@@ -43,7 +43,10 @@ export function fakeSupervisor(token?: string, queue: ApprovalQueue = createAppr
     closed: false,
     queue,
     recipients: [],
-    state: () => ({ ...current, approvals: queue.list() }),
+    state: () => {
+      const handoffs = queue.handoffs();
+      return { ...current, approvals: queue.list(), ...(handoffs.length > 0 ? { handoffs } : {}) };
+    },
     bind(options) {
       fake.boundUrl = options.mcpUrl;
     },

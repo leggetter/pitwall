@@ -1,6 +1,7 @@
 // The supervisor's approvals in memory (M5, W115): cards, their one answer, expiry, withdrawal, limits,
 // spawn_session's one-time passes and the notes for its next message. Made-up text only.
 import { describe, expect, it } from 'vitest';
+import { SUPERVISOR_HANDOFFS_MAX } from '../shared/protocol.js';
 import { canonicalJson, createApprovalQueue, MAX_PENDING_APPROVALS, PASS_MS, timeoutMessage } from './approvals.js';
 
 const NOW = Date.parse('2026-10-29T12:00:00.000Z');
@@ -81,5 +82,24 @@ describe('the approval queue', () => {
     expect(queue.takeNotes()).toEqual(['note 3', 'note 4', 'note 5', 'note 6', 'note 7']);
     expect(queue.takeNotes()).toEqual([]);
     expect(canonicalJson({ b: 1, a: { d: 2, c: [{ f: 1, e: 2 }] } })).toBe('{"a":{"c":[{"e":2,"f":1}],"d":2},"b":1}');
+  });
+});
+
+describe('hand-offs (W124)', () => {
+  it('records each, oldest first, keeps the newest SUPERVISOR_HANDOFFS_MAX, and tells its listeners', () => {
+    let ids = 0;
+    const queue = createApprovalQueue({ now: () => Date.parse('2026-11-02T12:00:00.000Z'), randomId: () => `h${++ids}` });
+    let told = 0;
+    queue.subscribe(() => told++);
+    queue.handoff({ kind: 'spawn', name: 'pitwall-test-a', shortId: 'abc12345' });
+    expect(queue.handoffs()).toEqual([{ id: 'h1', kind: 'spawn', name: 'pitwall-test-a', shortId: 'abc12345', at: '2026-11-02T12:00:00.000Z' }]);
+    expect(told).toBe(1);
+    for (let index = 0; index < SUPERVISOR_HANDOFFS_MAX + 5; index++) queue.handoff({ kind: 'message', name: `pitwall-test-${index}` });
+    const kept = queue.handoffs();
+    expect(kept).toHaveLength(SUPERVISOR_HANDOFFS_MAX);
+    expect(kept.at(-1)!.name).toBe(`pitwall-test-${SUPERVISOR_HANDOFFS_MAX + 4}`);
+    // A copy: changing it changes nothing.
+    kept[0]!.name = 'changed';
+    expect(queue.handoffs()[0]!.name).not.toBe('changed');
   });
 });

@@ -192,6 +192,14 @@ async function until(condition: () => boolean, ms = 2000): Promise<void> {
 
 
 describe('starting the supervisor', () => {
+  it('carries what you approved in this run, its hand-offs, once there are any (W124)', () => {
+    const approvals = createApprovalQueue({ now: () => Date.parse('2026-11-02T12:00:00.000Z'), randomId: () => 'h1' });
+    const { supervisor } = harness({ approvals });
+    expect(supervisor.state().handoffs).toBeUndefined();
+    approvals.handoff({ kind: 'spawn', name: 'pitwall-test-new', shortId: 'abc12345' });
+    expect(supervisor.state().handoffs).toEqual([{ id: 'h1', kind: 'spawn', name: 'pitwall-test-new', shortId: 'abc12345', at: '2026-11-02T12:00:00.000Z' }]);
+  });
+
   it('starts a new conversation with SendMessage alone, the read-only MCP tools allowed, the two that act asking approve, and your settings off', async () => {
     const { supervisor, children, sessionDir } = harness();
     expect(supervisor.state()).toEqual({ status: 'off', approvals: [] });

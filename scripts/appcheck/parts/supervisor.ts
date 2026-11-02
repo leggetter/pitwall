@@ -3,7 +3,7 @@
 // view in the third column as ?supervisor, one history entry, in a session's place and back; a new
 // conversation's questions, which fill the box; a message that starts it, the working line, and its
 // reply as markdown; Load earlier; the draft cards, Edit and Send edit, Don't send, and where focus
-// goes; Stop; held, with the stop command and the app strip's line; failed, with Start; a reload that
+// goes; what it sent and started, with each session's state, Needs you's notice and Open (W124); Stop; held, with the stop command and the app strip's line; failed, with Start; a reload that
 // starts nothing; and none with --no-supervisor. Made-up example/* content only.
 
 import { NAMES, SUPERVISOR_APPROVALS } from '../fixtures.js';
@@ -19,6 +19,7 @@ const SEND = `${SVIEW}?.querySelector('.supervisor-box button[type="submit"]')`;
 const STOP = `${SVIEW}?.querySelector('[data-supervisor-stop]')`;
 const START = `${SVIEW}?.querySelector('[data-supervisor-start]')`;
 const CARDS = `[...(${SVIEW}?.querySelectorAll('li.approval-card') ?? [])]`;
+const HANDOFFS = `[...(${SVIEW}?.querySelectorAll('[data-supervisor-handoffs] li.supervisor-handoff') ?? [])]`;
 const cardButton = (index: number, label: string) => `[...(${CARDS}[${index}]?.querySelectorAll('button') ?? [])].find((b) => b.textContent.trim() === ${q(label)})`;
 const NEEDS_YOU = `Number([...document.querySelectorAll('nav[aria-label="Repos"] a[data-repo-item]')].find((a) => a.querySelector('.repo-item-label')?.textContent === 'Needs you')?.querySelector('.badge')?.firstChild?.textContent ?? 0)`;
 const TITLE_COUNT = `Number(/^\\((\\d+)\\)/.exec(document.title)?.[1] ?? 0)`;
@@ -148,6 +149,37 @@ const part: Part = {
       t.expectEqual(await page.evaluate<number>(TITLE_COUNT), counts.title - 2, 'the title counts two fewer');
       // Below 900 px the repo list is a drawer, shut now.
       if (t.layout !== 'drawer') t.expectEqual(await page.evaluate<number>(NEEDS_YOU), counts.needs - 2, 'and so does Needs you');
+    });
+
+    await t.step('sent and started (W124): each session with its state, Needs you’s notice, and Open, which opens it', async () => {
+      await t.fresh({ search: '?view=all', supervisor: 'idle', approvals: true });
+      await openRepoList(t);
+      await page.click('the Supervisor item', ITEM);
+      await page.waitFor('two cards', `${CARDS}.length === 2`);
+      await page.click('Send', cardButton(0, 'Send'));
+      await page.waitFor('the message’s row', `${HANDOFFS}.length === 1`);
+      await page.waitFor('focus on the next card’s heading', `document.activeElement === ${CARDS}[0]?.querySelector('h4')`);
+      await page.click('Send', cardButton(0, 'Send'));
+      await page.waitFor('both rows', `${HANDOFFS}.length === 2 && ${CARDS}.length === 0`);
+      const rows = await page.evaluate<{ what: string; needs: string | null; open: string | null }[]>(
+        `${HANDOFFS}.map((li) => ({ what: li.querySelector('.supervisor-handoff-what').textContent, needs: li.querySelector('[data-handoff-needs]')?.textContent ?? null, open: li.querySelector('[data-handoff-open]')?.textContent ?? null }))`,
+      );
+      t.expectEqual(
+        rows,
+        [
+          { what: 'Started pr-57', needs: 'pr-57 needs you: Which base branch should the made-up review compare against?', open: 'Open pr-57 →' },
+          { what: `Message sent to ${NAMES.asked}`, needs: rows[1]?.needs ?? null, open: `Open ${NAMES.asked} →` },
+        ],
+        'needs you first, each with its Open',
+      );
+      t.expectEqual(await page.evaluate(`${SVIEW}.querySelector('[data-supervisor-handoffs] h3')?.textContent`), 'Sent and started (2)', 'under their heading');
+      const box = await page.evaluate<{ right: number }>(`(() => { const r = ${HANDOFFS}[0].querySelector('[data-handoff-open]').getBoundingClientRect(); return { right: r.right }; })()`);
+      t.expect(box.right <= t.viewport.width + 0.5, 'Open inside the window', box);
+      await t.shot('handoffs');
+      await page.click('Open pr-57', `${HANDOFFS}[0].querySelector('[data-handoff-open]')`);
+      await page.waitFor('its session view, in the supervisor’s place', `!${SVIEW} && !!document.querySelector('#session-view')`);
+      t.expect((await page.evaluate<string>('location.search')).includes('session='), 'the session in the URL', await page.evaluate('location.search'));
+      t.expectEqual(await page.evaluate(`document.querySelector('#session-view h2 .session-view-name')?.textContent ?? null`), 'pr-57', 'the session it started');
     });
 
     await t.step('a long draft: the exact text, its length said, and a no-break space drawn as its code (W120)', async () => {

@@ -23,7 +23,7 @@
 //
 // Nothing here is written to disk: approvals, passes and notes go when pitwall does.
 import { randomBytes } from 'node:crypto';
-import { SUPERVISOR_APPROVAL_TIMEOUT_MS, type SupervisorApproval } from '../shared/protocol.js';
+import { SUPERVISOR_APPROVAL_TIMEOUT_MS, SUPERVISOR_HANDOFFS_MAX, type SupervisorApproval, type SupervisorHandoff } from '../shared/protocol.js';
 
 /** The permission prompt tool's answer, as Claude Code documents it for `--permission-prompt-tool`. */
 export type PermissionAnswer = { behavior: 'allow'; updatedInput: Record<string, unknown> } | { behavior: 'deny'; message: string };
@@ -82,11 +82,15 @@ export interface ApprovalQueue {
    * approval's pass is spent even when the arguments differ.
    */
   takePass(toolUseId: string | undefined, args: Record<string, unknown>): Record<string, unknown> | undefined;
+  /** Records something you approved that went (W124): a message sent, or a session started. */
+  handoff(done: Omit<SupervisorHandoff, 'id' | 'at'>): void;
+  /** What handoff() recorded, oldest first, at most SUPERVISOR_HANDOFFS_MAX. */
+  handoffs(): SupervisorHandoff[];
   /** Keeps a note for the supervisor's next message from you. */
   note(text: string): void;
   /** The notes kept, oldest first, and forgets them. */
   takeNotes(): string[];
-  /** Changes whenever list() could answer differently. */
+  /** Changes whenever list() or handoffs() could answer differently. */
   version(): number;
   /** Called when list() may have changed. Returns an unsubscribe function. */
   subscribe(listener: () => void): () => void;
@@ -123,6 +127,7 @@ export function createApprovalQueue(options: ApprovalQueueOptions = {}): Approva
     for (let index = passes.length - 1; index >= 0; index--) if (passes[index]!.until <= at) passes.splice(index, 1);
   };
   const notes: string[] = [];
+  const done: SupervisorHandoff[] = [];
   const listeners = new Set<() => void>();
   let changes = 0;
 
@@ -219,6 +224,14 @@ export function createApprovalQueue(options: ApprovalQueueOptions = {}): Approva
       if (index === -1) return undefined;
       const [pass] = passes.splice(index, 1);
       return JSON.parse(pass!.input) as Record<string, unknown>;
+    },
+    handoff(each) {
+      done.push({ ...each, id: randomId(), at: new Date(now()).toISOString() });
+      if (done.length > SUPERVISOR_HANDOFFS_MAX) done.splice(0, done.length - SUPERVISOR_HANDOFFS_MAX);
+      changed();
+    },
+    handoffs() {
+      return done.map((each) => ({ ...each }));
     },
     note(text) {
       notes.push(text);

@@ -11,6 +11,8 @@
 //   Load earlier, Jump to latest, markdown as pitwall's own elements (D15) and the working line (W102)
 //   while it works, from the snapshot's status. A new conversation has an empty state: what the
 //   supervisor is for, and questions that fill the message box.
+// - What it sent and started in this run, each session with its state, Needs you's notice and
+//   "Open <name> →" (SupervisorHandoffs.tsx, W124), from the snapshot alone.
 // - Its approvals: draft cards above the message box (ApprovalCards.tsx).
 // - The message box, with Stop while it works (SupervisorBox.tsx).
 //
@@ -19,7 +21,8 @@
 // conversation and the box announce, so a snapshot that changes its status announces nothing.
 
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import type { SupervisorState } from '../../../src/shared/protocol.js';
+import type { SessionSummary, SupervisorState } from '../../../src/shared/protocol.js';
+import type { NotNeeded } from '../notNeeded.js';
 import { ApiContext } from '../api.js';
 import { getSupervisorConversation } from '../conversation.js';
 import { plainText } from '../format.js';
@@ -48,6 +51,7 @@ import { Icon } from './Icon.js';
 import { InfoTip } from './InfoTip.js';
 import { Frame, Top, type SessionViewLayout } from './SessionView.js';
 import { SupervisorBox } from './SupervisorBox.js';
+import { SupervisorHandoffs } from './SupervisorHandoffs.js';
 import { Timestamp } from './Timestamp.js';
 import '../supervisor.css';
 
@@ -85,9 +89,14 @@ export interface SupervisorViewProps {
   animate?: boolean;
   /** Whether the message box has a draft, for the shortcuts that would close the view (6.2). */
   onDraftChange?: ((hasDraft: boolean) => void) | undefined;
+  /** Every session the snapshot lists, for what it sent and started (W124). */
+  sessions?: readonly SessionSummary[] | undefined;
+  notNeeded?: NotNeeded | undefined;
+  /** Opens a session's view in this one's place, as its row in the list does (W124). */
+  onOpenSession?: ((sessionId: string) => void) | undefined;
 }
 
-export function SupervisorView({ state, onClose, layout = 'overlay', compact = false, backLabel, headingRef, animate = true, onDraftChange }: SupervisorViewProps) {
+export function SupervisorView({ state, onClose, layout = 'overlay', compact = false, backLabel, headingRef, animate = true, onDraftChange, sessions = [], notNeeded, onOpenSession }: SupervisorViewProps) {
   const api = useContext(ApiContext);
   const ids = { title: useId(), conversation: useId(), panel: useId(), suggest: useId() };
   const ownHeading = useRef<HTMLHeadingElement>(null);
@@ -298,6 +307,8 @@ export function SupervisorView({ state, onClose, layout = 'overlay', compact = f
         workingReady={conversation.state.status !== 'loading' && conversation.state.status !== 'unavailable'}
         empty={empty}
       />
+
+      <SupervisorHandoffs handoffs={state.handoffs} sessions={sessions} notNeeded={notNeeded} onOpenSession={onOpenSession} />
 
       <ApprovalCards approvals={state.approvals} onEmpty={toBox} />
 

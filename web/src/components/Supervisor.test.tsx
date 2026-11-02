@@ -641,3 +641,68 @@ describe('its draft cards', () => {
     expect(view()).toBeDefined();
   });
 });
+
+describe('what it sent and started (W124)', () => {
+  const started = session({ sessionId: '00000000-0000-4000-8000-00000000c124', name: 'pitwall-test-started', kind: 'background', shortId: 'c0ffee12', status: 'busy', state: 'working' });
+  const asking = session({ sessionId: '00000000-0000-4000-8000-00000000d124', name: 'pitwall-test-asking', kind: 'background', shortId: 'd00dfeed', needsYou: { reason: 'claude-code', text: 'Pick a migration name' } });
+  const handoffSnap = (state: SupervisorState, sessions = [alpha, beta, started, asking]) =>
+    snapshot([group({ key: `${ROOT}/demo-app`, label: 'demo-app', sessions })], { roots: [ROOT], supervisor: state });
+  const region = () => viewOf().getByRole('region', { name: /Sent and started/ });
+
+  it('shows nothing until something was sent or started', async () => {
+    renderDashboard(handoffSnap({ status: 'idle', approvals: [] }), { search: '?view=all&supervisor' });
+    await settle();
+    expect(viewOf().queryByRole('region', { name: /Sent and started/ })).toBeNull();
+  });
+
+  it('lists each session it messaged or started, with its state, needs-you first, and Open opens it in the view’s place', async () => {
+    const state: SupervisorState = {
+      status: 'idle',
+      approvals: [],
+      handoffs: [
+        { id: 'h1', kind: 'spawn', name: 'pitwall-test-started', shortId: 'c0ffee12', at: minutesAgo(5) },
+        { id: 'h2', kind: 'message', name: 'pitwall-test-beta', sessionId: beta.sessionId, at: minutesAgo(3) },
+        { id: 'h3', kind: 'spawn', name: 'pitwall-test-asking', shortId: 'd00dfeed', at: minutesAgo(2) },
+      ],
+    };
+    const { history } = renderDashboard(handoffSnap(state), { search: '?view=all&supervisor' });
+    await settle();
+    expect(region()).toBeDefined();
+    const rows = within(region()).getAllByRole('listitem');
+    expect(rows.map((row) => row.querySelector('.supervisor-handoff-what')?.textContent)).toEqual(['Started pitwall-test-asking', 'Message sent to pitwall-test-beta', 'Started pitwall-test-started']);
+    expect(rows[0]!.querySelector('[data-handoff-needs]')?.textContent).toBe('pitwall-test-asking needs you: Pick a migration name');
+    expect(rows[1]!.querySelector('[data-handoff-needs]')).toBeNull();
+    expect(within(rows[2]!).getByText('Busy')).toBeDefined();
+    fireEvent.click(within(rows[2]!).getByRole('button', { name: 'Open pitwall-test-started' }));
+    await settle();
+    expect(view()).toBeUndefined();
+    expect(history!.location.search).toBe(`?view=all&session=${started.sessionId}`);
+    expect(document.getElementById('session-view')).not.toBeNull();
+  });
+
+  it('says a started session is starting, with no Open, until the index lists it, and opens nothing it doesn’t list', async () => {
+    const state: SupervisorState = { status: 'idle', approvals: [], handoffs: [{ id: 'h1', kind: 'spawn', name: 'pitwall-test-new', shortId: 'abcd1234', at: minutesAgo(0) }] };
+    const { update } = renderDashboard(handoffSnap(state), { search: '?view=all&supervisor' });
+    await settle();
+    expect(within(region()).getByText('Starting…')).toBeDefined();
+    expect(within(region()).queryByRole('button')).toBeNull();
+    const listed = session({ sessionId: '00000000-0000-4000-8000-00000000e124', name: 'pitwall-test-new', kind: 'background', shortId: 'abcd1234', status: 'idle' });
+    update(handoffSnap(state, [alpha, beta, listed]));
+    await settle();
+    expect(within(region()).getByRole('button', { name: 'Open pitwall-test-new' })).toBeDefined();
+  });
+});
+
+describe('reading hand-offs (W124)', () => {
+  it('keeps only well-formed ones, and none at all is no handoffs', async () => {
+    const { asSupervisorState } = await import('../supervisor.js');
+    const good = { id: 'h1', kind: 'spawn', name: 'pitwall-test-a', shortId: 'abc12345', at: minutesAgo(1) };
+    const state = asSupervisorState({
+      status: 'idle',
+      approvals: [],
+      handoffs: [good, { ...good, id: '' }, { ...good, kind: 'relay' }, { ...good, name: ' ' }, { ...good, at: 'soon' }, 'nonsense', { id: 'h2', kind: 'message', name: 'pitwall-test-b', at: minutesAgo(0), sessionId: 7 }],
+    });
+    expect(state?.handoffs).toEqual([good, { id: 'h2', kind: 'message', name: 'pitwall-test-b', at: minutesAgo(0) }]);
+    expect(asSupervisorState({ status: 'idle', approvals: [], handoffs: 'x' })?.handoffs).toBeUndefined();
+  });
+});

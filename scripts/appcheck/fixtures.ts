@@ -28,6 +28,7 @@ import type {
   SubagentList,
   SubagentSummary,
   SupervisorApproval,
+  SupervisorHandoff,
   SupervisorDecision,
   SupervisorState,
   SupervisorStatus,
@@ -353,6 +354,8 @@ export class World {
   /** The supervisor (W114): its status, drafts, conversation and cost, and its timers' generation. */
   #supervisor: SupervisorWorldState = 'none';
   #approvals: SupervisorApproval[] = [];
+  /** What you approved (W124): each message sent and session started, oldest first. */
+  #handoffs: SupervisorHandoff[] = [];
   #supervisorEntries: ConversationEntry[] = [];
   #supervisorOlder: ConversationEntry[] = [];
   #supervisorCost = 0;
@@ -395,6 +398,7 @@ export class World {
     this.#recaps = new Map(this.#recapsState === 'off' ? [] : this.#baseRecaps().map((each) => [this.byName(each.name).sessionId, each.recap]));
     this.#supervisorTurn += 1;
     this.#supervisor = options.supervisor ?? 'none';
+    this.#handoffs = [];
     this.#approvals = options.approvals === 'long' ? [this.#longApproval()] : options.approvals ? this.#baseApprovals() : [];
     const history = options.supervisorHistory ?? (this.#supervisor !== 'none' && this.#supervisor !== 'off');
     this.#supervisorEntries = history ? this.#supervisorTurns() : [];
@@ -414,6 +418,7 @@ export class World {
     if (this.#supervisor === 'failed') state.error = SUPERVISOR_FAILED_ERROR;
     if (this.#supervisorTurnAt !== undefined) state.lastTurnAt = this.#supervisorTurnAt;
     if (this.#supervisorCost > 0) state.costUsd = this.#supervisorCost;
+    if (this.#handoffs.length > 0) state.handoffs = [...this.#handoffs];
     return state;
   }
 
@@ -489,6 +494,21 @@ export class World {
         this.#approvals = this.#approvals.filter((each) => each.id !== id);
         const what = decision.decision === 'decline' ? "You didn't send it." : decision.decision === 'edit' ? 'You sent your edit.' : 'You sent it.';
         this.#supervisorEntries.push({ kind: 'notice', text: `${approval.kind === 'message' ? `Message to ${approval.to}` : `New session in ${approval.directory}`}: ${what}`, at: new Date().toISOString() });
+        // What went, for the panel's Sent and started (W124): a message to the session of that name, or
+        // a new background session, listed at once, that needs you, as one that has a question would.
+        if (decision.decision !== 'decline') {
+          const at = new Date().toISOString();
+          if (approval.kind === 'message') {
+            const to = [...this.#sessions.values()].find((each) => each.name === approval.to);
+            this.#handoffs.push({ id: `pt124-handoff-${this.#handoffs.length + 1}`, kind: 'message', name: approval.to, at, ...(to === undefined ? {} : { sessionId: to.sessionId }) });
+          } else {
+            const started = this.spawn({ cwd: approval.directory, prompt: approval.prompt, ...(approval.name === undefined ? {} : { name: approval.name }) }, CODE);
+            started.summary.needsYou = { reason: 'claude-code', text: 'Which base branch should the made-up review compare against?' };
+            started.summary.state = 'blocked';
+            started.list();
+            this.#handoffs.push({ id: `pt124-handoff-${this.#handoffs.length + 1}`, kind: 'spawn', name: started.summary.name, shortId: started.summary.shortId!, at });
+          }
+        }
         // Told what you decided, it takes a short turn, so its last turn moves.
         this.#supervisorTurnAt = new Date().toISOString();
       },
