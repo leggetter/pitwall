@@ -85,6 +85,8 @@ describe('RECAP_SYSTEM_PROMPT', () => {
     expect(RECAP_SYSTEM_PROMPT).toContain('"Say whether to mark #42 ready"');
     expect(RECAP_SYSTEM_PROMPT).toContain('Each question the user still has to answer is its own to-do.');
     expect(RECAP_SYSTEM_PROMPT).toContain('Always "nothing" when todos is empty.');
+    // #123's review: an answered question is a finished to-do.
+    expect(RECAP_SYSTEM_PROMPT).toContain('A question the newer turns show you answered is finished');
     // An update revises, keeping the summary steady.
     expect(RECAP_SYSTEM_PROMPT).toContain('When updating, revise the previous recap rather than writing a new one. Keep the summary steady');
     expect(RECAP_SYSTEM_PROMPT).not.toMatch(/"why"|"now"|"next"/);
@@ -175,6 +177,8 @@ describe('parseRecapAnswer', () => {
 
   it('refuses an answer that contradicts itself: waiting on you with no to-do for you, or on anything with no to-dos', () => {
     expect(parseRecapAnswer(answer({ todos: [{ text: 'Open a PR', owner: 'session' }], waitingOn: 'you' }))).toBeUndefined();
+    // Nor 'nothing' beside a to-do for you (#123's review).
+    expect(parseRecapAnswer(answer({ todos: [{ text: 'Say whether to merge', owner: 'you' }], waitingOn: 'nothing' }))).toBeUndefined();
     for (const waitingOn of ['you', 'another session', 'CI', 'someone else']) expect(parseRecapAnswer(answer({ todos: [], waitingOn })), waitingOn).toBeUndefined();
     expect(parseRecapAnswer(answer({ todos: [{ text: 'Finish the checks on #42', owner: 'CI' }], waitingOn: 'CI' }))?.waitingOn).toBe('CI');
   });

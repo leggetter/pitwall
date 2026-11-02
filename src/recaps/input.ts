@@ -326,5 +326,5 @@ export function updateRecapInput(input: UpdateInput, random?: () => string): str
   const parts = firstPromptBlock(input.firstPrompt);
   parts.push(block('previous-recap', JSON.stringify({ summary, todos: todos.map(({ text, owner }) => ({ text, owner })), waitingOn, title })));
   parts.push(block('turns-since-previous-recap', input.turns));
-  return frame(parts, 'Revise the previous recap with what the newer turns show: keep its summary steady, changing only what they change, and drop the to-dos they finished. Answer with the JSON object only.', random);
+  return frame(parts, 'Revise the previous recap with what the newer turns show: keep its summary steady, changing only what they change, and drop the to-dos they finished, a question you answered included. Answer with the JSON object only.', random);
 }
