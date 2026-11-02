@@ -79,7 +79,7 @@ describe('RECAP_SYSTEM_PROMPT', () => {
   });
 
   it('leaves nothing for you in a session you said is done, follow-ups outside it included (#140)', () => {
-    expect(RECAP_SYSTEM_PROMPT).toContain("When the user's latest prompt says this session is finished, closed or done with, nothing is left in it: todos is empty and waitingOn is \"nothing\", even if it named follow-ups outside it");
+    expect(RECAP_SYSTEM_PROMPT).toContain("When the user's latest prompt says this whole session is finished, closed or done with, not just a part of the work, and asks it for nothing more, nothing is left in it: todos is empty and waitingOn is \"nothing\", even if it named follow-ups outside it");
     expect(RECAP_SYSTEM_PROMPT).toContain('This holds for an update too, until the user asks this session for more.');
   });
 
