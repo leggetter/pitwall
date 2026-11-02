@@ -350,7 +350,7 @@ describe('the queue and the budget', () => {
     expect(h.calls).toHaveLength(1);
     expect(h.engine.refresh(missing)).toEqual({ kind: 'no-transcript' });
     expect(h.engine.refresh(unfound)).toEqual({ kind: 'no-transcript' });
-    await h.reply(h.calls[0], envelope(answer({ waitingOn: 'nothing' })));
+    await h.reply(h.calls[0], envelope(answer({ waitingOn: 'nothing', todos: [] })));
     expect(h.engine.recap(ended)).toMatchObject({ source: 'pitwall', waitingOn: 'nothing' });
     // Asked again with nothing new: a first recap afresh, not an update with no turns.
     expect(h.engine.refresh(ended)).toEqual({ kind: 'queued' });
