@@ -133,7 +133,7 @@ In the order they'll be built. Each starts when the one before it has merged int
 - **M3.1, the work after M3 (done).** Merged 2026-10-28, [#87](https://github.com/leggetter/pitwall/pull/87), after W85's security review; End session for interactive sessions (spike 005, W90) in [#93](https://github.com/leggetter/pitwall/pull/93). See "M3.1 - After M3", "Spike 005" and "M3.1 work breakdown" in the [archive](docs/plan-archive.md#m31---after-m3-done-merged-into-main-in-87-and-end-session-in-93). W86 (a dependency bump) and W89 (a bug) stayed open; they are in "Suggested actions" below.
 - **M4, my open pull requests (done).** W92 to W117, merged 2026-11-02, [#117](https://github.com/leggetter/pitwall/pull/117), after W96's and W108's security reviews and Phil's try-out. See "M4 - My open pull requests", "M4 redesign" and "M4 work breakdown" in the [archive](docs/plan-archive.md#m4---my-open-pull-requests-in-progress-on-m4integration).
 
-### M5 - Supervisor (done, merged into `main` in #MERGEPR on 2026-11-02)
+### M5 - Supervisor (done, merged into `main` in #138 on 2026-11-02)
 
 Pitwall runs and owns one supervisor: a conversation with me, in pitwall's own chat panel, that knows every session and can propose messages and new sessions for my approval. Each session also gets a recap, from a short model call that isn't a supervisor (proposed, below).
 

@@ -6,7 +6,7 @@ Last updated: 2026-11-02, on `main`, as M5 merged.
 
 ## Current milestone
 
-**M5, the supervisor, is done:** merged into `main` in [#MERGEPR](https://github.com/leggetter/pitwall/pull/MERGEPR) on 2026-11-02, built on `m5/integration` as W109 to W129 ([#110](https://github.com/leggetter/pitwall/pull/110) to [#137](https://github.com/leggetter/pitwall/pull/137)). Phil tried it on port 4519 and gave the word; the full app check ran before the merge (1,976 steps; its two stale checks fixed in #137).
+**M5, the supervisor, is done:** merged into `main` in [#138](https://github.com/leggetter/pitwall/pull/138) on 2026-11-02, built on `m5/integration` as W109 to W129 ([#110](https://github.com/leggetter/pitwall/pull/110) to [#137](https://github.com/leggetter/pitwall/pull/137)). Phil tried it on port 4519 and gave the word; the full app check ran before the merge (1,976 steps; its two stale checks fixed in #137).
 
 - **Security:** W116's review and W120's fixes ([#122](https://github.com/leggetter/pitwall/pull/122)); the re-review of W124 to W128 and W129's fixes ([#133](https://github.com/leggetter/pitwall/pull/133)), whose re-check approved M5 for `main`. Its unfixed Info notes: a look-alike name doesn't trigger the resume card's shared-name note; resume errors show a folder outside `untrusted`; the `claude` command list isn't checked against Claude Code 2.1.316's hidden commands.
 - **M5.1, efficiency, is next.** Start it on a new `m5.1/integration` branch from `main`, as M4 and M5 were built.
