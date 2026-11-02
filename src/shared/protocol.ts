@@ -1772,7 +1772,7 @@ export type SupervisorDecision = { decision: 'send' } | { decision: 'edit'; text
 /** The supervisor's model (Phil, 2026-10-29), at its default effort. */
 export const SUPERVISOR_MODEL = 'claude-opus-5-5';
 
-/** An approval you don't answer is declined after this, inside the MCP permission tool's 30 minutes (spike 009). */
+/** An approval you don't answer is declined after this, inside the 30 minutes pitwall gives the supervisor's MCP calls (W115). */
 export const SUPERVISOR_APPROVAL_TIMEOUT_MS = 29 * 60 * 1000;
 
 /** The longest message you can send the supervisor, and the longest edit. */

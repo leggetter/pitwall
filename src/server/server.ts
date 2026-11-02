@@ -50,7 +50,7 @@
 //   POST /api/supervisor/message, /start, /interrupt   then supervisorRoutes.ts; 409 with --no-supervisor
 //   GET /api/supervisor/conversation   its own transcript, paged as a session's, under the same limit;
 //                                      404 before it has one, and with --no-supervisor
-//   POST /api/supervisor/approvals/:id  404 until W115
+//   POST /api/supervisor/approvals/:id  your decision on one of its drafts (W115), supervisorRoutes.ts
 //   /mcp                                outside /api/*, so neither the token nor the apiKey is taken
 //                                      there: Host only, then mcp.ts: no Origin, POST, the running
 //                                      supervisor's own bearer token, JSON, at most 64 KiB. 404 with
@@ -81,7 +81,7 @@ import {
   WS_PATH,
   type ConversationPage,
 } from '../shared/protocol.js';
-import { CommandSlots, DEFAULT_MAX_CONCURRENT_COMMANDS, registerActions, type ActionOptions } from './actions.js';
+import { CommandSlots, createSpawnRunner, DEFAULT_MAX_CONCURRENT_COMMANDS, registerActions, type ActionOptions } from './actions.js';
 import { createAttachServer, type AttachOptions } from './attach.js';
 import { AttachmentStore, registerAttachments, type AttachmentStoreOptions } from './attachments.js';
 import { createCloneRoute, type CloneOptions } from './clone.js';
@@ -96,6 +96,7 @@ import { registerRecaps } from './recapRoutes.js';
 import { createSnapshotView, type SnapshotView } from './snapshotLinks.js';
 import { createRecapView } from './snapshotRecaps.js';
 import { createSupervisorView } from './snapshotSupervisor.js';
+import { createApproveTool, createSpawnSessionTool, recipientNames, type SupervisorActionSources } from './supervisorActions.js';
 import { registerSupervisor } from './supervisorRoutes.js';
 import type { Supervisor } from '../supervisor/supervisor.js';
 import { createRelayManager } from './relay.js';
@@ -250,21 +251,43 @@ export async function startServerWithInternals(
   const supervised = supervisor === undefined ? undefined : createSupervisorView(recapped ?? indexer, supervisor);
   // The snapshot clients get: each session's PR links cut to those matching a PR in the list (D14, W105).
   const snapshots = createSnapshotView(supervised ?? recapped ?? indexer, prs);
-  // pitwall's MCP server, for the supervisor alone (W112): read-only tools over what pitwall already has.
-  const mcp =
+  // New sessions, from the spawn route and the supervisor's spawn_session (W115): one set of limits.
+  const actionOptions: ActionOptions = { token, spawned, resumed, ...internals.actions, slots: commandSlots, attachments };
+  const spawner = internals.actions?.spawner ?? createSpawnRunner(actionOptions);
+  // What the supervisor can do behind your click (W115): its approvals, checked against this snapshot.
+  const supervisorActions: SupervisorActionSources | undefined =
     supervisor === undefined
+      ? undefined
+      : { snapshots, ownSessionIds: () => supervisor.ownSessionIds(), approvals: supervisor.approvals(), spawner, onSpawned: () => indexer.pollSoon() };
+  // pitwall's MCP server, for the supervisor alone (W112, W115): read-only tools over what pitwall
+  // already has, spawn_session, and approve, the permission prompt tool.
+  const mcp =
+    supervisor === undefined || supervisorActions === undefined
       ? undefined
       : {
           token: () => supervisor.mcpToken(),
           version: packageVersion(),
-          tools: createSupervisorTools({
-            snapshots,
-            conversation: (sessionId, before) => indexer.conversation(sessionId, before),
-            ...(recaps === undefined ? {} : { recaps }),
-            prs,
-            ownSessionIds: () => supervisor.ownSessionIds(),
-          }),
+          tools: [
+            ...createSupervisorTools({
+              snapshots,
+              conversation: (sessionId, before) => indexer.conversation(sessionId, before),
+              ...(recaps === undefined ? {} : { recaps }),
+              prs,
+              ownSessionIds: () => supervisor.ownSessionIds(),
+            }),
+            createSpawnSessionTool(supervisorActions),
+            createApproveTool(supervisorActions),
+          ],
         };
+  // The names its recipient gate lets through to an approval, kept up with the list (W115).
+  const offRecipients =
+    supervisor === undefined
+      ? undefined
+      : (() => {
+          const update = () => supervisor.setRecipients(recipientNames(snapshots.latest(), supervisor.ownSessionIds()));
+          update();
+          return snapshots.subscribe(update);
+        })();
   // Clone and start (W107): its route, its sweep of what a killed pitwall left once listening, and on close() its running clone stopped.
   const clone = createCloneRoute(indexer, prs, internals.clone);
   // The directory list (W70), your open PRs, Refresh (M4) and Clone and start (W107), then the input routes: attachments
@@ -276,7 +299,7 @@ export async function startServerWithInternals(
     registerPrs(app, prs);
     clone.register(app);
     registerAttachments(app, attachments);
-    registerActions(app, indexer, { token, spawned, resumed, ...internals.actions, slots: commandSlots, attachments });
+    registerActions(app, indexer, { ...actionOptions, spawner });
     registerEditors(app, indexer, { token, ...internals.editors, slots: commandSlots });
     registerEndSession(app, indexer, {
       isRelay: (row) => relay.isRelay(row) || recaps?.isOwn(row) === true,
@@ -286,7 +309,7 @@ export async function startServerWithInternals(
     });
     registerRelay(app, indexer, relay);
     registerRecaps(app, indexer, recaps);
-    registerSupervisor(app, supervisor);
+    registerSupervisor(app, supervisor, supervisorActions);
     registerMcp(app, mcp);
     internals.routes?.(app);
   };
@@ -367,6 +390,9 @@ export async function startServerWithInternals(
     url: `http://${LOOPBACK_HOST}:${port}`,
     port,
     close() {
+      // The supervisor's drafts denied first, while their calls can still be answered (W115).
+      supervisor?.approvals().cancelAll("pitwall is closing, so this wasn't sent.");
+      offRecipients?.();
       // No more fetches, and no more 'prs' messages to clients that are closing.
       prs.stop();
       snapshots.stop();

@@ -16,7 +16,7 @@ M3.1 was built on `m3.1/integration` ([PR #69](https://github.com/leggetter/pitw
 
 M4, Phil's open pull requests, was built on `m4/integration` (W92 to W117) and merged into `main` on 2026-11-02 in [PR #117](https://github.com/leggetter/pitwall/pull/117), after Phil's try-out and W108's security review.
 
-M5, the supervisor, is being built on `m5/integration`, branched from `m4/integration` before M4 reached `main`, starting with per-session recaps (W109 to W111), then pitwall's read-only MCP server and the supervisor process (W112, W113). See "M5 - Supervisor" and "M5 work breakdown" in `PLAN.md`.
+M5, the supervisor, is being built on `m5/integration`, branched from `m4/integration` before M4 reached `main`, starting with per-session recaps (W109 to W111), then pitwall's read-only MCP server and the supervisor process (W112, W113), its panel (W114) and its approvals (W115). See "M5 - Supervisor" and "M5 work breakdown" in `PLAN.md`.
 
 ## Rules
 
@@ -81,12 +81,15 @@ src/recaps/              per-session recaps (M5, W110, D26): engine.ts schedules
                          builds the input, prompt.ts the command line, environment and strict parsing, call.ts
                          runs one. The transcript reads are src/index/recapSources.ts; the snapshot's view
                          and routes are src/server/snapshotRecaps.ts and recapRoutes.ts. Off with --no-recaps
-src/supervisor/          the supervisor (M5, W113, D4): one claude -p session on Opus 5.5 that pitwall starts
+src/supervisor/          the supervisor (M5, W113, W115, D4): one claude -p session on Opus 5.5 that pitwall starts
                          when the page asks, owns and resumes by its session id; prompt.ts its command line,
                          environment and versioned system prompt, state.ts its 0600 state file, supervisor.ts
-                         the process and its stream. Its MCP server is src/server/mcp.ts (the route, by hand)
-                         and mcpTools.ts (the read-only tools, W112); the snapshot's view and routes are
-                         src/server/snapshotSupervisor.ts and supervisorRoutes.ts. Off with --no-supervisor
+                         the process and its stream, approvals.ts its cards in memory, gate.ts and
+                         supervisorGateHook.mjs the deny-only recipient gate. Its MCP server is
+                         src/server/mcp.ts (the route, by hand), mcpTools.ts (the read-only tools, W112) and
+                         supervisorActions.ts (approve, spawn_session and the checks, W115); the snapshot's
+                         view and routes are src/server/snapshotSupervisor.ts and supervisorRoutes.ts. Off
+                         with --no-supervisor
 src/cli.ts               the `pitwall` command (bin, built to dist/cli.js)
 src/config.ts            the config file (W103, D24): ~/.pitwall/config.json or --config, JSON with comments,
                          the roots and each root's GitHub owners, ownersByRoot() for the PR side

@@ -1,6 +1,7 @@
-// pitwall's MCP server (M5, W112): MCP's JSON-RPC over HTTP POST at MCP_PATH, on pitwall's own
-// server, for the supervisor alone (src/supervisor/), with read-only tools (mcpTools.ts). Written
-// by hand in a few lines rather than with an SDK (AGENTS.md: a few lines over a dependency).
+// pitwall's MCP server (M5, W112, W115): MCP's JSON-RPC over HTTP POST at MCP_PATH, on pitwall's own
+// server, for the supervisor alone (src/supervisor/), with read-only tools (mcpTools.ts), and
+// spawn_session and the permission prompt tool, approve (supervisorActions.ts). Written by hand in a
+// few lines rather than with an SDK (AGENTS.md: a few lines over a dependency).
 //
 // What Claude Code 2.1.312's HTTP transport sends (a probe on 2026-10-29 that sent no prompt, so
 // no model call, to a stand-in that logged each request's method and headers):
@@ -29,8 +30,11 @@
 //   JSON-RPC            one message, not a batch, else 400: a request gets its answer as JSON with
 //                       200, a notification or a response 202 with no body
 //
-// The tools only read. Each answer frames text from sessions, recaps and GitHub as untrusted data
-// (mcpTools.ts), and the supervisor's prompt says never to follow instructions in it.
+// The read-only tools frame text from sessions, recaps and GitHub as untrusted data (mcpTools.ts),
+// and the supervisor's prompt says never to follow instructions in it. approve holds its call until
+// you decide (up to SUPERVISOR_APPROVAL_TIMEOUT_MS), so it doesn't count against
+// MCP_MAX_CONCURRENT_CALLS; the approvals have their own limit. A held call ends when its HTTP
+// request closes, or with MCP's `notifications/cancelled` for its id: both abort its signal.
 import type { Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { isRecord } from '../index/guards.js';
@@ -52,6 +56,25 @@ export interface McpToolResult {
   isError?: boolean;
 }
 
+/** What a call gets beside its arguments. */
+export interface McpCallContext {
+  /** The request's `params._meta`, as the client sent it: untrusted, and absent when it sent none. */
+  meta?: Record<string, unknown>;
+  /** Aborted when the call is cancelled or its request closes. */
+  signal: AbortSignal;
+}
+
+/** MCP's tool annotations, as tools/list gives them. Default: read-only. */
+export interface McpToolAnnotations {
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+  idempotentHint: boolean;
+  openWorldHint: boolean;
+}
+
+/** The read-only tools' annotations. */
+export const READ_ONLY_ANNOTATIONS: McpToolAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+
 /** One tool. Its `call` gets the arguments as an object, and never throws for bad ones: it answers an error. */
 export interface McpTool {
   name: string;
@@ -59,7 +82,17 @@ export interface McpTool {
   description: string;
   /** JSON Schema for its arguments. */
   inputSchema: Record<string, unknown>;
-  call(args: Record<string, unknown>): Promise<McpToolResult>;
+  /** Default READ_ONLY_ANNOTATIONS. */
+  annotations?: McpToolAnnotations;
+  /** True for a call that waits on you (approve): it doesn't count against MCP_MAX_CONCURRENT_CALLS. */
+  holds?: boolean;
+  call(args: Record<string, unknown>, context?: McpCallContext): Promise<McpToolResult>;
+}
+
+/** The calls running, for MCP_MAX_CONCURRENT_CALLS, and each one's abort by its JSON-RPC id, for `notifications/cancelled`. */
+export interface McpCalls {
+  running: number;
+  inFlight?: Map<string | number, AbortController>;
 }
 
 export interface McpServerOptions {
@@ -91,12 +124,18 @@ function isId(id: unknown): id is string | number {
  * The MCP methods pitwall serves, for one parsed message. Pure but for the tools' calls, so it's
  * tested without HTTP. `calls` counts the tool calls running, for MCP_MAX_CONCURRENT_CALLS.
  */
-export async function answerMessage(message: unknown, options: Pick<McpServerOptions, 'tools' | 'version'>, calls: { running: number }): Promise<JsonRpcAnswer> {
+export async function answerMessage(message: unknown, options: Pick<McpServerOptions, 'tools' | 'version'>, calls: McpCalls, signal?: AbortSignal): Promise<JsonRpcAnswer> {
   if (!isRecord(message) || message.jsonrpc !== '2.0') return errorAnswer(isRecord(message) && isId(message.id) ? message.id : null, INVALID_REQUEST, 'Not a JSON-RPC 2.0 message.');
   // A response from the client, or a notification: nothing to answer.
   if (message.method === undefined && (Object.hasOwn(message, 'result') || Object.hasOwn(message, 'error'))) return undefined;
   if (typeof message.method !== 'string') return errorAnswer(isId(message.id) ? message.id : null, INVALID_REQUEST, 'No method.');
-  if (!Object.hasOwn(message, 'id')) return undefined;
+  if (!Object.hasOwn(message, 'id')) {
+    // A cancelled request: its call, if it still runs, is aborted, as a held approve is.
+    if (message.method === 'notifications/cancelled' && isRecord(message.params) && isId(message.params.requestId)) {
+      calls.inFlight?.get(message.params.requestId)?.abort();
+    }
+    return undefined;
+  }
   const { id, method } = message;
   if (!isId(id)) return errorAnswer(null, INVALID_REQUEST, 'The id must be a string or a number.');
   const params = isRecord(message.params) ? message.params : {};
@@ -121,7 +160,7 @@ export async function answerMessage(message: unknown, options: Pick<McpServerOpt
           name: tool.name,
           description: tool.description,
           inputSchema: tool.inputSchema,
-          annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+          annotations: tool.annotations ?? READ_ONLY_ANNOTATIONS,
         })),
       });
     case 'tools/call': {
@@ -130,17 +169,28 @@ export async function answerMessage(message: unknown, options: Pick<McpServerOpt
       if (tool === undefined) return errorAnswer(id, INVALID_PARAMS, 'pitwall has no tool by that name.');
       const args = params.arguments ?? {};
       if (!isRecord(args)) return errorAnswer(id, INVALID_PARAMS, 'The arguments must be an object.');
-      if (calls.running >= MCP_MAX_CONCURRENT_CALLS) {
+      const counted = tool.holds !== true;
+      if (counted && calls.running >= MCP_MAX_CONCURRENT_CALLS) {
         return ok({ content: [{ type: 'text', text: 'pitwall is busy with other tool calls. Try again in a moment.' }], isError: true });
       }
-      calls.running++;
+      if (counted) calls.running++;
+      const abort = new AbortController();
+      const onAbort = () => abort.abort();
+      if (signal?.aborted === true) abort.abort();
+      else signal?.addEventListener('abort', onAbort, { once: true });
+      // A second request with an id still running doesn't take over the first's cancel.
+      const tracked = calls.inFlight !== undefined && !calls.inFlight.has(id);
+      if (tracked) calls.inFlight!.set(id, abort);
       try {
-        const result = await tool.call(args);
+        const meta = isRecord(params._meta) ? params._meta : undefined;
+        const result = await tool.call(args, { signal: abort.signal, ...(meta === undefined ? {} : { meta }) });
         return ok({ content: [{ type: 'text', text: result.text }], ...(result.isError === true ? { isError: true } : {}) });
       } catch {
         return ok({ content: [{ type: 'text', text: 'pitwall hit an unexpected error running this tool.' }], isError: true });
       } finally {
-        calls.running--;
+        if (counted) calls.running--;
+        if (tracked) calls.inFlight!.delete(id);
+        signal?.removeEventListener('abort', onAbort);
       }
     }
     default:
@@ -157,7 +207,7 @@ export function registerMcp(app: Hono, options: McpServerOptions | undefined): v
     app.all(MCP_PATH, (c) => c.body(null, 404));
     return;
   }
-  const calls = { running: 0 };
+  const calls: McpCalls = { running: 0, inFlight: new Map() };
   const refuse = (c: Context, status: 400 | 401 | 403 | 405 | 413 | 415) => {
     c.header('Cache-Control', 'no-store');
     return c.body(null, status);
@@ -188,7 +238,8 @@ export function registerMcp(app: Hono, options: McpServerOptions | undefined): v
       return c.json(errorAnswer(null, PARSE_ERROR, 'The body isn’t valid JSON.'), 400);
     }
     if (Array.isArray(message)) return c.json(errorAnswer(null, INVALID_REQUEST, 'pitwall takes one message at a time, not a batch.'), 400);
-    const answer = await answerMessage(message, options, calls);
+    // Aborted when Claude Code closes the request, as when it gives up on a held approve.
+    const answer = await answerMessage(message, options, calls, c.req.raw.signal);
     if (answer === undefined) return c.body(null, 202);
     return c.json(answer, 200);
   });

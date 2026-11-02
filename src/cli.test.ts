@@ -143,7 +143,7 @@ describe('parseCliArgs', () => {
   it('says in the help what --no-supervisor does: when it starts, which model, on whose login, what it reads, and that it only reads', () => {
     expect(USAGE).toContain('[--no-recaps] [--no-supervisor]');
     expect(USAGE.replace(/\s+/g, ' ')).toContain(
-      '--no-supervisor Turn the supervisor off, and never run it. Without it, pitwall starts the supervisor only when you open it or send it a message: a claude -p session on claude-opus-5-5, on whatever login or API key claude finds, that answers from what pitwall knows of your sessions and PRs, and reads a session\'s latest turns when you ask about it. It can only read.',
+      '--no-supervisor Turn the supervisor off, and never run it. Without it, pitwall starts the supervisor only when you open it or send it a message: a claude -p session on claude-opus-5-5, on whatever login or API key claude finds, that answers from what pitwall knows of your sessions and PRs, and reads a session\'s latest turns when you ask about it. It messages a session or starts one only after you approve its draft in the page.',
     );
   });
 
