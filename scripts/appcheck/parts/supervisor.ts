@@ -212,7 +212,7 @@ const part: Part = {
       const lines = await page.evaluate<{ where: string | null; permission: string | null; bypass: string | null; bypassShown: boolean; fits: boolean }>(
         `(() => { const c = ${card}; const where = c.querySelector('.approval-where'); const bypass = c.querySelector('.approval-bypass'); const r = c.getBoundingClientRect(); return { where: where?.textContent ?? null, permission: c.querySelector('.approval-permission')?.textContent ?? null, bypass: bypass?.textContent ?? null, bypassShown: !!bypass && bypass.getBoundingClientRect().height > 0, fits: [where, bypass].every((el) => !el || (el.getBoundingClientRect().right <= r.right + 0.5 && el.scrollWidth <= el.clientWidth + 1)) }; })()`,
       );
-      t.expect(/^2 listed sessions have this name; this is the one in ~\/\S+, last active .+ ago\.$/.test(lines.where ?? ''), 'the folder, home as ~, its last activity and the shared name, as text', lines.where);
+      t.expect(/^2 listed sessions have this name; this is the one in \/\S+, last active .+ ago\.$/.test(lines.where ?? ''), 'the folder as its whole path, its last activity and the shared name, as text', lines.where);
       t.expectEqual(lines.permission, 'Claude Code resumes it with its own saved settings, its permission mode included: bypassPermissions.', 'its own saved settings, permission mode included');
       t.expect(lines.bypassShown && (lines.bypass ?? '').includes('no permission prompts'), 'a visible warning for bypassPermissions', lines.bypass);
       t.expect(lines.fits, 'the new lines wrap inside the card', lines);

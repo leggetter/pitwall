@@ -735,7 +735,7 @@ describe('a finished session resumed with a message (W127)', () => {
     await settle();
     const card = view()!.querySelector<HTMLElement>('li.approval-card')!;
     // Relative to now, from the session's own last activity.
-    expect(card.querySelector('.approval-where')?.textContent).toMatch(/^In ~\/code\/demo-app, last active \d+d ago\.$/);
+    expect(card.querySelector('.approval-where')?.textContent).toMatch(/^In \/Users\/example\/code\/demo-app, last active \d+d ago\.$/);
     expect(card.querySelector('.approval-where time')?.getAttribute('datetime')).toBe(resumeCard.lastActivityAt);
     expect(card.querySelector('.approval-permission')?.textContent).toBe("Claude Code resumes it with its own saved settings, its permission mode included, which pitwall can't see for this session.");
     expect(card.querySelector('.approval-bypass')).toBeNull();
@@ -747,7 +747,7 @@ describe('a finished session resumed with a message (W127)', () => {
     renderDashboard(resumeSnap({ status: 'idle', approvals: [card] }), { search: '?view=all&supervisor' });
     await settle();
     const shown = view()!.querySelector<HTMLElement>('li.approval-card')!;
-    expect(shown.querySelector('.approval-where')?.textContent).toMatch(/^2 listed sessions have this name; this is the one in ~\/code\/demo-app, last active \d+d ago\.$/);
+    expect(shown.querySelector('.approval-where')?.textContent).toMatch(/^2 listed sessions have this name; this is the one in \/Users\/example\/code\/demo-app, last active \d+d ago\.$/);
     expect(shown.querySelector('.approval-permission')?.textContent).toBe('Claude Code resumes it with its own saved settings, its permission mode included: bypassPermissions.');
     expect(shown.querySelector('.approval-bypass')?.textContent).toContain('the message runs with no permission prompts');
   });
@@ -771,7 +771,7 @@ describe('a finished session resumed with a message (W127)', () => {
     const shown = view()!.querySelector<HTMLElement>('li.approval-card')!;
     const tip = await hover(shown.querySelector('h4 bdi')!);
     expect(tip?.textContent).toBe(`${ROOT}/demo[U+00A0]app`);
-    expect(shown.querySelector('.approval-where')?.textContent).toMatch(/^In ~\/code\/demo\[U\+00A0\]app, last active /);
+    expect(shown.querySelector('.approval-where')?.textContent).toMatch(/^In \/Users\/example\/code\/demo\[U\+00A0\]app, last active /);
   });
 
   it('a card: “Resume <name> and send”, how it comes back, the message, and Send, Edit and Don’t send', async () => {
