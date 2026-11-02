@@ -198,6 +198,8 @@ describe('parseRecapAnswer', () => {
     expect(repaired({ todos: owned('CI'), waitingOn: 'you' })).toEqual({ waitingOn: 'CI', repaired: ['waiting-on'] });
     expect(repaired({ todos: owned('someone else'), waitingOn: 'you' })).toEqual({ waitingOn: 'someone else', repaired: ['waiting-on'] });
     expect(repaired({ todos: owned('session'), waitingOn: 'you' })).toEqual({ waitingOn: 'nothing', repaired: ['waiting-on'] });
+    // The first to-do someone else owns says what it waits on: the session's own comes first here.
+    expect(repaired({ todos: [{ text: 'Rerun the export', owner: 'session' }, { text: 'Finish the checks on #42', owner: 'CI' }], waitingOn: 'you' })).toEqual({ waitingOn: 'CI', repaired: ['waiting-on'] });
     // A value that agrees stays, and nothing is reported.
     expect(repaired({ todos: [{ text: 'Finish the checks on #42', owner: 'CI' }], waitingOn: 'CI' })).toEqual({ waitingOn: 'CI', repaired: [] });
     expect(repaired({ todos: [{ text: 'Run the checks', owner: 'session' }], waitingOn: 'nothing' })).toEqual({ waitingOn: 'nothing', repaired: [] });
@@ -215,6 +217,17 @@ describe('parseRecapAnswer', () => {
         expect(reading.answer.title).toBe('Fix nightly export failing on large files');
       }
     }
+  });
+
+  it('refuses an empty fence as one, and reads a long run of spaces quickly (#128 review)', () => {
+    for (const text of ['```json\n```', '```\n\n```', '```json\r\n   \r\n```']) {
+      const reading = readRecapAnswer(text);
+      expect(reading.ok ? undefined : reading.refusal, JSON.stringify(text)).toBe('empty-fence');
+    }
+    const started = performance.now();
+    const reading = readRecapAnswer(`\`\`\`json\n${answer()}${' '.repeat(200_000)}x\n\`\`\``);
+    expect(reading.ok).toBe(false);
+    expect(performance.now() - started).toBeLessThan(200);
   });
 
   it('keeps refusing what a fence does not fix, and says which check refused it (W126)', () => {
