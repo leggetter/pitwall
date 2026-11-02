@@ -35,10 +35,11 @@ Last updated: 2026-11-02, on `m5/integration`. This file lives on the integratio
 3. **Handoff:** this coordinator session ends (the `handoff` skill) and a new one starts with "Read NOW.md".
 4. **M5.1, efficiency** (work profiles, a Usage view with a run rate, the supervisor applying them): "M5.1 - Efficiency" in `PLAN.md`.
 5. **W86** on or after 2026-11-04: `npm install <pkg>@<version> --before=<date>`, the newest version at least 14 days old. **W89** stays open until Phil has retried.
-6. **M6, triage,** on the observer model (Phil, 2026-11-02), with Peers part of it: "M6 - Triage" in `PLAN.md`. Then the considerations: chatting with a session, a session asking the supervisor to spin off work.
+6. **M6, triage,** on the coordination model of split work, shared state and graded oversight (Phil, 2026-11-02), with Peers part of it for now: "M6 - Triage" in `PLAN.md`. Then the considerations: chatting with a session, a session asking the supervisor to spin off work.
 
 ## Open questions for Phil
 
+- **Should Peers (#99) be cut back to showing the messages sessions already send?** The 2026-11-02 research (CooperBench) questions directing peer coordination. Decision unchanged until you say. No lean.
 - **Is M5 ready for `main`?** It waits on your try-out (port 4519) and your word. Lean: merge once the try-out is clean.
 - **W89, the lost first paste:** is it pitwall or the browser? Needs you to retry on M3.1's build in Dia, with Grammarly off, and in another field. No lean; the app check's traces showed none of pitwall's handlers blocking it.
 - **Should the supervisor survive pitwall restarts?** Lean: yes. It stops with pitwall and pitwall resumes its conversation by session id on the next run; spike 009 checked that `--resume` keeps the conversation, and W113 built it. Listed as open in `PLAN.md`; say if it can be closed.
