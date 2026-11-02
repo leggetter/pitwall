@@ -168,7 +168,7 @@ const part: Part = {
         rows,
         [
           { what: 'Started pr-57', needs: 'pr-57 needs you: Which base branch should the made-up review compare against?', open: 'Open pr-57 →' },
-          { what: `Message sent to ${NAMES.asked}`, needs: rows[1]?.needs ?? null, open: `Open ${NAMES.asked} →` },
+          { what: `Message approved for ${NAMES.asked}`, needs: rows[1]?.needs ?? null, open: `Open ${NAMES.asked} →` },
         ],
         'needs you first, each with its Open',
       );

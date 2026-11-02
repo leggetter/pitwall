@@ -24,7 +24,7 @@ import type { ConnectionView } from '../connection.js';
 import { draftKey } from '../drafts.js';
 import type { StorageSource } from '../groupState.js';
 import type { NavigationEnv } from '../selection.js';
-import { SUPERVISOR_DRAFT_ID } from '../supervisor.js';
+import { SUPERVISOR_DRAFT_ID, needsReason } from '../supervisor.js';
 import { group, minutesAgo, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
 import { descriptionOf } from '../test/tooltips.js';
@@ -669,7 +669,7 @@ describe('what it sent and started (W124)', () => {
     await settle();
     expect(region()).toBeDefined();
     const rows = within(region()).getAllByRole('listitem');
-    expect(rows.map((row) => row.querySelector('.supervisor-handoff-what')?.textContent)).toEqual(['Started pitwall-test-asking', 'Message sent to pitwall-test-beta', 'Started pitwall-test-started']);
+    expect(rows.map((row) => row.querySelector('.supervisor-handoff-what')?.textContent)).toEqual(['Started pitwall-test-asking', 'Message approved for pitwall-test-beta', 'Started pitwall-test-started']);
     expect(rows[0]!.querySelector('[data-handoff-needs]')?.textContent).toBe('pitwall-test-asking needs you: Pick a migration name');
     expect(rows[1]!.querySelector('[data-handoff-needs]')).toBeNull();
     expect(within(rows[2]!).getByText('Busy')).toBeDefined();
@@ -704,5 +704,12 @@ describe('reading hand-offs (W124)', () => {
     });
     expect(state?.handoffs).toEqual([good, { id: 'h2', kind: 'message', name: 'pitwall-test-b', at: minutesAgo(0) }]);
     expect(asSupervisorState({ status: 'idle', approvals: [], handoffs: 'x' })?.handoffs).toBeUndefined();
+  });
+});
+
+describe('needsReason (W124)', () => {
+  it('shows a hidden character as a marker and drops bidi controls, under the hidden-text rule', () => {
+    const asking = session({ needsYou: { reason: 'claude-code', text: 'Approve\u200b the\u202e merge\u2066?' } });
+    expect(needsReason(asking)).toBe('Approve[U+200B] the merge?');
   });
 });
