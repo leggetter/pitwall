@@ -78,7 +78,8 @@ Options:
                         ${SUPERVISOR_MODEL}, on whatever login or API key claude
                         finds, that answers from what pitwall knows of your
                         sessions and PRs, and reads a session's latest turns
-                        when you ask about it. It can only read.
+                        when you ask about it. It messages a session or starts
+                        one only after you approve its draft in the page.
   -h, --help            Show this help.
   -v, --version         Show the version.
 

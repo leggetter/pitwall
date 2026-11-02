@@ -1,6 +1,7 @@
 // A stand-in supervisor for server tests (M5, W113): it runs nothing, records what it's asked, and
 // answers as the test sets it. Test-only: tsconfig.build.json leaves src/test/ out of the build.
 import type { ConversationPage, SupervisorState } from '../shared/protocol.js';
+import { createApprovalQueue, type ApprovalQueue } from '../supervisor/approvals.js';
 import type { InterruptOutcome, Supervisor, SupervisorOutcome } from '../supervisor/supervisor.js';
 
 export interface FakeSupervisor extends Supervisor {
@@ -19,11 +20,15 @@ export interface FakeSupervisor extends Supervisor {
   /** What conversation() answers, by `before`. */
   pages: Map<string | undefined, ConversationPage>;
   closed: boolean;
+  /** Its approvals: a real queue, whose cards state() carries (W115). */
+  queue: ApprovalQueue;
+  /** What setRecipients() was last given. */
+  recipients: readonly string[];
   /** Changes state(), and tells subscribers. */
   set(state: SupervisorState): void;
 }
 
-export function fakeSupervisor(token?: string): FakeSupervisor {
+export function fakeSupervisor(token?: string, queue: ApprovalQueue = createApprovalQueue()): FakeSupervisor {
   let current: SupervisorState = { status: 'off', approvals: [] };
   let changes = 0;
   const listeners = new Set<() => void>();
@@ -36,7 +41,9 @@ export function fakeSupervisor(token?: string): FakeSupervisor {
     token,
     pages: new Map(),
     closed: false,
-    state: () => current,
+    queue,
+    recipients: [],
+    state: () => ({ ...current, approvals: queue.list() }),
     bind(options) {
       fake.boundUrl = options.mcpUrl;
     },
@@ -59,11 +66,17 @@ export function fakeSupervisor(token?: string): FakeSupervisor {
       return fake.pages.get(before);
     },
     stats: () => ({ starts: fake.starts, turns: 0, toolCalls: {} }),
-    version: () => changes,
+    approvals: () => queue,
+    setRecipients(names) {
+      fake.recipients = [...names];
+    },
+    version: () => changes + queue.version(),
     subscribe(listener) {
       listeners.add(listener);
+      const off = queue.subscribe(listener);
       return () => {
         listeners.delete(listener);
+        off();
       };
     },
     async close() {

@@ -236,10 +236,11 @@ describe('the supervisor’s routes', () => {
     ws.close();
   });
 
-  it('approvals answer 404 until W115', async () => {
+  it('an approval that doesn’t exist answers 404 (W115; supervisorApprovals.test.ts has the rest)', async () => {
     const server = await start();
     const { apiKey, ws } = await authedClient(server.port);
-    expect((await post(server.port, supervisorApprovalPath('anything'), apiKey, { decision: 'send' })).status).toBe(404);
+    expect((await post(server.port, supervisorApprovalPath('abc123'), apiKey, { decision: 'send' })).status).toBe(404);
+    expect((await post(server.port, supervisorApprovalPath('not-an-id'), apiKey, { decision: 'send' })).status).toBe(404);
     ws.close();
   });
 
@@ -318,7 +319,7 @@ describe('the real supervisor behind the routes, with a fake claude', () => {
           write(data: string) {
             child.written.push(data);
             const line = JSON.parse(data) as { type: string; request_id?: string };
-            if (line.type === 'control_request') setImmediate(() => events.line(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: line.request_id, response: { current_permission_mode: 'dontAsk' } } })));
+            if (line.type === 'control_request') setImmediate(() => events.line(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: line.request_id, response: { current_permission_mode: 'default' } } })));
           },
           end: () => setImmediate(() => events.exit(0, null)),
           kill: (signal) => setImmediate(() => events.exit(null, signal)),

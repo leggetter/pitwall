@@ -1,5 +1,5 @@
-// The supervisor's routes (M5, W113): message it, start it, stop its turn, and its approvals,
-// which W115 brings. Its conversation, GET supervisorConversationPath(), is with the other
+// The supervisor's routes (M5, W113, W115): message it, start it, stop its turn, and answer its
+// approvals. Its conversation, GET supervisorConversationPath(), is with the other
 // conversation pages in server.ts, under their shared limit.
 //
 // Each comes after the /api/* checks in server.ts: Host, this server's Origin, and, since each is
@@ -24,13 +24,20 @@
 //     200  the interrupt was sent: the turn ends, and the snapshot says so
 //     409  off, or no turn is running
 //
-//   POST supervisorApprovalPath(id)                                    answers: ActionResult
-//     404  always, until W115 brings approvals
+//   POST supervisorApprovalPath(id) body: SupervisorDecision as JSON  answers: ActionResult
+//     200  answered: Send or Edit allowed the call, Don't send denied it (supervisorActions.ts' decide())
+//     400  not JSON, not a SupervisorDecision, or an edit that isn't valid text: the card stays
+//     404  no approval has that id: answered, withdrawn or out of time, or the supervisor is off
+//     409  being answered already; or checked again, the call was no longer valid, such as to a
+//          session that has ended since, so it was denied and its card went, with why
+//     413  the body is over SUPERVISOR_MAX_BODY_BYTES
+//     415  not `Content-Type: application/json`
 import type { Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { isRecord } from '../index/guards.js';
 import { SUPERVISOR_INTERRUPT_PATH, SUPERVISOR_MESSAGE_MAX, SUPERVISOR_MESSAGE_PATH, SUPERVISOR_START_PATH, supervisorApprovalPath, type ActionResult } from '../shared/protocol.js';
 import type { Supervisor, SupervisorOutcome } from '../supervisor/supervisor.js';
+import { decide, parseDecision, type SupervisorActionSources } from './supervisorActions.js';
 
 /** SUPERVISOR_MESSAGE_MAX characters are at most about 120 KiB of JSON, every one escaped. */
 export const SUPERVISOR_MAX_BODY_BYTES = 160 * 1024;
@@ -54,8 +61,12 @@ export function validateSupervisorMessage(body: unknown): { ok: true; text: stri
   return { ok: true, text };
 }
 
-/** Adds the routes. Call it after the /api/* checks and before the /api/* catch-all, as ServerInternals.routes does. */
-export function registerSupervisor(app: Hono, supervisor: Supervisor | undefined): void {
+/**
+ * Adds the routes. Call it after the /api/* checks and before the /api/* catch-all, as
+ * ServerInternals.routes does. `actions` answers approvals; without it, or without a supervisor,
+ * every approval is 404.
+ */
+export function registerSupervisor(app: Hono, supervisor: Supervisor | undefined, actions?: SupervisorActionSources): void {
   const answer = (c: Context, result: ActionResult, status: Status) => {
     c.header('Cache-Control', 'no-store');
     return c.json(result, status);
@@ -107,6 +118,28 @@ export function registerSupervisor(app: Hono, supervisor: Supervisor | undefined
     return answer(c, { ok: true }, 200);
   });
 
-  // W115 brings approvals; until then there are none to answer.
-  app.post(APPROVAL_ROUTE, (c) => answer(c, { ok: false, error: 'There is no such approval.' }, 404));
+  app.post(
+    APPROVAL_ROUTE,
+    bodyLimit({ maxSize: SUPERVISOR_MAX_BODY_BYTES, onError: (c) => answer(c, { ok: false, error: 'The answer is too large.' }, 413) }),
+    async (c) => {
+      if (supervisor === undefined || actions === undefined) return answer(c, { ok: false, error: 'There is no such approval.' }, 404);
+      if (!/^application\/json\s*(;|$)/i.test(c.req.header('content-type') ?? '')) return answer(c, { ok: false, error: 'Send the request as application/json.' }, 415);
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return answer(c, { ok: false, error: "The body isn't valid JSON." }, 400);
+      }
+      const decision = parseDecision(body);
+      if (decision === undefined) return answer(c, { ok: false, error: 'The body must be a decision: send, edit with its text, or decline.' }, 400);
+      if (decision.decision === 'edit' && decision.text.length > SUPERVISOR_MESSAGE_MAX) {
+        return answer(c, { ok: false, error: `An edit can be at most ${SUPERVISOR_MESSAGE_MAX.toLocaleString('en-US')} characters.` }, 413);
+      }
+      const id = c.req.param('id');
+      if (typeof id !== 'string' || !/^[0-9a-f]{1,64}$/.test(id)) return answer(c, { ok: false, error: 'There is no such approval.' }, 404);
+      const outcome = await decide(actions, id, decision);
+      if (outcome.status === 200) return answer(c, { ok: true }, 200);
+      return answer(c, { ok: false, error: outcome.error }, outcome.status);
+    },
+  );
 }

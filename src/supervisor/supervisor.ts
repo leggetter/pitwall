@@ -1,8 +1,10 @@
-// The supervisor (M5, W113; spike 009; D4): one headless `claude -p` session that pitwall starts,
-// owns and resumes, with stream-json on stdin and stdout, on SUPERVISOR_MODEL, with no built-in
-// tools and only the read-only tools of pitwall's own MCP server (W112). It can only read: it
-// can't message a session, start one, run a command or change a file. W115 adds acting, behind
-// your approval.
+// The supervisor (M5, W113, W115; spike 009; D4): one headless `claude -p` session that pitwall
+// starts, owns and resumes, with stream-json on stdin and stdout, on SUPERVISOR_MODEL. It reads
+// through the read-only tools of pitwall's own MCP server (W112), and can propose a message to a
+// session (SendMessage) or a new session (the MCP server's spawn_session), each sent only after your
+// click: Claude Code asks pitwall's permission prompt tool, approve, before each call, and approve
+// holds the call as a card until you decide (approvals.ts, src/server/supervisorActions.ts). It
+// can't run a command or change a file.
 //
 // When it runs:
 //
@@ -29,6 +31,9 @@
 //                                              per pitwall, removed when the supervisor exits; one a
 //                                              pitwall that died left is removed at the next start
 //     session/                          0700   the empty folder claude runs in, where nothing is written
+//     gate/                             0700   the recipient gate's files (gate.ts): per process, its
+//                                              ready marker and the names it may message, 0600, removed
+//                                              when it exits
 //
 // The MCP server's bearer token is new for each process (crypto random) and valid only while that
 // process runs: the server compares it in constant time (src/server/mcp.ts). It's in the 0600
@@ -37,19 +42,20 @@
 // The stream (spike 009, findings 1, 7 and 10):
 //
 //   control_request initialize    written at start; its answer says the process reads stdin, so
-//                                 the supervisor is 'idle', and that its permission mode is dontAsk
+//                                 the supervisor is 'idle', and that its permission mode is default
 //   system/init                   at the start of every turn: the session id, kept in the state
-//                                 file, and its tools and permission mode, checked again
+//                                 file, and its tools, permission mode, MCP server and gate, checked again
 //   assistant, user               a turn running
 //   result                        a turn's end: its cost, from model_usage_since_last_result, and
 //                                 the next message, if one is queued
-//   control_request (from claude) answered with a denial or an error: pitwall asks for nothing,
-//                                 so a permission prompt is refused, never allowed
+//   control_request (from claude) answered with a denial or an error: permission prompts go to the
+//                                 approve tool, so one on the stream is refused, never allowed
 //
 // Your messages are written one at a time as stream-json user messages, never on a command line;
-// one sent while a turn runs waits in pitwall's queue until its `result`. Stop sends the stream's
-// `interrupt` control request. A session's reply, once the supervisor can message (W115), starts a
-// turn by itself: `working` until its result.
+// one sent while a turn runs waits in pitwall's queue until its `result`, and one sent while it's
+// stopped waits for the next start (W115, W114's review). After you edit one of its proposals, your
+// next message starts with pitwall's note of what was sent. Stop sends the stream's `interrupt`
+// control request. Messages from other sessions are refused.
 import { randomBytes } from 'node:crypto';
 import { lstatSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -60,6 +66,8 @@ import { runFile } from '../index/exec.js';
 import { isRecord } from '../index/guards.js';
 import { defaultConfigDir, encodeProjectDir, isSessionUuid } from '../index/transcripts.js';
 import { MCP_SERVER_NAME, type ConversationPage, type SupervisorState } from '../shared/protocol.js';
+import { createApprovalQueue, type ApprovalQueue } from './approvals.js';
+import { createSupervisorGate, SUPERVISOR_GATE_DIR_NAME, type SupervisorGate } from './gate.js';
 import { ensureLaunchDir, pitwallHome } from '../server/launch.js';
 import { checkClaudeVersion, spawnRelayChild, type RelayChild, type RelayChildEvents, type RelaySpawner } from '../server/relay.js';
 import { nameKey, oneLine, userMessageLine } from '../server/relayPrompt.js';
@@ -67,13 +75,15 @@ import { randomSecret } from '../server/security.js';
 import {
   mcpConfigText,
   MIN_SUPERVISOR_CLAUDE_VERSION,
-  SUPERVISOR_ALLOWED_TOOLS,
   SUPERVISOR_DIR_NAME,
+  SUPERVISOR_INIT_TOOLS,
   SUPERVISOR_NAME,
+  SUPERVISOR_PERMISSION_MODE,
   SUPERVISOR_PROMPT_VERSION,
   SUPERVISOR_SESSION_DIR_NAME,
   supervisorArgs,
   supervisorEnvironment,
+  supervisorSettings,
 } from './prompt.js';
 import { supervisorStateFile, SUPERVISOR_STATE_FILE, type SupervisorStateStore } from './state.js';
 
@@ -175,11 +185,19 @@ export interface Supervisor {
   /** A page of its own transcript, as the index pages a session's (supervisorConversationPath()). Undefined with no conversation yet. */
   conversation(before?: string): Promise<ConversationPage | undefined>;
   stats(): SupervisorStats;
+  /** Its approvals: the cards waiting on your click, the spawn passes and the notes for its next message (W115). */
+  approvals(): ApprovalQueue;
+  /**
+   * The names its SendMessage may go on to an approval for: the live, listed sessions with a name no
+   * other has, never pitwall's own. The recipient gate (gate.ts) denies any other. Until it's called,
+   * none.
+   */
+  setRecipients(names: readonly string[]): void;
   /** Changes whenever state() could answer differently. */
   version(): number;
   /** Called when state() may have changed. Returns an unsubscribe function. */
   subscribe(listener: () => void): () => void;
-  /** Stops it, if it runs, and drops what's queued. Resolves within about 2 seconds. */
+  /** Denies every approval waiting, stops it, if it runs, and drops what's queued. Resolves within about 2 seconds. */
   close(): Promise<void>;
 }
 
@@ -216,6 +234,10 @@ export interface SupervisorOptions {
   log?: (message: string) => void;
   /** Control request ids, for tests. */
   randomId?: () => string;
+  /** Its approvals (W115). Default: a new queue. */
+  approvals?: ApprovalQueue;
+  /** The recipient gate (W115). Default: gate.ts's, in the supervisor's folder. */
+  gate?: SupervisorGate;
 }
 
 /** The longest stderr kept from a process, for the held check. */
@@ -238,6 +260,8 @@ interface Proc {
   /** Why it couldn't start, from the spawner. */
   spawnError?: string;
   initRequestId: string;
+  /** Its recipient gate's id (gate.ts). */
+  gateId: string;
   readyTimer?: NodeJS.Timeout;
   /** Called once: with the start's outcome, when it's ready or exits first. */
   onSettled: ((outcome: SupervisorOutcome) => void)[];
@@ -279,6 +303,10 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
   const maxQueue = Math.max(1, options.maxQueue ?? 5);
   const now = options.now ?? Date.now;
   const randomId = options.randomId ?? (() => randomBytes(8).toString('hex'));
+  const approvals = options.approvals ?? createApprovalQueue({ now });
+  const gate = options.gate ?? createSupervisorGate({ dir: path.join(dir, SUPERVISOR_GATE_DIR_NAME) });
+  /** The names the gate lets through to an approval, as the server last gave them. */
+  let recipients: readonly string[] = [];
 
   let closed = false;
   let mcpUrl: string | undefined;
@@ -306,6 +334,7 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
   const stats: SupervisorStats = { starts: 0, turns: 0, toolCalls: {} };
   let changes = 0;
   const listeners = new Set<() => void>();
+  approvals.subscribe(() => changed());
 
   function addRealpath(candidate: string): void {
     try {
@@ -329,12 +358,14 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
   // ---------------------------------------------------------------- what's shown
 
   function state(): SupervisorState {
-    const result: SupervisorState = { status: 'off', approvals: [] };
+    const result: SupervisorState = { status: 'off', approvals: approvals.list() };
     if (proc !== undefined && !proc.stopping) result.status = !proc.ready ? 'starting' : proc.busy ? 'working' : 'idle';
     else if (launching !== undefined) result.status = 'starting';
     else if (problem !== undefined) {
       result.status = problem.status;
       result.error = problem.error;
+      // Your messages kept for the next start (W114's review): say so, so none seems lost.
+      if (queue.length > 0) result.error = `${problem.error} ${queue.length === 1 ? 'Your message waits' : `Your ${queue.length} messages wait`} to be sent when it starts.`;
     }
     if (sessionId !== undefined) result.sessionId = sessionId;
     if (lastTurnAt !== undefined) result.lastTurnAt = lastTurnAt;
@@ -373,13 +404,17 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     if (version !== undefined) return fail(version);
 
     let cwd: string;
+    const gateId = gate.newId();
     try {
       ensureLaunchDir(home);
       prepareDir(dir);
       sweepMcpConfigs(dir);
       cwd = prepareDir(sessionDir);
       dirs.add(cwd);
+      gate.prepare();
+      gate.setRecipients(gateId, recipients);
     } catch {
+      gate.forget(gateId);
       return fail(`pitwall couldn't prepare the supervisor's folder, ${dir}, so it didn't start.`);
     }
 
@@ -408,6 +443,7 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
       writeConfig(mcpConfigText(mcpUrl, token));
     } catch (error) {
       log(`couldn't write its MCP config (${oneLine((error as Error).message)}).`);
+      gate.forget(gateId);
       return fail(`pitwall couldn't write the supervisor's MCP config in ${dir}, so it didn't start.`);
     }
 
@@ -421,6 +457,7 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
       exited: false,
       stderr: '',
       initRequestId: `pitwall-init-${randomId()}`,
+      gateId,
       onSettled: [],
       onExit: [],
     };
@@ -437,13 +474,15 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     // Before the spawn, so a process that exits at once still removes the file it was given.
     configOwner = p;
     try {
-      p.child = spawn(claudeBin, supervisorArgs({ mcpConfig: configFile, ...(resume === undefined ? {} : { resume }), ...(options.model === undefined ? {} : { model: options.model }) }), {
+      const settings = supervisorSettings(gate.hooks(gateId));
+      p.child = spawn(claudeBin, supervisorArgs({ mcpConfig: configFile, settings, ...(resume === undefined ? {} : { resume }), ...(options.model === undefined ? {} : { model: options.model }) }), {
         cwd,
         env: supervisorEnvironment(options.env ?? process.env),
       }, events);
     } catch (error) {
       log(`couldn't start it: ${oneLine((error as Error).message)}`);
       removeConfig(p);
+      gate.forget(gateId);
       return fail("pitwall couldn't start claude for the supervisor.");
     }
     stats.starts++;
@@ -532,6 +571,7 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     clearTimeout(p.readyTimer);
     if (p.pid !== undefined) pids.delete(p.pid);
     removeConfig(p);
+    gate.forget(p.gateId);
     const wasReady = p.ready;
     const why = p.spawnError ?? (code !== null ? `exit code ${code}` : `signal ${signal ?? 'unknown'}`);
     // An older process that exits after a newer one started says nothing about the newer one.
@@ -554,11 +594,13 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     } else {
       outcome = fail(`The supervisor stopped (${why}). Send it a message, or press Start, to start it again.`);
     }
-    // What was waiting for it can't reach it now. Whoever sent it was told it was taken; the snapshot says it stopped.
-    if (current && wasReady && outcome.kind !== 'closed' && queue.length > 0) {
-      log(`${queue.length} queued ${queue.length === 1 ? 'message' : 'messages'} didn't reach it.`);
-      queue.length = 0;
+    // Your messages waiting for it stay queued for the next start, and the snapshot's error says so
+    // (W114's review: one sent while a tripped process stopped got a 200, then was dropped here).
+    if (current && outcome.kind !== 'closed' && queue.length > 0) {
+      log(`${queue.length} queued ${queue.length === 1 ? 'message waits' : 'messages wait'} for its next start.`);
     }
+    // Nothing can answer its approvals now: each is denied, and its card goes.
+    if (current) approvals.cancelAll('The supervisor stopped before the user answered, so this wasn\'t sent.');
     settle(p, outcome);
     for (const resolve of p.onExit.splice(0)) resolve();
     if (proc === p) proc = undefined;
@@ -599,7 +641,8 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     const next = queue.shift();
     if (next === undefined) return;
     p.busy = true;
-    p.child.write(userMessageLine(next.text));
+    // What pitwall must tell it first, such as what was sent after you edited its proposal (W115).
+    p.child.write(userMessageLine(withNotes(approvals.takeNotes(), next.text)));
     changed();
   }
 
@@ -662,8 +705,8 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
           if (block.type !== 'tool_use' || typeof block.name !== 'string') continue;
           const name = oneLine(block.name, 120);
           stats.toolCalls[name] = (stats.toolCalls[name] ?? 0) + 1;
-          // dontAsk denies it, since only the read-only tools are allowed; say so.
-          if (!SUPERVISOR_ALLOWED_TOOLS.includes(name)) log(`it tried a tool pitwall doesn't allow (${name}); Claude Code denies it.`);
+          // Claude Code asks the approve tool about it, which denies it; say so.
+          if (!SUPERVISOR_INIT_TOOLS.has(name)) log(`it tried a tool pitwall doesn't give it (${name}); pitwall's approve tool denies it.`);
         }
         return;
       case 'result':
@@ -678,24 +721,24 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     if (response === undefined || response.request_id !== p.initRequestId) return;
     const answer = isRecord(response.response) ? response.response : undefined;
     const mode = answer?.current_permission_mode;
-    if (response.subtype === 'success' && mode !== undefined && mode !== 'dontAsk') {
+    if (response.subtype === 'success' && mode !== undefined && mode !== SUPERVISOR_PERMISSION_MODE) {
       return trip(p, "The supervisor started in a permission mode pitwall didn't ask for, so pitwall stopped it.");
     }
     markReady(p);
   }
 
   /**
-   * A request from claude, such as a permission prompt, which pitwall never asks for (it runs in
-   * dontAsk mode, with no prompt tool): a permission prompt is denied, anything else answered with
-   * an error, so nothing waits on pitwall and nothing is allowed.
+   * A request from claude on the stream, such as a permission prompt, which pitwall never asks for:
+   * prompts go to the approve tool (`--permission-prompt-tool`), never here. A permission prompt is
+   * denied, anything else answered with an error, so nothing waits on pitwall and nothing is allowed.
    */
   function onControlRequest(p: Proc, event: Record<string, unknown>): void {
     const id = event.request_id;
     if (typeof id !== 'string' || id.length > 200) return;
     const request = isRecord(event.request) ? event.request : undefined;
     if (request?.subtype === 'can_use_tool') {
-      log('it asked to use a tool, which pitwall refused: the supervisor can only read.');
-      p.child.write(`${JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: id, response: { behavior: 'deny', message: "pitwall's supervisor can only read." } } })}\n`);
+      log('it asked on the stream to use a tool, which pitwall refused: approvals go through the approve tool.');
+      p.child.write(`${JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: id, response: { behavior: 'deny', message: 'pitwall answers permission prompts only through its approve tool.' } } })}\n`);
       return;
     }
     p.child.write(`${JSON.stringify({ type: 'control_response', response: { subtype: 'error', request_id: id, error: "pitwall doesn't handle this request." } })}\n`);
@@ -706,12 +749,17 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     if (!p.ready) markReady(p);
     p.busy = true;
     const tools = Array.isArray(event.tools) ? event.tools.filter((tool): tool is string => typeof tool === 'string') : [];
-    const extra = tools.find((tool) => !SUPERVISOR_ALLOWED_TOOLS.includes(tool) && !TOLERATED_TOOLS.has(tool));
+    const extra = tools.find((tool) => !SUPERVISOR_INIT_TOOLS.has(tool) && !TOLERATED_TOOLS.has(tool));
     if (extra !== undefined) {
       return trip(p, `The supervisor started with a tool pitwall didn't give it (${oneLine(extra, 80)}), so pitwall stopped it.`);
     }
-    if (event.permissionMode !== undefined && event.permissionMode !== 'dontAsk') {
+    if (event.permissionMode !== undefined && event.permissionMode !== SUPERVISOR_PERMISSION_MODE) {
       return trip(p, "The supervisor started in a permission mode pitwall didn't ask for, so pitwall stopped it.");
+    }
+    // The recipient gate's SessionStart hook ran before the first turn (spike 009, finding 1): without
+    // it, its hooks didn't load, and a SendMessage would reach approval unchecked by it (W115).
+    if (!gate.isReady(p.gateId)) {
+      return trip(p, "The supervisor started without pitwall's message gate, so pitwall stopped it. Press Start to try again.");
     }
     // pitwall's MCP server, its only way to read anything (W113's review): missing or failed, it would
     // answer from nothing. Another status, such as pending, is only logged.
@@ -842,6 +890,19 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     stats() {
       return { starts: stats.starts, turns: stats.turns, toolCalls: { ...stats.toolCalls } };
     },
+    approvals: () => approvals,
+    setRecipients(names) {
+      if (names.length === recipients.length && names.every((name, index) => name === recipients[index])) return;
+      recipients = [...names];
+      const p = proc;
+      if (p === undefined || p.exited) return;
+      try {
+        gate.setRecipients(p.gateId, recipients);
+      } catch (error) {
+        // The gate keeps the list before; approve checks every call against the snapshot anyway.
+        log(`couldn't update its message gate (${oneLine((error as Error).message)}).`);
+      }
+    },
     version() {
       return changes;
     },
@@ -854,6 +915,8 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     async close() {
       if (closed) return;
       closed = true;
+      // Answered first, while the process can still read the denials.
+      approvals.cancelAll("pitwall is closing, so this wasn't sent.");
       queue.length = 0;
       const p = proc;
       if (p !== undefined && !p.exited) {
@@ -871,10 +934,19 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
 }
 
 /**
- * Built-in tools Claude Code may list in a `--tools ""` session that pitwall accepts: none so far.
- * Anything else in system/init's `tools` but the read-only MCP tools stops the supervisor.
+ * Tools Claude Code may list that pitwall accepts beyond SUPERVISOR_INIT_TOOLS: none so far.
+ * Anything else in system/init's `tools` stops the supervisor.
  */
 export const TOLERATED_TOOLS: ReadonlySet<string> = new Set<string>();
+
+/**
+ * Your message with pitwall's notes before it, each on a line of its own in brackets, so the
+ * supervisor reads them in the same turn rather than one of their own (W115).
+ */
+export function withNotes(notes: readonly string[], text: string): string {
+  if (notes.length === 0) return text;
+  return `${notes.map((note) => `[pitwall: ${note}]`).join('\n')}\n\n${text}`;
+}
 
 /** One stream-json control request line. */
 export function controlRequestLine(requestId: string, request: Record<string, unknown>): string {

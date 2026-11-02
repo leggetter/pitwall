@@ -139,6 +139,11 @@ export interface ActionOptions {
   slots?: CommandSlots;
   /** The uploads spawn's `attachments` name (W79). The server passes its store. Without one, every id is unknown. */
   attachments?: SpawnAttachments;
+  /**
+   * What starts a session that passed every check, with spawn's limits. The server makes one for the
+   * spawn route and the supervisor's spawn_session (W115), so they share them. Default: a new one.
+   */
+  spawner?: SpawnRunner;
 }
 
 /** What spawn needs from the AttachmentStore. */
@@ -520,6 +525,94 @@ export class CommandSlots {
   }
 }
 
+/** A start's answer: the SpawnResult, its status, and for 429 how many seconds to wait. */
+export interface SpawnOutcome {
+  status: 201 | 400 | 422 | 429 | 502 | 504;
+  result: SpawnResult;
+  retryAfterSeconds?: number;
+}
+
+/**
+ * Starts sessions that passed every check (validateSpawnRequest()) with `claude --bg`, under spawn's
+ * limits: the spawn route's, and the supervisor's spawn_session's after your approval (W115), which
+ * share one SpawnLimiter.
+ */
+export interface SpawnRunner {
+  start(spawn: ValidSpawn): Promise<SpawnOutcome>;
+  /** The limit on sessions started, which resume counts against too. */
+  readonly limiter: SpawnLimiter;
+}
+
+export function createSpawnRunner(options: Omit<ActionOptions, 'spawner'> = {}): SpawnRunner {
+  const run = options.run ?? runCommand;
+  const now = options.now ?? Date.now;
+  const claudeBin = options.claudeBin ?? 'claude';
+  const timeoutMs = options.timeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS;
+  const env = () => childEnvironment(options.env ?? process.env, options.token);
+  const limiter = new SpawnLimiter(
+    options.maxConcurrentSpawns ?? DEFAULT_MAX_CONCURRENT_SPAWNS,
+    options.spawnRate ?? DEFAULT_SPAWN_RATE,
+    now,
+  );
+  const attachments = options.attachments;
+
+  async function start(spawn: ValidSpawn): Promise<SpawnOutcome> {
+    // Checked again and taken, then the slot, with nothing that waits between: two spawns can't
+    // both use one attachment, and one that can't be used doesn't count toward the rate limit.
+    const ids = spawn.attachments?.map((file) => file.id) ?? [];
+    if (ids.length > 0) {
+      const claim = attachments?.claim(ids) ?? { ok: false as const, error: UNKNOWN_ATTACHMENT_ERROR };
+      if (!claim.ok) return { status: 400, result: { ok: false, error: claim.error } };
+    }
+    const slot = limiter.acquire();
+    if (!slot.ok) {
+      if (ids.length > 0) attachments?.release(ids);
+      return { status: 429, result: { ok: false, error: slot.error }, retryAfterSeconds: slot.retryAfterSeconds };
+    }
+    // Whether a session may have the files: used unless nothing started for certain.
+    let settled: 'used' | 'released' = 'used';
+    try {
+      let result: CommandResult;
+      try {
+        // PWD is the directory it runs in, as for resume: a new session records where it started.
+        result = await run(claudeBin, spawnArgs(spawn), { cwd: spawn.cwd, env: { ...env(), PWD: spawn.cwd }, timeoutMs });
+      } finally {
+        slot.release();
+      }
+
+      if (result.kind === 'failed') {
+        if (result.reason === 'timeout') {
+          return { status: 504, result: { ok: false, error: `claude --bg ${result.message}. The session may still appear in the list.` } };
+        }
+        // Killed by a signal, it may have started a session first.
+        if (result.reason !== 'signal') settled = 'released';
+        return { status: 502, result: { ok: false, error: `Couldn't run claude: ${result.message}.` } };
+      }
+      if (result.code !== 0) {
+        settled = 'released';
+        const message = said(result);
+        const untrusted = untrustedLine(message);
+        if (untrusted !== undefined) return { status: 422, result: untrustedResult(untrusted, spawn.cwd) };
+        return { status: 502, result: { ok: false, error: firstLine(message) ?? `claude --bg exited with code ${result.code}.` } };
+      }
+      const started = parseBackgrounded(result.stdout);
+      if (!started) {
+        const line = firstLine(result.stdout);
+        return { status: 502, result: { ok: false, error: `Claude Code didn't report the new session's id${line ? `: ${line}` : '.'} It may still appear in the list.` } };
+      }
+      options.spawned?.add(started.shortId);
+      return { status: 201, result: { ok: true, shortId: started.shortId, name: started.name ?? spawn.name ?? started.shortId } };
+    } finally {
+      if (ids.length > 0) {
+        if (settled === 'used') await attachments?.markUsed(ids);
+        else attachments?.release(ids);
+      }
+    }
+  }
+
+  return { start, limiter };
+}
+
 /** The stop route as a Hono pattern. stopPath() encodes its argument, so the pattern is decoded back. */
 const STOP_ROUTE = decodeURIComponent(stopPath(':sessionId'));
 const REMOVE_ROUTE = decodeURIComponent(removePath(':sessionId'));
@@ -542,11 +635,9 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
   const claudeBin = options.claudeBin ?? 'claude';
   const timeoutMs = options.timeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS;
   const env = () => childEnvironment(options.env ?? process.env, options.token);
-  const limiter = new SpawnLimiter(
-    options.maxConcurrentSpawns ?? DEFAULT_MAX_CONCURRENT_SPAWNS,
-    options.spawnRate ?? DEFAULT_SPAWN_RATE,
-    now,
-  );
+  // New sessions, from New session's dialog here and from the supervisor's spawn_session (W115): one limit for both.
+  const spawner = options.spawner ?? createSpawnRunner(options);
+  const limiter = spawner.limiter;
 
   const spawnResult = (c: Context, result: SpawnResult, status: 201 | 400 | 413 | 415 | 422 | 429 | 502 | 503 | 504) => {
     c.header('Cache-Control', 'no-store');
@@ -575,65 +666,9 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
 
       const validation = await validateSpawnRequest(body, snapshot.roots, options.attachments);
       if (!validation.ok) return spawnResult(c, { ok: false, error: validation.error }, 400);
-      const { spawn } = validation;
-
-      // Checked again and taken, then the slot, with nothing that waits between: two spawns can't
-      // both use one attachment, and one that can't be used doesn't count toward the rate limit.
-      const ids = spawn.attachments?.map((file) => file.id) ?? [];
-      const attachments = options.attachments;
-      if (ids.length > 0) {
-        const claim = attachments?.claim(ids) ?? { ok: false as const, error: UNKNOWN_ATTACHMENT_ERROR };
-        if (!claim.ok) return spawnResult(c, { ok: false, error: claim.error }, 400);
-      }
-      const slot = limiter.acquire();
-      if (!slot.ok) {
-        if (ids.length > 0) attachments?.release(ids);
-        c.header('Retry-After', String(slot.retryAfterSeconds));
-        return spawnResult(c, { ok: false, error: slot.error }, 429);
-      }
-      // Whether a session may have the files: used unless nothing started for certain.
-      let settled: 'used' | 'released' = 'used';
-      try {
-        let result: CommandResult;
-        try {
-          // PWD is the directory it runs in, as for resume: a new session records where it started.
-          result = await run(claudeBin, spawnArgs(spawn), { cwd: spawn.cwd, env: { ...env(), PWD: spawn.cwd }, timeoutMs });
-        } finally {
-          slot.release();
-        }
-
-        if (result.kind === 'failed') {
-          if (result.reason === 'timeout') {
-            return spawnResult(c, { ok: false, error: `claude --bg ${result.message}. The session may still appear in the list.` }, 504);
-          }
-          // Killed by a signal, it may have started a session first.
-          if (result.reason !== 'signal') settled = 'released';
-          return spawnResult(c, { ok: false, error: `Couldn't run claude: ${result.message}.` }, 502);
-        }
-        if (result.code !== 0) {
-          settled = 'released';
-          const message = said(result);
-          const untrusted = untrustedLine(message);
-          if (untrusted !== undefined) return spawnResult(c, untrustedResult(untrusted, spawn.cwd), 422);
-          return spawnResult(c, { ok: false, error: firstLine(message) ?? `claude --bg exited with code ${result.code}.` }, 502);
-        }
-        const started = parseBackgrounded(result.stdout);
-        if (!started) {
-          const line = firstLine(result.stdout);
-          return spawnResult(
-            c,
-            { ok: false, error: `Claude Code didn't report the new session's id${line ? `: ${line}` : '.'} It may still appear in the list.` },
-            502,
-          );
-        }
-        options.spawned?.add(started.shortId);
-        return spawnResult(c, { ok: true, shortId: started.shortId, name: started.name ?? spawn.name ?? started.shortId }, 201);
-      } finally {
-        if (ids.length > 0) {
-          if (settled === 'used') await attachments?.markUsed(ids);
-          else attachments?.release(ids);
-        }
-      }
+      const started = await spawner.start(validation.spawn);
+      if (started.retryAfterSeconds !== undefined) c.header('Retry-After', String(started.retryAfterSeconds));
+      return spawnResult(c, started.result, started.status);
     },
   );
 

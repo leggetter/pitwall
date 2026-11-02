@@ -9,9 +9,11 @@ import type { AgentRow } from '../index/agents.js';
 import { encodeProjectDir } from '../index/transcripts.js';
 import { SUPERVISOR_MODEL } from '../shared/protocol.js';
 import type { RelayChild, RelayChildEvents } from '../server/relay.js';
-import { SUPERVISOR_ALLOWED_TOOLS, SUPERVISOR_NAME } from './prompt.js';
+import { createApprovalQueue } from './approvals.js';
+import { SUPERVISOR_ALLOWED_TOOLS, SUPERVISOR_ASK_TOOLS, SUPERVISOR_NAME } from './prompt.js';
+import { markReady, readRecipients } from './supervisorGateHook.mjs';
 import { memoryState, type SupervisorRecord } from './state.js';
-import { createSupervisor, heldBy, heldError, sweepMcpConfigs, turnCost, type Supervisor, type SupervisorOptions } from './supervisor.js';
+import { createSupervisor, heldBy, heldError, sweepMcpConfigs, turnCost, withNotes, type Supervisor, type SupervisorOptions } from './supervisor.js';
 
 const SESSION = 'aaaaaaaa-0000-4000-8000-000000000001';
 const OTHER_SESSION = 'bbbbbbbb-0000-4000-8000-000000000002';
@@ -28,10 +30,10 @@ afterAll(() => {
 /** How the fake answers what's written to it. */
 type Behaviour = (line: Record<string, unknown>, child: FakeChild) => void;
 
-/** Answers the initialize request as Claude Code 2.1.312 does: success, in dontAsk mode, idle. */
+/** Answers the initialize request as Claude Code 2.1.312 does: success, in default mode (W115), idle. */
 const answersInitialize: Behaviour = (line, child) => {
   if (line.type === 'control_request' && (line.request as { subtype?: string }).subtype === 'initialize') {
-    child.emit({ type: 'control_response', response: { subtype: 'success', request_id: line.request_id, response: { current_permission_mode: 'dontAsk', session_state: 'idle', pid: child.pid } } });
+    child.emit({ type: 'control_response', response: { subtype: 'success', request_id: line.request_id, response: { current_permission_mode: 'default', session_state: 'idle', pid: child.pid } } });
   }
 };
 
@@ -84,7 +86,7 @@ class FakeChild implements RelayChild {
   }
   /** A turn's start, as system/init. */
   init(sessionId = SESSION, extra: Record<string, unknown> = {}): void {
-    this.emit({ type: 'system', subtype: 'init', session_id: sessionId, tools: [...SUPERVISOR_ALLOWED_TOOLS], permissionMode: 'dontAsk', ...extra });
+    this.emit({ type: 'system', subtype: 'init', session_id: sessionId, tools: ['SendMessage', ...SUPERVISOR_ALLOWED_TOOLS, 'mcp__pitwall__spawn_session'], permissionMode: 'default', mcp_servers: [{ name: 'pitwall', status: 'connected' }], ...extra });
   }
   /** A turn's end, as result. */
   result(extra: Record<string, unknown> = {}): void {
@@ -110,7 +112,14 @@ afterEach(async () => {
 });
 
 let homes = 0;
-function harness(options: Partial<SupervisorOptions> & { record?: SupervisorRecord; transcript?: boolean; bind?: boolean; behaviour?: Behaviour } = {}): Harness {
+/** The gate's hook folder and id, from the --settings a child was given. */
+function gateOf(child: FakeChild): { dir: string; id: string } {
+  const settings = JSON.parse(flag(child.args, '--settings')!) as { hooks: { SessionStart: { hooks: { args: string[] }[] }[] } };
+  const [, dir, id] = settings.hooks.SessionStart[0]!.hooks[0]!.args;
+  return { dir: dir!, id: id! };
+}
+
+function harness(options: Partial<SupervisorOptions> & { record?: SupervisorRecord; transcript?: boolean; bind?: boolean; behaviour?: Behaviour; hooksLoad?: boolean } = {}): Harness {
   const home = path.join(tmp, `home-${++homes}`);
   mkdirSync(home, { mode: 0o700 });
   const configDir = path.join(tmp, `claude-${homes}`);
@@ -136,6 +145,11 @@ function harness(options: Partial<SupervisorOptions> & { record?: SupervisorReco
     spawn: (_file, args, spawnOptions, events) => {
       const child = new FakeChild(events, 70_000 + children.length, args, spawnOptions);
       if (options.behaviour !== undefined) child.behaviour = options.behaviour;
+      // Its SessionStart hook, as Claude Code runs it before the first turn: the gate is ready.
+      if (options.hooksLoad !== false) {
+        const gate = gateOf(child);
+        markReady(gate.dir, gate.id);
+      }
       children.push(child);
       return child;
     },
@@ -143,6 +157,7 @@ function harness(options: Partial<SupervisorOptions> & { record?: SupervisorReco
     claudeVersion: async () => '2.1.312 (Claude Code)',
     env: { PATH: '/usr/bin:/bin', HOME: '/made-up/home', NODE_OPTIONS: '--require /made-up/evil.js', CLAUDE_CODE_EFFORT_LEVEL: 'max', ANTHROPIC_API_KEY: 'made-up-key' },
     log: (message) => logs.push(message),
+    promptVersion: 1,
     ...options,
   });
   if (options.bind !== false) supervisor.bind({ mcpUrl: MCP_URL });
@@ -161,6 +176,11 @@ function transcriptLines(): string {
     .concat('\n');
 }
 
+const flag = (args: string[], name: string) => {
+  const at = args.indexOf(name);
+  return at === -1 ? undefined : args[at + 1];
+};
+
 async function until(condition: () => boolean, ms = 2000): Promise<void> {
   const deadline = Date.now() + ms;
   while (!condition()) {
@@ -169,13 +189,9 @@ async function until(condition: () => boolean, ms = 2000): Promise<void> {
   }
 }
 
-const flag = (args: string[], name: string) => {
-  const at = args.indexOf(name);
-  return at === -1 ? undefined : args[at + 1];
-};
 
 describe('starting the supervisor', () => {
-  it('starts a new conversation with spike 009’s command line: no built-in tools, only the read-only MCP tools, your settings off', async () => {
+  it('starts a new conversation with SendMessage alone, the read-only MCP tools allowed, the two that act asking approve, and your settings off', async () => {
     const { supervisor, children, sessionDir } = harness();
     expect(supervisor.state()).toEqual({ status: 'off', approvals: [] });
     expect(await supervisor.start()).toEqual({ kind: 'ok' });
@@ -184,20 +200,24 @@ describe('starting the supervisor', () => {
     expect(args.slice(0, 7)).toEqual(['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-hook-events']);
     expect(flag(args, '--name')).toBe(SUPERVISOR_NAME);
     expect(flag(args, '--model')).toBe(SUPERVISOR_MODEL);
-    expect(flag(args, '--tools')).toBe('');
-    expect(flag(args, '--permission-mode')).toBe('dontAsk');
+    expect(flag(args, '--tools')).toBe('SendMessage');
+    expect(flag(args, '--permission-mode')).toBe('default');
+    expect(flag(args, '--permission-prompt-tool')).toBe('mcp__pitwall__approve');
     expect(flag(args, '--setting-sources')).toBe('');
     expect(args).toContain('--strict-mcp-config');
     expect(flag(args, '--allowed-tools')).toBe('mcp__pitwall__list_sessions,mcp__pitwall__read_session,mcp__pitwall__list_prs,mcp__pitwall__get_recap');
-    expect(flag(args, '--settings')).toBe('{"autoMemoryEnabled":false,"crossSessionInbound":"refuse"}');
+    const settings = JSON.parse(flag(args, '--settings')!) as Record<string, unknown>;
+    expect(settings).toMatchObject({ autoMemoryEnabled: false, crossSessionInbound: 'refuse', permissions: { ask: [...SUPERVISOR_ASK_TOOLS] } });
+    // The recipient gate: a deny-only hook on SendMessage, which blocks if it can't run.
+    expect(settings.hooks).toMatchObject({ PreToolUse: [{ matcher: 'SendMessage', hooks: [{ type: 'command', onFailure: 'block' }] }], SessionStart: [{}] });
     expect(args).not.toContain('--resume');
-    expect(args).not.toContain('--permission-prompt-tool');
     expect(options.cwd).toBe(realpathSync(sessionDir));
     // The relay's environment, at the model's default effort, credentials passed on.
     expect(options.env.NODE_OPTIONS).toBeUndefined();
     expect(options.env.CLAUDE_CODE_EFFORT_LEVEL).toBeUndefined();
     expect(options.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe('1');
     expect(options.env.ANTHROPIC_API_KEY).toBe('made-up-key');
+    expect(options.env.MCP_TOOL_TIMEOUT).toBe('1800000');
     // The first thing written: the initialize request, whose answer says it reads stdin.
     expect(children[0]!.lines()[0]).toMatchObject({ type: 'control_request', request: { subtype: 'initialize' } });
     expect(supervisor.state()).toEqual({ status: 'idle', approvals: [] });
@@ -213,7 +233,7 @@ describe('starting the supervisor', () => {
     expect(statSync(sessionDir).mode & 0o777).toBe(0o700);
     const token = supervisor.mcpToken()!;
     expect(token.length).toBeGreaterThanOrEqual(43);
-    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ mcpServers: { pitwall: { type: 'http', url: MCP_URL, headers: { Authorization: `Bearer ${token}` } } } });
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ mcpServers: { pitwall: { type: 'http', url: MCP_URL, headers: { Authorization: `Bearer ${token}` }, timeout: 1_800_000 } } });
     expect(children[0]!.args.join('\n')).not.toContain(token);
     expect(JSON.stringify(children[0]!.options.env)).not.toContain(token);
   });
@@ -401,19 +421,53 @@ describe('when it stops', () => {
     });
   });
 
-  it('fails when it exits mid-turn, drops what was queued, and starts again only with the next message', async () => {
+  it('fails when it exits mid-turn, keeps what was queued for the next start, says so, and starts again only when asked', async () => {
     const { supervisor, children } = harness();
     await supervisor.send('first');
     await supervisor.send('queued');
     children[0]!.init();
     children[0]!.exit(143, null);
     await until(() => supervisor.state().status === 'failed');
-    expect(supervisor.state().error).toBe('The supervisor stopped (exit code 143). Send it a message, or press Start, to start it again.');
+    expect(supervisor.state().error).toBe('The supervisor stopped (exit code 143). Send it a message, or press Start, to start it again. Your message waits to be sent when it starts.');
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(children).toHaveLength(1);
     await supervisor.send('next');
     expect(children).toHaveLength(2);
-    expect(children[1]!.messages()).toEqual(['next']);
+    // The kept one first, then the new one once its turn ends.
+    expect(children[1]!.messages()).toEqual(['queued']);
+    children[1]!.init();
+    children[1]!.result();
+    await until(() => children[1]!.messages().length === 2);
+    expect(children[1]!.messages()).toEqual(['queued', 'next']);
+  });
+
+  it('keeps a message you send while a tripped process stops, and sends it after the next start (W114’s review)', async () => {
+    const { supervisor, children } = harness();
+    await supervisor.send('hello');
+    const child = children[0]!;
+    child.exitOnSignal = false;
+    child.exitOnEnd = false;
+    child.init(SESSION, { tools: ['Bash'] });
+    expect(supervisor.state().status).toBe('failed');
+    // Sent while it's stopping: taken, and kept when it exits.
+    const sending = supervisor.send('while it stops');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    child.exit(null, 'SIGTERM');
+    expect(await sending).toEqual({ kind: 'ok' });
+    await until(() => children.length === 2 && children[1]!.messages().length === 1);
+    expect(children[1]!.messages()).toEqual(['while it stops']);
+  });
+
+  it('says in its error that your messages wait while it’s stopped, once a trip has stopped it', async () => {
+    const { supervisor, children } = harness();
+    await supervisor.send('first');
+    await supervisor.send('second');
+    await supervisor.send('third');
+    children[0]!.init(SESSION, { tools: ['Bash'] });
+    await until(() => children[0]!.exited);
+    expect(supervisor.state()).toMatchObject({ status: 'failed', error: "The supervisor started with a tool pitwall didn't give it (Bash), so pitwall stopped it. Your 2 messages wait to be sent when it starts." });
+    await supervisor.start();
+    expect(children[1]!.messages()).toEqual(['second']);
   });
 
   it('says claude wasn’t found when it can’t be started', async () => {
@@ -451,7 +505,7 @@ describe('what it can do', () => {
     child.emit({ type: 'control_request', request_id: 'perm-1', request: { subtype: 'can_use_tool', tool_name: 'SendMessage', input: { to: 'x' } } });
     child.emit({ type: 'control_request', request_id: 'other-1', request: { subtype: 'elicitation' } });
     expect(child.lines().slice(-2)).toEqual([
-      { type: 'control_response', response: { subtype: 'success', request_id: 'perm-1', response: { behavior: 'deny', message: "pitwall's supervisor can only read." } } },
+      { type: 'control_response', response: { subtype: 'success', request_id: 'perm-1', response: { behavior: 'deny', message: 'pitwall answers permission prompts only through its approve tool.' } } },
       { type: 'control_response', response: { subtype: 'error', request_id: 'other-1', error: "pitwall doesn't handle this request." } },
     ]);
   });
@@ -468,7 +522,7 @@ describe('what it can do', () => {
     expect(supervisor.state().error).toBe("The supervisor started with a tool pitwall didn't give it (Bash), so pitwall stopped it.");
   });
 
-  it('stops a supervisor that isn’t in dontAsk mode, by its initialize answer or its init', async () => {
+  it('stops a supervisor that isn’t in default mode, by its initialize answer or its init', async () => {
     const byAnswer = harness({
       behaviour: (line, child) => {
         if (line.type === 'control_request') child.emit({ type: 'control_response', response: { subtype: 'success', request_id: line.request_id, response: { current_permission_mode: 'bypassPermissions' } } });
@@ -477,8 +531,72 @@ describe('what it can do', () => {
     expect(await byAnswer.supervisor.start()).toEqual({ kind: 'failed', error: "The supervisor started in a permission mode pitwall didn't ask for, so pitwall stopped it." });
     const byInit = harness();
     await byInit.supervisor.send('hello');
-    byInit.children[0]!.init(SESSION, { permissionMode: 'default' });
+    byInit.children[0]!.init(SESSION, { permissionMode: 'dontAsk' });
     await until(() => byInit.supervisor.state().status === 'failed');
+    const bypass = harness();
+    await bypass.supervisor.send('hello');
+    bypass.children[0]!.init(SESSION, { permissionMode: 'bypassPermissions' });
+    await until(() => bypass.supervisor.state().status === 'failed');
+  });
+
+  it('accepts SendMessage, spawn_session and approve in its init, and stops one that lists any other tool', async () => {
+    const { supervisor, children } = harness();
+    await supervisor.send('hello');
+    children[0]!.init(SESSION, { tools: ['SendMessage', ...SUPERVISOR_ALLOWED_TOOLS, 'mcp__pitwall__spawn_session', 'mcp__pitwall__approve'] });
+    expect(supervisor.state().status).toBe('working');
+    children[0]!.result();
+    await supervisor.send('again');
+    children[0]!.init(SESSION, { tools: ['SendMessage', 'mcp__pitwall__run_command'] });
+    expect(supervisor.state()).toMatchObject({ status: 'failed', error: "The supervisor started with a tool pitwall didn't give it (mcp__pitwall__run_command), so pitwall stopped it." });
+  });
+
+  it('stops a supervisor whose recipient gate didn’t load: its SessionStart hook never ran', async () => {
+    const { supervisor, children } = harness({ hooksLoad: false });
+    await supervisor.send('hello');
+    children[0]!.init();
+    expect(supervisor.state()).toMatchObject({ status: 'failed', error: "The supervisor started without pitwall's message gate, so pitwall stopped it. Press Start to try again." });
+  });
+
+  it('writes the names it may message for its gate, 0600, at start and as they change, and removes them when it exits', async () => {
+    const { supervisor, children } = harness();
+    supervisor.setRecipients(['pitwall-test-target']);
+    await supervisor.start();
+    const gate = gateOf(children[0]!);
+    expect(statSync(gate.dir).mode & 0o777).toBe(0o700);
+    expect(readRecipients(gate.dir, gate.id)).toEqual(new Set(['pitwall-test-target']));
+    expect(statSync(path.join(gate.dir, `${gate.id}.recipients`)).mode & 0o777).toBe(0o600);
+    supervisor.setRecipients(['pitwall-test-a', 'pitwall-test-b']);
+    expect(readRecipients(gate.dir, gate.id)).toEqual(new Set(['pitwall-test-a', 'pitwall-test-b']));
+    children[0]!.exit(0, null);
+    await until(() => supervisor.state().status === 'failed');
+    expect(readRecipients(gate.dir, gate.id)).toBeUndefined();
+    expect(readdirSync(gate.dir)).toEqual([]);
+  });
+
+  it('shows its approvals in its state, denies them when it exits or pitwall closes, and puts pitwall’s notes before your next message', async () => {
+    const approvals = createApprovalQueue();
+    const { supervisor, children } = harness({ approvals });
+    await supervisor.start();
+    const added = approvals.add({ draft: { kind: 'message', to: 'pitwall-test-target', text: 'hello' }, toolName: 'SendMessage', toolUseId: 'toolu_1', input: { to: 'pitwall-test-target', message: 'hello' } });
+    if (!added.ok) throw new Error('not added');
+    expect(supervisor.state().approvals).toMatchObject([{ id: added.id, kind: 'message', to: 'pitwall-test-target', text: 'hello' }]);
+    approvals.note('the user edited your message');
+    await supervisor.send('next question');
+    expect(children[0]!.messages()).toEqual(['[pitwall: the user edited your message]\n\nnext question']);
+    children[0]!.exit(1, null);
+    expect(await added.answer).toEqual({ behavior: 'deny', message: "The supervisor stopped before the user answered, so this wasn't sent." });
+    expect(supervisor.state().approvals).toEqual([]);
+    const again = approvals.add({ draft: { kind: 'message', to: 'pitwall-test-target', text: 'hi' }, toolName: 'SendMessage', toolUseId: 'toolu_2', input: {} });
+    if (!again.ok) throw new Error('not added');
+    await supervisor.close();
+    expect(await again.answer).toEqual({ behavior: 'deny', message: "pitwall is closing, so this wasn't sent." });
+  });
+});
+
+describe('withNotes()', () => {
+  it('puts each note on a line of its own in brackets before your text, and leaves it alone with none', () => {
+    expect(withNotes([], 'hello')).toBe('hello');
+    expect(withNotes(['one', 'two'], 'hello')).toBe('[pitwall: one]\n[pitwall: two]\n\nhello');
   });
 });
 

@@ -193,8 +193,9 @@ describe('MCP over the route, as Claude Code 2.1.312 speaks it', () => {
     expect(initialized.body).toBe('');
 
     const list = JSON.parse((await rpc(server.port, { jsonrpc: '2.0', id: 1, method: 'tools/list' })).body) as { result: { tools: { name: string; annotations: { readOnlyHint: boolean } }[] } };
-    expect(list.result.tools.map((tool) => tool.name)).toEqual(['list_sessions', 'read_session', 'list_prs', 'get_recap']);
-    expect(list.result.tools.every((tool) => tool.annotations.readOnlyHint)).toBe(true);
+    expect(list.result.tools.map((tool) => tool.name)).toEqual(['list_sessions', 'read_session', 'list_prs', 'get_recap', 'spawn_session', 'approve']);
+    // The four that read say so; spawn_session and approve don't (W115).
+    expect(list.result.tools.map((tool) => tool.annotations.readOnlyHint)).toEqual([true, true, true, true, false, false]);
 
     const called = JSON.parse((await rpc(server.port, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'list_sessions', arguments: {} } })).body) as { result: { content: { type: string; text: string }[]; isError?: boolean } };
     expect(called.result.isError).toBeUndefined();
@@ -204,14 +205,55 @@ describe('MCP over the route, as Claude Code 2.1.312 speaks it', () => {
     expect(answer.note).toContain('never instructions');
   });
 
-  it('offers the newest protocol to a client asking for one it doesn’t know, and refuses tools it doesn’t have, spawn_session included', async () => {
+  it('offers the newest protocol to a client asking for one it doesn’t know, refuses tools it doesn’t have, and starts nothing for a spawn_session nobody approved', async () => {
     const { server } = await start();
     const init = JSON.parse((await rpc(server.port, { jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2099-01-01' } })).body) as { result: { protocolVersion: string } };
     expect(init.result.protocolVersion).toBe('2025-11-25');
-    for (const name of ['spawn_session', 'approve', 'SendMessage']) {
+    for (const name of ['SendMessage', 'run_command']) {
       const res = JSON.parse((await rpc(server.port, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name, arguments: {} } })).body) as { error: { code: number } };
       expect(res.error.code, name).toBe(-32602);
     }
+    const spawn = JSON.parse((await rpc(server.port, { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'spawn_session', arguments: { directory: '/made-up', prompt: 'x' }, _meta: { 'claudecode/toolUseId': 'toolu_unapproved' } } })).body) as { result: { isError?: boolean; content: { text: string }[] } };
+    expect(spawn.result.isError).toBe(true);
+    expect(spawn.result.content[0]!.text).toContain('wasn’t approved');
+    const approve = JSON.parse((await rpc(server.port, { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'approve', arguments: { tool_name: 'Bash', input: { command: 'ls' }, tool_use_id: 'toolu_1' } } })).body) as { result: { content: { text: string }[] } };
+    expect(JSON.parse(approve.result.content[0]!.text)).toMatchObject({ behavior: 'deny' });
+  });
+});
+
+describe('answerMessage(): calls that hold (W115)', () => {
+  it('doesn’t count a holding tool against MCP_MAX_CONCURRENT_CALLS, passes its _meta, and aborts it on notifications/cancelled', async () => {
+    let seen: { meta?: Record<string, unknown>; aborted: Promise<void> } | undefined;
+    const holder: McpTool = {
+      name: 'hold',
+      description: '',
+      inputSchema: {},
+      holds: true,
+      call: (_args, context) =>
+        new Promise((resolve) => {
+          seen = { ...(context?.meta === undefined ? {} : { meta: context.meta }), aborted: new Promise((done) => context!.signal.addEventListener('abort', () => done())) };
+          context!.signal.addEventListener('abort', () => resolve({ text: 'aborted' }));
+        }),
+    };
+    const calls = { running: MCP_MAX_CONCURRENT_CALLS, inFlight: new Map<string | number, AbortController>() };
+    const answering = answerMessage({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'hold', arguments: {}, _meta: { 'claudecode/toolUseId': 'toolu_7' } } }, { tools: [holder], version: '0' }, calls);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(seen?.meta).toEqual({ 'claudecode/toolUseId': 'toolu_7' });
+    expect(calls.inFlight.has(7)).toBe(true);
+    // A cancel for another id does nothing; for its own, it aborts the call.
+    await answerMessage({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 8 } }, { tools: [holder], version: '0' }, calls);
+    await answerMessage({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 7 } }, { tools: [holder], version: '0' }, calls);
+    expect(await answering).toMatchObject({ id: 7, result: { content: [{ text: 'aborted' }] } });
+    expect(calls.inFlight.size).toBe(0);
+    expect(calls.running).toBe(MCP_MAX_CONCURRENT_CALLS);
+  });
+
+  it('aborts a holding call when its request’s signal aborts, as when the connection closes', async () => {
+    const holder: McpTool = { name: 'hold', description: '', inputSchema: {}, holds: true, call: (_args, context) => new Promise((resolve) => context!.signal.addEventListener('abort', () => resolve({ text: 'gone' }))) };
+    const request = new AbortController();
+    const answering = answerMessage({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'hold' } }, { tools: [holder], version: '0' }, { running: 0 }, request.signal);
+    request.abort();
+    expect(await answering).toMatchObject({ result: { content: [{ text: 'gone' }] } });
   });
 });
 
