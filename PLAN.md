@@ -937,6 +937,7 @@ Small improvements that aren't needed now, gathered from reviews and try-outs so
 - [ ] Peers, sessions talking to each other: undecided ([#99](https://github.com/leggetter/pitwall/issues/99))
 - [ ] Chatting with a session from the Conversation tab, and sessions pitwall hosts: later, after M5 ([#108](https://github.com/leggetter/pitwall/issues/108))
 - [ ] A session asking the supervisor to spin off work, as an approval card labelled with the session that asked: after M5 (Phil, 2026-10-29)
+- [ ] **Plan status** (W123), the first follow-up after M5: a button on the recap strip beside Refresh, named by Phil (2026-11-02), that shows where the session is in its overall plan: the milestones or work items done and still to do, where it is now, and any change to the plan the transcript records. A deeper recap call (about $0.002) over more of the transcript, compaction summaries included; nothing is sent to the session. The summary already carries a one-line plan position (W121)
 - [ ] Model and effort for each kind of work (a session, its sub-agents, the supervisor, recaps, the relay): defaults in the config file, overrides in the app's settings; after this round of work, M4's merge and M5 ([#114](https://github.com/leggetter/pitwall/issues/114); Phil, 2026-10-30, after the week's usage limit stopped three agents)
 
 ---
