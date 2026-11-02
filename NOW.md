@@ -16,6 +16,7 @@ Last updated: 2026-11-02, on `m5/integration`. This file lives on the integratio
 | Item | State |
 | --- | --- |
 | W124, the supervisor's v3 prompt, cheaper lookups and Open hand-offs (Phil's first use) | In review, into `m5/integration` |
+| W126, why a recap's answer was refused; a fence and a disagreeing waitingOn repaired (Phil's report, 2026-11-02) | In review, into `m5/integration` |
 | M5 try-out | Phil's, on port 4519; started, W124 came from it |
 | Merge `m5/integration` into `main` | Waits on Phil's word after the try-out |
 | W86, bump `vite` and `happy-dom` | Phil approved (2026-10-28); on or after 2026-11-04, when the fixes are 14 days old |

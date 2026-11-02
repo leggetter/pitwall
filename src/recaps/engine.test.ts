@@ -11,7 +11,7 @@ import { modelRejectedMessage } from '../server/work.js';
 import { memoryBudget } from './budget.js';
 import type { RecapChildEvents, RecapSpawner } from './call.js';
 import { createRecapEngine, OWN_NAME_MS, PAUSE_AFTER_FAILURES, PLAN_MAX_CONCURRENT, PLAN_MODEL_REJECTED, RETRY_AFTER_FAILURE_MS, secondsToMidnight, type RecapEngineOptions, type RecapIndex } from './engine.js';
-import { ANSWER_INVALID, CALL_FAILED, PLAN_STATUS_SYSTEM_PROMPT, planStatusArgs, recapArgs, RECAP_NAME } from './prompt.js';
+import { CALL_FAILED, RECAP_REFUSALS, PLAN_STATUS_SYSTEM_PROMPT, planStatusArgs, recapArgs, RECAP_NAME } from './prompt.js';
 
 const MINUTE = 60_000;
 const DIR = '/made-up/pitwall-home/recap';
@@ -409,7 +409,7 @@ describe('failures', () => {
     await h.poll([a]);
     await h.reply(h.calls[0], envelope('Sure! Here is your recap: {"summary": "a"}'));
     // errorAt is when the error was set, so a page can tell a failure since its ask from an older one (W111's review).
-    expect(h.engine.health()).toEqual({ calls: 1, budget: RECAP_DAILY_BUDGET, costUsd: 0.0011, error: ANSWER_INVALID, errorAt: new Date(h.clock.now).toISOString() });
+    expect(h.engine.health()).toEqual({ calls: 1, budget: RECAP_DAILY_BUDGET, costUsd: 0.0011, error: RECAP_REFUSALS['text-around'], errorAt: new Date(h.clock.now).toISOString() });
     expect(JSON.stringify(h.engine.health())).not.toContain('Sure!');
     expect(h.engine.recap(a)).toBeUndefined();
     await h.poll([a]);
@@ -419,7 +419,7 @@ describe('failures', () => {
     await h.poll([a]);
     expect(h.calls).toHaveLength(2);
     // A call that starts while the error stands leaves errorAt where it was: it isn't a new failure.
-    expect(h.engine.health()).toMatchObject({ calls: 2, error: ANSWER_INVALID, errorAt: new Date(h.clock.now - RETRY_AFTER_FAILURE_MS).toISOString() });
+    expect(h.engine.health()).toMatchObject({ calls: 2, error: RECAP_REFUSALS['text-around'], errorAt: new Date(h.clock.now - RETRY_AFTER_FAILURE_MS).toISOString() });
     await h.reply(h.calls[1], envelope(answer()));
     expect(h.engine.health()).not.toHaveProperty('error');
     expect(h.engine.health()).not.toHaveProperty('errorAt');
@@ -430,7 +430,8 @@ describe('failures', () => {
       [(call, h) => h.reply(call, 'API Error: secret detail', 1), /^The recap call exited with code 1\.$/],
       [(call, h) => h.reply(call, envelope('x', { is_error: true })), new RegExp(`^${CALL_FAILED}$`)],
       [(call, h) => h.reply(call, 'not json at all'), /couldn't read/],
-      [(call, h) => h.reply(call, envelope('```json\n{}\n```')), /wasn't the JSON/],
+      [(call, h) => h.reply(call, envelope('```json\n{}\n```')), /missing or extra fields/],
+      [(call, h) => h.reply(call, envelope(answer({ summary: 'It fixed\u202e it.' }))), /^The recap call's answer had a hidden character, which pitwall refuses\.$/],
       [
         async (call) => {
           call.events.stdout('x'.repeat(1024 * 1024 + 1));
@@ -448,6 +449,19 @@ describe('failures', () => {
       expect(h.engine.health().error).not.toMatch(/secret|x{20}/);
       expect(h.engine.health().calls).toBe(1);
     }
+  });
+
+  it('repairs a fenced answer and a waitingOn that disagrees with the to-dos, and logs which repair, never the answer (W126)', async () => {
+    const h = harness();
+    h.start();
+    const a = h.add('a');
+    await h.poll([a]);
+    const text = '```json\n' + JSON.stringify(answer({ waitingOn: 'nothing', summary: 'A distinctive summary.' })) + '\n```';
+    await h.reply(h.calls[0]!, envelope(text));
+    expect(h.engine.health()).not.toHaveProperty('error');
+    expect(h.engine.recap(a)).toMatchObject({ waitingOn: 'you', summary: 'A distinctive summary.' });
+    expect(h.logs).toContain('a recap answer was repaired (fence, waiting-on).');
+    expect(h.logs.join('\n')).not.toContain('distinctive');
   });
 
   it('stops a call that takes too long, and says claude was not found', async () => {
@@ -589,9 +603,12 @@ describe('what the snapshot shows', () => {
     expect(h.engine.decorate({ ...a, status: 'busy' })).not.toHaveProperty('needsYou');
     expect(h.engine.decorate({ ...a, status: 'idle' }).needsYou?.reason).toBe('recap');
     for (const waitingOn of ['another session', 'CI', 'someone else', 'nothing']) {
-      const other = await recapped({ waitingOn });
+      const other = await recapped({ waitingOn, todos: [{ text: 'Carry on', owner: 'session' }] });
       expect(other.h.engine.decorate(other.a), waitingOn).not.toHaveProperty('needsYou');
     }
+    // 'nothing' beside a to-do for you is repaired to 'you', so Needs you has it to show (W126).
+    const repaired = await recapped({ waitingOn: 'nothing' });
+    expect(repaired.h.engine.decorate(repaired.a).needsYou?.reason).toBe('recap');
   });
 
   it("shows Claude Code's away_summary before the first recap and while the budget is spent, and it never sets Needs you", async () => {
