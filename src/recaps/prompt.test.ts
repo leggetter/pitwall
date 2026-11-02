@@ -3,13 +3,15 @@
 import { describe, expect, it } from 'vitest';
 import { PLAN_ITEM_MAX, PLAN_ITEM_STATES, PLAN_ITEMS_MAX, RECAP_FIELD_MAX, RECAP_MODEL, RECAP_TITLE_MAX_WORDS, RECAP_TODO_OWNERS, RECAP_TODOS_MAX } from '../shared/protocol.js';
 import {
-  ANSWER_INVALID,
   CALL_FAILED,
   ENVELOPE_UNREADABLE,
   parseEnvelope,
   parsePlanAnswer,
   parseRecapAnswer,
   plainTitle,
+  readRecapAnswer,
+  RECAP_REFUSALS,
+  type RecapRefusal,
   PLAN_STATUS_SYSTEM_PROMPT,
   planStatusArgs,
   RECAP_MAX_OUTPUT_TOKENS,
@@ -180,52 +182,101 @@ describe('parseRecapAnswer', () => {
     expect(plainTitle('  Fix\tthe\nexport  ')).toBe('Fix the export');
   });
 
-  it('refuses an answer that contradicts itself: waiting on you with no to-do for you, or on anything with no to-dos', () => {
-    expect(parseRecapAnswer(answer({ todos: [{ text: 'Open a PR', owner: 'session' }], waitingOn: 'you' }))).toBeUndefined();
-    // Nor 'nothing' beside a to-do for you (#123's review).
-    expect(parseRecapAnswer(answer({ todos: [{ text: 'Say whether to merge', owner: 'you' }], waitingOn: 'nothing' }))).toBeUndefined();
-    for (const waitingOn of ['you', 'another session', 'CI', 'someone else']) expect(parseRecapAnswer(answer({ todos: [], waitingOn })), waitingOn).toBeUndefined();
-    expect(parseRecapAnswer(answer({ todos: [{ text: 'Finish the checks on #42', owner: 'CI' }], waitingOn: 'CI' }))?.waitingOn).toBe('CI');
+  it('derives waitingOn from the to-dos where it disagrees with them, instead of refusing (W126)', () => {
+    const repaired = (overrides: Record<string, unknown>) => {
+      const reading = readRecapAnswer(answer(overrides));
+      return reading.ok ? { waitingOn: reading.answer.waitingOn, repaired: reading.repaired } : reading;
+    };
+    // No to-dos: nothing, whatever the model said.
+    for (const waitingOn of ['you', 'another session', 'CI', 'someone else']) {
+      expect(repaired({ todos: [], waitingOn }), waitingOn).toEqual({ waitingOn: 'nothing', repaired: ['waiting-on'] });
+    }
+    // 'nothing' beside a to-do for you (#123's review): you.
+    expect(repaired({ todos: [{ text: 'Say whether to merge', owner: 'you' }], waitingOn: 'nothing' })).toEqual({ waitingOn: 'you', repaired: ['waiting-on'] });
+    // 'you' with none for you: the first to-do's owner, as a waitingOn value.
+    const owned = (owner: string) => [{ text: 'a', owner }, { text: 'b', owner: 'session' }];
+    expect(repaired({ todos: owned('CI'), waitingOn: 'you' })).toEqual({ waitingOn: 'CI', repaired: ['waiting-on'] });
+    expect(repaired({ todos: owned('someone else'), waitingOn: 'you' })).toEqual({ waitingOn: 'someone else', repaired: ['waiting-on'] });
+    expect(repaired({ todos: owned('session'), waitingOn: 'you' })).toEqual({ waitingOn: 'nothing', repaired: ['waiting-on'] });
+    // A value that agrees stays, and nothing is reported.
+    expect(repaired({ todos: [{ text: 'Finish the checks on #42', owner: 'CI' }], waitingOn: 'CI' })).toEqual({ waitingOn: 'CI', repaired: [] });
+    expect(repaired({ todos: [{ text: 'Run the checks', owner: 'session' }], waitingOn: 'nothing' })).toEqual({ waitingOn: 'nothing', repaired: [] });
+    expect(repaired({ todos: [{ text: 'a', owner: 'session' }, { text: 'b', owner: 'you' }], waitingOn: 'CI' })).toEqual({ waitingOn: 'CI', repaired: [] });
+    expect(repaired({})).toEqual({ waitingOn: 'you', repaired: [] });
   });
 
-  it('refuses anything else', () => {
-    const rejected = [
-      '',
-      'Here is the recap:',
-      '```json\n' + answer() + '\n```',
-      `${answer()}\n${answer()}`,
-      `${answer()} and more`,
-      `Sure. ${answer()}`,
-      '[' + answer() + ']',
-      '"just a string"',
-      'null',
-      '{"summary": "a"',
-      answer({ waitingOn: 'me' }),
-      answer({ waitingOn: 'You' }),
-      answer({ waitingOn: 1 }),
-      answer({ summary: 3 }),
-      answer({ summary: '' }),
-      answer({ summary: '   ' }),
-      answer({ summary: ['a'] }),
-      answer({ title: { text: 'a' } }),
-      answer({ title: '' }),
-      answer({ todos: 'Say whether to mark #42 ready' }),
-      answer({ todos: { 0: TODOS[0] } }),
-      answer({ todos: null }),
-      answer({ todos: ['Say whether to mark #42 ready'] }),
-      answer({ todos: [{ text: 'a', owner: 'me' }, TODOS[0]] }),
-      answer({ todos: [{ text: 'a', owner: 'another session' }, TODOS[0]] }),
-      answer({ todos: [{ text: 'a', owner: 'You' }] }),
-      answer({ todos: [{ text: '', owner: 'you' }] }),
-      answer({ todos: [{ text: 7, owner: 'you' }] }),
-      answer({ todos: [{ text: 'a' }] }),
-      answer({ todos: [{ text: 'a', owner: 'you', done: false }] }),
-      answer({ extra: 'field' }),
-      answer({ why: 'the old shape' }),
-      JSON.stringify({ why: 'a', now: 'b', next: 'c', waitingOn: 'you', title: 'd' }),
-      JSON.stringify({ summary: 'a', todos: TODOS, waitingOn: 'you' }),
+  it('strips one surrounding code fence around exactly one object, and says so (W126)', () => {
+    const fenced = [`\`\`\`json\n${answer()}\n\`\`\``, `\`\`\`\n${answer()}\n\`\`\``, `  \`\`\`JSON\r\n${answer()}\r\n\`\`\`\n`, `\`\`\`json\n${answer()}\`\`\``];
+    for (const text of fenced) {
+      const reading = readRecapAnswer(text);
+      expect(reading.ok, text).toBe(true);
+      if (reading.ok) {
+        expect(reading.repaired).toEqual(['fence']);
+        expect(reading.answer.title).toBe('Fix nightly export failing on large files');
+      }
+    }
+  });
+
+  it('keeps refusing what a fence does not fix, and says which check refused it (W126)', () => {
+    const fence = (inner: string) => `\`\`\`json\n${inner}\n\`\`\``;
+    const refused: [string, RecapRefusal][] = [
+      ['', 'text-around'],
+      ['Here is the recap:', 'text-around'],
+      [`Sure. ${answer()}`, 'text-around'],
+      [`${answer()} and more`, 'text-around'],
+      [`Here it is:\n${fence(answer())}`, 'text-around'],
+      [`${fence(answer())}\nHope that helps.`, 'text-around'],
+      [`${fence(answer())}\n${fence(answer())}`, 'text-around'],
+      [`\`\`\`python\n${answer()}\n\`\`\``, 'text-around'],
+      [fence('Sure.'), 'text-around'],
+      ['[' + answer() + ']', 'text-around'],
+      ['null', 'text-around'],
+      [`${answer()}\n${answer()}`, 'not-json'],
+      [fence(`${answer()}\n${answer()}`), 'not-json'],
+      ['{"summary": "a"', 'text-around'],
+      ['{"summary": "a",}', 'not-json'],
+      [answer({ extra: 'field' }), 'keys'],
+      [answer({ why: 'the old shape' }), 'keys'],
+      [JSON.stringify({ why: 'a', now: 'b', next: 'c', waitingOn: 'you', title: 'd' }), 'keys'],
+      [JSON.stringify({ summary: 'a', todos: TODOS, waitingOn: 'you' }), 'keys'],
+      [fence('{}'), 'keys'],
+      [answer({ todos: 'Say whether to mark #42 ready' }), 'todos'],
+      [answer({ todos: { 0: TODOS[0] } }), 'todos'],
+      [answer({ todos: null }), 'todos'],
+      [answer({ todos: ['Say whether to mark #42 ready'] }), 'todos'],
+      [answer({ todos: [{ text: 'a' }] }), 'todos'],
+      [answer({ todos: [{ text: 'a', owner: 'you', done: false }] }), 'todos'],
+      [answer({ waitingOn: 'me' }), 'waiting-on'],
+      [answer({ waitingOn: 'You' }), 'waiting-on'],
+      [answer({ waitingOn: 1 }), 'waiting-on'],
+      [answer({ todos: [{ text: 'a', owner: 'me' }, TODOS[0]] }), 'owner'],
+      [answer({ todos: [{ text: 'a', owner: 'another session' }, TODOS[0]] }), 'owner'],
+      [answer({ todos: [{ text: 'a', owner: 'You' }] }), 'owner'],
+      [answer({ todos: [{ text: 'a', owner: 1 }] }), 'owner'],
+      [answer({ summary: 3 }), 'not-text'],
+      [answer({ summary: ['a'] }), 'not-text'],
+      [answer({ title: { text: 'a' } }), 'not-text'],
+      [answer({ todos: [{ text: 7, owner: 'you' }] }), 'not-text'],
+      [answer({ summary: '' }), 'empty-text'],
+      [answer({ summary: '   ' }), 'empty-text'],
+      [answer({ title: '' }), 'empty-text'],
+      [answer({ todos: [{ text: '', owner: 'you' }] }), 'empty-text'],
+      [answer({ summary: 'It fixed\u202e the export.' }), 'hidden-character'],
+      [answer({ title: 'Fix\u200b export' }), 'hidden-character'],
+      [answer({ todos: [{ text: 'Say\u{e0041} whether', owner: 'you' }] }), 'hidden-character'],
     ];
-    for (const text of rejected) expect(parseRecapAnswer(text), text).toBeUndefined();
+    for (const [text, refusal] of refused) {
+      const reading = readRecapAnswer(text);
+      expect(reading, text).toEqual({ ok: false, refusal });
+      expect(parseRecapAnswer(text), text).toBeUndefined();
+    }
+    // Every refusal has its own plain sentence, which names the check and carries nothing of the answer.
+    expect(new Set(Object.values(RECAP_REFUSALS)).size).toBe(Object.keys(RECAP_REFUSALS).length);
+    expect(RECAP_REFUSALS['hidden-character']).toBe("The recap call's answer had a hidden character, which pitwall refuses.");
+  });
+
+  it('does not repair a hidden character inside a fence', () => {
+    expect(readRecapAnswer(`\`\`\`json\n${answer({ summary: 'It fixed\u202e the export.' })}\n\`\`\``)).toEqual({ ok: false, refusal: 'hidden-character' });
   });
 });
 
@@ -250,7 +301,7 @@ describe('parseEnvelope', () => {
     expect(parseEnvelope(envelope({ total_cost_usd: -1 }))).toEqual({ ok: true, text: answer(), durationMs: 4200 });
     expect(parseEnvelope(envelope({ total_cost_usd: 'a lot' }))).toEqual({ ok: true, text: answer(), durationMs: 4200 });
     // None of pitwall's reasons quote what was printed.
-    for (const reason of [ENVELOPE_UNREADABLE, CALL_FAILED, ANSWER_INVALID]) expect(reason).not.toMatch(/secret|API Error/);
+    for (const reason of [ENVELOPE_UNREADABLE, CALL_FAILED, ...Object.values(RECAP_REFUSALS)]) expect(reason).not.toMatch(/secret|API Error/);
   });
 });
 

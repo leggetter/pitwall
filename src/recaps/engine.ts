@@ -73,14 +73,15 @@ import { budgetFile, type BudgetStore } from './budget.js';
 import { runRecapCall, spawnRecapChild, type CallOutcome, type RecapSpawner } from './call.js';
 import { firstRecapInput, planStatusInput, TurnCollector, updateRecapInput, type RelayMessages } from './input.js';
 import {
-  ANSWER_INVALID,
   CALL_FAILED,
   ENVELOPE_UNREADABLE,
   MIN_RECAP_CLAUDE_VERSION,
   PLAN_ANSWER_INVALID,
   parseEnvelope,
   parsePlanAnswer,
-  parseRecapAnswer,
+  readRecapAnswer,
+  RECAP_REFUSALS,
+  type RecapRepair,
   planStatusArgs,
   plainField,
   RECAP_DIR_NAME,
@@ -570,6 +571,8 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
       save();
     }
     if (!result.ok) return fail(job.sessionId, throughMs, result.reason, 'call');
+    // What pitwall repaired in the answer rather than refuse it (W126): which repair, never the answer.
+    if (result.repaired !== undefined && result.repaired.length > 0) log(`a recap answer was repaired (${result.repaired.join(', ')}).`);
     const at = now();
     recaps.set(job.sessionId, {
       ...result.answer,
@@ -862,13 +865,29 @@ function answerOf(recap: SessionRecap): RecapAnswer {
 }
 
 /** What a call's process gave: a recap, or why not, in pitwall's words, with its cost when it reported one. */
-export function readOutcome(outcome: Exclude<CallOutcome, { kind: 'stopped' }>): { ok: true; answer: RecapAnswer; costUsd?: number } | { ok: false; reason: string; costUsd?: number } {
-  return readCall(outcome, parseRecapAnswer, 'recap');
+export function readOutcome(
+  outcome: Exclude<CallOutcome, { kind: 'stopped' }>,
+): { ok: true; answer: RecapAnswer; repaired?: RecapRepair[]; costUsd?: number } | { ok: false; reason: string; costUsd?: number } {
+  return readCall(
+    outcome,
+    (text) => {
+      const reading = readRecapAnswer(text);
+      return reading.ok ? { ok: true, answer: reading.answer, repaired: reading.repaired } : { ok: false, reason: RECAP_REFUSALS[reading.refusal] };
+    },
+    'recap',
+  );
 }
 
 /** What a plan status call's process gave (W123): its answer, or why not, in pitwall's words, with its cost when it reported one. */
 export function readPlanOutcome(outcome: Exclude<CallOutcome, { kind: 'stopped' }>): { ok: true; answer: PlanAnswer; costUsd?: number } | { ok: false; reason: string; costUsd?: number } {
-  return readCall(outcome, parsePlanAnswer, 'plan status');
+  return readCall(
+    outcome,
+    (text) => {
+      const answer = parsePlanAnswer(text);
+      return answer === undefined ? { ok: false, reason: PLAN_ANSWER_INVALID } : { ok: true, answer };
+    },
+    'plan status',
+  );
 }
 
 /** The envelope's reasons, which name a recap call, for another kind of call. */
@@ -881,9 +900,9 @@ function envelopeReason(reason: string, noun: 'recap' | 'plan status'): string {
 
 function readCall<T>(
   outcome: Exclude<CallOutcome, { kind: 'stopped' }>,
-  parse: (text: string) => T | undefined,
+  parse: (text: string) => { ok: true; answer: T; repaired?: RecapRepair[] } | { ok: false; reason: string },
   noun: 'recap' | 'plan status',
-): { ok: true; answer: T; costUsd?: number } | { ok: false; reason: string; costUsd?: number } {
+): { ok: true; answer: T; repaired?: RecapRepair[]; costUsd?: number } | { ok: false; reason: string; costUsd?: number } {
   switch (outcome.kind) {
     case 'spawn-error':
       return { ok: false, reason: outcome.notFound ? `claude wasn't found, so pitwall couldn't make a ${noun}.` : `pitwall couldn't start claude for a ${noun}.` };
@@ -901,9 +920,9 @@ function readCall<T>(
         return { ok: false, reason: `The ${noun} call ${how}.`, ...cost };
       }
       if (!envelope.ok) return { ok: false, reason: envelopeReason(envelope.reason, noun), ...cost };
-      const answer = parse(envelope.text);
-      if (answer === undefined) return { ok: false, reason: noun === 'recap' ? ANSWER_INVALID : PLAN_ANSWER_INVALID, ...cost };
-      return { ok: true, answer, ...cost };
+      // The reason is the check that refused the answer, in pitwall's words, never the answer itself (W126).
+      const read = parse(envelope.text);
+      return { ...read, ...cost };
     }
   }
 }

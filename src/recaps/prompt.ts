@@ -231,57 +231,121 @@ function hasExactly(value: Record<string, unknown>, keys: readonly string[]): bo
   return own.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 }
 
-/**
- * A text the model wrote, or undefined when it's refused: not a string, empty once made plain, or
- * with a character that doesn't show as itself (W120's rule, hiddenCharacter(): a control but tab
- * and newline, a format, zero-width or tag character, and the like), which could carry what nobody
- * reading the strip sees. Tabs and line breaks become spaces.
- */
-function answerText(raw: unknown, plain: (text: string) => string): string | undefined {
-  if (typeof raw !== 'string' || hiddenCharacter(raw) !== undefined) return undefined;
+/** Which check refused a recap's answer (W126): a code for tests and the log, never the model's text. */
+export type RecapRefusal = 'text-around' | 'not-json' | 'keys' | 'todos' | 'waiting-on' | 'owner' | 'not-text' | 'empty-text' | 'hidden-character';
+
+/** What pitwall repaired in an answer instead of refusing it (W126). */
+export type RecapRepair = 'fence' | 'waiting-on';
+
+/** The error for each refusal, in pitwall's words: it says which check failed and never quotes the answer (W126). */
+export const RECAP_REFUSALS: Readonly<Record<RecapRefusal, string>> = {
+  'text-around': "The recap call's answer had text around the JSON object, which pitwall refuses.",
+  'not-json': "The recap call's answer wasn't valid JSON, which pitwall refuses.",
+  keys: "The recap call's answer had missing or extra fields, which pitwall refuses.",
+  todos: "The recap call's answer had a to-do list in the wrong shape, which pitwall refuses.",
+  'waiting-on': "The recap call's answer had a 'waiting on' value pitwall doesn't know, which it refuses.",
+  owner: "The recap call's answer had a to-do owner pitwall doesn't know, which it refuses.",
+  'not-text': "The recap call's answer had a field that wasn't text, which pitwall refuses.",
+  'empty-text': "The recap call's answer had an empty field, which pitwall refuses.",
+  'hidden-character': "The recap call's answer had a hidden character, which pitwall refuses.",
+};
+
+/** A text the model wrote, or why it's refused: not a string, empty once made plain, or with a hidden character. */
+function answerText(raw: unknown, plain: (text: string) => string): { text: string } | { refusal: RecapRefusal } {
+  if (typeof raw !== 'string') return { refusal: 'not-text' };
+  // W120's rule, hiddenCharacter(): a control but tab and newline, a format, zero-width or tag character,
+  // and the like, which could carry what nobody reading the strip sees. Tabs and line breaks become spaces.
+  if (hiddenCharacter(raw) !== undefined) return { refusal: 'hidden-character' };
   const text = plain(raw);
-  return text === '' ? undefined : text;
+  return text === '' ? { refusal: 'empty-text' } : { text };
 }
 
+/** `text` as the one JSON object it holds, or the refusal. A single code fence around it is stripped (`repaired`). */
+function objectText(text: string): { json: string; repaired: boolean } | { refusal: RecapRefusal } {
+  let json = text.trim();
+  let repaired = false;
+  // One Markdown code fence, ```json or ```, around nothing but the object (W126). Anything else
+  // around it, a second fence included, stays refused.
+  const fence = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n?[ \t]*```$/i.exec(json);
+  if (fence?.[1] !== undefined && !fence[1].includes('```')) {
+    json = fence[1].trim();
+    repaired = true;
+  }
+  if (!json.startsWith('{') || !json.endsWith('}')) return { refusal: 'text-around' };
+  return { json, repaired };
+}
+
+/** The answer, or the check that refused it; `repaired` lists what pitwall fixed instead of refusing (W126). */
+export type RecapReading = { ok: true; answer: RecapAnswer; repaired: RecapRepair[] } | { ok: false; refusal: RecapRefusal };
+
 /**
- * The model's answer, read strictly: after trimming, exactly one JSON object with summary, todos,
- * waitingOn and title and no others; todos an array of objects with exactly text and owner, owner
- * one of RECAP_TODO_OWNERS, only the first RECAP_TODOS_MAX kept; waitingOn one of RECAP_WAITING_ON;
- * every text a string, not empty once made plain, without a character W120's rule refuses. And it
- * must agree with itself: 'nothing' when there's no to-do, and 'you' only with a to-do for you, so
- * Needs you always has a to-do to show. Undefined for anything else, a code fence or a second object
- * included.
+ * The model's answer, read strictly: after trimming, exactly one JSON object (one surrounding code
+ * fence is stripped) with summary, todos, waitingOn and title and no others; todos an array of
+ * objects with exactly text and owner, owner one of RECAP_TODO_OWNERS, only the first RECAP_TODOS_MAX
+ * kept; waitingOn one of RECAP_WAITING_ON; every text a string, not empty once made plain, without a
+ * character W120's rule refuses. Anything else is refused with the check that refused it
+ * (RecapRefusal), a code fence with other text or a second object included.
+ *
+ * waitingOn and the to-dos must agree, so Needs you always has a to-do for you to show: 'nothing'
+ * when there are no to-dos, 'you' only with a to-do for you, and not 'nothing' beside a to-do for you
+ * (#123's review). Where they don't, pitwall derives waitingOn from the to-dos instead of refusing
+ * the answer (W126): 'nothing' with none, 'you' with one for you, and otherwise the first to-do's
+ * owner. Every other value the model chose stays.
  */
-export function parseRecapAnswer(text: string): RecapAnswer | undefined {
-  const trimmed = text.trim();
-  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return undefined;
+export function readRecapAnswer(text: string): RecapReading {
+  const object = objectText(text);
+  if ('refusal' in object) return { ok: false, refusal: object.refusal };
   let parsed: unknown;
   try {
-    parsed = JSON.parse(trimmed);
+    parsed = JSON.parse(object.json);
   } catch {
-    return undefined;
+    return { ok: false, refusal: 'not-json' };
   }
-  if (!isRecord(parsed) || !hasExactly(parsed, ANSWER_KEYS)) return undefined;
+  if (!isRecord(parsed) || !hasExactly(parsed, ANSWER_KEYS)) return { ok: false, refusal: 'keys' };
   const { waitingOn, todos: rawTodos } = parsed;
-  if (typeof waitingOn !== 'string' || !(RECAP_WAITING_ON as readonly string[]).includes(waitingOn)) return undefined;
-  if (!Array.isArray(rawTodos)) return undefined;
+  if (typeof waitingOn !== 'string' || !(RECAP_WAITING_ON as readonly string[]).includes(waitingOn)) return { ok: false, refusal: 'waiting-on' };
+  if (!Array.isArray(rawTodos)) return { ok: false, refusal: 'todos' };
   const summary = answerText(parsed.summary, (raw) => plainField(raw));
+  if ('refusal' in summary) return { ok: false, refusal: summary.refusal };
   const title = answerText(parsed.title, plainTitle);
-  if (summary === undefined || title === undefined) return undefined;
+  if ('refusal' in title) return { ok: false, refusal: title.refusal };
   const todos: RecapTodo[] = [];
   for (const raw of rawTodos.slice(0, RECAP_TODOS_MAX)) {
-    if (!isRecord(raw) || !hasExactly(raw, TODO_KEYS)) return undefined;
+    if (!isRecord(raw) || !hasExactly(raw, TODO_KEYS)) return { ok: false, refusal: 'todos' };
     const owner = raw.owner;
-    if (typeof owner !== 'string' || !(RECAP_TODO_OWNERS as readonly string[]).includes(owner)) return undefined;
+    if (typeof owner !== 'string' || !(RECAP_TODO_OWNERS as readonly string[]).includes(owner)) return { ok: false, refusal: 'owner' };
     const todoText = answerText(raw.text, (each) => plainField(each));
-    if (todoText === undefined) return undefined;
-    todos.push({ text: todoText, owner: owner as RecapTodoOwner });
+    if ('refusal' in todoText) return { ok: false, refusal: todoText.refusal };
+    todos.push({ text: todoText.text, owner: owner as RecapTodoOwner });
   }
-  if (todos.length === 0 && waitingOn !== 'nothing') return undefined;
-  if (waitingOn === 'you' && !todos.some((todo) => todo.owner === 'you')) return undefined;
-  // And not 'nothing' beside a to-do for you, which would say "2 for you" in the strip but nothing in Needs you (#123's review).
-  if (waitingOn === 'nothing' && todos.some((todo) => todo.owner === 'you')) return undefined;
-  return { summary, todos, waitingOn: waitingOn as RecapWaitingOn, title };
+  const repaired: RecapRepair[] = object.repaired ? ['fence'] : [];
+  const agreed = agreedWaitingOn(waitingOn as RecapWaitingOn, todos);
+  if (agreed !== waitingOn) repaired.push('waiting-on');
+  return { ok: true, answer: { summary: summary.text, todos, waitingOn: agreed, title: title.text }, repaired };
+}
+
+/** What a to-do's owner is waiting on, as waitingOn says it: the session itself waits on nothing. */
+const WAITING_ON_FOR_OWNER: Readonly<Record<RecapTodoOwner, RecapWaitingOn>> = {
+  you: 'you',
+  session: 'nothing',
+  CI: 'CI',
+  'someone else': 'someone else',
+};
+
+/** The model's waitingOn where it agrees with the to-dos, otherwise the one the to-dos give (W126). */
+function agreedWaitingOn(waitingOn: RecapWaitingOn, todos: readonly RecapTodo[]): RecapWaitingOn {
+  const first = todos[0];
+  if (first === undefined) return 'nothing';
+  const forYou = todos.some((todo) => todo.owner === 'you');
+  if (waitingOn === 'nothing') return forYou ? 'you' : waitingOn;
+  if (waitingOn === 'you' && !forYou) return WAITING_ON_FOR_OWNER[first.owner];
+  return waitingOn;
+}
+
+/** readRecapAnswer() without the reason: the answer, or undefined. */
+export function parseRecapAnswer(text: string): RecapAnswer | undefined {
+  const reading = readRecapAnswer(text);
+  return reading.ok ? reading.answer : undefined;
 }
 
 /** What the model answered for a plan status (W123), as pitwall keeps it: every text plain, within its limits. */
@@ -312,7 +376,7 @@ export function parsePlanAnswer(text: string): PlanAnswer | undefined {
   if (parsed.found === false) return hasExactly(parsed, ['found']) ? { found: false } : undefined;
   if (parsed.found !== true || !hasExactly(parsed, PLAN_FOUND_KEYS)) return undefined;
   const plan = answerText(parsed.plan, (raw) => plainField(raw));
-  if (plan === undefined) return undefined;
+  if ('refusal' in plan) return undefined;
   const rawChanges = parsed.changes;
   if (typeof rawChanges !== 'string' || hiddenCharacter(rawChanges) !== undefined) return undefined;
   const changes = plainField(rawChanges);
@@ -324,10 +388,10 @@ export function parsePlanAnswer(text: string): PlanAnswer | undefined {
     const state = raw.state;
     if (typeof state !== 'string' || !(PLAN_ITEM_STATES as readonly string[]).includes(state)) return undefined;
     const itemText = answerText(raw.text, (each) => plainField(each, PLAN_ITEM_MAX));
-    if (itemText === undefined) return undefined;
-    items.push({ text: itemText, state: state as PlanItemState });
+    if ('refusal' in itemText) return undefined;
+    items.push({ text: itemText.text, state: state as PlanItemState });
   }
-  return { found: true, plan, items, ...(changes === '' ? {} : { changes }) };
+  return { found: true, plan: plan.text, items, ...(changes === '' ? {} : { changes }) };
 }
 
 /** What `--output-format json` printed, read strictly. */
@@ -340,8 +404,6 @@ export type RecapEnvelope =
 export const ENVELOPE_UNREADABLE = "The recap call printed something pitwall couldn't read.";
 /** Claude Code said the call failed. */
 export const CALL_FAILED = 'Claude Code said the recap call failed.';
-/** The answer wasn't the JSON object the prompt asks for. */
-export const ANSWER_INVALID = "The recap call's answer wasn't the JSON pitwall asked for.";
 /** A plan status's answer wasn't the JSON object its prompt asks for (W123). */
 export const PLAN_ANSWER_INVALID = "The plan status call's answer wasn't the JSON pitwall asked for.";
 
