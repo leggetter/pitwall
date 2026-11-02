@@ -90,6 +90,7 @@ import {
   removePath,
   resumePath,
   SPAWN_PATH,
+  SPAWN_PROMPT_MAX,
   stopPath,
   type ActionResult,
   type ResumeResult,
@@ -156,7 +157,7 @@ export const DEFAULT_MAX_CONCURRENT_COMMANDS = 4;
 
 /** The largest spawn body accepted. A 16,384-character prompt is at most about 96 KiB of JSON. */
 export const MAX_SPAWN_BODY_BYTES = 128 * 1024;
-export const MAX_PROMPT_LENGTH = 16_384;
+export const MAX_PROMPT_LENGTH = SPAWN_PROMPT_MAX;
 export const MAX_CWD_LENGTH = 4096;
 
 /**

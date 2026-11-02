@@ -50,18 +50,26 @@ describe('the approval queue', () => {
     queue.cancelAll('done');
   });
 
-  it('lets one spawn_session call through per pass, by tool_use_id and exactly the input allowed, within PASS_MS', () => {
+  it('lets one spawn_session call through per pass, keyed on exactly the input allowed, within PASS_MS, and by its tool_use_id when the call has one', () => {
     let now = NOW;
     const queue = createApprovalQueue({ now: () => now });
-    queue.grantPass('toolu_a', { directory: '/made-up/work/repo', prompt: 'Go.' });
-    expect(queue.takePass(undefined, { directory: '/made-up/work/repo', prompt: 'Go.' })).toBeUndefined();
-    expect(queue.takePass('toolu_b', { directory: '/made-up/work/repo', prompt: 'Go.' })).toBeUndefined();
-    // Keys in another order are the same input.
-    expect(queue.takePass('toolu_a', { prompt: 'Go.', directory: '/made-up/work/repo' })).toEqual({ directory: '/made-up/work/repo', prompt: 'Go.' });
-    expect(queue.takePass('toolu_a', { directory: '/made-up/work/repo', prompt: 'Go.' })).toBeUndefined();
+    const input = { directory: '/made-up/work/repo', prompt: 'Go.' };
+    queue.grantPass('toolu_a', input);
+    // Another call's id, or other arguments: nothing, and the pass stays.
+    expect(queue.takePass('toolu_b', input)).toBeUndefined();
+    expect(queue.takePass(undefined, { ...input, prompt: 'Other.' })).toBeUndefined();
+    // Keys in another order are the same input; with no id, the arguments alone.
+    expect(queue.takePass(undefined, { prompt: 'Go.', directory: '/made-up/work/repo' })).toEqual(input);
+    expect(queue.takePass(undefined, input)).toBeUndefined();
+    expect(queue.takePass('toolu_a', input)).toBeUndefined();
+    // With its id: spent even when the arguments differ.
     queue.grantPass('toolu_c', { directory: '/x', prompt: 'Go.' });
     expect(queue.takePass('toolu_c', { directory: '/x', prompt: 'Other.' })).toBeUndefined();
-    expect(queue.takePass('toolu_c', { directory: '/x', prompt: 'Go.' })).toBeUndefined();
+    expect(queue.takePass(undefined, { directory: '/x', prompt: 'Go.' })).toBeUndefined();
+    // Taken back unused, and run out.
+    const revoked = queue.grantPass('toolu_e', input);
+    queue.revokePass(revoked);
+    expect(queue.takePass(undefined, input)).toBeUndefined();
     queue.grantPass('toolu_d', { directory: '/x', prompt: 'Go.' });
     now += PASS_MS;
     expect(queue.takePass('toolu_d', { directory: '/x', prompt: 'Go.' })).toBeUndefined();

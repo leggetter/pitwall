@@ -14,8 +14,10 @@
 //
 // Two more things live here, both for one call or one message:
 //
-//   passes     a spawn_session call runs only for a tool_use_id an approval just allowed, with the
-//              input it allowed, once, within PASS_MS (grantPass(), takePass())
+//   passes     a spawn_session call runs only with exactly the input an approval just allowed: each
+//              allow adds one pass, keyed on that input in canonical JSON (the directory's real path,
+//              the name, the prompt), each call takes one, and a pass lasts PASS_MS. When the call
+//              carries Claude Code's tool_use_id, it must be the approval's too (grantPass(), takePass())
 //   notes      after an Edit, what was actually sent, for pitwall to put before your next message to
 //              the supervisor, so it isn't left believing its own text went (note(), takeNotes())
 //
@@ -70,9 +72,15 @@ export interface ApprovalQueue {
   settle(id: string, answer: PermissionAnswer): boolean;
   /** Denies every card with `message`. */
   cancelAll(message: string): void;
-  /** Lets one spawn_session call with this tool_use_id run, with exactly this input. */
-  grantPass(toolUseId: string, input: Record<string, unknown>): void;
-  /** Takes the pass for a call, whatever its input; the input it allowed when `args` match it, else undefined. */
+  /** Lets one spawn_session call with exactly this input run, within PASS_MS. Returns what revokePass() takes. */
+  grantPass(toolUseId: string, input: Record<string, unknown>): number;
+  /** Takes back a pass grantPass() gave, unused. */
+  revokePass(pass: number): void;
+  /**
+   * Takes one pass for a call with these arguments, and returns the input it allowed, or undefined
+   * when none matches. With a tool_use_id, only a pass from that call's approval matches, and that
+   * approval's pass is spent even when the arguments differ.
+   */
   takePass(toolUseId: string | undefined, args: Record<string, unknown>): Record<string, unknown> | undefined;
   /** Keeps a note for the supervisor's next message from you. */
   note(text: string): void;
@@ -108,7 +116,12 @@ export function createApprovalQueue(options: ApprovalQueueOptions = {}): Approva
   const now = options.now ?? Date.now;
   const randomId = options.randomId ?? (() => randomBytes(12).toString('hex'));
   const entries = new Map<string, Entry>();
-  const passes = new Map<string, { input: string; until: number }>();
+  const passes: { id: number; toolUseId: string; input: string; until: number }[] = [];
+  let passIds = 0;
+  const dropExpired = () => {
+    const at = now();
+    for (let index = passes.length - 1; index >= 0; index--) if (passes[index]!.until <= at) passes.splice(index, 1);
+  };
   const notes: string[] = [];
   const listeners = new Set<() => void>();
   let changes = 0;
@@ -182,18 +195,30 @@ export function createApprovalQueue(options: ApprovalQueueOptions = {}): Approva
       for (const id of [...entries.keys()]) settle(id, { behavior: 'deny', message });
     },
     grantPass(toolUseId, input) {
-      const at = now();
-      for (const [key, pass] of passes) if (pass.until <= at) passes.delete(key);
-      passes.set(toolUseId, { input: canonicalJson(input), until: at + PASS_MS });
+      dropExpired();
+      const id = ++passIds;
+      passes.push({ id, toolUseId, input: canonicalJson(input), until: now() + PASS_MS });
+      return id;
+    },
+    revokePass(pass) {
+      const index = passes.findIndex((each) => each.id === pass);
+      if (index !== -1) passes.splice(index, 1);
     },
     takePass(toolUseId, args) {
-      if (toolUseId === undefined) return undefined;
-      const pass = passes.get(toolUseId);
-      if (pass === undefined) return undefined;
-      // Taken whatever happens next: one call per approval.
-      passes.delete(toolUseId);
-      if (pass.until <= now() || pass.input !== canonicalJson(args)) return undefined;
-      return JSON.parse(pass.input) as Record<string, unknown>;
+      dropExpired();
+      const wanted = canonicalJson(args);
+      if (toolUseId !== undefined) {
+        const index = passes.findIndex((each) => each.toolUseId === toolUseId);
+        if (index === -1) return undefined;
+        // Spent whatever its arguments: one call per approval.
+        const [pass] = passes.splice(index, 1);
+        return pass!.input === wanted ? (JSON.parse(pass!.input) as Record<string, unknown>) : undefined;
+      }
+      // Without Claude Code's tool_use_id, which isn't documented: the oldest pass for exactly these arguments.
+      const index = passes.findIndex((each) => each.input === wanted);
+      if (index === -1) return undefined;
+      const [pass] = passes.splice(index, 1);
+      return JSON.parse(pass!.input) as Record<string, unknown>;
     },
     note(text) {
       notes.push(text);

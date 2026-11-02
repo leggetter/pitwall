@@ -2,7 +2,8 @@
 // each thing it wants to do that waits on your click, oldest first, above its message box. A message to
 // a session, or a new session in a directory, with the text it would send, as plain text in <bdi>,
 // never markdown, since it's the model's and may quote a transcript; when it runs out; and Send, Edit
-// and Don't send. Edit opens the text in place, up to SUPERVISOR_MESSAGE_MAX, with Send edit and Cancel.
+// and Don't send. Edit opens the text in place, up to SUPERVISOR_MESSAGE_MAX for a message and
+// SPAWN_PROMPT_MAX for a new session's first prompt (editLimit()), with Send edit and Cancel.
 //
 // - Each decision POSTs a SupervisorDecision to supervisorApprovalPath(). The card stays busy until the
 //   snapshot drops it, since that's when pitwall has acted, or STUCK_MS passes. A failure is an inline
@@ -14,7 +15,7 @@
 //   in the editor, and Cancel or Escape back on Edit.
 
 import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
-import type { SupervisorApproval, SupervisorDecision } from '../../../src/shared/protocol.js';
+import { SPAWN_PROMPT_MAX, type SupervisorApproval, type SupervisorDecision } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { useAutoGrow } from '../autoGrow.js';
 import { plainText } from '../format.js';
@@ -34,8 +35,13 @@ export const STUCK_TEXT = "pitwall took your answer, but this card is still wait
 
 /** The editor's Send edit while it can't send, for its tooltip. */
 export const EDIT_EMPTY = 'Type the text to send, or Cancel to keep the draft.';
-export const editTooLong = (over: number) =>
-  `Shorten it by ${over.toLocaleString('en')} ${over === 1 ? 'character' : 'characters'} to send it: the limit is ${SUPERVISOR_TEXT_MAX.toLocaleString('en')}.`;
+export const editTooLong = (over: number, limit: number = SUPERVISOR_TEXT_MAX) =>
+  `Shorten it by ${over.toLocaleString('en')} ${over === 1 ? 'character' : 'characters'} to send it: the limit is ${limit.toLocaleString('en')}.`;
+
+/** The longest edit of each kind: a message's, SUPERVISOR_MESSAGE_MAX; a new session's first prompt, SPAWN_PROMPT_MAX (W115). */
+export function editLimit(kind: SupervisorApproval['kind']): number {
+  return kind === 'spawn' ? SPAWN_PROMPT_MAX : SUPERVISOR_TEXT_MAX;
+}
 
 /** What each kind's text is, as the card labels it. */
 const TEXT_LABELS = { message: 'Message', spawn: 'First prompt' } as const;
@@ -191,14 +197,15 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
   };
 
   const length = editing?.length ?? 0;
-  const tooLong = length > SUPERVISOR_TEXT_MAX;
+  const limit = editLimit(approval.kind);
+  const tooLong = length > limit;
   const empty = (editing ?? '').trim() === '';
-  const editOff = phase.kind !== 'idle' ? undefined : tooLong ? editTooLong(length - SUPERVISOR_TEXT_MAX) : empty ? EDIT_EMPTY : undefined;
+  const editOff = phase.kind !== 'idle' ? undefined : tooLong ? editTooLong(length - limit, limit) : empty ? EDIT_EMPTY : undefined;
   const sendEdit = () => {
     if (editing === undefined || editOff !== undefined) return;
     void decide({ decision: 'edit', text: editing });
   };
-  const count = characterCount(length, SUPERVISOR_TEXT_MAX);
+  const count = characterCount(length, limit);
 
   const busy = phase.kind !== 'idle';
   const busyWith = (decision: SupervisorDecision['decision']) => phase.kind !== 'idle' && phase.decision === decision;
