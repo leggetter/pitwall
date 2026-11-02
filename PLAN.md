@@ -890,6 +890,10 @@ Small improvements that aren't needed now, gathered from reviews and try-outs so
   - **Several hung mounts** at different paths could take all of libuv's four worker threads; documented in `repos.ts`, not guarded (W117).
 - **Processes**
   - **`claude agents`, stop, remove, `claude --version` and the editors** still run in the shared temp directory; they could get a private one, as gh does (W117).
+- **Supervisor**
+  - **A spawn's directory, by its real path,** isn't checked for invisible characters, so a symlink to a folder named with a zero-width space passes; the card shows it, its tooltip doesn't (W116's re-check).
+  - **End session refuses any interactive session named `pitwall-supervisor`,** wherever it runs, unlike the index's folder rule (W116's re-check).
+  - **`--max-turns 30`** hasn't been seen live; it needs a 30-step turn (W120).
 - **Recaps**
   - **Keep recaps across restarts,** under `~/.pitwall`, so a restart doesn't recap every session again (spike 010).
   - **`--effort low` for recaps,** half the time, if quality holds (spike 010). Now a setting (W119: `work.recaps.effort`, or Preferences); measuring its quality is what's left.
