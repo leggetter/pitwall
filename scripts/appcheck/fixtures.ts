@@ -26,6 +26,10 @@ import type {
   SpawnRequest,
   SubagentList,
   SubagentSummary,
+  SupervisorApproval,
+  SupervisorDecision,
+  SupervisorState,
+  SupervisorStatus,
 } from '../../src/shared/protocol.js';
 
 export const CODE = '/Users/example/code';
@@ -237,6 +241,32 @@ export const RECAPPED = {
   claudeCode: NAMES.running3,
 } as const;
 
+/**
+ * The supervisor (M5, W114): 'none', the default, as with --no-supervisor, so the parts before W114
+ * see the repo list and the page as they did; otherwise its status as the page finds it. A message
+ * sent to it while it's off or idle starts a made-up turn: 'starting' for a moment when it was off,
+ * then 'working', with your message in its conversation, then 'idle', with its made-up reply.
+ */
+export type SupervisorWorldState = 'none' | SupervisorStatus;
+
+/** How long a made-up supervisor turn's steps take, so the page shows each one. */
+export const SUPERVISOR_STEP_MS = 700;
+
+/** What a held supervisor's made-up error says, naming the claude stop command, as the contract has it. */
+export const SUPERVISOR_HELD_ERROR =
+  "A background session is running the supervisor's conversation, so pitwall can't resume it. Run `claude stop pt114bg1` to hand it back, then press Start. pitwall won't stop it for you.";
+export const SUPERVISOR_FAILED_ERROR = 'The supervisor stopped as it started (exit code 1). Press Start to try again.';
+
+/** The made-up reply each message gets, in markdown, naming made-up sessions and example/* repos. */
+export const SUPERVISOR_REPLY =
+  'Two sessions need you:\n\n1. **pitwall-test-docs** waits on a permission prompt to run the made-up docs build.\n2. **pitwall-test-review** asked whether to retry the failed batch on `example/api-server` now or tonight.\n\nNothing else needs you.';
+
+/** Its made-up drafts, oldest first: a message to a session, and a new session for a PR. */
+export const SUPERVISOR_APPROVALS = {
+  message: 'pt114-approval-message',
+  spawn: 'pt114-approval-spawn',
+} as const;
+
 /** The cursor of SUBAGENTS.drafting's newest page, for its Load earlier. */
 const SUBAGENT_CURSOR = 'pt77-older';
 
@@ -254,6 +284,12 @@ export interface ResetOptions {
   labels?: Readonly<Record<string, string>>;
   /** What recaps say (W111): 'off', as with --no-recaps, by default. */
   recaps?: RecapsState;
+  /** The supervisor (W114): 'none', as with --no-supervisor, by default. */
+  supervisor?: SupervisorWorldState;
+  /** Whether it has made-up drafts waiting on you, a message and a new session (W114). */
+  approvals?: boolean;
+  /** Whether its conversation has made-up turns already, with a page behind Load earlier, or none, a new one. */
+  supervisorHistory?: boolean;
 }
 
 /** The made-up index: a snapshot, conversations, and what POSTs have changed since the last reset. */
@@ -288,6 +324,15 @@ export class World {
   #cloneFails = false;
   /** PRs listed with another relation than their own until the next reset, by key (W108): `notYours()`. */
   #relations = new Map<string, PullRequestRelation>();
+  /** The supervisor (W114): its status, drafts, conversation and cost, and its timers' generation. */
+  #supervisor: SupervisorWorldState = 'none';
+  #approvals: SupervisorApproval[] = [];
+  #supervisorEntries: ConversationEntry[] = [];
+  #supervisorOlder: ConversationEntry[] = [];
+  #supervisorCost = 0;
+  #supervisorTurnAt: string | undefined;
+  /** Each made-up turn's number: Stop and a reset end the one running, so its later steps do nothing. */
+  #supervisorTurn = 0;
 
   constructor() {
     this.reset();
@@ -320,6 +365,155 @@ export class World {
     this.#recapping = new Set();
     this.#recapErrorAt = this.#now - 3 * MINUTE;
     this.#recaps = new Map(this.#recapsState === 'off' ? [] : this.#baseRecaps().map((each) => [this.byName(each.name).sessionId, each.recap]));
+    this.#supervisorTurn += 1;
+    this.#supervisor = options.supervisor ?? 'none';
+    this.#approvals = options.approvals ? this.#baseApprovals() : [];
+    const history = options.supervisorHistory ?? (this.#supervisor !== 'none' && this.#supervisor !== 'off');
+    this.#supervisorEntries = history ? this.#supervisorTurns() : [];
+    this.#supervisorOlder = history ? this.#supervisorOlderTurns() : [];
+    this.#supervisorCost = history ? 0.0425 : 0;
+    this.#supervisorTurnAt = history ? this.#ago(4) : undefined;
+  }
+
+  // --- The supervisor (W114) ---------------------------------------------------------------------
+
+  /** Its state, as the snapshot carries it: absent with 'none', as with --no-supervisor. */
+  supervisorState(): SupervisorState | undefined {
+    if (this.#supervisor === 'none') return undefined;
+    const state: SupervisorState = { status: this.#supervisor, approvals: [...this.#approvals] };
+    if (this.#supervisorEntries.length > 0) state.sessionId = 'pt114-supervisor-session';
+    if (this.#supervisor === 'held') state.error = SUPERVISOR_HELD_ERROR;
+    if (this.#supervisor === 'failed') state.error = SUPERVISOR_FAILED_ERROR;
+    if (this.#supervisorTurnAt !== undefined) state.lastTurnAt = this.#supervisorTurnAt;
+    if (this.#supervisorCost > 0) state.costUsd = this.#supervisorCost;
+    return state;
+  }
+
+  /** Its conversation's newest page, or the older one behind Load earlier; undefined for none yet, a 404, or a cursor it doesn't know. */
+  supervisorConversation(before: string | undefined): ConversationPage | undefined {
+    if (this.#supervisor === 'none' || this.#supervisorEntries.length === 0) return undefined;
+    const sessionId = 'pt114-supervisor-session';
+    if (before === undefined) return { sessionId, entries: [...this.#supervisorEntries], ...(this.#supervisorOlder.length > 0 ? { before: 'pt114-older' } : {}) };
+    return before === 'pt114-older' ? { sessionId, entries: [...this.#supervisorOlder] } : undefined;
+  }
+
+  /**
+   * A message to it (SUPERVISOR_MESSAGE_PATH), as the contract answers: 'refused' with none or while
+   * it's held (409); otherwise taken, and `steps`, which the server runs a moment apart: starting, if it
+   * was off or failed, then working with your message in its conversation, then idle with its reply.
+   */
+  supervisorMessage(text: string): { result: 'refused' } | { result: 'taken'; steps: Array<() => void> } {
+    if (this.#supervisor === 'none' || this.#supervisor === 'held') return { result: 'refused' };
+    const steps: Array<() => void> = [];
+    if (this.#supervisor === 'off' || this.#supervisor === 'failed') {
+      this.#supervisor = 'starting';
+    }
+    const turn = ++this.#supervisorTurn;
+    const live = () => turn === this.#supervisorTurn;
+    steps.push(() => {
+      if (!live()) return;
+      this.#supervisor = 'working';
+      this.#supervisorEntries.push({ kind: 'user', text, at: new Date().toISOString() });
+      this.#supervisorEntries.push({ kind: 'tool', text: 'mcp__pitwall__list_sessions', toolName: 'mcp__pitwall__list_sessions', at: new Date().toISOString() });
+    });
+    steps.push(() => {
+      if (!live()) return;
+      this.#supervisorEntries.push({ kind: 'assistant', text: SUPERVISOR_REPLY, markdown: true, at: new Date().toISOString() });
+      this.#supervisor = 'idle';
+      this.#supervisorTurnAt = new Date().toISOString();
+      this.#supervisorCost += 0.0099;
+    });
+    return { result: 'taken', steps };
+  }
+
+  /** Start (SUPERVISOR_START_PATH): 'refused' with none or while it's held; otherwise starting, then idle a moment later. */
+  supervisorStart(): { result: 'refused' } | { result: 'taken'; steps: Array<() => void> } {
+    if (this.#supervisor === 'none' || this.#supervisor === 'held') return { result: 'refused' };
+    if (this.#supervisor !== 'off' && this.#supervisor !== 'failed') return { result: 'taken', steps: [] };
+    this.#supervisor = 'starting';
+    return {
+      result: 'taken',
+      steps: [
+        () => {
+          this.#supervisor = 'idle';
+        },
+      ],
+    };
+  }
+
+  /** Stop (SUPERVISOR_INTERRUPT_PATH): its running turn stops, with Claude Code's notice. */
+  supervisorInterrupt(): boolean {
+    if (this.#supervisor !== 'working') return false;
+    this.#supervisorTurn += 1;
+    this.#supervisorEntries.push({ kind: 'notice', text: '[Request interrupted by user]', at: new Date().toISOString() });
+    this.#supervisor = 'idle';
+    this.#supervisorTurnAt = new Date().toISOString();
+    return true;
+  }
+
+  /** A decision for one approval (supervisorApprovalPath()): 'missing' for one it doesn't have (404), else it goes, `done` a moment later, as pitwall acts on it. */
+  supervisorDecide(id: string, decision: SupervisorDecision): { result: 'missing' } | { result: 'taken'; done: () => void } {
+    const approval = this.#approvals.find((each) => each.id === id);
+    if (!approval) return { result: 'missing' };
+    return {
+      result: 'taken',
+      done: () => {
+        this.#approvals = this.#approvals.filter((each) => each.id !== id);
+        const what = decision.decision === 'decline' ? "You didn't send it." : decision.decision === 'edit' ? 'You sent your edit.' : 'You sent it.';
+        this.#supervisorEntries.push({ kind: 'notice', text: `${approval.kind === 'message' ? `Message to ${approval.to}` : `New session in ${approval.directory}`}: ${what}`, at: new Date().toISOString() });
+        // Told what you decided, it takes a short turn, so its last turn moves.
+        this.#supervisorTurnAt = new Date().toISOString();
+      },
+    };
+  }
+
+  /** Puts the supervisor in `status`, as its process would, for a step that needs it there. */
+  setSupervisor(status: Exclude<SupervisorWorldState, 'none'>): void {
+    this.#supervisor = status;
+  }
+
+  #baseApprovals(): SupervisorApproval[] {
+    return [
+      {
+        id: SUPERVISOR_APPROVALS.message,
+        kind: 'message',
+        to: NAMES.asked,
+        text: 'Please retry the made-up failed batch on example/api-server tonight, in the nightly window, not now. Tell me here when it has run.',
+        at: this.#ago(5),
+        expiresAt: this.#ago(-24),
+      },
+      {
+        id: SUPERVISOR_APPROVALS.spawn,
+        kind: 'spawn',
+        directory: DEMO_APP,
+        name: 'pr-57',
+        prompt: 'Review https://github.com/example/demo-app/pull/57. Say what blocks it, if anything.',
+        at: this.#ago(2),
+        expiresAt: this.#ago(-27),
+      },
+    ];
+  }
+
+  #supervisorTurns(): ConversationEntry[] {
+    return [
+      { kind: 'user', text: "What's running, in a sentence each?", at: this.#ago(6) },
+      { kind: 'tool', text: 'mcp__pitwall__list_sessions', toolName: 'mcp__pitwall__list_sessions', at: this.#ago(5.9) },
+      {
+        kind: 'assistant',
+        markdown: true,
+        at: this.#ago(5.8),
+        text: '- **pitwall-test-nightly-export** is running the made-up export tests.\n- **pitwall-test-retry-worker** is waiting on CI for its backoff change on `example/api-server`.\n- **pitwall-test-index-rebuild** is half way through the made-up index rebuild.',
+      },
+      { kind: 'user', text: 'Ask pitwall-test-review to retry the batch tonight, and start a session to review example/demo-app#57.', at: this.#ago(5.2) },
+      { kind: 'assistant', markdown: true, at: this.#ago(5), text: "I've drafted both for you. They're in the cards below, and go only when you send them." },
+    ];
+  }
+
+  #supervisorOlderTurns(): ConversationEntry[] {
+    return [
+      { kind: 'user', text: 'Which sessions need me, and why?', at: this.#ago(40) },
+      { kind: 'assistant', markdown: true, at: this.#ago(39.8), text: 'Only **pitwall-test-docs**: it waits on a permission prompt.' },
+    ];
   }
 
   /**
@@ -358,6 +552,7 @@ export class World {
       groups: named.filter((group) => group.sessions.length > 0),
       source: { ok: true },
       ...(health ? { recaps: health } : {}),
+      ...(this.#supervisor === 'none' ? {} : { supervisor: this.supervisorState() }),
     };
   }
 

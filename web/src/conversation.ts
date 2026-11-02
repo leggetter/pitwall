@@ -6,6 +6,7 @@ import {
   CONVERSATION_STALE_STATUS,
   conversationPath,
   subagentConversationPath,
+  supervisorConversationPath,
   type AskedQuestion,
   type ConversationEntry,
   type ConversationEntryKind,
@@ -104,7 +105,18 @@ export function getSubagentConversation(api: ApiClient, sessionId: string, agent
   return getPage(api, subagentConversationPath(sessionId, agentId, before), sessionId, signal);
 }
 
-async function getPage(api: ApiClient, path: string, sessionId: string, signal: AbortSignal | undefined): Promise<ConversationResult> {
+/**
+ * One page of the supervisor's conversation (M5, W114), as getConversation() pages a session's: the
+ * newest, or the one before `before`. Its page names the supervisor's own session id, which the page
+ * may not know yet, as before its first turn, so any id the page names is taken. A 404, as before it
+ * has a transcript, is 'not-found': a new conversation.
+ */
+export function getSupervisorConversation(api: ApiClient, before?: string, signal?: AbortSignal): Promise<ConversationResult> {
+  return getPage(api, supervisorConversationPath(before), undefined, signal);
+}
+
+/** `sessionId` undefined takes the id the page names, whatever it is, as the supervisor's does. */
+async function getPage(api: ApiClient, path: string, sessionId: string | undefined, signal: AbortSignal | undefined): Promise<ConversationResult> {
   const result = await getRetryingBusy(api, path, signal);
   if (result.kind === 'unauthorized') return { kind: 'unauthorized' };
   if (result.kind === 'failed') {
@@ -112,7 +124,8 @@ async function getPage(api: ApiClient, path: string, sessionId: string, signal: 
     if (result.status === STALE_CURSOR_STATUS) return { kind: 'stale' };
     return failedResult(result);
   }
-  const page = asConversationPage(result.body, sessionId);
+  const named = typeof result.body === 'object' && result.body !== null ? (result.body as Record<string, unknown>).sessionId : undefined;
+  const page = asConversationPage(result.body, sessionId ?? (typeof named === 'string' ? named : ''));
   return page ? { kind: 'ok', page } : { kind: 'failed' };
 }
 

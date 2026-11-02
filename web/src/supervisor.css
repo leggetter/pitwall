@@ -1,0 +1,265 @@
+/* The supervisor's view (docs/design-system.md, 4: Supervisor), in a session view's frame: its header's
+   status, cost and alerts, the new conversation's empty state, its draft cards above the message box,
+   and the box itself, which is the session view's (relay.css). Uses the tokens in tokens.css. */
+
+/* The heading's icon, before "Supervisor", centred on its line. */
+.supervisor-title {
+  align-items: center;
+  gap: var(--pw-space-2);
+}
+
+.supervisor-title-icon {
+  flex: none;
+  color: var(--pw-text-subtle);
+}
+
+/* "$0.04 this run", meta, with its info button's 24 px box overlapping the 20 px line. */
+.supervisor-cost {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pw-space-0-5);
+  font-variant-numeric: tabular-nums;
+}
+
+.supervisor-cost .session-view-info {
+  margin-block: calc(-1 * var(--pw-space-0-5));
+}
+
+/* Start, while it's off: at the end of the meta line, the line's own height. */
+.supervisor-start {
+  display: inline-flex;
+  margin-left: auto;
+  margin-block: calc(-1 * var(--pw-space-0-5));
+}
+
+.supervisor-note {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+/* The held or failed alert's text, then the stop command on a line of its own. */
+.supervisor-error {
+  overflow-wrap: anywhere;
+}
+
+.supervisor-command {
+  display: flex;
+  margin-top: var(--pw-space-1);
+  min-width: 0;
+}
+
+/* The new conversation's empty state: centred in the body, as an empty state is in its pane. */
+.supervisor-empty {
+  display: flex;
+  min-height: 100%;
+}
+
+.supervisor-suggestions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--pw-space-2);
+}
+
+.supervisor-suggestions-label {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.supervisor-suggestions ul {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--pw-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A question longer than the line wraps rather than widening the page. */
+.supervisor-suggestions .button {
+  max-width: 100%;
+  white-space: normal;
+  text-align: left;
+  height: auto;
+  min-height: 24px;
+}
+
+/*
+ * The draft cards, between the conversation and the message box, on the footer's muted band: at most
+ * 40% of the view, then the list scrolls under its heading (a Tab stop while it does, ScrollBox), so the
+ * conversation and the box keep their room.
+ */
+.supervisor-approvals {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-2);
+  max-height: 40%;
+  padding: var(--pw-space-3) var(--pw-space-4) 0;
+  border-top: 1px solid var(--pw-border);
+  background: var(--pw-surface-muted);
+}
+
+.supervisor-approvals-title {
+  flex: none;
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-m);
+}
+
+.supervisor-approvals-count {
+  color: var(--pw-text-subtle);
+  font-weight: var(--pw-weight-regular);
+  font-variant-numeric: tabular-nums;
+}
+
+.supervisor-approvals-scroll {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* Room for each card's focus ring, and the band's bottom edge. */
+  padding: var(--pw-space-0-5) var(--pw-space-0-5) var(--pw-space-3);
+  margin-inline: calc(-1 * var(--pw-space-0-5));
+}
+
+.supervisor-approvals-scroll:focus-visible {
+  outline-offset: -2px;
+  box-shadow: var(--pw-ring-focus-inset);
+}
+
+.approval-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A card: a surface on the band, with the needs-you bar a row has, since each waits on you. */
+.approval-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1-5);
+  padding: var(--pw-space-3);
+  background: var(--pw-surface);
+  border-radius: var(--pw-radius-md);
+  box-shadow:
+    inset 3px 0 0 var(--pw-state-attention-bar),
+    inset 0 0 0 1px var(--pw-border);
+}
+
+/* Its headings and paragraphs take their spacing from the card's gap, not the browser's margins. */
+.approval-card :is(h4, p),
+.supervisor-approvals-title,
+.supervisor-note,
+.supervisor-suggestions-label {
+  margin: 0;
+}
+
+.approval-title {
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-m);
+  overflow-wrap: anywhere;
+}
+
+/* Takes focus when the card before it goes, with no ring of its own: it isn't a control. */
+.approval-title:focus,
+.approval-title:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.approval-meta,
+.approval-note {
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  font-variant-numeric: tabular-nums;
+}
+
+.approval-note {
+  color: var(--pw-text-muted);
+}
+
+.approval-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+  min-width: 0;
+}
+
+.approval-label {
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-s);
+}
+
+/* The model's text, as text: its line breaks kept, eight lines at most, then it scrolls. */
+.approval-text {
+  max-height: calc(8 * var(--pw-leading-m) + 2 * var(--pw-space-2));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--pw-space-2) var(--pw-space-3);
+  background: var(--pw-surface-muted);
+  border-radius: var(--pw-radius-md);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.approval-text:focus-visible {
+  outline-offset: -2px;
+  box-shadow: var(--pw-ring-focus-inset);
+}
+
+/* The editor: three lines to eight, as the message box's text box grows. */
+.approval-editor {
+  min-height: calc(3 * var(--pw-leading-m) + 2 * var(--pw-space-1-5));
+}
+
+.approval-editing .relay-count {
+  margin-left: 0;
+  align-self: flex-end;
+}
+
+.approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pw-space-2);
+}
+
+@media (max-height: 760px) {
+  .approval-text {
+    max-height: calc(4 * var(--pw-leading-m) + 2 * var(--pw-space-2));
+  }
+}
+
+@media (forced-colors: active) {
+  /* The card's edge and bar are shadows, which forced colours drop: a border in their place. */
+  .approval-card {
+    border: 1px solid ButtonText;
+    border-left-width: 3px;
+  }
+
+  .approval-text {
+    border: 1px solid ButtonText;
+  }
+}
+
+/* The repo list's Supervisor item (3: Repo list): its status badge before the drafts' count, neither giving way. */
+.supervisor-item-status {
+  display: inline-flex;
+  flex: none;
+}
+
+/* Needs you's notice while the supervisor's drafts wait on you, over the rows, as the PR list's notices are. */
+.supervisor-notice {
+  padding: var(--pw-space-3) var(--pw-space-4);
+  border-bottom: 1px solid var(--pw-border);
+}

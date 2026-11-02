@@ -1,0 +1,551 @@
+// The supervisor's panel (M5, W114; docs/design-system.md, 4: Supervisor): the repo list's item in
+// every root tab, its status and its drafts' count, which Needs you and the page title count too; its
+// view in the third column, as ?supervisor, one pushed history entry, in a session's or a PR's place;
+// its states, off, starting, idle, working, held and failed, and none with --no-supervisor; the empty
+// state's questions; the message box and Stop; and the draft cards and their decisions, with focus.
+// Nothing starts it but Start and a message. Made-up sessions, ids and text only.
+
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  SUPERVISOR_INTERRUPT_PATH,
+  SUPERVISOR_MESSAGE_MAX,
+  SUPERVISOR_MESSAGE_PATH,
+  SUPERVISOR_START_PATH,
+  supervisorApprovalPath,
+  type ConversationEntry,
+  type IndexSnapshot,
+  type SupervisorApproval,
+  type SupervisorState,
+} from '../../../src/shared/protocol.js';
+import { ApiContext, createApiClient, type FetchLike } from '../api.js';
+import type { ConnectionView } from '../connection.js';
+import { draftKey } from '../drafts.js';
+import type { StorageSource } from '../groupState.js';
+import type { NavigationEnv } from '../selection.js';
+import { SUPERVISOR_DRAFT_ID } from '../supervisor.js';
+import { group, minutesAgo, session, snapshot } from '../test/fixtures.js';
+import { fakeHistory } from '../test/history.js';
+import { descriptionOf } from '../test/tooltips.js';
+import { Dashboard } from './Dashboard.js';
+import { QUEUED_TEXT, SUPERVISOR_SEND_HELD } from './SupervisorBox.js';
+import { HELD_TITLE, NO_SUPERVISOR, SUGGESTIONS, SUPERVISOR_EMPTY } from './SupervisorView.js';
+
+const API_KEY = 'k'.repeat(43);
+const ROOT = '/Users/example/code';
+const OSS = '/Users/example/oss';
+
+const alpha = session({ sessionId: '00000000-0000-4000-8000-00000000a114', name: 'pitwall-test-alpha', status: 'waiting' });
+const beta = session({ sessionId: '00000000-0000-4000-8000-00000000b114', name: 'pitwall-test-beta' });
+
+const message = (id: string, minutes: number, text = 'Please rerun the made-up tests, then tell me what failed.'): SupervisorApproval => ({
+  id,
+  kind: 'message',
+  to: 'pitwall-test-beta',
+  text,
+  at: minutesAgo(minutes),
+  expiresAt: minutesAgo(minutes - 29),
+});
+const spawn: SupervisorApproval = {
+  id: 'spawn-1',
+  kind: 'spawn',
+  directory: `${ROOT}/demo-app`,
+  name: 'pr-57',
+  prompt: 'Review the made-up PR #57.',
+  at: minutesAgo(1),
+  expiresAt: minutesAgo(-28),
+};
+
+function snap(supervisor: SupervisorState | undefined, roots: 1 | 2 = 1): IndexSnapshot {
+  const groups = [group({ key: `${ROOT}/demo-app`, label: 'demo-app', sessions: [alpha, beta] })];
+  if (roots === 2) groups.push(group({ key: `${OSS}/blog`, label: 'blog', root: OSS, sessions: [session({ name: 'pitwall-test-blog', cwd: `${OSS}/blog` })] }));
+  return snapshot(groups, { roots: roots === 2 ? [ROOT, OSS] : [ROOT], ...(supervisor ? { supervisor } : {}) });
+}
+
+type Answer = { status: number; body?: unknown } | 'never' | Error;
+
+/** POSTs get what `post` says for their path, `{ ok: true }` by default; the conversation gets `page`, a 404 without one. */
+function fakeServer(options: { page?: { sessionId: string; entries: ConversationEntry[]; before?: string }; post?: (url: string, body: unknown) => Answer } = {}) {
+  return vi.fn<FetchLike>(async (url, init) => {
+    if (init.method === 'POST') {
+      const body = init.body === undefined ? undefined : (JSON.parse(String(init.body)) as unknown);
+      const answer = options.post?.(url, body) ?? { status: 200, body: { ok: true } };
+      if (answer === 'never') return new Promise<Response>(() => {});
+      if (answer instanceof Error) throw answer;
+      return new Response(answer.body === undefined ? 'not json' : JSON.stringify(answer.body), { status: answer.status });
+    }
+    if (url.startsWith('/api/supervisor/conversation') && options.page) return new Response(JSON.stringify(options.page), { status: 200 });
+    return new Response('{}', { status: 404 });
+  });
+}
+
+const posts = (fetch: ReturnType<typeof fakeServer>) =>
+  fetch.mock.calls.filter(([, init]) => init.method === 'POST').map(([url, init]) => ({ url, body: init.body === undefined ? undefined : (JSON.parse(String(init.body)) as unknown) }));
+
+function memory(): StorageSource {
+  const items = new Map<string, string>();
+  return () => ({ getItem: (name) => items.get(name) ?? null, setItem: (name, value) => void items.set(name, value) });
+}
+
+function renderDashboard(first: IndexSnapshot, options: { fetch?: FetchLike; search?: string; navigation?: NavigationEnv } = {}) {
+  const fetch = options.fetch ?? fakeServer();
+  const api = createApiClient({ apiKey: API_KEY, fetch });
+  const history = options.navigation ? undefined : fakeHistory(options.search ?? '?view=all');
+  const navigation = options.navigation ?? history!.navigation;
+  const storage = memory();
+  const ui = (s: IndexSnapshot) => {
+    const view: ConnectionView = { state: 'live', snapshot: s };
+    return (
+      <ApiContext.Provider value={api}>
+        <Dashboard view={view} navigation={navigation} storage={storage} />
+      </ApiContext.Provider>
+    );
+  };
+  const result = render(ui(first));
+  return { ...result, history, update: (next: IndexSnapshot) => result.rerender(ui(next)) };
+}
+
+const settle = () => act(async () => {});
+const repoList = () => screen.getByRole('navigation', { name: 'Repos' });
+const items = () => [...repoList().querySelectorAll<HTMLAnchorElement>('a[data-repo-item]')];
+const labels = () => items().map((link) => link.querySelector('.repo-item-label')?.textContent);
+const item = () => repoList().querySelector<HTMLAnchorElement>('a[data-supervisor-item]');
+const needsYouItem = () => items().find((link) => link.querySelector('.repo-item-label')?.textContent === 'Needs you');
+const view = () => document.getElementById('supervisor-view') ?? undefined;
+const viewOf = () => within(view()!);
+const box = () => viewOf().getByRole('textbox', { name: 'Message to the supervisor' }) as HTMLTextAreaElement;
+const sendButton = () => viewOf().getByRole('button', { name: 'Send' });
+
+async function openFromItem() {
+  fireEvent.click(item()!);
+  await settle();
+}
+
+describe('the Supervisor item', () => {
+  it('is first in the repo list, above Needs you, while pitwall runs one', () => {
+    renderDashboard(snap({ status: 'idle', approvals: [] }));
+    expect(labels().slice(0, 3)).toEqual(['Supervisor', 'Needs you', 'All sessions']);
+    expect(item()?.getAttribute('href')).toBe('?view=all&supervisor');
+  });
+
+  it('is in no repo list with --no-supervisor', () => {
+    renderDashboard(snap(undefined));
+    expect(item()).toBeNull();
+    expect(labels()[0]).toBe('Needs you');
+  });
+
+  it('says its status while it works, starts, is held or has failed, and nothing while it’s idle or off', () => {
+    const { update } = renderDashboard(snap({ status: 'off', approvals: [] }));
+    const badge = () => item()?.querySelector('.supervisor-item-status')?.textContent ?? null;
+    expect(badge()).toBeNull();
+    expect(item()?.textContent).toBe('Supervisor');
+    for (const [status, label] of [['working', 'Working'], ['starting', 'Starting'], ['held', 'Held'], ['failed', 'Failed']] as const) {
+      update(snap({ status, approvals: [] }));
+      expect(badge()).toBe(label);
+      // Its name says it once, from the visually hidden text, not the badge, which is hidden.
+      expect(item()?.querySelector('.visually-hidden')?.textContent).toBe(`, ${label.toLowerCase()}`);
+    }
+    update(snap({ status: 'idle', approvals: [] }));
+    expect(badge()).toBeNull();
+  });
+
+  it('counts its drafts in its own badge, Needs you’s and the page title, solid, as Needs you’s are', () => {
+    renderDashboard(snap({ status: 'idle', approvals: [message('m1', 4), spawn] }));
+    const badge = item()?.querySelector('.badge-attention');
+    expect(badge?.textContent).toBe('2 drafts need you');
+    // alpha waits on you, and the two drafts.
+    expect(needsYouItem()?.querySelector('.badge')?.textContent).toBe('3 need you');
+    expect(document.title).toBe('(3) pitwall');
+  });
+
+  it('is in every root tab, and its drafts count in each tab’s Needs you, not the tabs’ own badges', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [message('m1', 4)] }, 2), { search: `?view=all&root=${ROOT}` });
+    expect(item()).not.toBeNull();
+    expect(needsYouItem()?.querySelector('.badge')?.textContent).toBe('2 need you');
+    const tab = screen.getByRole('tab', { name: /oss/ });
+    // The other tab's badge is its own sessions': none of them needs you.
+    expect(tab.querySelector('.badge')).toBeNull();
+    fireEvent.click(tab);
+    await settle();
+    expect(item()).not.toBeNull();
+    expect(needsYouItem()?.querySelector('.badge')?.textContent).toBe('1 needs you');
+  });
+});
+
+describe('the supervisor’s view', () => {
+  it('opens from the item in the third column, as one pushed history entry, with focus on its heading', async () => {
+    const { history } = renderDashboard(snap({ status: 'idle', approvals: [] }));
+    await openFromItem();
+    expect(view()).toBeDefined();
+    expect(history!.entries).toEqual(['?view=all', '?view=all&supervisor']);
+    expect(document.activeElement).toBe(viewOf().getByRole('heading', { level: 2, name: 'Supervisor' }));
+    expect(item()?.getAttribute('aria-current')).toBe('true');
+    expect(item()?.getAttribute('aria-controls')).toBe('supervisor-view');
+    // Again: no entry, focus on the heading.
+    await openFromItem();
+    expect(history!.entries).toHaveLength(2);
+  });
+
+  it('takes a session’s place, and a session takes its place, each one entry, and the back button goes between them', async () => {
+    const { history } = renderDashboard(snap({ status: 'idle', approvals: [] }));
+    fireEvent.click(screen.getByRole('button', { name: 'pitwall-test-beta' }));
+    await settle();
+    expect(document.getElementById('session-view')).not.toBeNull();
+    await openFromItem();
+    expect(document.getElementById('session-view')).toBeNull();
+    expect(view()).toBeDefined();
+    expect(history!.location.search).toBe('?view=all&supervisor');
+    fireEvent.click(screen.getByRole('button', { name: 'pitwall-test-alpha' }));
+    await settle();
+    expect(view()).toBeUndefined();
+    expect(history!.location.search).toBe(`?view=all&session=${alpha.sessionId}`);
+    history!.back();
+    await settle();
+    expect(view()).toBeDefined();
+    history!.back();
+    await settle();
+    expect(view()).toBeUndefined();
+    expect(document.getElementById('session-view')).not.toBeNull();
+  });
+
+  it('closes with Close, giving focus back to the item', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [] }));
+    await openFromItem();
+    fireEvent.click(viewOf().getByRole('button', { name: 'Close' }));
+    await settle();
+    expect(view()).toBeUndefined();
+    expect(document.activeElement).toBe(item());
+  });
+
+  it('never starts it as it opens: from a URL, it only reads its conversation', async () => {
+    const fetch = fakeServer();
+    renderDashboard(snap({ status: 'off', approvals: [] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    expect(view()).toBeDefined();
+    expect(posts(fetch)).toEqual([]);
+    expect(fetch.mock.calls.map(([url]) => url)).toContain('/api/supervisor/conversation');
+  });
+
+  it('says the supervisor is off with --no-supervisor', async () => {
+    renderDashboard(snap(undefined), { search: '?view=all&supervisor' });
+    await settle();
+    expect(viewOf().getByRole('heading', { name: NO_SUPERVISOR.title })).toBeDefined();
+  });
+
+  it('is a new conversation with nothing in it yet: what it’s for, and questions that fill the box but never send', async () => {
+    const fetch = fakeServer();
+    renderDashboard(snap({ status: 'off', approvals: [] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    expect(viewOf().getByText(SUPERVISOR_EMPTY.title)).toBeDefined();
+    const questions = viewOf().getAllByRole('button').filter((button) => button.hasAttribute('data-suggestion'));
+    expect(questions.map((button) => button.textContent)).toEqual([...SUGGESTIONS]);
+    fireEvent.click(questions[0]!);
+    await settle();
+    expect(box().value).toBe(SUGGESTIONS[0]);
+    expect(document.activeElement).toBe(box());
+    expect(posts(fetch)).toEqual([]);
+  });
+
+  it('shows its conversation as the session view does, its messages as markdown', async () => {
+    const fetch = fakeServer({
+      page: {
+        sessionId: 'sup-1',
+        entries: [
+          { kind: 'user', text: 'Which sessions need me?', at: minutesAgo(2) },
+          { kind: 'assistant', text: 'Two do:\n\n- **pitwall-test-alpha** waits on a prompt.', markdown: true, at: minutesAgo(2) },
+        ],
+      },
+    });
+    renderDashboard(snap({ status: 'idle', sessionId: 'sup-1', approvals: [], lastTurnAt: minutesAgo(2) }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    const conversation = viewOf().getByRole('region', { name: 'Conversation' });
+    expect(within(conversation).getByText('Which sessions need me?')).toBeDefined();
+    expect(conversation.querySelector('strong')?.textContent).toBe('pitwall-test-alpha');
+    expect(viewOf().queryByText(SUPERVISOR_EMPTY.title)).toBeNull();
+  });
+});
+
+describe('its states', () => {
+  it('off: Start, which starts it, busy until the snapshot says it’s starting', async () => {
+    const fetch = fakeServer();
+    const { update } = renderDashboard(snap({ status: 'off', approvals: [] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    expect(viewOf().getByText('Off')).toBeDefined();
+    const start = viewOf().getByRole('button', { name: 'Start' });
+    fireEvent.click(start);
+    await settle();
+    expect(posts(fetch)).toEqual([{ url: SUPERVISOR_START_PATH, body: {} }]);
+    expect(viewOf().getByRole('button', { name: 'Starting…' }).getAttribute('aria-busy')).toBe('true');
+    update(snap({ status: 'starting', approvals: [] }));
+    await settle();
+    expect(viewOf().queryByRole('button', { name: 'Start' })).toBeNull();
+    expect(viewOf().queryByRole('button', { name: 'Starting…' })).toBeNull();
+    // Its working line says it's starting.
+    expect(view()!.querySelector('.working-step')?.textContent).toBe('Starting the supervisor');
+  });
+
+  it('a Start that fails says why, in pitwall’s words', async () => {
+    const fetch = fakeServer({ post: () => ({ status: 502, body: { ok: false, error: 'Made up: claude exited at once.' } }) });
+    renderDashboard(snap({ status: 'off', approvals: [] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.click(viewOf().getByRole('button', { name: 'Start' }));
+    await settle();
+    expect(viewOf().getByRole('alert').textContent).toBe("Couldn't start the supervisor. Made up: claude exited at once.");
+    expect(viewOf().getByRole('button', { name: 'Start' })).toBeDefined();
+  });
+
+  it('idle and working: its status and this run’s cost', async () => {
+    const { update } = renderDashboard(snap({ status: 'idle', approvals: [], costUsd: 0.0425, lastTurnAt: minutesAgo(3) }), { search: '?view=all&supervisor' });
+    await settle();
+    const meta = view()!.querySelector('.session-view-meta')!;
+    expect(meta.textContent).toContain('Idle');
+    expect(meta.textContent).toContain('$0.04 this run');
+    expect(viewOf().queryByRole('button', { name: 'Start' })).toBeNull();
+    update(snap({ status: 'working', approvals: [], costUsd: 0.05 }));
+    await settle();
+    expect(meta.textContent).toContain('Working');
+    expect(view()!.querySelector('.working-line')).not.toBeNull();
+  });
+
+  it('held: the error, the claude stop command to copy, Start, and no sending', async () => {
+    const error = 'A background session, 1a2b3c4d, has its conversation. Stop it with `claude stop 1a2b3c4d`, then start it here.';
+    renderDashboard(snap({ status: 'held', approvals: [], error }), { search: '?view=all&supervisor' });
+    await settle();
+    expect(viewOf().getByText(HELD_TITLE)).toBeDefined();
+    expect(view()!.querySelector('.supervisor-error')?.textContent).toBe(error);
+    expect(view()!.querySelector('.command-chip')?.textContent).toBe('claude stop 1a2b3c4d');
+    expect(viewOf().getByRole('button', { name: 'Copy the stop command' })).toBeDefined();
+    expect(viewOf().getByRole('button', { name: 'Start' })).toBeDefined();
+    fireEvent.change(box(), { target: { value: 'Hello' } });
+    expect(sendButton().getAttribute('aria-disabled')).toBe('true');
+    expect(descriptionOf(sendButton())).toBe(SUPERVISOR_SEND_HELD);
+    // The app strip says so too, with Open.
+    expect(document.querySelector('[data-strip="supervisor"]')?.textContent).toContain("The supervisor can't run:");
+  });
+
+  it('failed: the error, with Start', async () => {
+    renderDashboard(snap({ status: 'failed', approvals: [], error: 'Made up: it exited with code 1.' }), { search: '?view=all&supervisor' });
+    await settle();
+    const alert = view()!.querySelector('.supervisor-alert')!;
+    expect(alert.textContent).toContain('Made up: it exited with code 1.');
+    expect(within(alert as HTMLElement).getByRole('button', { name: 'Start' })).toBeDefined();
+  });
+
+  it('the app strip’s Open opens the view', async () => {
+    renderDashboard(snap({ status: 'failed', approvals: [], error: 'Made up: it exited.' }));
+    const strip = document.querySelector<HTMLElement>('[data-strip="supervisor"]')!;
+    fireEvent.click(within(strip).getByRole('button', { name: 'Open' }));
+    await settle();
+    expect(view()).toBeDefined();
+  });
+});
+
+describe('its message box', () => {
+  it('sends what you type, as you, and clears it; the draft is kept in the tab until then', async () => {
+    const fetch = fakeServer();
+    renderDashboard(snap({ status: 'idle', approvals: [] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.change(box(), { target: { value: 'What should I work on next?' } });
+    expect(JSON.parse(window.sessionStorage.getItem(draftKey(SUPERVISOR_DRAFT_ID)) ?? '{}')).toEqual({ v: 1, text: 'What should I work on next?' });
+    fireEvent.keyDown(box(), { key: 'Enter', ctrlKey: true });
+    await settle();
+    expect(posts(fetch)).toEqual([{ url: SUPERVISOR_MESSAGE_PATH, body: { text: 'What should I work on next?' } }]);
+    expect(box().value).toBe('');
+    expect(window.sessionStorage.getItem(draftKey(SUPERVISOR_DRAFT_ID))).toBeNull();
+    expect(view()!.querySelector('.supervisor-box [role="status"]')?.textContent).toBe('Sent to the supervisor.');
+  });
+
+  it('says a message sent while it works waits for the turn to end', async () => {
+    renderDashboard(snap({ status: 'working', approvals: [] }), { search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.change(box(), { target: { value: 'And the PRs?' } });
+    fireEvent.click(sendButton());
+    await settle();
+    expect(viewOf().getByText(QUEUED_TEXT)).toBeDefined();
+  });
+
+  it('keeps the draft when it isn’t sent, saying why, and warns when it may have gone', async () => {
+    let answer: Answer = { status: 409, body: { ok: false, error: 'Made up: it is held.' } };
+    const fetch = fakeServer({ post: () => answer });
+    renderDashboard(snap({ status: 'idle', approvals: [] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.change(box(), { target: { value: 'Hello' } });
+    fireEvent.click(sendButton());
+    await settle();
+    expect(viewOf().getByRole('alert').textContent).toBe('Not sent: Made up: it is held.');
+    expect(box().value).toBe('Hello');
+    answer = { status: 502 };
+    fireEvent.click(sendButton());
+    await settle();
+    expect(viewOf().getByRole('alert').textContent).toContain('may have reached the supervisor. Check its conversation before sending again.');
+    expect(JSON.parse(window.sessionStorage.getItem(draftKey(SUPERVISOR_DRAFT_ID)) ?? '{}').send?.state).toBe('uncertain');
+  });
+
+  it('counts from 80 % of its limit, and won’t send over it', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [] }), { search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.change(box(), { target: { value: 'x'.repeat(SUPERVISOR_MESSAGE_MAX + 1) } });
+    expect(view()!.querySelector('.relay-count.over')?.textContent).toBe('1 character over the 20,000 limit');
+    expect(sendButton().getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('has Stop while it works, which stops its turn, busy until the snapshot says it has', async () => {
+    const fetch = fakeServer();
+    const { update } = renderDashboard(snap({ status: 'working', approvals: [] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    const stop = viewOf().getByRole('button', { name: 'Stop' });
+    stop.focus();
+    fireEvent.click(stop);
+    await settle();
+    expect(posts(fetch)).toEqual([{ url: SUPERVISOR_INTERRUPT_PATH, body: {} }]);
+    expect(viewOf().getByRole('button', { name: 'Stopping…' })).toBeDefined();
+    update(snap({ status: 'idle', approvals: [] }));
+    await settle();
+    expect(viewOf().queryByRole('button', { name: /^Stop/ })).toBeNull();
+    // Stop went with focus on it: the text box has it now.
+    expect(document.activeElement).toBe(box());
+  });
+
+  it('has no Stop while it’s idle', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [] }), { search: '?view=all&supervisor' });
+    await settle();
+    expect(viewOf().queryByRole('button', { name: 'Stop' })).toBeNull();
+  });
+
+  it('keeps the view open on Escape while there’s a draft', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [] }), { search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.change(box(), { target: { value: 'Half a thought' } });
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    await settle();
+    expect(view()).toBeDefined();
+    fireEvent.change(box(), { target: { value: '' } });
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    await settle();
+    expect(view()).toBeUndefined();
+  });
+});
+
+describe('its draft cards', () => {
+  const cards = () => [...view()!.querySelectorAll<HTMLElement>('li.approval-card')];
+
+  it('are a list with headings, oldest first, above the message box, each with its text as text', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [message('m1', 6, 'Run **this** <b>now</b>.'), spawn] }), { search: '?view=all&supervisor' });
+    await settle();
+    const region = viewOf().getByRole('region', { name: 'Drafts for you (2)' });
+    const list = within(region).getByRole('list');
+    expect(within(list).getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent)).toEqual([
+      'Message to pitwall-test-beta',
+      'New session in ~/code/demo-app, named pr-57',
+    ]);
+    // The model's text, as text: no markdown, no HTML.
+    const text = cards()[0]!.querySelector('.approval-text bdi');
+    expect(text?.textContent).toBe('Run **this** <b>now</b>.');
+    expect(cards()[0]!.querySelector('strong, b')).toBeNull();
+    expect(cards()[0]!.textContent).toContain('Not sent unless you answer by');
+    // Above the message box.
+    expect(region.compareDocumentPosition(box()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('Send: the decision, busy until the snapshot drops the card, then focus on the next card’s heading', async () => {
+    const fetch = fakeServer();
+    const first = message('m1', 6);
+    const { update } = renderDashboard(snap({ status: 'idle', approvals: [first, spawn] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    const send = within(cards()[0]!).getByRole('button', { name: 'Send' });
+    send.focus();
+    fireEvent.click(send);
+    await settle();
+    expect(posts(fetch)).toEqual([{ url: supervisorApprovalPath('m1'), body: { decision: 'send' } }]);
+    expect(within(cards()[0]!).getByRole('button', { name: 'Sending…' }).getAttribute('aria-busy')).toBe('true');
+    expect(within(cards()[0]!).getByRole('button', { name: 'Edit' }).getAttribute('aria-disabled')).toBe('true');
+    update(snap({ status: 'idle', approvals: [spawn] }));
+    await settle();
+    expect(cards()).toHaveLength(1);
+    expect(document.activeElement).toBe(within(cards()[0]!).getByRole('heading', { level: 4 }));
+  });
+
+  it('Don’t send declines it; the last card going puts focus in the message box', async () => {
+    const fetch = fakeServer();
+    const { update } = renderDashboard(snap({ status: 'idle', approvals: [spawn] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    const decline = within(cards()[0]!).getByRole('button', { name: "Don't send" });
+    decline.focus();
+    fireEvent.click(decline);
+    await settle();
+    expect(posts(fetch)).toEqual([{ url: supervisorApprovalPath('spawn-1'), body: { decision: 'decline' } }]);
+    update(snap({ status: 'idle', approvals: [] }));
+    await settle();
+    expect(viewOf().queryByRole('region', { name: /Drafts for you/ })).toBeNull();
+    expect(document.activeElement).toBe(box());
+  });
+
+  it('Edit: the text in place, Send edit with what you changed, and Cancel back to Edit', async () => {
+    const fetch = fakeServer();
+    renderDashboard(snap({ status: 'idle', approvals: [message('m1', 6)] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.click(within(cards()[0]!).getByRole('button', { name: 'Edit' }));
+    await settle();
+    const editor = within(cards()[0]!).getByRole('textbox', { name: 'Edit the message' }) as HTMLTextAreaElement;
+    expect(editor.value).toBe('Please rerun the made-up tests, then tell me what failed.');
+    expect(document.activeElement).toBe(editor);
+    fireEvent.change(editor, { target: { value: 'Please rerun only the made-up e2e tests.' } });
+    fireEvent.click(within(cards()[0]!).getByRole('button', { name: 'Send edit' }));
+    await settle();
+    expect(posts(fetch)).toEqual([{ url: supervisorApprovalPath('m1'), body: { decision: 'edit', text: 'Please rerun only the made-up e2e tests.' } }]);
+  });
+
+  it('Edit, then Cancel or Escape: the text as it was, and focus on Edit; the view stays open', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [message('m1', 6)] }), { search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.click(within(cards()[0]!).getByRole('button', { name: 'Edit' }));
+    await settle();
+    const editor = within(cards()[0]!).getByRole('textbox', { name: 'Edit the message' });
+    fireEvent.change(editor, { target: { value: 'Something else' } });
+    fireEvent.keyDown(editor, { key: 'Escape' });
+    await settle();
+    expect(view()).toBeDefined();
+    expect(within(cards()[0]!).queryByRole('textbox')).toBeNull();
+    expect(document.activeElement).toBe(within(cards()[0]!).getByRole('button', { name: 'Edit' }));
+    expect(cards()[0]!.querySelector('.approval-text')?.textContent).toBe('Please rerun the made-up tests, then tell me what failed.');
+  });
+
+  it('won’t send an empty edit, or one over the limit', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [message('m1', 6)] }), { search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.click(within(cards()[0]!).getByRole('button', { name: 'Edit' }));
+    await settle();
+    const editor = within(cards()[0]!).getByRole('textbox', { name: 'Edit the message' });
+    fireEvent.change(editor, { target: { value: '  ' } });
+    expect(within(cards()[0]!).getByRole('button', { name: 'Send edit' }).getAttribute('aria-disabled')).toBe('true');
+    fireEvent.change(editor, { target: { value: 'x'.repeat(SUPERVISOR_MESSAGE_MAX + 2) } });
+    expect(cards()[0]!.querySelector('.relay-count.over')?.textContent).toBe('2 characters over the 20,000 limit');
+  });
+
+  it('says so when a card has gone, and when a decision fails, in pitwall’s words', async () => {
+    let answer: Answer = { status: 404, body: { ok: false, error: 'Gone.' } };
+    const fetch = fakeServer({ post: () => answer });
+    renderDashboard(snap({ status: 'idle', approvals: [message('m1', 6)] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.click(within(cards()[0]!).getByRole('button', { name: 'Send' }));
+    await settle();
+    expect(within(cards()[0]!).getByRole('alert').textContent).toMatch(/no longer waiting/);
+    answer = { status: 500 };
+    fireEvent.click(within(cards()[0]!).getByRole('button', { name: "Don't send" }));
+    await settle();
+    expect(within(cards()[0]!).getByRole('alert').textContent).toBe("Couldn't decline it (HTTP 500). If this card is still here, try again.");
+    // Not busy, so it can be answered again.
+    expect(within(cards()[0]!).getByRole('button', { name: "Don't send" }).getAttribute('aria-busy')).toBeNull();
+  });
+
+  it('in Needs you: a notice that they wait, with a way to the view, and nothing else needing you', async () => {
+    const quiet = snapshot([group({ key: `${ROOT}/demo-app`, label: 'demo-app', sessions: [beta] })], { supervisor: { status: 'idle', approvals: [message('m1', 6)] } });
+    renderDashboard(quiet, { search: '?view=needs-you' });
+    const main = screen.getByRole('main');
+    expect(main.querySelector('.supervisor-notice')?.textContent).toContain('The supervisor has a draft waiting for you.');
+    expect(within(main).getByText('Nothing else needs you right now')).toBeDefined();
+    fireEvent.click(within(main).getByRole('button', { name: 'Open the supervisor' }));
+    await settle();
+    expect(view()).toBeDefined();
+  });
+});
