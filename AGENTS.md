@@ -107,6 +107,10 @@ src/supervisor/          the supervisor (M5, W113, W115, D4): one claude -p sess
                          supervisorActions.ts (approve, spawn_session and the checks, W115); the snapshot's
                          view and routes are src/server/snapshotSupervisor.ts and supervisorRoutes.ts. Off
                          with --no-supervisor
+src/usage/               the usage report's reads and totals (M5.1, W131): scan.ts streams transcripts and keeps
+                         numbers only, report.ts aggregates them by repo, model, day, hour and sub-agent,
+                         prices.ts has the API list prices behind its stand-in cost, format.ts the text tables.
+                         Under src/, so built, because M5.1's Usage view will reuse it from the server
 src/cli.ts               the `pitwall` command (bin, built to dist/cli.js)
 src/config.ts            the config file (W103, D24): ~/.pitwall/config.json or --config, JSON with comments,
                          the roots and each root's GitHub owners, ownersByRoot() for the PR side, and `work`,
@@ -121,6 +125,8 @@ web/public/theme-init.js sets the theme before first paint (a same-origin script
 web/src/uikit/           the dev-only `#uikit` gallery; `npm run build` leaves it out
 web/src/test/            test helpers and fixtures shared across the web UI's tests; not built
 scripts/dev.ts           runs the two watchers behind `npm run dev`
+scripts/usage-report.ts  npx tsx scripts/usage-report.ts [--days 14] [--json]: aggregate token usage from every
+                         repo's transcripts, read-only, totals only, to test the efficiency rules (W131)
 scripts/extract-icons.ts regenerates web/src/icons/paths.ts from a pinned Material Symbols commit
 scripts/readme-screenshot.ts
                          writes <outDir>/hero-<theme>.png from made-up sessions on the app check's fake
