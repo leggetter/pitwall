@@ -93,7 +93,8 @@ export function PrNeedNote({ pr, onOpen }: { pr: PullRequestSummary; onOpen: (pr
     <p className="session-view-pr-need" data-pr-need={prKey(pr)}>
       {NEEDS_YOU_FOR}{' '}
       <Tooltip content={`${prName(pr)}: ${plainText(pr.title)}`} relation="description">
-        <button type="button" className="link-button pr-link" aria-label={prLinkLabel(pr)} onClick={() => onOpen(pr)}>
+        {/* Its name holds its visible text, owner/repo#n with no space (label in name, #130's review). */}
+        <button type="button" className="link-button pr-link" aria-label={`Pull request ${prRef(pr)}`} onClick={() => onOpen(pr)}>
           {prRef(pr)}
         </button>
       </Tooltip>
