@@ -17,6 +17,11 @@
 // A session marked not needed now (W88, notNeeded.ts) counts in none of the need-you badges: Needs
 // you's, Starred's, the groups' and the Hidden section's. Each group still counts it among its sessions.
 //
+// The Supervisor (M5, W114), first, above Needs you, in every root tab while pitwall runs one: a link
+// that opens its view in the third column, not a selection, so it's marked current while that's open,
+// as a session's row is. Its status shows as a badge while it works, starts, is held or has failed, and
+// its drafts that wait on you as a solid count, which Needs you's count includes too.
+//
 // Pull requests (M4, W95, W106), under Starred, lists every row with an open PR under the root: the
 // sessions that own one and the PRs no session owns. Its badge counts those that need you through a
 // PR, as Needs you counts them, in solid warning; otherwise how many rows it lists, and nothing before
@@ -45,12 +50,14 @@
 // focus to the item that took its place, or the one before it.
 
 import { useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
-import type { SessionGroup } from '../../../src/shared/protocol.js';
+import type { SessionGroup, SupervisorStatus } from '../../../src/shared/protocol.js';
 import { plainText } from '../format.js';
 import { absentGroup, sameGroup, type HiddenGroup } from '../hidden.js';
 import type { NotNeeded } from '../notNeeded.js';
 import { groupSelection, sameSelection, selectionHref, VIEW_NAMES, viewIn, type Selection } from '../selection.js';
 import { groupId, groupLabel, repoListGroups, sessionsIn } from '../sessions.js';
+import { itemStatusText, STATUS_LABELS, STATUS_LOOKS, SUPERVISOR_NAME, SUPERVISOR_VIEW_ID } from '../supervisor.js';
+import { Badge } from './Badge.js';
 import { allDone, countNeeds, countRows, NO_WORK, sessionNeedsYou, type ListGroup, type Work } from '../work.js';
 import { Icon } from './Icon.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
@@ -133,19 +140,44 @@ export interface RepoListProps {
   prs?: { attention: number; count: number | undefined } | undefined;
   /** Which session owns each open PR (W106, work.ts), for the need-you counts. None when it's undefined. */
   work?: Work | undefined;
+  /**
+   * The Supervisor item, first, above Needs you, in every root tab (M5, W114): its status, how many of
+   * its drafts wait on you, which Needs you counts too, whether its view is open, the link's address,
+   * and a way to open it. No item when it's undefined, as with `--no-supervisor`.
+   */
+  supervisor?: RepoListSupervisor | undefined;
 }
+
+export interface RepoListSupervisor {
+  status: SupervisorStatus;
+  approvals: number;
+  open: boolean;
+  href: string;
+  onOpen: () => void;
+}
+
+/** The Supervisor item's id among the items, for the list's one Tab stop. */
+const SUPERVISOR_ITEM = 'supervisor';
 
 /** Where focus was in the list, to hand it on if what had it goes. */
 type FocusedPart = { zone: 'items'; index: number } | { zone: 'hidden'; part: 'link' | 'unhide'; index: number };
 
-export function RepoList({ groups, roots, selection, onSelect, autoFocus = false, skeletons = false, inert = false, hidden, tab, starred, notNeeded, prs, work = NO_WORK }: RepoListProps) {
+export function RepoList({ groups, roots, selection, onSelect, autoFocus = false, skeletons = false, inert = false, hidden, tab, starred, notNeeded, prs, work = NO_WORK, supervisor }: RepoListProps) {
   const hiddenId = useId();
   const nav = useRef<HTMLElement>(null);
   // Each session once, though in Every repo it worked in it may be in several groups (W42).
   const sessions = sessionsIn(groups ?? []);
   const starredSessions = starred ? sessions.filter((session) => starred.has(session.sessionId)) : [];
   const views: Item[] = [
-    { id: 'view:needs-you', selection: viewIn('needs-you', tab), label: VIEW_NAMES['needs-you'], attention: countNeeds(groups ?? [], notNeeded, work), count: undefined, muted: false },
+    // The supervisor's drafts count here too, in every root tab: each waits on you (W114).
+    {
+      id: 'view:needs-you',
+      selection: viewIn('needs-you', tab),
+      label: VIEW_NAMES['needs-you'],
+      attention: countNeeds(groups ?? [], notNeeded, work) + (supervisor?.approvals ?? 0),
+      count: undefined,
+      muted: false,
+    },
     // The total, never a badge: Needs you, just above, has that.
     { id: 'view:all', selection: viewIn('all', tab), label: VIEW_NAMES.all, attention: 0, count: groups ? countRows(groups) : undefined, muted: false },
     // As a group counts: its badge, or how many; nothing while none is starred.
@@ -187,7 +219,8 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
   // The one item in the Tab order: the last one focused, else the selection, else the first.
   const [focused, setFocused] = useState<string>();
   const selected = items.find((item) => sameSelection(item.selection, selection))?.id;
-  const tabStop = items.some((item) => item.id === focused) ? focused : (selected ?? items[0]?.id);
+  const stops = supervisor ? [SUPERVISOR_ITEM, ...items.map((item) => item.id)] : items.map((item) => item.id);
+  const tabStop = focused !== undefined && stops.includes(focused) ? focused : (selected ?? stops[0]);
 
   useEffect(() => {
     if (autoFocus) nav.current?.querySelector<HTMLElement>('a[tabindex="0"]')?.focus();
@@ -332,6 +365,56 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
     );
   };
 
+  /**
+   * The Supervisor item (W114): a link to its view, `?supervisor`, which the page opens with no reload,
+   * marked current while it's open. Its status after its name, a badge while it works, starts, is held
+   * or has failed, with nothing for idle or off; then, while drafts wait on you, their count, solid, as
+   * Needs you's is.
+   */
+  const renderSupervisor = (item: RepoListSupervisor) => {
+    const statusText = itemStatusText(item.status);
+    const look = STATUS_LOOKS[item.status];
+    const className = ['repo-item', 'supervisor-item', item.open && 'selected'].filter(Boolean).join(' ');
+    return (
+      <li key={SUPERVISOR_ITEM}>
+        <a
+          className={className}
+          href={item.href}
+          aria-current={item.open ? 'true' : undefined}
+          aria-controls={item.open ? SUPERVISOR_VIEW_ID : undefined}
+          tabIndex={tabStop === SUPERVISOR_ITEM ? 0 : -1}
+          data-repo-item=""
+          data-repo-id={SUPERVISOR_ITEM}
+          data-supervisor-item={item.status}
+          onClick={(event) => {
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault();
+            item.onOpen();
+          }}
+          onFocus={() => setFocused(SUPERVISOR_ITEM)}
+        >
+          <Icon name="supervisor" className="repo-item-icon" />
+          <span className="repo-item-label">{SUPERVISOR_NAME}</span>
+          {statusText !== undefined && (
+            // Its words are the visible badge's; the link's name reads "Supervisor, working".
+            <span className="supervisor-item-status" aria-hidden="true">
+              <Badge look={look.look} lead={look.lead === 'spinner' ? 'dot' : look.lead}>
+                {STATUS_LABELS[item.status]}
+              </Badge>
+            </span>
+          )}
+          {statusText !== undefined && <span className="visually-hidden">, {statusText}</span>}
+          {item.approvals > 0 && (
+            <span className="badge badge-attention">
+              {item.approvals}
+              <span className="visually-hidden"> {item.approvals === 1 ? 'draft needs' : 'drafts need'} you</span>
+            </span>
+          )}
+        </a>
+      </li>
+    );
+  };
+
   const renderHidden = ({ item, entry, present }: (typeof hiddenEntries)[number]) => {
     const isSelected = sameSelection(item.selection, selection);
     return (
@@ -374,7 +457,10 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
 
   return (
     <nav ref={nav} className="repo-list" aria-label="Repos" onKeyDown={onKeyDown} onFocus={onFocus} onBlur={onBlur} inert={inert || undefined}>
-      <ul className="repo-items">{views.map((item) => render(item))}</ul>
+      <ul className="repo-items">
+        {supervisor && renderSupervisor(supervisor)}
+        {views.map((item) => render(item))}
+      </ul>
       {(sections.length > 0 || (skeletons && !groups)) && <hr className="repo-divider" />}
       {skeletons && !groups && <SkeletonItems />}
       {rooted(sections, (item) => render(item))}

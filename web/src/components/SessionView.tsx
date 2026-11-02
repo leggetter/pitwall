@@ -1273,6 +1273,10 @@ export interface WaitingSessionViewProps {
   compact?: boolean;
   headingRef?: RefObject<HTMLHeadingElement | null>;
   animate?: boolean;
+  /** Its heading, visually hidden: "Session" by default, or "Supervisor" for ?supervisor (W114). */
+  title?: string;
+  /** Its status line, visually hidden: "Loading the session" by default. */
+  label?: string;
 }
 
 /**
@@ -1281,21 +1285,21 @@ export interface WaitingSessionViewProps {
  * snapshot replaces it with the session, or with the unlisted state. It takes no focus, and never
  * attaches, sends or changes anything.
  */
-export function WaitingSessionView({ waiting, slow, onClose, layout = 'overlay', compact = false, headingRef, animate = true }: WaitingSessionViewProps) {
+export function WaitingSessionView({ waiting, slow, onClose, layout = 'overlay', compact = false, headingRef, animate = true, title = 'Session', label = 'Loading the session' }: WaitingSessionViewProps) {
   const titleId = useId();
   return (
     <Frame layout={layout} animate={animate} titleId={titleId} onEscape={onClose}>
       <header className="session-view-head">
         <Top compact={compact} onClose={onClose}>
           <h2 className="session-view-title" id={titleId} ref={headingRef} tabIndex={-1}>
-            <span className="visually-hidden">Session</span>
+            <span className="visually-hidden">{title}</span>
             {waiting.shown && <SkeletonHeading />}
           </h2>
         </Top>
         {waiting.shown && <SkeletonMeta />}
       </header>
       <div className="session-view-body">
-        <WaitingStatus waiting={waiting} label="Loading the session" slow={slow} />
+        <WaitingStatus waiting={waiting} label={label} slow={slow} />
       </div>
     </Frame>
   );

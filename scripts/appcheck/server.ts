@@ -11,7 +11,8 @@
 // snapshot and on each change, and POST PRS_REFRESH_PATH, with the contract's 409 and 429; and
 // recaps (W111), off unless a case turns them on: GET recapPath() and POST recapRefreshPath().
 // Clone and start (W107), POST CLONE_PATH, which clones nothing: the world places the repo's PRs under
-// a made-up clone a moment later, as discovery would.
+// a made-up clone a moment later, as discovery would. The supervisor (W114), off unless a case turns
+// it on: its conversation, a message, Start, Stop and a decision for each draft, which run no claude.
 //
 // It never runs `claude`, reads no transcript, `~/.claude`, `.env` or `~/.pitwall`, and holds no real
 // token: the token is random per run and only ever reaches the page in its URL's fragment. It imports
@@ -49,8 +50,9 @@ import type {
   SpawnRequest,
   SpawnResult,
   SubagentList,
+  SupervisorDecision,
 } from '../../src/shared/protocol.js';
-import { COPY_SHORT_ID, NAMES, RECAP_CALL_MS, terminalScreen, World, type ResetOptions, type TerminalSize } from './fixtures.js';
+import { COPY_SHORT_ID, NAMES, RECAP_CALL_MS, SUPERVISOR_HELD_ERROR, SUPERVISOR_STEP_MS, terminalScreen, World, type ResetOptions, type TerminalSize } from './fixtures.js';
 
 type Security = typeof import('../../src/server/security.js');
 type Static = typeof import('../../src/server/static.js');
@@ -102,6 +104,12 @@ export interface Records {
   recapRefreshes: Array<{ name: string; status: number }>;
   /** Each Clone and start the server answered (W107): the repo the page sent, and the status it got. */
   clones: Array<{ repo: unknown; status: number }>;
+  /** Each message to the supervisor (W114), by its length and the status it got. Never its text. */
+  supervisorMessages: Array<{ length: number; status: number }>;
+  /** Each Start and Stop of the supervisor, and each decision for one of its drafts, with the status each got (W114). */
+  supervisorStarts: number[];
+  supervisorStops: number[];
+  decisions: Array<{ id: string; decision: string; length?: number; status: number }>;
   /** Every HTTP request and upgrade, as `METHOD /path status`. */
   requests: string[];
 }
@@ -120,6 +128,10 @@ const emptyRecords = (): Records => ({
   recapFetches: [],
   recapRefreshes: [],
   clones: [],
+  supervisorMessages: [],
+  supervisorStarts: [],
+  supervisorStops: [],
+  decisions: [],
   uploads: [],
   deletes: [],
   requests: [],
@@ -297,6 +309,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (method === 'GET' && url.pathname === protocol.PRS_PATH) return json(res, 200, world.prList() satisfies PullRequestList);
     if (method === 'POST' && url.pathname === protocol.PRS_REFRESH_PATH) return refreshPrs(req, res);
     if (method === 'POST' && url.pathname === protocol.CLONE_PATH) return clone(req, res);
+    if (url.pathname.startsWith('/api/supervisor/')) return supervisor(req, res, method, url);
     if (method === 'POST' && url.pathname === protocol.SPAWN_PATH) return spawn(req, res);
     if (method === 'POST' && url.pathname === protocol.ATTACHMENTS_PATH) return upload(req, res);
     // An unused upload removed (W82): attachmentPath(id).
@@ -458,6 +471,89 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       answer.done();
       broadcast();
     });
+  }
+
+  /**
+   * The supervisor's routes (W114), as the contract answers them, in made-up words, running no claude:
+   * its conversation, 404 while it has none; a message, `{ text }` as JSON, 409 with none or while it's
+   * held, 413 over SUPERVISOR_MESSAGE_MAX, then the made-up turn's steps a moment apart; Start, 409 the
+   * same; Stop; and a decision for a draft, 404 for one it doesn't have, then the draft gone a moment later.
+   */
+  async function supervisor(req: IncomingMessage, res: ServerResponse, method: string, url: URL) {
+    // A step, then a longer one, so a part sees each state: working lasts twice as long as starting.
+    const run = (steps: Array<() => void>) =>
+      steps.forEach((step, index) =>
+        later(SUPERVISOR_STEP_MS * (2 * index + 1), () => {
+          step();
+          broadcast();
+        }),
+      );
+    if (method === 'GET' && url.pathname === '/api/supervisor/conversation') {
+      const page = world.supervisorConversation(url.searchParams.get('before') ?? undefined);
+      return page ? json(res, 200, page satisfies ConversationPage) : end(res, url.searchParams.has('before') ? 410 : 404);
+    }
+    if (method !== 'POST') return end(res, 405);
+    if (url.pathname === protocol.SUPERVISOR_MESSAGE_PATH) {
+      if (!/^application\/json\s*(;|$)/i.test(req.headers['content-type'] ?? '')) return json(res, 415, { ok: false, error: 'Send the request as application/json.' } satisfies ActionResult);
+      const body = await readJson(req);
+      const text = isRecord(body) && typeof body.text === 'string' ? body.text : undefined;
+      const answer = (status: number, result: ActionResult) => {
+        records.supervisorMessages.push({ length: text?.length ?? 0, status });
+        json(res, status, result);
+      };
+      if (text === undefined || text.trim() === '') return answer(400, { ok: false, error: 'The message must be { "text": "…" }, with some text.' });
+      if (text.length > protocol.SUPERVISOR_MESSAGE_MAX) return answer(413, { ok: false, error: `Messages to the supervisor are at most ${protocol.SUPERVISOR_MESSAGE_MAX} characters.` });
+      const taken = world.supervisorMessage(text);
+      if (taken.result === 'refused') return answer(409, { ok: false, error: SUPERVISOR_HELD_ERROR });
+      answer(200, { ok: true });
+      broadcast();
+      run(taken.steps);
+      return;
+    }
+    if (url.pathname === protocol.SUPERVISOR_START_PATH) {
+      await readJson(req);
+      const taken = world.supervisorStart();
+      records.supervisorStarts.push(taken.result === 'refused' ? 409 : 200);
+      if (taken.result === 'refused') return json(res, 409, { ok: false, error: SUPERVISOR_HELD_ERROR } satisfies ActionResult);
+      json(res, 200, { ok: true } satisfies ActionResult);
+      broadcast();
+      run(taken.steps);
+      return;
+    }
+    if (url.pathname === protocol.SUPERVISOR_INTERRUPT_PATH) {
+      await readJson(req);
+      // As the real route: 409 when no turn is running.
+      if (world.supervisorState()?.status !== 'working') {
+        records.supervisorStops.push(409);
+        return json(res, 409, { ok: false, error: "The supervisor isn't working on anything." } satisfies ActionResult);
+      }
+      records.supervisorStops.push(200);
+      json(res, 200, { ok: true } satisfies ActionResult);
+      later(SUPERVISOR_STEP_MS, () => {
+        if (world.supervisorInterrupt()) broadcast();
+      });
+      return;
+    }
+    const approval = /^\/api\/supervisor\/approvals\/([^/]+)$/.exec(url.pathname);
+    if (approval) {
+      const id = decodeURIComponent(approval[1]!);
+      const body = await readJson(req);
+      const decision = asDecision(body);
+      const answer = (status: number, result: ActionResult) => {
+        records.decisions.push({ id, decision: decision?.decision ?? 'invalid', ...(decision?.decision === 'edit' ? { length: decision.text.length } : {}), status });
+        json(res, status, result);
+      };
+      if (!decision) return answer(400, { ok: false, error: 'The decision must be send, edit with its text, or decline.' });
+      const taken = world.supervisorDecide(id, decision);
+      if (taken.result === 'missing') return answer(404, { ok: false, error: 'There is no such approval.' });
+      answer(200, { ok: true });
+      later(SUPERVISOR_STEP_MS / 2, () => {
+        taken.done();
+        broadcast();
+      });
+      return;
+    }
+    return end(res, 404);
   }
 
   /**
@@ -884,4 +980,13 @@ function readUpload(req: IncomingMessage, limit = 10 * 1024 * 1024): Promise<{ s
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** A SupervisorDecision, exactly: send or decline alone, or edit with its text and nothing else. */
+function asDecision(body: unknown): SupervisorDecision | undefined {
+  if (!isRecord(body)) return undefined;
+  const keys = Object.keys(body).sort().join(',');
+  if ((body.decision === 'send' || body.decision === 'decline') && keys === 'decision') return { decision: body.decision };
+  if (body.decision === 'edit' && keys === 'decision,text' && typeof body.text === 'string' && body.text.trim() !== '' && body.text.length <= 20_000) return { decision: 'edit', text: body.text };
+  return undefined;
 }

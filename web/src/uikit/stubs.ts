@@ -9,6 +9,9 @@ import {
   DIRECTORIES_PATH,
   PROTOCOL_VERSION,
   SPAWN_PATH,
+  SUPERVISOR_INTERRUPT_PATH,
+  SUPERVISOR_MESSAGE_PATH,
+  SUPERVISOR_START_PATH,
   WS_CLOSE_TOO_MANY,
   type AttachClientMessage,
   type AttachServerMessage,
@@ -36,6 +39,7 @@ import {
   SUBAGENT_OLDER,
   SUBAGENT_TRANSCRIPT,
   SUBAGENTS,
+  SUPERVISOR_CONVERSATION,
   TERMINAL_OUTPUT,
   TRUNCATED_SUBAGENTS,
   TRUST_HINT,
@@ -139,6 +143,19 @@ export interface StubOptions {
    * `failed` is gh failing, a 502.
    */
   clone?: 'cloned' | 'cloning' | 'failed';
+  /**
+   * The supervisor (W114). `supervisorConversation`: its newest page, `entries`, from the fixtures by
+   * default, or `none`, a 404, a new conversation; `loading` never answers. `supervisorSend`: what a
+   * message gets, `ok`, `sending`, which never answers, `refused`, a 409 while it's held, or `unreachable`.
+   * `supervisorStart` and `supervisorStop`: `ok`, `busy`, which never answers, or `failed`, a 502.
+   * `approval`: what a decision gets, `ok`, `deciding`, which never answers, `gone`, a 404, or `failed`, a 500.
+   */
+  supervisorConversation?: 'ok' | 'none' | 'loading';
+  supervisorEntries?: ConversationEntry[];
+  supervisorSend?: 'ok' | 'sending' | 'refused' | 'unreachable';
+  supervisorStart?: 'ok' | 'busy' | 'failed';
+  supervisorStop?: 'ok' | 'busy' | 'failed';
+  approval?: 'ok' | 'deciding' | 'gone' | 'failed';
 }
 
 /** Where the stubbed Clone and start says it cloned the gallery's not-cloned repo (W107). */
@@ -157,6 +174,7 @@ export function stubApi(options: StubOptions = {}): ApiClient {
   const fetchedOlder = new Map<string, number>();
   let listed = 0;
   const answer = (method: 'GET' | 'POST', path: string, body?: unknown): Promise<ApiResult> => {
+    if (path.startsWith('/api/supervisor/')) return supervisor(options, method, path);
     if (method === 'POST' && path === SPAWN_PATH) return spawn(options.spawn ?? 'started');
     if (method === 'POST' && path === CLONE_PATH) {
       const clone = options.clone ?? 'cloned';
@@ -218,6 +236,46 @@ export function stubApi(options: StubOptions = {}): ApiClient {
     // An unused upload removed (W82): done, as the server's 204.
     delete: (path) => Promise.resolve(path.startsWith(`${ATTACHMENTS_PATH}/`) ? { kind: 'ok', status: 204, body: undefined } : failed(404)),
   };
+}
+
+/** The supervisor's routes (W114), in made-up words, as the contract answers them. */
+function supervisor(options: StubOptions, method: 'GET' | 'POST', path: string): Promise<ApiResult> {
+  if (method === 'GET' && path.startsWith('/api/supervisor/conversation')) {
+    const kind = options.supervisorConversation ?? 'ok';
+    if (kind === 'loading') return forever();
+    if (kind === 'none') return Promise.resolve(failed(404));
+    return Promise.resolve(ok({ sessionId: 'pitwall-test-supervisor', entries: options.supervisorEntries ?? SUPERVISOR_CONVERSATION }));
+  }
+  if (method !== 'POST') return Promise.resolve(failed(405));
+  const action = (result: 'ok' | 'busy' | 'failed' | undefined, error: string) =>
+    result === 'busy' ? forever() : result === 'failed' ? Promise.resolve(failed(502, { ok: false, error })) : Promise.resolve(ok({ ok: true }));
+  if (path === SUPERVISOR_START_PATH) return action(options.supervisorStart, "Made up: claude exited as it started.");
+  if (path === SUPERVISOR_INTERRUPT_PATH) return action(options.supervisorStop, "Made up: the turn had already ended.");
+  if (path === SUPERVISOR_MESSAGE_PATH) {
+    switch (options.supervisorSend ?? 'ok') {
+      case 'sending':
+        return forever();
+      case 'refused':
+        return Promise.resolve(failed(409, { ok: false, error: 'Made up: a background session has its conversation, so it can’t take messages.' }));
+      case 'unreachable':
+        return Promise.resolve(failed());
+      case 'ok':
+        return Promise.resolve(ok({ ok: true }));
+    }
+  }
+  if (path.startsWith('/api/supervisor/approvals/')) {
+    switch (options.approval ?? 'ok') {
+      case 'deciding':
+        return forever();
+      case 'gone':
+        return Promise.resolve(failed(404, { ok: false, error: 'Made up: no such approval.' }));
+      case 'failed':
+        return Promise.resolve(failed(500));
+      case 'ok':
+        return Promise.resolve(ok({ ok: true }));
+    }
+  }
+  return Promise.resolve(failed(404));
 }
 
 function recapRefresh(result: NonNullable<StubOptions['recapRefresh']>): Promise<ApiResult> {

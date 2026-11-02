@@ -18,9 +18,10 @@
 // it again, until the draft is edited or sent. Nothing about Send changes: it's the same press as
 // before, and nothing sends by itself.
 
-import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useContext, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import type { RelayExchange, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
+import { useAutoGrow } from '../autoGrow.js';
 import { DraftStorageContext, readDraft, writeDraft, type UnsureSend } from '../drafts.js';
 import { absoluteTime, plainText } from '../format.js';
 import {
@@ -150,33 +151,8 @@ export function RelayBox({ session, replyShown = false, onDraftChange, listed = 
   }, [hasDraft]);
   useEffect(() => () => onDraftRef.current?.(false), []);
 
-  // From one line to eight, then it scrolls (4: Inputs): its height follows its content, and the CSS
-  // caps it. Measured again when its width changes, since the text wraps differently.
-  const grow = () => {
-    const element = field.current;
-    if (!element) return;
-    element.style.height = 'auto';
-    element.style.height = `${element.scrollHeight}px`;
-  };
-  useLayoutEffect(grow, [text, formShown]);
-  useEffect(() => {
-    const element = field.current;
-    if (!element || typeof ResizeObserver === 'undefined') return;
-    let width = element.clientWidth;
-    let frame = 0;
-    const observer = new ResizeObserver(() => {
-      if (element.clientWidth === width) return;
-      width = element.clientWidth;
-      // In the next frame: changing its height inside the callback would notify it again in this one.
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(grow);
-    });
-    observer.observe(element);
-    return () => {
-      observer.disconnect();
-      cancelAnimationFrame(frame);
-    };
-  }, [formShown]);
+  // From one line to eight, then it scrolls (4: Inputs): its height follows its content, and the CSS caps it.
+  useAutoGrow(field, text, formShown);
 
   const length = outgoingText(text).length;
   const tooLong = length > MAX_RELAY_TEXT_LENGTH;

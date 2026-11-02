@@ -24,6 +24,7 @@ import { Confirmations, Conversations, EndedViews, Menus, MessageBoxes, SessionV
 import { SubagentViews } from './subagents.js';
 import { PullRequestSpecimens } from './prs.js';
 import { RecapSpecimens } from './recaps.js';
+import { SupervisorSpecimens } from './supervisor.js';
 import './gallery.css';
 
 interface Section {
@@ -87,6 +88,13 @@ const SECTIONS: Section[] = [
     intro:
       "M5 (W111): the recap strip between the session view's header and its tabs, in every state: You need to, Waiting on CI, another session and someone else, Done, May be out of date, Claude Code's recap, collapsed, refreshing, the day's budget spent, loading, none yet and failed; the session rows' recap reasons on line 2; and the app strip's recap lines.",
     Content: RecapSpecimens,
+  },
+  {
+    id: 'supervisor',
+    title: 'Supervisor',
+    intro:
+      "M5 (W114): the repo list's Supervisor item in each state, with its drafts' count; its view in each of the supervisor's states, off with a new conversation, starting, idle, working, held and failed, and with --no-supervisor; its draft cards of both kinds, long, editing, sending, failed and gone; its message box sending, queued, refused, maybe sent and stopping; and the page with its view open and Needs you counting its drafts, and the app strip's line.",
+    Content: SupervisorSpecimens,
   },
   { id: 'menus', title: 'Menus', intro: 'MenuButton: an icon button and its menu, which the session view\'s actions use, and its radio group, which nothing in the app uses since Preferences became a dialog (W59).', Content: Menus },
   { id: 'message-box', title: 'Message box', intro: "RelayBox, in the session view's footer: typing, at and over the limit, sending, each send's result, the latest exchange, a session that can't be messaged, and a draft the tab kept through a reload.", Content: MessageBoxes },
