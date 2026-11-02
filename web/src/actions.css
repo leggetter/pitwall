@@ -74,13 +74,18 @@
   line-height: var(--pw-leading-m);
 }
 
-/* The select's text clears the icon drawn over its right edge. */
+/*
+ * The select's text clears the icon drawn over its right edge, and a choice too long for it, such as a
+ * default with where it's from (W122), ends in an ellipsis, in full in the open list.
+ */
 .field .select {
   display: flex;
 }
 
 .field .select-input {
+  min-width: 0;
   padding-right: var(--pw-space-8);
+  text-overflow: ellipsis;
 }
 
 /* Paths and model names are in the mono path style. */

@@ -88,7 +88,7 @@ import {
   WS_PATH,
   type ConversationPage,
 } from '../shared/protocol.js';
-import { CommandSlots, createSpawnRunner, DEFAULT_MAX_CONCURRENT_COMMANDS, registerActions, type ActionOptions } from './actions.js';
+import { checkDirectory, CommandSlots, createSpawnRunner, DEFAULT_MAX_CONCURRENT_COMMANDS, registerActions, type ActionOptions } from './actions.js';
 import { createAttachServer, type AttachOptions } from './attach.js';
 import { AttachmentStore, registerAttachments, type AttachmentStoreOptions } from './attachments.js';
 import { createCloneRoute, type CloneOptions } from './clone.js';
@@ -331,7 +331,10 @@ export async function startServerWithInternals(
     registerRecaps(app, indexer, recaps);
     registerSupervisor(app, supervisor, supervisorActions);
     registerMcp(app, mcp);
-    registerWork(app, work);
+    registerWork(app, work, async (dir) => {
+      const checked = await checkDirectory(dir, indexer.latest()?.roots ?? []);
+      return checked.ok ? checked.path : undefined;
+    });
     internals.routes?.(app);
   };
   const app = createApp({ snapshots, indexer, token, apiKey, webRoot, port: () => port ?? -1, routes, ...(supervisor === undefined ? {} : { supervisor }) });

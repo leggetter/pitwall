@@ -8,7 +8,8 @@
 // - Repo list: Group sessions by (W42), which decides the repo list's groups and their counts.
 // - Session view: Open running background sessions on (W54), and The terminal takes the keyboard (W57).
 // - Models and effort (W119): the model and effort for each kind of work pitwall starts, a Model and
-//   an Effort select for each, the first option the default and where it's from, and what recaps and
+//   an Effort select for each, the first option the default and where it's from, Claude Code's own
+//   resolved from its settings and environment by the server (W122), and what recaps and
 //   the supervisor have cost, so a choice rests on numbers. Unlike the others, these are kept by
 //   pitwall's server for its run, never in the browser, and never written to the config file. A
 //   change is sent at once; a refusal is an inline alert, and the choice goes back.
@@ -17,8 +18,9 @@
 // think we should duplicate settings that already have their own standalone buttons"): the single-key
 // shortcuts are the keyboard shortcuts dialog's off switch, and the theme is the header's switch.
 //
-// The medium dialog, 624 px, so each option's line fits on one line, all but W57's two sentences, and
-// from 900 px never over the repo list (W62, Preferences.css). Each section is a <section> named by
+// The large dialog, 840 px (W122), so a kind of work, its model and its effort share a line, with
+// Claude Code's resolved defaults in full, and from 900 px never over the repo list (W62,
+// Preferences.css). Each section is a <section> named by
 // its <h3>, and each setting a RadioGroup.
 // Sort stays in the session list's header and the view's width on the divider: both are view
 // controls, used in place. Each setting keeps its own key and validation, the Dashboard's, passed in.
@@ -29,6 +31,7 @@ import { ApiContext } from '../api.js';
 import {
   choiceText,
   choiceValues,
+  CLAUDE_DEFAULTS_TEXT,
   defaultText,
   fetchWorkSettings,
   saveWorkOverrides,
@@ -175,7 +178,7 @@ function WorkRow({ kind, settings, onChange, cost }: { kind: WorkKind; settings:
                 <option value="">{defaultText(settings, kind, field)}</option>
                 {choiceValues(settings, kind, field).map((value) => (
                   <option key={value} value={value}>
-                    {choiceText(value)}
+                    {choiceText(value, settings, kind, field)}
                   </option>
                 ))}
               </select>
@@ -255,6 +258,7 @@ export function WorkPreferences({ recaps, supervisor, initial }: WorkPreferences
   return (
     <PreferencesSection title={PREFERENCE_SECTIONS.work}>
       <p className="field-hint">{WORK_SECTION_TEXT}</p>
+      {settings?.claude !== undefined && <p className="field-hint">{CLAUDE_DEFAULTS_TEXT}</p>}
       {settings === undefined && !failed && <p className="field-hint">{api ? WORK_TEXT.loading : WORK_TEXT.noApi}</p>}
       {failed && (
         <Alert tone="danger" role="alert">
@@ -280,7 +284,7 @@ export interface PreferencesDialogProps extends PreferencesProps, WorkPreference
 
 export function PreferencesDialog({ onClose, groupBy, onGroupBy, backgroundTab, onBackgroundTab, terminalFocus, onTerminalFocus, ...work }: PreferencesDialogProps) {
   return (
-    <Dialog title={PREFERENCES_LABEL} subtitle={PREFERENCES_SUBTITLE} size="md" onClose={onClose} className="preferences-dialog">
+    <Dialog title={PREFERENCES_LABEL} subtitle={PREFERENCES_SUBTITLE} size="lg" onClose={onClose} className="preferences-dialog">
       <RepoListPreferences groupBy={groupBy} onGroupBy={onGroupBy} />
       <SessionViewPreferences backgroundTab={backgroundTab} onBackgroundTab={onBackgroundTab} terminalFocus={terminalFocus} onTerminalFocus={onTerminalFocus} />
       <WorkPreferences {...work} />

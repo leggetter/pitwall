@@ -58,6 +58,7 @@ type Security = typeof import('../../src/server/security.js');
 type Static = typeof import('../../src/server/static.js');
 type Protocol = typeof import('../../src/shared/protocol.js');
 type Work = typeof import('../../src/server/work.js');
+type ClaudeDefaultsModule = typeof import('../../src/server/claudeDefaults.js');
 
 /** pitwall's own modules, from the build. */
 export interface Built {
@@ -66,13 +67,21 @@ export interface Built {
   protocol: Protocol;
   /** The model and effort store and its checks (W119), so the fake server answers WORK_PATH as the real one. */
   work: Work;
+  /** Claude Code's defaults (W122), worked out from made-up settings files, never this machine's. */
+  claudeDefaults: ClaudeDefaultsModule;
 }
 
-/** Imports the four modules the fake server uses from a server build, such as dist. */
+/** Imports the five modules the fake server uses from a server build, such as dist. */
 export async function importBuilt(dist: string): Promise<Built> {
   const load = (path: string) => import(pathToFileURL(join(dist, path)).href);
-  const [security, staticFiles, protocol, work] = await Promise.all([load('server/security.js'), load('server/static.js'), load('shared/protocol.js'), load('server/work.js')]);
-  return { security: security as Security, static: staticFiles as Static, protocol: protocol as Protocol, work: work as Work };
+  const [security, staticFiles, protocol, work, claudeDefaults] = await Promise.all([
+    load('server/security.js'),
+    load('server/static.js'),
+    load('shared/protocol.js'),
+    load('server/work.js'),
+    load('server/claudeDefaults.js'),
+  ]);
+  return { security: security as Security, static: staticFiles as Static, protocol: protocol as Protocol, work: work as Work, claudeDefaults: claudeDefaults as ClaudeDefaultsModule };
 }
 
 export interface Records {
@@ -252,11 +261,18 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
   const world = new World();
   world.setRecapBudget(protocol.RECAP_DAILY_BUDGET);
   let records = emptyRecords();
-  // The model and effort (W119): a made-up config file's defaults, sessions on opus at high and their sub-agents on haiku.
+  // The model and effort (W119): a made-up config file's defaults, sessions at high effort and their
+  // sub-agents on haiku; and Claude Code's own (W122), from made-up settings: your settings' Opus 5.5,
+  // and a project that saves Opus 5.5 at xhigh, for New session's directory.
   const madeUpWork = () =>
     built.work.createWorkStore({
-      config: { ...built.work.emptyChoices(), session: { model: 'opus', effort: 'high' }, subagents: { model: 'haiku' } },
+      config: { ...built.work.emptyChoices(), session: { effort: 'high' }, subagents: { model: 'haiku' } },
       configFile: '/Users/example/.pitwall/config.json',
+      claude: async (layers, dir) => {
+        const user = { scope: 'user' as const, model: 'claude-opus-5-5' };
+        const project = { scope: 'project' as const, modelSettings: { 'claude-opus-5-5': { effortLevel: 'xhigh' } } };
+        return built.claudeDefaults.claudeDefaults({ session: dir === undefined ? [user] : [project, user], managed: [] }, {}, layers, dir);
+      },
     });
   let work = madeUpWork();
   // The uploads kept (W82), by id, and the names that have had their one failure.
@@ -322,12 +338,12 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (method === 'GET' && url.pathname === protocol.PRS_PATH) return json(res, 200, world.prList() satisfies PullRequestList);
     if (method === 'POST' && url.pathname === protocol.PRS_REFRESH_PATH) return refreshPrs(req, res);
     if (method === 'POST' && url.pathname === protocol.CLONE_PATH) return clone(req, res);
-    if (method === 'GET' && url.pathname === protocol.WORK_PATH) return json(res, 200, work.settings());
+    if (method === 'GET' && url.pathname === protocol.WORK_PATH) return json(res, 200, await work.describe(url.searchParams.get('dir') || undefined));
     if (method === 'POST' && url.pathname === protocol.WORK_PATH) {
       const body = await readJson(req);
       const result = work.update(body);
       records.workPosts.push({ overrides: isRecord(body) ? body.overrides : undefined, status: result.ok ? 200 : 400 });
-      return result.ok ? json(res, 200, result.settings) : json(res, 400, { error: result.error });
+      return result.ok ? json(res, 200, await work.describe()) : json(res, 400, { error: result.error });
     }
     if (url.pathname.startsWith('/api/supervisor/')) return supervisor(req, res, method, url);
     if (method === 'POST' && url.pathname === protocol.SPAWN_PATH) return spawn(req, res);

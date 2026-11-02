@@ -39,6 +39,7 @@ import {
   type WorkKind,
   type WorkSettings,
 } from '../shared/protocol.js';
+import type { ClaudeDefaultsReader } from './claudeDefaults.js';
 import { RELAY_MODEL } from './relayPrompt.js';
 
 /** pitwall's own model and effort for each kind of work: today's behaviour, before W119. */
@@ -190,6 +191,11 @@ export interface WorkStore {
   /** What applies to `kind` now: the override, else the config file's, else pitwall's own, field by field. */
   choice(kind: WorkKind): WorkChoice;
   settings(): WorkSettings;
+  /**
+   * settings(), with Claude Code's defaults (W122) when the store has a reader: for sessions in `dir`,
+   * already checked, or with your user settings alone.
+   */
+  describe(dir?: string): Promise<WorkSettings>;
   /** Replaces the overrides with `body`'s, a WorkUpdate, once it passes every check. */
   update(body: unknown): { ok: true; settings: WorkSettings } | { ok: false; error: string };
 }
@@ -199,6 +205,8 @@ export interface WorkStoreOptions {
   config?: WorkChoices;
   /** The config file's path, when one was read. */
   configFile?: string;
+  /** Reads Claude Code's defaults (W122, claudeDefaults.ts). Absent: the answers have no `claude`. */
+  claude?: ClaudeDefaultsReader;
 }
 
 export function createWorkStore(options: WorkStoreOptions = {}): WorkStore {
@@ -219,6 +227,11 @@ export function createWorkStore(options: WorkStoreOptions = {}): WorkStore {
   return {
     choice,
     settings,
+    async describe(dir) {
+      const current = settings();
+      const claude = await options.claude?.({ builtIn: current.builtIn, config: current.config, overrides: current.overrides }, dir);
+      return claude === undefined ? current : { ...current, claude };
+    },
     update(body) {
       if (typeof body !== 'object' || body === null || Array.isArray(body) || !Object.hasOwn(body, 'overrides')) {
         return { ok: false, error: 'The body must be { "overrides": { ... } }.' };
@@ -248,11 +261,16 @@ function copy(choices: Readonly<WorkChoices>): WorkChoices {
 /** The longest POST body: five kinds of two short strings each fit in well under 1 KiB. */
 const MAX_WORK_BODY_BYTES = 4 * 1024;
 
-/** GET and POST WORK_PATH. Call it after the /api/* checks, as ServerInternals.routes does. */
-export function registerWork(app: Hono, store: WorkStore): void {
-  app.get(WORK_PATH, (c) => {
+/**
+ * GET and POST WORK_PATH. Call it after the /api/* checks, as ServerInternals.routes does.
+ * `checkDir` answers GET's `?dir=` as a realpath under a root, or undefined, which leaves it out.
+ */
+export function registerWork(app: Hono, store: WorkStore, checkDir: (dir: string) => Promise<string | undefined> = async () => undefined): void {
+  app.get(WORK_PATH, async (c) => {
     c.header('Cache-Control', 'no-store');
-    return c.json(store.settings());
+    const asked = c.req.query('dir');
+    const dir = asked === undefined || asked === '' ? undefined : await checkDir(asked);
+    return c.json(await store.describe(dir));
   });
   app.post(
     WORK_PATH,
@@ -268,7 +286,7 @@ export function registerWork(app: Hono, store: WorkStore): void {
       }
       const result = store.update(body);
       if (!result.ok) return c.json({ error: result.error }, 400);
-      return c.json(result.settings);
+      return c.json(await store.describe());
     },
   );
 }

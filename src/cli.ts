@@ -30,6 +30,7 @@ import { createRecapEngine } from './recaps/engine.js';
 import { createSupervisor } from './supervisor/supervisor.js';
 import { childEnvironment } from './server/command.js';
 import { createRelayManager, DEFAULT_PORT, PortInUseError, startServer } from './server/index.js';
+import { createClaudeDefaultsReader } from './server/claudeDefaults.js';
 import { createWorkStore } from './server/work.js';
 import { type DirCheckContext, LaunchDirError, pitwallHome, prepareLaunchDir, removeWhenUsed, writeLaunchFile } from './server/launch.js';
 import { RELAY_NAME } from './server/relayPrompt.js';
@@ -582,7 +583,13 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   // The relay (D8) starts on the first message. The index leaves its own session out, and shows its exchanges.
   // The model and effort for each kind of work (W119): the config file's `work`, then the app's
   // overrides for this run. The relay, recaps and the supervisor read it at each start or call.
-  const work = createWorkStore({ ...(config.work === undefined ? {} : { config: config.work }), ...(config.found ? { configFile: config.file } : {}) });
+  // Claude Code's own defaults (W122), read from its documented settings files and pitwall's
+  // environment at each GET, for Preferences' and New session's words.
+  const work = createWorkStore({
+    ...(config.work === undefined ? {} : { config: config.work }),
+    ...(config.found ? { configFile: config.file } : {}),
+    claude: createClaudeDefaultsReader(),
+  });
   const relay = createRelayManager({ work: () => work.choice('relay') });
   // Recaps (M5, W110): the server starts them once it's listening. The index leaves their calls out, and
   // hands them what it read of each transcript. With --no-recaps, there's no engine, and no call.

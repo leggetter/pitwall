@@ -1912,6 +1912,9 @@ export const MODEL_ALIASES = ['opus', 'sonnet', 'haiku', 'fable', 'best', 'opusp
  */
 export const SUBAGENT_MODEL_ALIASES = ['opus', 'sonnet', 'haiku', 'fable'] as const;
 
+/** The aliases Preferences offers each kind, besides what pitwall's layers name (W119). */
+export const OFFERED_WORK_MODELS = ['opus', 'sonnet', 'haiku', 'fable'] as const;
+
 /**
  * A full model name, such as `claude-opus-5-5` or `claude-haiku-4-5-20251001`: `claude-`, a family,
  * then numbers joined by `-`. Never free text on a command line: only these characters, at most 64.
@@ -1965,6 +1968,56 @@ export interface WorkSettings {
   effective: WorkChoices;
   /** The config file it read, for the words "in <file>". Absent when there's none. */
   configFile?: string;
+  /**
+   * What Claude Code would use where pitwall passes no `--model` or `--effort` (W122), read from its
+   * documented settings files and environment variables as the request came in. Absent when the
+   * server wasn't given a reader (tests, the gallery) or the read failed.
+   */
+  claude?: ClaudeDefaults;
+}
+
+/**
+ * A settings file Claude Code reads (code.claude.com/docs/en/settings, "Settings files and who they
+ * affect"): managed, a project's `.claude/settings.local.json`, its `.claude/settings.json`, and
+ * `~/.claude/settings.json`, in that order of precedence.
+ */
+export type ClaudeSettingsScope = 'managed' | 'local' | 'project' | 'user';
+
+/** Where one of Claude Code's defaults comes from (W122). */
+export type ClaudeDefaultSource =
+  /** An environment variable: in that settings file's `env` block, or, with no scope, pitwall's environment. */
+  | { kind: 'variable'; name: string; scope?: ClaudeSettingsScope }
+  /** A key in a settings file. */
+  | { kind: 'setting'; key: 'model' | 'effortLevel' | 'modelSettings' | 'maxEffortLevel'; scope: ClaudeSettingsScope }
+  /** The model's own default effort, or none for a model without effort levels. */
+  | { kind: 'model' }
+  /** Your account's default model, which only Claude Code sees: by plan, or an organization's default. */
+  | { kind: 'account' }
+  /** A session's sub-agents: the session's model. */
+  | { kind: 'session' };
+
+/** One default: the value, absent when it can't be known here, and where it comes from. */
+export interface ClaudeDefault {
+  /**
+   * A model alias or full name; an EffortLevel, `auto` for CLAUDE_CODE_EFFORT_LEVEL's "send none", or
+   * `none` for a model without effort levels.
+   */
+  value?: string;
+  source: ClaudeDefaultSource;
+}
+
+/** Claude Code's defaults for each kind of work pitwall starts (W122). */
+export interface ClaudeDefaults {
+  /** With no `--model`: each kind's model. */
+  model: Record<WorkKind, ClaudeDefault>;
+  /**
+   * With no `--effort`: each kind's effort, by the model it would run on: WORK_DEFAULT for Claude
+   * Code's own model, else the alias or full name passed. Effort settings are per model. Sub-agents
+   * have none of their own.
+   */
+  effort: Record<WorkKind, Record<string, ClaudeDefault>>;
+  /** The directory whose project settings were read, for New session. Absent: none, so sessions' are your settings alone. */
+  dir?: string;
 }
 
 /**
@@ -1977,5 +2030,9 @@ export interface WorkUpdate {
   overrides: Partial<Record<WorkKind, WorkChoice>>;
 }
 
-/** The model and effort settings (W119). GET answers WorkSettings; POST takes a WorkUpdate. */
+/**
+ * The model and effort settings (W119). GET answers WorkSettings; POST takes a WorkUpdate. GET takes
+ * `?dir=<absolute path>` (W122): a directory under a root, whose project settings then go into
+ * `claude`'s defaults for sessions. One that isn't is left out, as if none were given.
+ */
 export const WORK_PATH = '/api/work';

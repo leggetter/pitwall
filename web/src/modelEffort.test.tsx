@@ -1,12 +1,12 @@
 // W119: Preferences' Models and effort section and New session's Model and Effort fields, against a
-// fake server. Made-up values only.
+// fake server, and W122's words for Claude Code's resolved defaults. Made-up values only.
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { SPAWN_PATH, WORK_PATH, type IndexSnapshot, type WorkSettings } from '../../src/shared/protocol.js';
+import { SPAWN_PATH, WORK_PATH, type ClaudeDefaults, type IndexSnapshot, type WorkSettings } from '../../src/shared/protocol.js';
 import { ApiContext, createApiClient, type FetchLike } from './api.js';
 import { NewSessionDialog } from './components/NewSessionDialog.js';
 import { recapCostText, supervisorCostText, WorkPreferences } from './components/Preferences.js';
-import { choiceValues, defaultText, readWorkSettings, usdText, withOverride } from './modelEffort.js';
+import { choiceText, choiceValues, claudeText, defaultText, modelText, readWorkSettings, sessionDefaultText, usdText, withOverride } from './modelEffort.js';
 import { group, session, snapshot } from './test/fixtures.js';
 
 const API_KEY = 'k'.repeat(43);
@@ -27,23 +27,45 @@ function settings(overrides: Partial<WorkSettings> = {}): WorkSettings {
   };
 }
 
+/** Claude Code's defaults as the server might resolve them (W122). */
+function claude(): ClaudeDefaults {
+  const byModel = (fallback: ClaudeDefaults['effort']['session'][string]) => ({ default: fallback, opus: { value: 'medium', source: { kind: 'model' } }, sonnet: { value: 'medium', source: { kind: 'model' } } }) as ClaudeDefaults['effort']['session'];
+  return {
+    model: {
+      session: { value: 'claude-opus-5-5', source: { kind: 'setting', key: 'model', scope: 'user' } },
+      subagents: { source: { kind: 'session' } },
+      supervisor: { source: { kind: 'account' } },
+      recaps: { source: { kind: 'account' } },
+      relay: { value: 'sonnet', source: { kind: 'variable', name: 'ANTHROPIC_MODEL' } },
+    },
+    effort: {
+      session: { ...byModel({ value: 'high', source: { kind: 'variable', name: 'CLAUDE_CODE_EFFORT_LEVEL' } }), opus: { value: 'xhigh', source: { kind: 'setting', key: 'modelSettings', scope: 'project' } } },
+      subagents: {},
+      supervisor: { ...byModel({ source: { kind: 'model' } }), 'claude-opus-5-5': { value: 'medium', source: { kind: 'model' } } },
+      recaps: { ...byModel({ source: { kind: 'model' } }), 'claude-haiku-5-5': { value: 'low', source: { kind: 'setting', key: 'maxEffortLevel', scope: 'managed' } } },
+      relay: { ...byModel({ value: 'auto', source: { kind: 'variable', name: 'CLAUDE_CODE_EFFORT_LEVEL' } }), haiku: { value: 'medium', source: { kind: 'model' } } },
+    },
+  };
+}
+
 const settle = () => act(async () => {});
+const pathOf = (url: string) => new URL(url, 'http://127.0.0.1').pathname;
 
 /** A fake server: GET WORK_PATH answers `initial`; POST WORK_PATH `post`'s answer; POST SPAWN_PATH 201. */
 function fakeServer(initial: WorkSettings, post: (body: unknown) => { status: number; body: unknown } = (body) => ({ status: 200, body: { ...initial, overrides: (body as { overrides: unknown }).overrides } })) {
   return vi.fn<FetchLike>(async (url, init) => {
-    if (url.endsWith(WORK_PATH) && init.method === undefined) return new Response(JSON.stringify(initial), { status: 200 });
-    if (url.endsWith(WORK_PATH) && init.method === 'POST') {
+    if (pathOf(url) === WORK_PATH && init.method === undefined) return new Response(JSON.stringify(initial), { status: 200 });
+    if (pathOf(url) === WORK_PATH && init.method === 'POST') {
       const answer = post(JSON.parse(String(init.body)));
       return new Response(JSON.stringify(answer.body), { status: answer.status });
     }
-    if (url.endsWith(SPAWN_PATH)) return new Response(JSON.stringify({ ok: true, shortId: 'c0ffee12', name: 'pitwall-test-spawn' }), { status: 201 });
+    if (pathOf(url) === SPAWN_PATH) return new Response(JSON.stringify({ ok: true, shortId: 'c0ffee12', name: 'pitwall-test-spawn' }), { status: 201 });
     return new Response('{}', { status: 404 });
   });
 }
 
 const posts = (fetch: ReturnType<typeof fakeServer>, path: string) =>
-  fetch.mock.calls.filter(([url, init]) => url.endsWith(path) && init.method === 'POST').map(([, init]) => JSON.parse(String(init.body)) as unknown);
+  fetch.mock.calls.filter(([url, init]) => pathOf(url) === path && init.method === 'POST').map(([, init]) => JSON.parse(String(init.body)) as unknown);
 
 function renderSection(fetch: FetchLike, props: Parameters<typeof WorkPreferences>[0] = {}) {
   const api = createApiClient({ apiKey: API_KEY, fetch });
@@ -61,10 +83,47 @@ const optionTexts = (select: HTMLSelectElement) => [...select.options].map((opti
 describe('the words and choices', () => {
   it('names the default and where it comes from', () => {
     const s = settings();
-    expect(defaultText(s, 'session', 'model')).toBe('Default: opus, from the config file');
-    expect(defaultText(s, 'recaps', 'model')).toBe('Default: claude-haiku-5-5');
+    expect(defaultText(s, 'session', 'model')).toBe('Default: opus (the config file)');
+    expect(defaultText(s, 'session', 'effort')).toBe('Default: high (the config file)');
+    expect(defaultText(s, 'recaps', 'model')).toBe("Default: Haiku 5.5 (pitwall's default)");
+    // Without the server's `claude`, Claude Code's default can't be named.
     expect(defaultText(s, 'recaps', 'effort')).toBe("Default: Claude Code's");
-    expect(defaultText({ ...s, config: { ...s.config, relay: { model: 'default' } } }, 'relay', 'model')).toBe("Default: Claude Code's, from the config file");
+    expect(defaultText({ ...s, config: { ...s.config, relay: { model: 'default' } } }, 'relay', 'model')).toBe("Default: Claude Code's");
+  });
+
+  it("names Claude Code's resolved default and where it comes from (W122)", () => {
+    const s = settings({ claude: claude(), config: empty(), effective: { ...empty(), supervisor: { model: 'claude-opus-5-5' }, recaps: { model: 'claude-haiku-5-5' }, relay: { model: 'haiku' } } });
+    expect(defaultText(s, 'session', 'model')).toBe('Default: Opus 5.5 (your Claude Code settings)');
+    expect(defaultText(s, 'session', 'effort')).toBe('Default: high (CLAUDE_CODE_EFFORT_LEVEL)');
+    expect(defaultText(s, 'subagents', 'model')).toBe("Default: the session's model");
+    expect(defaultText(s, 'supervisor', 'model')).toBe("Default: Opus 5.5 (pitwall's default)");
+    // An effort's default is on the model in effect: the supervisor's own Opus 5.5, recaps' Haiku 5.5.
+    expect(defaultText(s, 'supervisor', 'effort')).toBe("Default: medium (the model's own)");
+    expect(defaultText(s, 'recaps', 'effort')).toBe("Default: low (the maxEffortLevel cap in your organization's managed settings)");
+    expect(defaultText(s, 'relay', 'effort')).toBe("Default: medium (the model's own)");
+    // The "Claude Code's default" option says what it is too.
+    expect(choiceText('default', s, 'supervisor', 'model')).toBe("Claude Code's default: set by your Claude account");
+    expect(choiceText('default', s, 'relay', 'model')).toBe("Claude Code's default: sonnet (ANTHROPIC_MODEL)");
+    expect(choiceText('claude-haiku-5-5', s, 'recaps', 'model')).toBe('Haiku 5.5');
+    // With an override to Claude Code's model, the effort follows it.
+    const relayOnDefault = { ...s, overrides: { ...empty(), relay: { model: 'default' } }, effective: { ...s.effective, relay: { model: 'default' } } };
+    expect(defaultText(relayOnDefault, 'relay', 'effort')).toBe("Default: none sent, the API's own (CLAUDE_CODE_EFFORT_LEVEL)");
+  });
+
+  it('words each kind of source and value', () => {
+    expect(claudeText('model', { value: 'opus', source: { kind: 'variable', name: 'ANTHROPIC_MODEL', scope: 'project' } })).toBe("opus (ANTHROPIC_MODEL in the project's Claude Code settings)");
+    expect(claudeText('model', { value: 'claude-sonnet-5-5', source: { kind: 'setting', key: 'model', scope: 'local' } })).toBe("Sonnet 5.5 (the project's local Claude Code settings)");
+    expect(claudeText('effort', { value: 'none', source: { kind: 'model' } })).toBe('none (the model takes none)');
+    expect(claudeText('effort', { source: { kind: 'model' } })).toBe("the model's own");
+    expect(modelText('claude-haiku-4-5-20251001')).toBe('Haiku 4.5');
+    expect(modelText('claude-opus-5-5[1m]')).toBe('Opus 5.5 (1M)');
+    expect(modelText('claude-opus-5')).toBe('Opus 5');
+    expect(modelText('opusplan')).toBe('opusplan');
+    // New session's first options: the effective defaults, or Claude Code's on the model chosen.
+    const s = settings({ claude: claude() });
+    expect(sessionDefaultText(s, 'model')).toBe('Default: opus');
+    expect(sessionDefaultText(settings({ claude: claude(), effective: empty() }), 'effort', 'opus')).toBe("Default: xhigh (the project's Claude Code settings)");
+    expect(sessionDefaultText(undefined, 'model')).toBe('Default');
   });
 
   it("offers Claude Code's default only when the default isn't already it, sub-agents' four aliases, and any full name a layer names", () => {
@@ -92,6 +151,19 @@ describe('the words and choices', () => {
     expect(readWorkSettings({ builtIn: {} })).toBeUndefined();
   });
 
+  it("reads Claude Code's defaults defensively: a source it doesn't know, or a value with control characters, drops them", () => {
+    const good = readWorkSettings({ ...settings(), claude: claude() });
+    expect(good?.claude?.model.session).toEqual({ value: 'claude-opus-5-5', source: { kind: 'setting', key: 'model', scope: 'user' } });
+    const bad = claude() as unknown as { model: Record<string, unknown> };
+    bad.model.relay = { value: 'sonnet', source: { kind: 'variable', name: 'SECRET_TOKEN' } };
+    expect(readWorkSettings({ ...settings(), claude: bad })?.claude).toBeUndefined();
+    bad.model.relay = { value: 'son\nnet', source: { kind: 'model' } };
+    expect(readWorkSettings({ ...settings(), claude: bad })?.claude).toBeUndefined();
+    bad.model.relay = { value: 'opus\u202e', source: { kind: 'model' } };
+    expect(readWorkSettings({ ...settings(), claude: bad })?.claude).toBeUndefined();
+    expect(readWorkSettings({ ...settings(), claude: 'nope' })?.claude).toBeUndefined();
+  });
+
   it('says what recaps and the supervisor have cost', () => {
     expect(recapCostText({ calls: 37, budget: 200, costUsd: 0.0412 })).toBe('Today: $0.04 for 37 of 200 calls, at API list prices.');
     expect(recapCostText({ calls: 1, budget: 200, costUsd: 0.001 })).toBe('Today: under $0.01 for 1 of 200 calls, at API list prices.');
@@ -116,8 +188,8 @@ describe("Preferences' Models and effort", () => {
     }
     expect(within(rowOf("Sessions' sub-agents")).queryByLabelText('Effort')).toBeNull();
     expect(within(rowOf("Sessions' sub-agents")).getByText(/Claude Code has no separate setting for it/)).toBeTruthy();
-    expect(optionTexts(selectIn(rowOf('Sessions'), 'Model'))[0]).toBe('Default: opus, from the config file');
-    expect(optionTexts(selectIn(rowOf('Recaps'), 'Model'))).toEqual(['Default: claude-haiku-5-5', "Claude Code's default", 'opus', 'sonnet', 'haiku', 'fable', 'claude-haiku-5-5']);
+    expect(optionTexts(selectIn(rowOf('Sessions'), 'Model'))[0]).toBe('Default: opus (the config file)');
+    expect(optionTexts(selectIn(rowOf('Recaps'), 'Model'))).toEqual(["Default: Haiku 5.5 (pitwall's default)", "Claude Code's default", 'opus', 'sonnet', 'haiku', 'fable', 'Haiku 5.5']);
     expect(within(rowOf('Recaps')).getByText(/Today: \$0\.04 for 37 of 200 calls/)).toBeTruthy();
     expect(within(rowOf('Supervisor')).getByText(/This run: \$0\.12/)).toBeTruthy();
   });
@@ -229,6 +301,22 @@ describe("New session's Model and Effort (W119)", () => {
     fireEvent.submit(document.querySelector('form')!);
     await settle();
     expect(posts(fetch, SPAWN_PATH)).toEqual([{ cwd: REPO, prompt: 'go', model: 'default', effort: 'xhigh' }]);
+  });
+
+  it("asks for the directory's defaults, and names Claude Code's, its effort following the model chosen (W122)", async () => {
+    const fetch = fakeServer(settings({ claude: claude(), config: empty(), effective: empty() }));
+    renderDialog(fetch);
+    await settle();
+    const gets = fetch.mock.calls.filter(([url, init]) => pathOf(url) === WORK_PATH && init.method === undefined).map(([url]) => new URL(url, 'http://127.0.0.1').searchParams.get('dir'));
+    expect(gets).toEqual([REPO]);
+    const model = screen.getByLabelText(/^Model/) as HTMLSelectElement;
+    const effort = screen.getByLabelText(/^Effort/) as HTMLSelectElement;
+    expect(optionTexts(model)[0]).toBe('Default: Opus 5.5 (your Claude Code settings)');
+    expect(optionTexts(effort)[0]).toBe('Default: high (CLAUDE_CODE_EFFORT_LEVEL)');
+    fireEvent.change(model, { target: { value: 'opus' } });
+    expect(optionTexts(effort)[0]).toBe("Default: xhigh (the project's Claude Code settings)");
+    fireEvent.change(model, { target: { value: 'sonnet' } });
+    expect(optionTexts(effort)[0]).toBe("Default: medium (the model's own)");
   });
 
   it('says Default, with no Claude Code default to choose, when there are no defaults for sessions or they fail to load', async () => {

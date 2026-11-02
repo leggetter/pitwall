@@ -139,9 +139,15 @@ const part: Part = {
       await openDialog(t, 'New session');
       const labels = await page.evaluate<string[]>(`[...${DIALOG}.querySelectorAll('label.field-label')].map((l) => l.textContent.trim())`);
       t.expectEqual(labels, ['Directory', 'Name optional', 'Model optional', 'Effort optional', 'First prompt'], 'its fields');
-      // Model and Effort start from the defaults for sessions, which their first options name (W119): the made-up config file's.
+      // Model and Effort start from the defaults for sessions, which their first options name (W119): the made-up
+      // config file's effort, and Claude Code's own model, from made-up settings, read for the directory (W122).
       await page.waitFor('the defaults for sessions', `${field('Effort')}?.options[0]?.textContent === 'Default: high'`);
-      t.expectEqual(await page.evaluate(`${field('Model')}.options[0].textContent`), 'Default: opus', "Model's first option names the default");
+      t.expectEqual(await page.evaluate(`${field('Model')}.options[0].textContent`), 'Default: Opus 5.5 (your Claude Code settings)', "Model's first option names Claude Code's default and where it's from");
+      t.expectEqual(
+        await page.evaluate(`${field('Effort')}.options[1].textContent`),
+        "Claude Code's default: xhigh (the project's Claude Code settings)",
+        "Effort's Claude Code's default, from the directory's project settings",
+      );
       const values = await page.evaluate<string[]>(`[...${DIRECTORY}.options].map((o) => o.value)`);
       for (const dir of [CODE, API_SERVER, DEMO_APP]) t.expect(values.includes(dir), `it offers ${dir}`, values);
       t.expect(await page.evaluate(`document.activeElement === ${DIRECTORY}`), 'focus is on Directory, its first field', await page.evaluate(focused));
