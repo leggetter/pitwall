@@ -178,8 +178,10 @@ const part: Part = {
       await t.shot('held');
       t.allow(/\/api\/supervisor\/start$/, 'the 409 a held supervisor’s Start gets');
       await page.click('Start', START);
-      await page.waitFor('its refusal', `!!${SVIEW}.querySelector('.supervisor-alert[role="alert"]')`);
+      await page.waitFor('its refusal', `!${SVIEW}.querySelector('[data-supervisor-start]')?.getAttribute('aria-busy')`);
       t.expectEqual(records.supervisorStarts, [409], 'asked once, and refused');
+      t.expect(await page.evaluate<boolean>(`!${SVIEW}.querySelector('.supervisor-alert[role="alert"]')`), 'saying nothing the held alert doesn’t already say');
+      t.expect(!(await page.evaluate<string>(`document.querySelector('[data-strip="supervisor"]')?.textContent ?? ''`)).includes('`'), 'the strip shows the command without backticks');
     });
 
     await t.step('failed: the error, and Start, which starts it', async () => {

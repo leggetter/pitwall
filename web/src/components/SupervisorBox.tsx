@@ -15,13 +15,13 @@
 //   ignores Escape.
 
 import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type RefObject } from 'react';
-import type { SupervisorStatus } from '../../../src/shared/protocol.js';
+import { SUPERVISOR_MODEL, type SupervisorStatus } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { useAutoGrow } from '../autoGrow.js';
 import { DraftStorageContext, readDraft, writeDraft, type UnsureSend } from '../drafts.js';
 import { plainText } from '../format.js';
 import { characterCount, outgoingText } from '../relay.js';
-import { CHECK_ITS_CONVERSATION, interruptSupervisor, sendToSupervisor, SUPERVISOR_DRAFT_ID, SUPERVISOR_TEXT_MAX } from '../supervisor.js';
+import { CHECK_ITS_CONVERSATION, interruptSupervisor, modelName, sendToSupervisor, SUPERVISOR_DRAFT_ID, SUPERVISOR_TEXT_MAX } from '../supervisor.js';
 import { Alert, Detail } from './Alert.js';
 import { Button } from './Button.js';
 import { InfoTip } from './InfoTip.js';
@@ -31,15 +31,14 @@ import { Tooltip } from './Tooltip.js';
 import '../relay.css';
 
 /** The note behind the info button: what a message does, in two sentences. */
-export const SUPERVISOR_BOX_NOTE =
-  "Starts a turn on the supervisor's model, Opus 5.5, which counts against your plan's usage. It reads your sessions' recaps, and a session's conversation when you ask about it, and sends or starts nothing without your click.";
+export const SUPERVISOR_BOX_NOTE = `Starts a turn on the supervisor's model, ${modelName(SUPERVISOR_MODEL)}, which counts against your plan's usage. It reads your sessions' recaps, and a session's conversation when you ask about it, and sends or starts nothing without your click.`;
 
 /** Why Send is aria-disabled, for its tooltip. */
 export const SUPERVISOR_SEND_EMPTY = 'Type a message to send it.';
 export const supervisorTooLong = (over: number) =>
   `Shorten it by ${over.toLocaleString('en')} ${over === 1 ? 'character' : 'characters'} to send it: the limit is ${SUPERVISOR_TEXT_MAX.toLocaleString('en')}.`;
 export const SUPERVISOR_SEND_UNAVAILABLE = "Messages can't be sent from here.";
-export const SUPERVISOR_SEND_HELD = "It can't take messages while a background session holds its conversation. Stop that session, then start the supervisor.";
+export const SUPERVISOR_SEND_HELD = "It can't take messages while another session has its conversation. Stop or close that session, then press Start.";
 
 /** A message sent while a turn runs: the supervisor reads it when that turn ends. */
 export const QUEUED_TEXT = 'Queued: it reads this when its current turn ends.';

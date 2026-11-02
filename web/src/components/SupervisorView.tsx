@@ -5,7 +5,7 @@
 //
 // - The header: "Supervisor", its status, this run's cost, and Start while it's off or has failed. While
 //   it's held, the error, in pitwall's words, with the `claude stop` command it names, to copy, and
-//   Start, for once you've run it: pitwall never stops your background session for you. While it's
+//   Start, for once you've run it: pitwall never stops or ends the session that has it. While it's
 //   failed, the error, with Start.
 // - The conversation: the session view's (Conversation.tsx), from supervisorConversationPath(), with
 //   Load earlier, Jump to latest, markdown as pitwall's own elements (D15) and the working line (W102)
@@ -41,6 +41,7 @@ import { ApprovalCards } from './ApprovalCards.js';
 import { Badge } from './Badge.js';
 import { Button } from './Button.js';
 import { ConversationPanel, useConversation, type PageLoader } from './Conversation.js';
+import { CodeText } from './CodeText.js';
 import { CopyCommand } from './CopyCommand.js';
 import { EmptyState } from './EmptyState.js';
 import { Icon } from './Icon.js';
@@ -60,9 +61,9 @@ export const SUPERVISOR_EMPTY = {
 export const SUGGESTIONS = ['Which sessions need me, and why?', "What's running, in a sentence each?", 'What should I work on next?'] as const;
 
 /** The held alert's title. */
-export const HELD_TITLE = 'A background session has its conversation';
+export const HELD_TITLE = 'Another session has its conversation';
 /** What a held supervisor's alert says when its error doesn't. */
-export const HELD_FALLBACK = "A background session is running the supervisor's conversation, so pitwall can't. Stop it, then start the supervisor here.";
+export const HELD_FALLBACK = "Another session is running the supervisor's conversation, so pitwall can't. Stop or close it, then press Start.";
 /** What a failed supervisor's alert says when its error doesn't. */
 export const FAILED_FALLBACK = "The supervisor stopped, or couldn't start.";
 
@@ -129,8 +130,12 @@ export function SupervisorView({ state, onClose, layout = 'overlay', compact = f
   // Start, while it's off or has failed: busy until the snapshot says it's starting, or the answer fails.
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string>();
-  // Held too: once you've stopped the background session, Start tries again; still held, its 409 says why.
+  // Held too: once you've stopped or closed the session that has it, Start tries again; still held, its 409 says why.
   const startable = status === 'off' || status === 'failed' || status === 'held';
+  // A Start's refusal is about the status it was pressed in: any change of status takes it away.
+  useEffect(() => {
+    setStartError(undefined);
+  }, [status]);
   useEffect(() => {
     if (!starting) return;
     if (!startable) {
@@ -257,7 +262,9 @@ export function SupervisorView({ state, onClose, layout = 'overlay', compact = f
         {status === 'held' && (
           // There when the view opened, or since: no role, as the app strip says so too.
           <Alert tone="warning" title={HELD_TITLE} className="supervisor-alert" actions={startButton('outline')}>
-            <span className="supervisor-error">{state.error === undefined ? HELD_FALLBACK : plainText(state.error)}</span>
+            <span className="supervisor-error">
+              <CodeText text={state.error ?? HELD_FALLBACK} />
+            </span>
             {command !== undefined && (
               <span className="supervisor-command">
                 <CopyCommand command={command} label="Copy the stop command" />
@@ -267,10 +274,11 @@ export function SupervisorView({ state, onClose, layout = 'overlay', compact = f
         )}
         {status === 'failed' && (
           <Alert tone="danger" className="supervisor-alert" actions={startButton('outline')}>
-            {state.error === undefined ? FAILED_FALLBACK : plainText(state.error)}
+            <CodeText text={state.error ?? FAILED_FALLBACK} />
           </Alert>
         )}
-        {startError !== undefined && startable && (
+        {/* Not when it says what the held or failed alert above says already. */}
+        {startError !== undefined && startable && !(state.error !== undefined && startError.endsWith(plainText(state.error).trim())) && (
           <Alert tone="danger" role="alert" className="supervisor-alert">
             {startError}
           </Alert>
