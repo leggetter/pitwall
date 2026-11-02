@@ -17,6 +17,11 @@ import {
   decideApproval,
   heldCommand,
   modelName,
+  RESUME_BYPASS_WARNING,
+  resumeBypassed,
+  resumePermissionText,
+  resumeWhereLead,
+  typedPromptNotes,
   parseSupervisor,
   sendOutcome,
   sendToSupervisor,
@@ -30,7 +35,19 @@ const AT = '2026-10-29T10:00:00.000Z';
 const LATER = '2026-10-29T10:29:00.000Z';
 const message = { id: 'a1', kind: 'message', to: 'pitwall-test-api', text: 'Please rerun the made-up tests.', at: AT, expiresAt: LATER };
 const spawn = { id: 'a2', kind: 'spawn', directory: '/Users/example/code/demo-app', name: 'pr-57', prompt: 'Review the made-up PR.', at: AT, expiresAt: LATER };
-const resume = { id: 'a3', kind: 'resume', sessionId: '00000000-0000-4000-8000-000000000127', name: 'pitwall-test-precision', directory: '/Users/example/code/demo-app', text: 'The user asked me to pass this on: go on.', at: AT, expiresAt: LATER };
+const resume = {
+  id: 'a3',
+  kind: 'resume',
+  sessionId: '00000000-0000-4000-8000-000000000127',
+  name: 'pitwall-test-precision',
+  directory: '/Users/example/code/demo-app',
+  text: 'The user asked me to pass this on: go on.',
+  at: AT,
+  expiresAt: LATER,
+  lastActivityAt: AT,
+  sameName: 2,
+  permission: { kind: 'mode', mode: 'plan' },
+};
 
 describe('its place in the URL', () => {
   it('is ?supervisor, with no value, after the selection', () => {
@@ -114,6 +131,44 @@ describe('its words', () => {
     for (const bad of [{ ...resume, sessionId: '' }, { ...resume, name: ' ' }, { ...resume, directory: '' }, { ...resume, text: 7 }]) {
       expect(asSupervisorState({ status: 'idle', approvals: [bad] })?.approvals).toEqual([]);
     }
+  });
+
+  it('reads a resume card’s last activity, same-name count and permission mode, each to the safe side when it isn’t as pitwall sends it (W129)', () => {
+    const read = (extra: Record<string, unknown>) => asSupervisorState({ status: 'idle', approvals: [{ ...resume, ...extra }] })?.approvals[0];
+    expect(read({})).toEqual(resume);
+    const { lastActivityAt: _, ...withoutActivity } = resume;
+    expect(read({ lastActivityAt: 'not a time' })).toEqual(withoutActivity);
+    for (const sameName of [0, -2, 1.5, '3', undefined]) expect(read({ sameName })).toMatchObject({ sameName: 1 });
+    expect(read({ permission: { kind: 'unset' } })).toMatchObject({ permission: { kind: 'unset' } });
+    for (const permission of [undefined, 'plan', { kind: 'mode', mode: 'yolo' }, { kind: 'mode' }, { kind: 'other' }]) {
+      expect(read({ permission })).toMatchObject({ permission: { kind: 'unknown' } });
+    }
+  });
+});
+
+describe('a resume card’s lines (W129)', () => {
+  it('says how many sessions share the name, only when others do', () => {
+    expect(resumeWhereLead(1)).toBe('In ');
+    expect(resumeWhereLead(2)).toBe('2 listed sessions have this name; this is the one in ');
+  });
+
+  it('says it resumes with its own saved settings, its permission mode included, and what pitwall knows of that mode', () => {
+    expect(resumePermissionText({ kind: 'mode', mode: 'plan' })).toBe('Claude Code resumes it with its own saved settings, its permission mode included: plan.');
+    expect(resumePermissionText({ kind: 'unset' })).toContain('your Claude Code settings decide it');
+    expect(resumePermissionText({ kind: 'unknown' })).toBe("Claude Code resumes it with its own saved settings, its permission mode included, which pitwall can't see for this session.");
+    expect(resumeBypassed({ kind: 'mode', mode: 'bypassPermissions' })).toBe(true);
+    for (const mode of ['plan', 'acceptEdits', 'auto', 'default'] as const) expect(resumeBypassed({ kind: 'mode', mode })).toBe(false);
+    expect(resumeBypassed({ kind: 'unknown' })).toBe(false);
+    expect(RESUME_BYPASS_WARNING).toContain('no permission prompts');
+  });
+
+  it('notes a typed prompt’s slash command and @ path, and not an email address or a lone @ (I2)', () => {
+    expect(typedPromptNotes('/clear then go on')).toEqual(['It starts with /, so Claude Code may run it as a slash command rather than read it.']);
+    expect(typedPromptNotes('  /compact')).toHaveLength(1);
+    expect(typedPromptNotes('Read @src/server/actions.ts first.')).toEqual(['It has @ before a path, so Claude Code may attach that file.']);
+    expect(typedPromptNotes('@~/notes.md')).toHaveLength(1);
+    expect(typedPromptNotes('/review @README.md')).toHaveLength(2);
+    for (const plain of ['Mail phil@example.com about it.', 'Meet @ 5', 'Use a/b paths.', 'Go on.']) expect(typedPromptNotes(plain), plain).toEqual([]);
   });
 });
 

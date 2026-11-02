@@ -79,6 +79,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { readFileSync } from 'node:fs';
 import { createAgentsSource } from '../index/agents.js';
 import { ConversationCursorError, isSafeAgentId, isWellFormedCursor, type Indexer } from '../index/index.js';
+import { readSavedPermission } from '../index/jobs.js';
 import { prsOff } from '../prs/index.js';
 import {
   ATTACH_PATH,
@@ -219,6 +220,11 @@ export interface ServerInternals {
   attachments?: Omit<AttachmentStoreOptions, 'home'>;
   /** Clone and start (W107, clone.ts): tests pass a fake runFile and file system calls, so no test runs gh or touches a real root. */
   clone?: CloneOptions;
+  /**
+   * A resume card's saved permission mode (W129), from a background job's state.json by the job-file
+   * adapter (src/index/jobs.ts): tests pass a fake, so none reads the user's jobs folder.
+   */
+  savedPermission?: SupervisorActionSources['savedPermission'];
 }
 
 export async function startServerWithInternals(
@@ -285,6 +291,8 @@ export async function startServerWithInternals(
           resumer,
           // The recipient's fresh, unfiltered check (W120), as the relay's and resume's.
           agents: internals.actions?.agents ?? createAgentsSource(internals.actions?.claudeBin === undefined ? {} : { claudeBin: internals.actions.claudeBin }),
+          // What a resume card says of its permission mode (W129, L1), behind the job-file adapter, failing soft.
+          savedPermission: internals.savedPermission ?? ((shortId, sessionId) => readSavedPermission(shortId, sessionId)),
         };
   // pitwall's MCP server, for the supervisor alone (W112, W115): read-only tools over what pitwall
   // already has, spawn_session, resume_session (W127), and approve, the permission prompt tool.

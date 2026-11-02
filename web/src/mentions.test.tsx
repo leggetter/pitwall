@@ -3,7 +3,7 @@
 // character, and a shared name only when one session is plainly meant. All names are made up.
 
 import { describe, expect, it } from 'vitest';
-import { createMentions, mentionLabel, MENTION_MIN_LENGTH, type MentionPart } from './mentions.js';
+import { createMentions, mentionLabel, MENTION_MAX_LENGTH, MENTION_MIN_LENGTH, type MentionPart } from './mentions.js';
 import { pr, session } from './test/fixtures.js';
 
 /** The parts as short strings: text as itself, a mention as [text→name]. */
@@ -157,5 +157,31 @@ describe('mentionLabel', () => {
     expect(mentionLabel(session, 'a1b2c3d4')).toBe('Open session a1b2c3d4 (pr-894)');
     expect(mentionLabel({ kind: 'pr', key: 'example/demo-app/51', name: 'Example/Demo-App #51' }, 'example/demo-app#51')).toBe('Open pull request example/demo-app#51');
     expect(mentionLabel({ kind: 'session', sessionId: 'x', name: 'a​b' })).toBe('Open session a[U+200B]b');
+  });
+});
+
+// W129, the re-review's L2: matching costs the reply's length times the longest name's, so a name
+// over MENTION_MAX_LENGTH is never linked, and a long name with a long reply still splits quickly.
+describe('createMentions: long names', () => {
+  it('leaves a name over MENTION_MAX_LENGTH characters out, and links one at it', () => {
+    // Not generic, so they'd link anywhere in a sentence.
+    const atMost = 'a'.repeat(MENTION_MAX_LENGTH - 2) + '-z';
+    const over = 'b'.repeat(MENTION_MAX_LENGTH - 1) + '-z';
+    const mentions = createMentions([session({ name: atMost }), session({ name: over })]);
+    expect(show(mentions.split(`${atMost} and ${over}`))).toBe(`[${atMost}→${atMost}] and ${over}`);
+    expect(show(mentions.split(over, true))).toBe(over);
+  });
+
+  it('splits a 40,000-character reply quickly with a 10,000-character name, and one just under the cap, that it nearly matches everywhere', () => {
+    const huge = 'a'.repeat(10_000) + '-x';
+    const capped = 'a'.repeat(MENTION_MAX_LENGTH - 2) + '-x';
+    const mentions = createMentions([session({ name: huge }), session({ name: capped }), session({ name: 'pr-894' })]);
+    const reply = 'a'.repeat(40_000);
+    const started = performance.now();
+    const parts = mentions.split(reply);
+    const spaced = mentions.split(Array.from({ length: 4_000 }, () => 'aaaaaaaaa').join(' '));
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(parts).toEqual([{ kind: 'text', text: reply }]);
+    expect(spaced).toHaveLength(1);
   });
 });

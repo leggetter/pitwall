@@ -751,6 +751,11 @@ export function createResumeRunner(
     const stoppedJob = isStoppedJob(session);
     const problem = resumeProblem(session);
     if (problem !== undefined) return answer({ ok: false, error: problem }, 409);
+    // Whoever calls with a prompt, never a blank one or just a claude command's name, which
+    // `claude --resume <id> --bg -- purge` could run instead (W129, the re-review's M1; claudeCommands.ts).
+    if (prompt !== undefined && (prompt.trim() === '' || isClaudeCommand(prompt))) {
+      return answer({ ok: false, error: "The message can't be blank or just the name of a claude command, which claude --resume could run instead." }, 422);
+    }
     if (resuming.has(sessionId)) return answer({ ok: false, error: 'pitwall is already resuming this session.' }, 409);
     const release = slots.acquire();
     if (!release) return answer({ ok: false, error: slots.busyError }, 429, { retryAfterSeconds: 1 });

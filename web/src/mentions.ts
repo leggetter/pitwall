@@ -12,7 +12,8 @@
 //   applied to the names and the text alike. Longest first, so "pr-894 docs" wins over "pr-894"
 //   where both are names, and the leftmost wins where two overlap. Found with a trie of the names
 //   walked from each place a name could start, so the cost follows the text and the longest
-//   name, not how many names there are.
+//   name, not how many names there are: text length times name length, so a name over
+//   MENTION_MAX_LENGTH characters is never linked (W129, the re-review's L2).
 // - **What doesn't:** a name shorter than MENTION_MIN_LENGTH characters, which plain words would
 //   match ("api", "ui"); a generic name, one word of letters only or digits only ("website", "docs",
 //   "2024"), unless it's the whole of a bold or italic span, as the supervisor writes a session's
@@ -32,6 +33,9 @@ import { needsAttention } from './sessions.js';
 
 /** The fewest characters a name or id must have to be linked: "api" and "ui" are words first. */
 export const MENTION_MIN_LENGTH = 4;
+
+/** The most characters a name may have to be linked (W129, L2): each place in a reply may walk this far. */
+export const MENTION_MAX_LENGTH = 200;
 
 /** What a mention opens. */
 export type MentionTarget = { kind: 'session'; sessionId: string; name: string } | { kind: 'pr'; key: string; name: string };
@@ -103,7 +107,8 @@ export function createMentions(sessions: readonly SessionSummary[], prs: readonl
   for (const session of sessions) {
     const words = new Set([trimPlain(session.name), session.shortId ?? '', session.sessionId]);
     for (const word of words) {
-      if (length(word) < MENTION_MIN_LENGTH || !shows(word)) continue;
+      const chars = length(word);
+      if (chars < MENTION_MIN_LENGTH || chars > MENTION_MAX_LENGTH || !shows(word)) continue;
       const entry = byKey.get(key(word)) ?? { text: word, sessions: [] };
       if (!entry.sessions.some((each) => each.sessionId === session.sessionId)) entry.sessions.push(session);
       byKey.set(key(word), entry);

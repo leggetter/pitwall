@@ -33,3 +33,13 @@ No real session was messaged, attached to, resumed, stopped or removed. Each tes
 ## Recommendation
 
 Build `resume_session` on the Resume route's own code: `claude --resume <uuid> --bg -- <message>`, with the message last after `--`, in the session's real path, after the fresh `claude agents` check, under the same limits. With a message, don't mark the session as needing a prompt (NeedsYou's 'restarted'). On a copy, tell the user and the supervisor that the message went to the copy, and follow the copy by its short id.
+
+## Addendum: the saved permission mode (W129)
+
+Run on 2026-11-02 against Claude Code 2.1.316, for the security re-review's L1: does a stopped job's saved options include its permission mode, and can pitwall read it? One throwaway background session, `pitwall-test-perm`, on Haiku in the pitwall checkout, started with `--permission-mode plan` and a one-line prompt; only its own `state.json` was read, and of it only its keys, `state`, `sessionId` and `respawnFlags`. It was stopped and removed, and its transcript, `session-env`, `file-history` and job folders deleted.
+
+1. **`respawnFlags` is an array of strings, and holds the mode.** While it ran and after `claude stop`: `["--name", "pitwall-test-perm", "--permission-mode", "plan", "--model", "haiku"]`. These are the saved options finding 1's note names, so a resume of a stopped job wakes it in the mode it was started with; the resume itself wasn't run.
+2. **The file has no other permission field.** Its keys were `backend`, `children`, `createdAt`, `cwd`, `daemonShort`, `detail`, `fan`, `firstTerminalAt`, `inFlight`, `intent`, `linkScanOffset`, `name`, `nameSource`, `output`, `providerEnv`, `respawnFlags`, `resumeSessionId`, `sessionId`, `state`, `template`, `tempo` and `updatedAt`.
+3. **Not checked:** `--dangerously-skip-permissions` in `respawnFlags`, since that would mean starting a session that skips prompts; pitwall reads it as bypassPermissions if it's there. Nor which mode an ended interactive session comes back in: it has no job file before the resume, and its mode isn't a saved flag pitwall can read.
+
+pitwall reads the mode through the job-file adapter (`readSavedPermission()` in `src/index/jobs.ts`) and shows it on the resume card, with a warning for bypassPermissions; for an interactive session, the card says it can't see the mode (D4).

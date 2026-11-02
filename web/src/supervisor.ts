@@ -14,12 +14,14 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  PERMISSION_MODES,
   SUPERVISOR_INTERRUPT_PATH,
   SUPERVISOR_MESSAGE_MAX,
   SUPERVISOR_MESSAGE_PATH,
   SUPERVISOR_START_PATH,
   supervisorApprovalPath,
   type ConversationEntry,
+  type SavedPermission,
   type SessionSummary,
   type SupervisorApproval,
   type SupervisorDecision,
@@ -171,9 +173,32 @@ function asApproval(value: unknown): SupervisorApproval | undefined {
   if (kind === 'resume') {
     const { sessionId, name, directory, text } = value;
     if (!isId(sessionId) || !isText(name) || name.trim() === '' || !isText(directory) || directory === '' || !isText(text)) return undefined;
-    return { id, kind, sessionId, name, directory, text, at, expiresAt };
+    // W129: anything here that isn't as pitwall sends it reads as the safe side: one name, a mode it can't see.
+    const { lastActivityAt, sameName } = value;
+    const approval: SupervisorApproval = {
+      id,
+      kind,
+      sessionId,
+      name,
+      directory,
+      text,
+      at,
+      expiresAt,
+      sameName: typeof sameName === 'number' && Number.isSafeInteger(sameName) && sameName > 1 ? sameName : 1,
+      permission: asPermission(value.permission),
+    };
+    if (isTime(lastActivityAt)) approval.lastActivityAt = lastActivityAt;
+    return approval;
   }
   return undefined;
+}
+
+/** A resume's saved permission mode, or 'unknown' when it isn't one this page knows (W129). */
+function asPermission(value: unknown): SavedPermission {
+  if (!isRecord(value)) return { kind: 'unknown' };
+  if (value.kind === 'unset') return { kind: 'unset' };
+  const mode = PERMISSION_MODES.find((each) => each === value.mode);
+  return value.kind === 'mode' && mode !== undefined ? { kind: 'mode', mode } : { kind: 'unknown' };
 }
 
 /** The most hand-offs the page reads: the server keeps SUPERVISOR_HANDOFFS_MAX. */
@@ -380,6 +405,48 @@ export function approvalTitle(approval: SupervisorApproval): string {
   if (approval.kind === 'resume') return `Resume ${visibleString(approval.name)} and send`;
   const named = approval.name === undefined ? '' : `, named ${visibleString(approval.name)}`;
   return `New session in ${approvalDirectory(approval)}${named}`;
+}
+
+/**
+ * What a resume card says before the session's folder (W129, the re-review's M2): names aren't
+ * unique, so when another listed session has this one's name, it says how many do and which this is.
+ */
+export function resumeWhereLead(sameName: number): string {
+  return sameName > 1 ? `${sameName.toLocaleString('en')} listed sessions have this name; this is the one in ` : 'In ';
+}
+
+/**
+ * What a resume card says about the settings it resumes with (W129, the re-review's L1): Claude Code
+ * wakes a session with its own saved options, its permission mode included, and what pitwall knows of
+ * that mode, from a background job's saved flags.
+ */
+export function resumePermissionText(permission: SavedPermission): string {
+  const lead = 'Claude Code resumes it with its own saved settings, its permission mode included';
+  if (permission.kind === 'mode') return `${lead}: ${permission.mode}.`;
+  if (permission.kind === 'unset') return `${lead}. Its saved flags set no permission mode, so your Claude Code settings decide it.`;
+  return `${lead}, which pitwall can't see for this session.`;
+}
+
+/** The warning on a resume card whose saved permission mode skips the prompts (W129, L1). */
+export const RESUME_BYPASS_WARNING =
+  'Its saved permission mode is bypassPermissions: once you send it, the message runs with no permission prompts, whatever it asks for.';
+
+/** Whether a resume runs with its permission prompts skipped, as far as pitwall can tell. */
+export const resumeBypassed = (permission: SavedPermission) => permission.kind === 'mode' && permission.mode === 'bypassPermissions';
+
+/** `@` at the start or after a space, then a word that could be a path: `@src/a.ts`, `@~/notes`, `@README.md`. */
+const AT_PATH = /(?:^|\s)@[\w~./-]+/u;
+
+/**
+ * What a new session's first prompt or a resume's message may do besides being read (W129, the
+ * re-review's I2): it reaches Claude Code as a typed prompt, so a leading `/` may run a slash command
+ * and an `@` before a path may attach that file (D20).
+ */
+export function typedPromptNotes(text: string): string[] {
+  const notes: string[] = [];
+  if (text.trimStart().startsWith('/')) notes.push('It starts with /, so Claude Code may run it as a slash command rather than read it.');
+  if (AT_PATH.test(text)) notes.push('It has @ before a path, so Claude Code may attach that file.');
+  return notes;
 }
 
 /** The text an approval would send: a message's, or a new session's first prompt. */

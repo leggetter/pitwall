@@ -1051,6 +1051,9 @@ export const SUPERVISOR_RESUME: SupervisorApproval = {
   text: 'The user asked me to pass this on: please carry on with the made-up integer precision fix, then update its PR.',
   at: ago(0.5),
   expiresAt: ago(-29),
+  lastActivityAt: ago(60 * 26),
+  sameName: 2,
+  permission: { kind: 'mode', mode: 'bypassPermissions' },
 };
 export const SUPERVISOR_SPAWN: SupervisorApproval = {
   id: 'pitwall-test-approval-2',

@@ -27,7 +27,7 @@ import type { NavigationEnv } from '../selection.js';
 import { SUPERVISOR_DRAFT_ID, needsReason } from '../supervisor.js';
 import { group, minutesAgo, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
-import { descriptionOf } from '../test/tooltips.js';
+import { descriptionOf, hover } from '../test/tooltips.js';
 import { Dashboard } from './Dashboard.js';
 import { QUEUED_TEXT, SUPERVISOR_SEND_HELD } from './SupervisorBox.js';
 import { HELD_TITLE, NO_SUPERVISOR, SUGGESTIONS, SUPERVISOR_EMPTY } from './SupervisorView.js';
@@ -724,8 +724,55 @@ describe('a finished session resumed with a message (W127)', () => {
     text: 'The user asked me to pass this on: finish the precision fix.',
     at: minutesAgo(1),
     expiresAt: minutesAgo(-28),
+    lastActivityAt: minutesAgo(60 * 24 * 2),
+    sameName: 1,
+    permission: { kind: 'unknown' },
   };
   const resumeSnap = (state: SupervisorState, sessions = [alpha, beta, finished]) => snapshot([group({ key: `${ROOT}/demo-app`, label: 'demo-app', sessions })], { roots: [ROOT], supervisor: state });
+
+  it('a card shows, as text, its folder with home as ~ and its last activity; that its settings, permission mode included, are its own; and nothing about a shared name when none is (W129)', async () => {
+    renderDashboard(resumeSnap({ status: 'idle', approvals: [resumeCard] }), { search: '?view=all&supervisor' });
+    await settle();
+    const card = view()!.querySelector<HTMLElement>('li.approval-card')!;
+    // Relative to now, from the session's own last activity.
+    expect(card.querySelector('.approval-where')?.textContent).toMatch(/^In ~\/code\/demo-app, last active \d+d ago\.$/);
+    expect(card.querySelector('.approval-where time')?.getAttribute('datetime')).toBe(resumeCard.lastActivityAt);
+    expect(card.querySelector('.approval-permission')?.textContent).toBe("Claude Code resumes it with its own saved settings, its permission mode included, which pitwall can't see for this session.");
+    expect(card.querySelector('.approval-bypass')).toBeNull();
+    expect(card.querySelector('.approval-length')).toBeNull();
+  });
+
+  it('a card says when other listed sessions share the name, which one this is, and warns of a saved bypassPermissions mode (W129, M2, L1)', async () => {
+    const card: SupervisorApproval = { ...resumeCard, sameName: 2, permission: { kind: 'mode', mode: 'bypassPermissions' } };
+    renderDashboard(resumeSnap({ status: 'idle', approvals: [card] }), { search: '?view=all&supervisor' });
+    await settle();
+    const shown = view()!.querySelector<HTMLElement>('li.approval-card')!;
+    expect(shown.querySelector('.approval-where')?.textContent).toMatch(/^2 listed sessions have this name; this is the one in ~\/code\/demo-app, last active \d+d ago\.$/);
+    expect(shown.querySelector('.approval-permission')?.textContent).toBe('Claude Code resumes it with its own saved settings, its permission mode included: bypassPermissions.');
+    expect(shown.querySelector('.approval-bypass')?.textContent).toContain('the message runs with no permission prompts');
+  });
+
+  it('a card notes a typed prompt’s slash command or @ path, for a resume and a new session alike (W129, I2)', async () => {
+    const typed: SupervisorApproval = { ...resumeCard, text: '/review then read @src/index.ts' };
+    const spawnTyped: SupervisorApproval = { id: 's9', kind: 'spawn', directory: `${ROOT}/demo-app`, prompt: 'Read @docs/plan.md first.', at: minutesAgo(1), expiresAt: minutesAgo(-28) };
+    renderDashboard(resumeSnap({ status: 'idle', approvals: [typed, spawnTyped] }), { search: '?view=all&supervisor' });
+    await settle();
+    const [resumeShown, spawnShown] = [...view()!.querySelectorAll<HTMLElement>('li.approval-card')];
+    expect(resumeShown!.querySelector('.approval-length')?.textContent).toBe(
+      'It starts with /, so Claude Code may run it as a slash command rather than read it. It has @ before a path, so Claude Code may attach that file.',
+    );
+    expect(spawnShown!.querySelector('.approval-length')?.textContent).toBe('It has @ before a path, so Claude Code may attach that file.');
+  });
+
+  it('the folder’s tooltip draws a character that doesn’t show as its code, never dropping it (W129, I3)', async () => {
+    const card: SupervisorApproval = { ...resumeCard, directory: `${ROOT}/demo\u00a0app` };
+    renderDashboard(resumeSnap({ status: 'idle', approvals: [card] }), { search: '?view=all&supervisor' });
+    await settle();
+    const shown = view()!.querySelector<HTMLElement>('li.approval-card')!;
+    const tip = await hover(shown.querySelector('h4 bdi')!);
+    expect(tip?.textContent).toBe(`${ROOT}/demo[U+00A0]app`);
+    expect(shown.querySelector('.approval-where')?.textContent).toMatch(/^In ~\/code\/demo\[U\+00A0\]app, last active /);
+  });
 
   it('a card: “Resume <name> and send”, how it comes back, the message, and Send, Edit and Don’t send', async () => {
     renderDashboard(resumeSnap({ status: 'idle', approvals: [resumeCard] }), { search: '?view=all&supervisor' });

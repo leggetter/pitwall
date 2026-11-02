@@ -1927,17 +1927,45 @@ export interface SupervisorHandoff {
 /** The most hand-offs SupervisorState carries: the newest, in this run. */
 export const SUPERVISOR_HANDOFFS_MAX = 20;
 
+/** Claude Code's permission modes, as `claude --help` lists them for `--permission-mode` (2.1.316), and `default`. */
+export const PERMISSION_MODES = ['acceptEdits', 'auto', 'bypassPermissions', 'default', 'dontAsk', 'manual', 'plan'] as const;
+export type PermissionModeName = (typeof PERMISSION_MODES)[number];
+
+/**
+ * The permission mode a finished session resumes in, as far as pitwall can tell (W129, the re-review's
+ * L1): `mode`, from a background job's saved flags (src/index/jobs.ts); `unset`, its saved flags have
+ * no permission flag, so Claude Code's settings decide it; `unknown`, pitwall couldn't read them, or
+ * the session is an ended interactive one, which has no saved flags pitwall reads.
+ */
+export type SavedPermission = { kind: 'mode'; mode: PermissionModeName } | { kind: 'unset' } | { kind: 'unknown' };
+
 /**
  * Something the supervisor wants to do, waiting on your click (W115): a message to a session through
  * SendMessage, a new session through the MCP server's spawn_session, or a finished session resumed
  * with a message through resume_session (W127): `sessionId`, `name` and `directory` are the listed
- * session's, as pitwall resolved the id, never the model's input. Its text is the model's, so it's
+ * session's, as pitwall resolved the id, never the model's input, and so are `lastActivityAt`,
+ * `sameName` and `permission` (W129). Its text is the model's, so it's
  * shown as plain text in `<bdi>`, never as Markdown, and you can edit it before it goes.
  */
 export type SupervisorApproval =
   | { id: string; kind: 'message'; to: string; text: string; at: string; expiresAt: string }
   | { id: string; kind: 'spawn'; directory: string; name?: string; prompt: string; at: string; expiresAt: string }
-  | { id: string; kind: 'resume'; sessionId: string; name: string; directory: string; text: string; at: string; expiresAt: string };
+  | {
+      id: string;
+      kind: 'resume';
+      sessionId: string;
+      name: string;
+      directory: string;
+      text: string;
+      at: string;
+      expiresAt: string;
+      /** Its newest activity, as listed, for the card (W129, the re-review's M2). */
+      lastActivityAt?: string;
+      /** How many listed sessions have its name, ignoring case, itself included (W129): names aren't unique. */
+      sameName: number;
+      /** The permission mode it resumes in, as far as pitwall can tell (W129, L1). */
+      permission: SavedPermission;
+    };
 
 /**
  * Your answer to an approval (POST supervisorApprovalPath()): send it as it is, send your edit

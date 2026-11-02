@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from 'node:fs/p
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CACHE_SETTLE_MS, createJobReader, JOB_FILE_MAX_BYTES, NEEDS_MAX, needsText, parseJobState } from './jobs.js';
+import { CACHE_SETTLE_MS, createJobReader, JOB_FILE_MAX_BYTES, NEEDS_MAX, needsText, parseJobState, parseSavedPermission, readSavedPermission } from './jobs.js';
 
 // Synthetic job folders, shaped like Claude Code 2.1.311's `~/.claude/jobs/<shortId>/state.json`
 // (spike 007, finding 1). Made up: never a real job's file.
@@ -234,5 +234,67 @@ describe('createJobReader', () => {
     reader.retain(new Set());
     await reader.read(SHORT, SID);
     expect(parse).toHaveBeenCalledTimes(2);
+  });
+});
+
+// W129, the re-review's L1: a stopped job's saved permission mode, for a resume's card. The flags as
+// Claude Code 2.1.316 saved them for a made-up job started with `--permission-mode plan`.
+describe('parseSavedPermission', () => {
+  const state = (respawnFlags: unknown, sessionId = SID) => JSON.stringify({ sessionId, respawnFlags });
+
+  it('takes --permission-mode, in either spelling, when it’s one of Claude Code’s modes', () => {
+    expect(parseSavedPermission(state(['--name', 'pitwall-test-perm', '--permission-mode', 'plan', '--model', 'haiku']), SID)).toEqual({ kind: 'mode', mode: 'plan' });
+    expect(parseSavedPermission(state(['--permission-mode=acceptEdits']), SID)).toEqual({ kind: 'mode', mode: 'acceptEdits' });
+    expect(parseSavedPermission(state(['--permission-mode', 'bypassPermissions']), SID)).toEqual({ kind: 'mode', mode: 'bypassPermissions' });
+  });
+
+  it('reads --dangerously-skip-permissions as bypassPermissions, whatever mode is beside it', () => {
+    expect(parseSavedPermission(state(['--dangerously-skip-permissions']), SID)).toEqual({ kind: 'mode', mode: 'bypassPermissions' });
+    expect(parseSavedPermission(state(['--dangerously-skip-permissions', '--permission-mode', 'plan']), SID)).toEqual({ kind: 'mode', mode: 'bypassPermissions' });
+    // Allowing it isn't using it.
+    expect(parseSavedPermission(state(['--allow-dangerously-skip-permissions']), SID)).toEqual({ kind: 'unset' });
+  });
+
+  it('is unset with no permission flag, as spike 006 saw for a job saved with none', () => {
+    expect(parseSavedPermission(state([]), SID)).toEqual({ kind: 'unset' });
+    expect(parseSavedPermission(state(['--name', 'n', '--model', 'haiku']), SID)).toEqual({ kind: 'unset' });
+  });
+
+  it('is unknown for anything else: another session’s file, no flags, flags not strings, a mode it doesn’t know, a missing value, bad JSON', () => {
+    for (const text of [
+      state(['--permission-mode', 'plan'], 'another-session'),
+      JSON.stringify({ sessionId: SID }),
+      state('--permission-mode plan'),
+      state(['--permission-mode', 1]),
+      state(['--permission-mode', 'yolo']),
+      state(['--permission-mode']),
+      state(['--permission-mode=\u001b[31mplan']),
+      state(Array.from({ length: 201 }, () => '--verbose')),
+      '{',
+    ]) {
+      expect(parseSavedPermission(text, SID), text).toEqual({ kind: 'unknown' });
+    }
+  });
+});
+
+describe('readSavedPermission', () => {
+  let jobsDir: string;
+  beforeEach(async () => {
+    jobsDir = await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-jobs-'));
+  });
+  afterEach(async () => {
+    await rm(jobsDir, { recursive: true, force: true });
+  });
+
+  it('reads the job’s own state.json by the adapter’s rules, and fails soft', async () => {
+    await mkdir(path.join(jobsDir, SHORT));
+    await writeFile(path.join(jobsDir, SHORT, 'state.json'), JSON.stringify({ sessionId: SID, respawnFlags: ['--permission-mode', 'plan'] }));
+    expect(await readSavedPermission(SHORT, SID, { jobsDir })).toEqual({ kind: 'mode', mode: 'plan' });
+    expect(await readSavedPermission(SHORT, 'another-session', { jobsDir })).toEqual({ kind: 'unknown' });
+    expect(await readSavedPermission('missing0', SID, { jobsDir })).toEqual({ kind: 'unknown' });
+    expect(await readSavedPermission('../escape', SID, { jobsDir })).toEqual({ kind: 'unknown' });
+    // A symlinked job folder isn't followed.
+    await symlink(path.join(jobsDir, SHORT), path.join(jobsDir, 'linked00'));
+    expect(await readSavedPermission('linked00', SID, { jobsDir })).toEqual({ kind: 'unknown' });
   });
 });

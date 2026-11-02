@@ -24,7 +24,7 @@
 //
 // Nothing here is written to disk: approvals, passes and notes go when pitwall does.
 import { randomBytes } from 'node:crypto';
-import { SUPERVISOR_APPROVAL_TIMEOUT_MS, SUPERVISOR_HANDOFFS_MAX, type SupervisorApproval, type SupervisorHandoff } from '../shared/protocol.js';
+import { SUPERVISOR_APPROVAL_TIMEOUT_MS, SUPERVISOR_HANDOFFS_MAX, type SavedPermission, type SupervisorApproval, type SupervisorHandoff } from '../shared/protocol.js';
 
 /** The permission prompt tool's answer, as Claude Code documents it for `--permission-prompt-tool`. */
 export type PermissionAnswer = { behavior: 'allow'; updatedInput: Record<string, unknown> } | { behavior: 'deny'; message: string };
@@ -33,7 +33,7 @@ export type PermissionAnswer = { behavior: 'allow'; updatedInput: Record<string,
 export type ApprovalDraft =
   | { kind: 'message'; to: string; text: string }
   | { kind: 'spawn'; directory: string; name?: string; prompt: string }
-  | { kind: 'resume'; sessionId: string; name: string; directory: string; text: string };
+  | { kind: 'resume'; sessionId: string; name: string; directory: string; text: string; lastActivityAt?: string; sameName: number; permission: SavedPermission };
 
 /** One card waiting, with the call it's for. */
 export interface PendingApproval {
@@ -169,7 +169,18 @@ export function createApprovalQueue(options: ApprovalQueueOptions = {}): Approva
         request.draft.kind === 'message'
           ? { id, kind: 'message', to: request.draft.to, text: request.draft.text, ...times }
           : request.draft.kind === 'resume'
-            ? { id, kind: 'resume', sessionId: request.draft.sessionId, name: request.draft.name, directory: request.draft.directory, text: request.draft.text, ...times }
+            ? {
+                id,
+                kind: 'resume',
+                sessionId: request.draft.sessionId,
+                name: request.draft.name,
+                directory: request.draft.directory,
+                text: request.draft.text,
+                ...(request.draft.lastActivityAt === undefined ? {} : { lastActivityAt: request.draft.lastActivityAt }),
+                sameName: request.draft.sameName,
+                permission: request.draft.permission,
+                ...times,
+              }
             : { id, kind: 'spawn', directory: request.draft.directory, ...(request.draft.name === undefined ? {} : { name: request.draft.name }), prompt: request.draft.prompt, ...times };
       let resolve!: (answer: PermissionAnswer) => void;
       const answer = new Promise<PermissionAnswer>((done) => {
