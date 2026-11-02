@@ -23,7 +23,9 @@ import {
   parseRootOwners,
   prKey,
   prListState,
+  prNeedText,
   prReason,
+  prRef,
   prRelationText,
   prsOff,
   prStateBadges,
@@ -393,6 +395,13 @@ describe('sessions and PRs', () => {
     // Another author's failing checks are theirs to fix: no state, no attention.
     expect(sessionPrBadge([pr({ number: 3, relation: 'mentioned', checks: 'failing' })])?.state).toBeUndefined();
     expect(sessionPrBadge([quiet])?.state).toBeUndefined();
+    // Red only for failing checks or conflicts; amber for a review or changes requested; grey otherwise (Phil, 2026-11-02).
+    expect(badge?.look).toBe('subtle-danger');
+    expect(sessionPrBadge([pr({ number: 3, mergeable: 'conflicts' })])?.look).toBe('subtle-danger');
+    expect(sessionPrBadge([pr({ number: 3, review: 'changes-requested' })])?.look).toBe('subtle-warning');
+    expect(sessionPrBadge([pr({ number: 3, relation: 'review-requested', checks: 'failing' })])?.look).toBe('subtle-warning');
+    expect(sessionPrBadge([pr({ number: 3, relation: 'mentioned', checks: 'failing' })])?.look).toBe('subtle-neutral');
+    expect(sessionPrBadge([quiet])?.look).toBe('subtle-neutral');
     expect(badge?.hint.split('\n')).toEqual([
       'example/demo-app #42: A made-up change, number 42 (checks failing)',
       'example/demo-app #7: A made-up change, number 7',
@@ -403,16 +412,25 @@ describe('sessions and PRs', () => {
 });
 
 describe('why a PR needs you (W106)', () => {
-  it('says why in the badges’ order, with its number for a session row, and nothing when it needs nothing', () => {
+  it('says why in the badges’ order, and nothing when it needs nothing', () => {
     expect(prReason(pr({ number: 128, checks: 'failing', mergeable: 'conflicts' }))).toBe('CI is failing');
-    expect(prReason(pr({ number: 128, checks: 'failing' }), true)).toBe('CI is failing on #128');
-    expect(prReason(pr({ number: 128, mergeable: 'conflicts' }), true)).toBe('#128 has merge conflicts');
+    expect(prReason(pr({ number: 128, checks: 'failing' }))).toBe('CI is failing');
     expect(prReason(pr({ number: 128, mergeable: 'conflicts' }))).toBe('It has merge conflicts');
-    expect(prReason(pr({ number: 128, review: 'changes-requested' }), true)).toBe('Changes are requested on #128');
-    expect(prReason(pr({ number: 128, relation: 'review-requested', checks: 'failing' }), true)).toBe('Your review is requested on #128');
+    expect(prReason(pr({ number: 128, review: 'changes-requested' }))).toBe('Changes are requested');
+    expect(prReason(pr({ number: 128, relation: 'review-requested', checks: 'failing' }))).toBe('Your review is requested');
     expect(prReason(pr({ number: 128 }))).toBeUndefined();
     expect(prReason(pr({ number: 128, relation: 'mentioned', checks: 'failing' }))).toBeUndefined();
     expect(RELATION_PHRASES).toEqual({ authored: 'Yours', 'review-requested': 'Asks your review', mentioned: 'Mentions you' });
+  });
+
+  it("names the PR for a session's row and view, in the badge's own words, drafts included (W128)", () => {
+    expect(prNeedText(pr({ number: 128, draft: true, mergeable: 'conflicts' }))).toBe('Needs you for example/demo-app#128: conflicts');
+    expect(prNeedText(pr({ number: 128, checks: 'failing', mergeable: 'conflicts' }))).toBe('Needs you for example/demo-app#128: CI failing');
+    expect(prNeedText(pr({ number: 128, review: 'changes-requested' }))).toBe('Needs you for example/demo-app#128: changes requested');
+    expect(prNeedText(pr({ number: 128, relation: 'review-requested' }))).toBe('Needs you for example/demo-app#128: review requested');
+    expect(prNeedText(pr({ number: 128, draft: true }))).toBeUndefined();
+    expect(prNeedText(pr({ number: 128, relation: 'mentioned', checks: 'failing' }))).toBeUndefined();
+    expect(prRef(pr({ number: 7 }))).toBe('example/demo-app#7');
   });
 });
 

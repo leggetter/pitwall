@@ -19,6 +19,7 @@ import {
   PR_TITLE_MAX,
   prLinkIsStrong,
   prLinkMatches,
+  prIsOlder,
   prNeedsAttention,
   PRS_LIST_MAX,
   PRS_SHOWN_DAYS,
@@ -266,8 +267,6 @@ export function prsOff(list: PullRequestList | undefined): boolean {
   return list?.source.ok === false && list.source.reason === 'off';
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
 /**
  * "Now" for the 90-day window: the list's own fetchedAt, so what's hidden changes only with a fetch, as
  * the ended sessions' window follows the snapshot's time. Date.now() before the first fetch.
@@ -279,8 +278,7 @@ export function listNow(list: PullRequestList | undefined, fallback = Date.now()
 
 /** A PR last updated more than PRS_SHOWN_DAYS before `now`: listed behind Show older. A `now` that isn't a time hides nothing. */
 export function isOlderPr(pr: Pick<PullRequestSummary, 'updatedAt'>, now: number): boolean {
-  const updated = Date.parse(pr.updatedAt);
-  return !Number.isNaN(updated) && updated < now - PRS_SHOWN_DAYS * DAY_MS;
+  return prIsOlder(pr, now);
 }
 
 /**
@@ -464,6 +462,12 @@ export interface SessionPrBadge {
   state?: string;
   more: number;
   attention: boolean;
+  /**
+   * Its colour, from its most urgent highlighted state (Phil, 2026-11-02: red PR numbers "look like
+   * there's an error"): subtle danger for failing checks or conflicts, subtle warning for changes or a
+   * review requested, subtle neutral for one that needs nothing.
+   */
+  look: 'subtle-danger' | 'subtle-warning' | 'subtle-neutral';
   /** Its hover-only tooltip: each PR, by repo and number, its title, and its highlighted states. */
   hint: string;
 }
@@ -481,23 +485,48 @@ export function sessionPrBadge(owned: readonly PullRequestSummary[] | undefined)
   };
   const urgent = prStateBadges(first).find((badge) => badge.attention && prNeedsAttention(first));
   const state = urgent === undefined ? undefined : BADGE_STATES[urgent.state];
-  return { pr: first, ...(state === undefined ? {} : { state }), more: owned.length - 1, attention: prNeedsAttention(first), hint: owned.map(line).join('\n') };
+  const look = urgent?.look === 'subtle-danger' ? 'subtle-danger' : urgent === undefined ? 'subtle-neutral' : 'subtle-warning';
+  return { pr: first, ...(state === undefined ? {} : { state }), more: owned.length - 1, attention: prNeedsAttention(first), look, hint: owned.map(line).join('\n') };
 }
 
 /**
- * Why a PR needs you, in a sentence, for line 2 of a row (W106), or undefined when it doesn't
+ * Why a PR needs you, in a sentence, for line 2 of a PR row (W106), or undefined when it doesn't
  * (prNeedsAttention()): "Your review is requested", "CI is failing", "It has merge conflicts" or
- * "Changes are requested", in that order, as its badges are. With `number`, it names the PR, as a
- * session row's line 2 does: "CI is failing on #128".
+ * "Changes are requested", in that order, as its badges are. A session's row says it with
+ * prNeedText(), which names the PR.
  */
-export function prReason(pr: PullRequestSummary, number = false): string | undefined {
+export function prReason(pr: PullRequestSummary): string | undefined {
   if (!prNeedsAttention(pr)) return undefined;
-  const on = number ? ` on #${pr.number}` : '';
-  if (pr.relation === 'review-requested') return `Your review is requested${on}`;
-  if (pr.checks === 'failing') return `CI is failing${on}`;
-  if (pr.mergeable === 'conflicts') return number ? `#${pr.number} has merge conflicts` : 'It has merge conflicts';
-  if (pr.review === 'changes-requested') return `Changes are requested${on}`;
+  if (pr.relation === 'review-requested') return 'Your review is requested';
+  if (pr.checks === 'failing') return 'CI is failing';
+  if (pr.mergeable === 'conflicts') return 'It has merge conflicts';
+  if (pr.review === 'changes-requested') return 'Changes are requested';
   return undefined;
+}
+
+/** A PR as GitHub writes it, "example/demo-app#42", plain text. */
+export const prRef = (pr: Pick<PullRequestSummary, 'repoLabel' | 'number'>) => `${plainText(pr.repoLabel)}#${pr.number}`;
+
+/** prNeedText()'s start, before the PR. */
+export const NEEDS_YOU_FOR = 'Needs you for';
+
+/**
+ * Why a session needs you when it's for a PR it owns (W128; Phil, 2026-11-02: a finished session sat
+ * in Needs you and nothing said it was for its PR): "Needs you for example/demo-app#42: conflicts",
+ * with the PR badge's own words for its most urgent state (BADGE_STATES), or undefined when the PR
+ * needs nothing. For a session's row's line 2 and its view.
+ */
+export function prNeedText(pr: PullRequestSummary): string | undefined {
+  if (!prNeedsAttention(pr)) return undefined;
+  const state = prNeedState(pr);
+  return `${NEEDS_YOU_FOR} ${prRef(pr)}${state === undefined ? '' : `: ${state}`}`;
+}
+
+/** The PR badge's words for why a PR needs you, "conflicts", or undefined when it needs nothing (prNeedText()). */
+export function prNeedState(pr: PullRequestSummary): string | undefined {
+  if (!prNeedsAttention(pr)) return undefined;
+  const urgent = prStateBadges(pr).find((badge) => badge.attention);
+  return urgent === undefined ? undefined : BADGE_STATES[urgent.state];
 }
 
 /** How a PR is yours, in a word or two, for a PR row's line 2 while it needs nothing (W106): "Yours", "Mentions you". */

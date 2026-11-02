@@ -47,6 +47,10 @@ export interface AskedYou {
  *   from the job's `state.json`. Not its start placeholder, "send a prompt to
  *   start", which a resumed session shows though it asked nothing.
  * - 'asked': its last turn ended by asking you something (askedYou).
+ * - 'recap': its recap (M5, SessionSummary.recap) says it's waiting on you, and the recap is
+ *   current: made after the session's newest activity. `text` is its first to-do for you. Phil,
+ *   2026-10-29: sessions marked Done "whereas I'm sure there are open questions in them". The
+ *   heuristics above still decide first; a recap only adds a reason, never removes one.
  * - 'restarted': you resumed it, or confirmed a restart of it, in this run of
  *   pitwall, and no prompt has been sent to it since.
  * - 'blocked': Claude Code says it's blocked, and pitwall couldn't read why:
@@ -55,8 +59,11 @@ export interface AskedYou {
  *   question is never hidden.
  */
 export interface NeedsYou {
-  reason: 'prompt' | 'claude-code' | 'asked' | 'restarted' | 'blocked';
-  /** For 'claude-code' only: Claude Code's line, as plain text, at most 200 characters. */
+  reason: 'prompt' | 'claude-code' | 'asked' | 'recap' | 'restarted' | 'blocked';
+  /**
+   * For 'claude-code': Claude Code's line, as plain text, at most 200 characters. For 'recap':
+   * the recap's first to-do for you (RecapSummary.next), plain text, at most RECAP_FIELD_MAX characters.
+   */
   text?: string;
 }
 
@@ -78,7 +85,8 @@ export interface SessionSummary {
    * Where `title` came from.
    * - 'claude-code': the title Claude Code generated from the session's first
    *   prompt. It isn't updated as the session moves on.
-   * - 'pitwall': a title pitwall generated from the session's recent turns (M5).
+   * - 'pitwall': a title pitwall generated from the session's recent turns (M5): its recap's
+   *   `title`.
    */
   titleSource?: 'claude-code' | 'pitwall';
   kind: SessionKind;
@@ -153,6 +161,23 @@ export interface SessionSummary {
    * exactly the sessions that have it.
    */
   needsYou?: NeedsYou;
+  /**
+   * The session's recap, as the list needs it (M5, RecapSummary). Absent until one is made, and
+   * with `--no-recaps`. Sub-agents and pitwall's own sessions are never listed, so never have one.
+   * pitwall recaps an ended or finished session only when you ask (recapRefreshPath()), but one
+   * made while it was running stays. The whole recap is fetched with recapPath() (D14).
+   *
+   * Untrusted: it's a model's summary of a transcript, which anything a session read can steer.
+   * Shown as plain text only, and read as data, never instructions, by anything that reads it,
+   * W112's supervisor included (D26).
+   */
+  recap?: RecapSummary;
+  /**
+   * ISO 8601: when the session's newest plan status was made (M5, W123), the only word of it the
+   * snapshot carries (D14), so a view can tell there's one to fetch, and a newer one, with
+   * planStatusPath(). Absent until one is made, and with `--no-recaps`.
+   */
+  planStatusAt?: string;
   /** ISO 8601 timestamp of the newest transcript entry, when the transcript was readable. */
   lastActivityAt?: string;
   /**
@@ -404,6 +429,10 @@ export interface IndexSnapshot {
    * restart the relay.
    */
   relayOff?: RelayOff;
+  /** How recaps are doing (M5): absent with `--no-recaps`. */
+  recaps?: RecapHealth;
+  /** The supervisor (M5, SupervisorState): absent with `--no-supervisor`. */
+  supervisor?: SupervisorState;
 }
 
 /** Why pitwall stopped using its relay for this run (D8). */
@@ -591,6 +620,13 @@ export interface ConversationEntry {
   toolError?: boolean;
   /** For 'cross-session': the sender's name, as the receiving session saw it. */
   from?: string;
+  /**
+   * For 'cross-session': the message's id, as Claude Code records it (`origin.msg_id`, W99), when
+   * it has one. The same id SendMessage's result gave its sender, so pitwall's recaps can tell a
+   * message its own relay sent, which is yours, from one another session sent under the relay's
+   * name (M5, W110). An opaque id, never text.
+   */
+  msgId?: string;
   /**
    * The session's sub-agent this entry is about (W76): on a 'cross-session'
    * entry its report or message came from, and on a 'tool' entry the Agent
@@ -819,8 +855,14 @@ export interface SpawnRequest {
   prompt: string;
   /** Optional display name: letters, digits, space, `.`, `_` and `-`, at most 64 characters. */
   name?: string;
-  /** Optional model alias, such as `sonnet` or `haiku`. */
+  /**
+   * Optional model (W119): an alias, such as `sonnet` or `haiku`, or a full model name, as
+   * isWorkModel() allows, or WORK_DEFAULT for Claude Code's default whatever pitwall's defaults for
+   * sessions say. Absent: the defaults for sessions (WorkSettings.effective.session).
+   */
   model?: string;
+  /** Optional effort (W119): an EffortLevel, or WORK_DEFAULT. Absent: the defaults for sessions. */
+  effort?: EffortLevel | typeof WORK_DEFAULT;
   /**
    * Optional files for the first prompt (W79, spike 008): ids from
    * AttachmentResult, at most ATTACHMENTS_MAX_PER_SESSION, each used once.
@@ -1438,8 +1480,21 @@ export const PRS_MAX = 200;
 /** The most PRs a list holds: PRS_MAX from each of the searches (PR_RELATIONS). */
 export const PRS_LIST_MAX = PRS_MAX * PR_RELATIONS.length;
 
-/** The web UI lists PRs updated in this many days, and the rest behind Show older. */
+/**
+ * The web UI lists PRs updated in this many days, and the rest behind Show older. A PR no session owns
+ * that's older than this never needs you, in the UI or in the supervisor's list_prs (W125).
+ */
 export const PRS_SHOWN_DAYS = 90;
+
+/**
+ * Whether a PR was last updated more than PRS_SHOWN_DAYS before `now`, in ms: the web UI lists such a
+ * PR, when no session owns it, behind Show older, and list_prs marks it older (W125). A `now` or an
+ * updatedAt that isn't a time makes none older.
+ */
+export function prIsOlder(pr: Pick<PullRequestSummary, 'updatedAt'>, now: number): boolean {
+  const updated = Date.parse(pr.updatedAt);
+  return !Number.isNaN(updated) && updated < now - PRS_SHOWN_DAYS * 24 * 60 * 60 * 1000;
+}
 
 /** The longest PR title kept, in characters. */
 export const PR_TITLE_MAX = 300;
@@ -1559,3 +1614,604 @@ export type AttachServerMessage =
   | { type: 'attached' }
   | { type: 'exit'; code: number | null }
   | { type: 'error'; error: string };
+
+// --- Recaps (M5, spike 010) -----------------------------------------------------------------------
+
+/**
+ * What a session is waiting on, by its recap (spike 010's prompt):
+ * - 'you': its latest turn asks you a question, or needs your decision, approval or action.
+ * - 'another session': a reply or a result from another Claude Code session.
+ * - 'CI': checks, a build or a deploy.
+ * - 'someone else': another person, such as a reviewer or an author (M6's "blocked on someone else").
+ * - 'nothing': its work is finished, or nothing is pending.
+ */
+export type RecapWaitingOn = 'you' | 'another session' | 'CI' | 'someone else' | 'nothing';
+
+/** The values, for checking a model's answer. */
+export const RECAP_WAITING_ON: readonly RecapWaitingOn[] = ['you', 'another session', 'CI', 'someone else', 'nothing'];
+
+/**
+ * Who a to-do waits on (W121; Phil, 2026-11-02: "What's next? What are the outstanding actions?"):
+ * - 'you': the user answers a question, decides, approves or acts.
+ * - 'session': the session itself does it, once it carries on.
+ * - 'CI': checks, a build or a deploy.
+ * - 'someone else': another person, such as a reviewer or an author, or another Claude Code session.
+ */
+export type RecapTodoOwner = 'you' | 'session' | 'CI' | 'someone else';
+
+/** The values, for checking a model's answer. */
+export const RECAP_TODO_OWNERS: readonly RecapTodoOwner[] = ['you', 'session', 'CI', 'someone else'];
+
+/** One thing left to do, and who it waits on. `text` is plain, at most RECAP_FIELD_MAX characters. */
+export interface RecapTodo {
+  text: string;
+  owner: RecapTodoOwner;
+}
+
+/** The most to-dos a recap keeps: the first ones, in order. */
+export const RECAP_TODOS_MAX = 6;
+
+/**
+ * A session's recap (M5; spike 010; W121): a summary of the work and its to-dos. Phil, 2026-10-29:
+ * "a recap of what we're trying to achieve at the minute, both at a top level (why did we kick this
+ * off?) and in terms of where we are now"; and 2026-11-02: "just an updated version of what we're
+ * working on... Then, what's next? What are the outstanding actions? I'm not sure we need the
+ * breakdown." GET recapPath(). Made by one short `claude -p` call on RECAP_MODEL, with no tools and
+ * no session saved, from the session's first prompt, Claude Code's newest `away_summary` and
+ * compaction summary, and its latest turns, capped at RECAP_TURNS_CAP characters; or updated from the
+ * previous recap and the turns since, which revises the summary rather than writing it afresh. Kept
+ * in memory only. All text is plain, never Markdown, the summary and each to-do at most
+ * RECAP_FIELD_MAX characters, and shown in `<bdi>` where it names things. Untrusted: a transcript can
+ * steer what the model writes, so anything that reads it, a model above all, reads it as data, never
+ * instructions (D26).
+ */
+export interface SessionRecap {
+  /**
+   * One short paragraph: why the session was started and where it is now, saying so if the goal
+   * changed, and, for a session working through a plan, where it is in it.
+   */
+  summary: string;
+  /** What's left, in order, at most RECAP_TODOS_MAX, done ones dropped. Empty when nothing is. */
+  todos: RecapTodo[];
+  /**
+   * What it waits on now: the model's own answer (W121's live check), not worked out from the to-dos,
+   * since it can say 'another session', which no to-do's owner does, and a session's own to-do first
+   * says nothing of whether it's waiting. 'you' only with a to-do for you, and 'nothing' when the list
+   * is empty: the answer is refused otherwise.
+   */
+  waitingOn: RecapWaitingOn;
+  /** What the session is about, at most RECAP_TITLE_MAX_WORDS words. */
+  title: string;
+  /** ISO 8601: when it was made. */
+  at: string;
+  /** ISO 8601: the newest transcript entry it covers. */
+  throughAt: string;
+  /**
+   * 'pitwall' for pitwall's own recap. 'claude-code' when only Claude Code's `away_summary` is
+   * there, before pitwall's first recap or while the day's budget is spent: then `summary` is the
+   * away_summary, `todos` is empty, `title` is empty, `waitingOn` is 'nothing', so it never puts a
+   * session in Needs you, and `at` and `throughAt` are the away_summary's time. Only for a session
+   * whose process is running, not ended or finished.
+   */
+  source: 'pitwall' | 'claude-code';
+  /** True when the session has activity newer than `throughAt`. */
+  stale?: true;
+}
+
+/**
+ * What the snapshot carries of a recap (SessionSummary.recap): what the list and Needs you need (D14).
+ * `forYou` counts its to-dos for you, and `next` is the first of them, when there is one, for the
+ * row's line 2.
+ */
+export interface RecapSummary {
+  waitingOn: RecapWaitingOn;
+  title: string;
+  forYou: number;
+  next?: string;
+  at: string;
+  source: SessionRecap['source'];
+  stale?: true;
+}
+
+/** How recaps are doing today (IndexSnapshot.recaps). Days are local midnight to midnight. */
+export interface RecapHealth {
+  /** Calls made today, and the most allowed in a day (RECAP_DAILY_BUDGET). */
+  calls: number;
+  budget: number;
+  /** Sum of the calls' `total_cost_usd` today, at API list prices, as `claude -p` reports them. */
+  costUsd: number;
+  /** Set when the latest call failed: why, in pitwall's words, never the model's or claude's output. */
+  error?: string;
+  /**
+   * ISO 8601: when `error` was set, with it, so a page waiting for a recap it asked for can tell a
+   * failure since its ask from one before it (W111's review): `calls` rises as each call starts, and
+   * `error` stays until a call succeeds.
+   */
+  errorAt?: string;
+}
+
+/** The model recaps run on (spike 010: as right as Sonnet 5.5 on 56 recaps, at a fifteenth of the cost). */
+export const RECAP_MODEL = 'claude-haiku-5-5';
+
+/** How long a session must be idle after a turn ends before it's recapped (spike 010: trailing, 5 minutes). */
+export const RECAP_DEBOUNCE_MS = 5 * 60 * 1000;
+
+/** The most recap calls in a day (spike 010: about twice the busiest day measured, 96). */
+export const RECAP_DAILY_BUDGET = 200;
+
+/** Characters of the latest turns a recap reads (spike 010: 24k changed no answer and cost 37% more). */
+export const RECAP_TURNS_CAP = 8000;
+
+/** Characters of the first prompt a recap reads, keeping its start and end. */
+export const RECAP_FIRST_PROMPT_CAP = 1500;
+
+/** The longest summary, and the longest to-do. */
+export const RECAP_FIELD_MAX = 400;
+
+/** The most words in a recap's title. */
+export const RECAP_TITLE_MAX_WORDS = 8;
+
+/** GET: the session's SessionRecap, or 404 when there's none yet. The same authorization as SNAPSHOT_PATH. */
+export function recapPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/recap`;
+}
+
+/**
+ * POST, no body: recap the session now, answered with a RecapRefreshResult; the recap arrives in the
+ * snapshot and from recapPath(). It needs what every state-changing request needs: the apiKey,
+ * pitwall's Origin and its exact Host. 404 when pitwall has no transcript of the session to recap,
+ * 409 with `--no-recaps`, 429 when the day's budget is spent or a call for it is already running,
+ * which the answer's `busy` says.
+ */
+export function recapRefreshPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/recap/refresh`;
+}
+
+/**
+ * recapRefreshPath()'s answer: an ActionResult, and with a 429, why (W111's review), since a budget
+ * shared with another pitwall on the same home can be spent before this one's snapshot says so:
+ * - 'spent': the day's budget is spent; Retry-After is local midnight.
+ * - 'running': a call for this session is running; its recap arrives in a few seconds.
+ */
+export type RecapRefreshResult = ActionResult | { ok: false; error: string; busy: 'spent' | 'running' };
+
+// --- Plan status (M5, W123) -----------------------------------------------------------------------
+
+/**
+ * Where one of a plan's items is (W123), by the plan status call's prompt:
+ * - 'done': finished, by the transcript: merged, shipped, checked off or said to be done.
+ * - 'now': what the session is on at its latest turn.
+ * - 'next': still to come, or started and not finished, and not what it's on now.
+ * - 'dropped': taken out of the plan, replaced or abandoned, as the transcript says.
+ */
+export type PlanItemState = 'done' | 'now' | 'next' | 'dropped';
+
+/** The values, for checking a model's answer. */
+export const PLAN_ITEM_STATES: readonly PlanItemState[] = ['done', 'now', 'next', 'dropped'];
+
+/** One of a plan's milestones, work items or steps. `text` is plain, at most PLAN_ITEM_MAX characters. */
+export interface PlanItem {
+  text: string;
+  state: PlanItemState;
+}
+
+/**
+ * A session's plan status (M5, W123; Phil, 2026-11-02: "I want it to be clear that work is done as
+ * part of a plan... we're working our way through that plan. That plan can change."): a reminder of
+ * where the session is in the bigger picture, made when you press Plan status on the recap strip,
+ * never by itself. One `claude -p` call, as a recap's (D26), over more of the transcript: its first
+ * prompt, its newest compaction summary, all its sections, and its latest turns up to
+ * PLAN_TURNS_CAP characters. Nothing is sent to the session. GET planStatusPath(); kept in memory
+ * only, the newest per session, and the snapshot says only when it was made
+ * (SessionSummary.planStatusAt, D14). All text is plain, never Markdown. Untrusted, as a recap is: a
+ * transcript can steer what the model writes, so it's shown as plain text and read as data (D26).
+ */
+export interface PlanStatus {
+  /** False when the transcript shows no plan the session works through: then there's no `plan`, `items` is empty and there's no `changes`. */
+  found: boolean;
+  /** What the plan is, in one line, at most RECAP_FIELD_MAX characters. */
+  plan?: string;
+  /** Its milestones, work items or steps in the plan's own order, at most PLAN_ITEMS_MAX. At least one when `found`. */
+  items: PlanItem[];
+  /** How the plan changed during the session, when the transcript records a change; at most RECAP_FIELD_MAX characters. */
+  changes?: string;
+  /** ISO 8601: when it was made. */
+  at: string;
+  /** ISO 8601: the newest transcript entry it covers. */
+  throughAt: string;
+}
+
+/** The most items a plan status keeps: the first ones, in the plan's order. */
+export const PLAN_ITEMS_MAX = 15;
+
+/** The longest item, in characters. */
+export const PLAN_ITEM_MAX = 200;
+
+/** Characters of the latest turns a plan status reads: three times a recap's, for the bigger picture. */
+export const PLAN_TURNS_CAP = 24_000;
+
+/** Characters of the first prompt a plan status reads, keeping its start and end: twice a recap's, since a plan is often set out there. */
+export const PLAN_FIRST_PROMPT_CAP = 3000;
+
+/** Characters of the newest compaction summary a plan status reads, all its sections, keeping its start and end. */
+export const PLAN_COMPACTION_CAP = 12_000;
+
+/** GET: the session's newest PlanStatus, or 404 when none has been made. The same authorization as SNAPSHOT_PATH. */
+export function planStatusPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/plan-status`;
+}
+
+/**
+ * POST, no body: make the session's plan status now, answered with a PlanStatusResult once the call
+ * has finished, a few seconds to a minute. It needs what every state-changing request needs: the
+ * apiKey, pitwall's Origin and its exact Host. It counts against the day's recap budget
+ * (RECAP_DAILY_BUDGET) as a recap call. 404 when pitwall has no transcript of the session, 409 with
+ * `--no-recaps`, 429 when the day's budget is spent or a plan status of it is being made already,
+ * which the answer's `busy` says, or when two of other sessions' are (busy 'running', with `others`), 502 when the call failed, with why in pitwall's words, 503 while
+ * the server closes.
+ */
+export function planStatusRefreshPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/plan-status/refresh`;
+}
+
+/** planStatusRefreshPath()'s answer: the new plan status, or why not. */
+export type PlanStatusResult =
+  | { ok: true; status: PlanStatus }
+  /** `others`: busy with other sessions' plan statuses, as many as pitwall makes at a time, so none of this one is coming. */
+  | { ok: false; error: string; busy?: 'spent' | 'running'; others?: true };
+
+// --- The supervisor (M5; spike 009; D4 reopened, option B) ----------------------------------------
+
+/**
+ * The supervisor's state (IndexSnapshot.supervisor). pitwall runs it as one headless `claude -p`
+ * session with stream-json input and output, on SUPERVISOR_MODEL, with the relay's settings off,
+ * pitwall's MCP server (MCP_PATH) and nothing else, in one fixed directory, and resumes it by its
+ * session id across restarts (spike 009). It starts when you first open it or send it a message.
+ *
+ * - 'off': not started in this run yet.
+ * - 'starting': its process is starting or resuming.
+ * - 'idle': running, waiting for you.
+ * - 'working': a turn is running, yours or one a session's reply started.
+ * - 'held': another session holds its session id, a background session, an interactive one or another
+ *   pitwall's supervisor, so pitwall can't resume it; `error` says so and what frees it, naming
+ *   `claude stop <id>` for a background one. pitwall never stops or ends it for you.
+ * - 'failed': it exited or couldn't start; `error` says why, in pitwall's words, never claude's output.
+ */
+export type SupervisorStatus = 'off' | 'starting' | 'idle' | 'working' | 'held' | 'failed';
+
+export interface SupervisorState {
+  status: SupervisorStatus;
+  /** Its Claude Code session id, once it has one. */
+  sessionId?: string;
+  /** For 'held' and 'failed': why, in pitwall's words, with what to do. */
+  error?: string;
+  /**
+   * What it wants to do that waits on your click, oldest first (W115; Phil, 2026-10-29: approvals on
+   * by default, with an off switch in the config file later). Each counts in Needs you's total.
+   */
+  approvals: SupervisorApproval[];
+  /** ISO 8601: when its newest turn ended, for the working line and the view. */
+  lastTurnAt?: string;
+  /** Its turns' `total_cost_usd` in this run, at API list prices, as `claude -p` reports them. */
+  costUsd?: number;
+  /**
+   * What you approved in this run, oldest first (W124): each message sent and each session started,
+   * so the panel can open that session, list the sessions it started with their state, and say when
+   * one needs you. At most SUPERVISOR_HANDOFFS_MAX; absent when there are none.
+   */
+  handoffs?: SupervisorHandoff[];
+}
+
+/**
+ * One thing you approved (W124): a message sent to a session, a session started, or a finished
+ * session resumed with a message (W127). The supervisor never sees a session's reply (Phil,
+ * 2026-11-02): you carry on in the session itself, which the panel opens. `name` is the session's
+ * name as the card showed it, or as `claude --bg` reported it; `sessionId` the session pitwall
+ * checked the message's recipient was, or the one it resumed; `shortId` what `claude --bg` reported,
+ * which the page matches with SessionSummary.shortId once the index lists it.
+ *
+ * `copy` (W127): the session was open in another Claude Code process after all, so Claude Code
+ * started a copy of its conversation under a new id, `shortId`, and the message went to the copy,
+ * not to the session `name` names (spike 011). The original is unchanged. Never with `sessionId`.
+ */
+export interface SupervisorHandoff {
+  id: string;
+  kind: 'message' | 'spawn' | 'resume';
+  name: string;
+  at: string;
+  sessionId?: string;
+  shortId?: string;
+  copy?: true;
+}
+
+/** The most hand-offs SupervisorState carries: the newest, in this run. */
+export const SUPERVISOR_HANDOFFS_MAX = 20;
+
+/** Claude Code's permission modes, as `claude --help` lists them for `--permission-mode` (2.1.316), and `default`. */
+export const PERMISSION_MODES = ['acceptEdits', 'auto', 'bypassPermissions', 'default', 'dontAsk', 'manual', 'plan'] as const;
+export type PermissionModeName = (typeof PERMISSION_MODES)[number];
+
+/**
+ * The permission mode a finished session resumes in, as far as pitwall can tell (W129, the re-review's
+ * L1): `mode`, from a background job's saved flags (src/index/jobs.ts); `unset`, its saved flags have
+ * no permission flag, so Claude Code's settings decide it; `unknown`, pitwall couldn't read them, or
+ * the session is an ended interactive one, which has no saved flags pitwall reads.
+ */
+export type SavedPermission = { kind: 'mode'; mode: PermissionModeName } | { kind: 'unset' } | { kind: 'unknown' };
+
+/**
+ * Something the supervisor wants to do, waiting on your click (W115): a message to a session through
+ * SendMessage, a new session through the MCP server's spawn_session, or a finished session resumed
+ * with a message through resume_session (W127): `sessionId`, `name` and `directory` are the listed
+ * session's, as pitwall resolved the id, never the model's input, and so are `lastActivityAt`,
+ * `sameName` and `permission` (W129). Its text is the model's, so it's
+ * shown as plain text in `<bdi>`, never as Markdown, and you can edit it before it goes.
+ */
+export type SupervisorApproval =
+  | { id: string; kind: 'message'; to: string; text: string; at: string; expiresAt: string }
+  | { id: string; kind: 'spawn'; directory: string; name?: string; prompt: string; at: string; expiresAt: string }
+  | {
+      id: string;
+      kind: 'resume';
+      sessionId: string;
+      name: string;
+      directory: string;
+      text: string;
+      at: string;
+      expiresAt: string;
+      /** Its newest activity, as listed, for the card (W129, the re-review's M2). */
+      lastActivityAt?: string;
+      /** How many listed sessions have its name, ignoring case, itself included (W129): names aren't unique. */
+      sameName: number;
+      /** The permission mode it resumes in, as far as pitwall can tell (W129, L1). */
+      permission: SavedPermission;
+    };
+
+/**
+ * Your answer to an approval (POST supervisorApprovalPath()): send it as it is, send your edit
+ * (`text` replaces the message or the prompt), or don't send it. The supervisor is told which, and
+ * on an edit, what was sent.
+ */
+export type SupervisorDecision = { decision: 'send' } | { decision: 'edit'; text: string } | { decision: 'decline' };
+
+/** The supervisor's model (Phil, 2026-10-29), at its default effort. */
+export const SUPERVISOR_MODEL = 'claude-opus-5-5';
+
+/** An approval you don't answer is declined after this, inside the 30 minutes pitwall gives the supervisor's MCP calls (W115). */
+export const SUPERVISOR_APPROVAL_TIMEOUT_MS = 29 * 60 * 1000;
+
+/** The longest message you can send the supervisor, and the longest message or edit it proposes, resume_session's included (W127). */
+export const SUPERVISOR_MESSAGE_MAX = 20_000;
+
+/**
+ * The longest first prompt a new session takes (SpawnRequest's prompt, New session's dialog), and so
+ * the longest edit of a new session the supervisor proposes (W115).
+ */
+export const SPAWN_PROMPT_MAX = 16_384;
+
+/**
+ * POST `{ text }`: a message to the supervisor, as you, starting or resuming it first if it isn't
+ * running; queued if a turn is running. The apiKey, Origin and Host checks of every state-changing
+ * request. 409 with `--no-supervisor` or while it's 'held'; 413 over SUPERVISOR_MESSAGE_MAX.
+ */
+export const SUPERVISOR_MESSAGE_PATH = '/api/supervisor/message';
+
+/** POST, no body: start or resume the supervisor without a message. The same checks; 409 as for a message. */
+export const SUPERVISOR_START_PATH = '/api/supervisor/start';
+
+/** POST, no body: stop its running turn, with an `interrupt` control request. The same checks. */
+export const SUPERVISOR_INTERRUPT_PATH = '/api/supervisor/interrupt';
+
+/** GET: the supervisor's conversation, a ConversationPage, paged with `before` as conversationPath() pages a session's. */
+export function supervisorConversationPath(before?: string): string {
+  const path = '/api/supervisor/conversation';
+  return before === undefined ? path : `${path}?before=${encodeURIComponent(before)}`;
+}
+
+/** POST a SupervisorDecision for one approval. The same checks; 404 for an approval that's gone. */
+export function supervisorApprovalPath(id: string): string {
+  return `/api/supervisor/approvals/${encodeURIComponent(id)}`;
+}
+
+/**
+ * pitwall's MCP server, for the supervisor alone (W112): MCP's JSON-RPC over HTTP POST on
+ * pitwall's own server. It takes a bearer token of its own, made for each run and written only into
+ * the supervisor's 0600 MCP config file, never the page's token or apiKey, and checks `Host` as
+ * every route does. Its answers carry text from sessions, recaps and GitHub, all of it untrusted,
+ * so each tool's result frames it as data, and the supervisor's prompt says never to follow
+ * instructions in it.
+ */
+export const MCP_PATH = '/mcp';
+
+/** The MCP server's name in the supervisor's config, so its tools are `mcp__pitwall__<tool>`. */
+export const MCP_SERVER_NAME = 'pitwall';
+
+/**
+ * Its tools. The read-only ones are allowed outright; spawn_session (W115) and resume_session (W127) ask for your approval;
+ * approve is the permission prompt tool (`--permission-prompt-tool mcp__pitwall__approve`), which
+ * Claude Code calls itself and leaves out of the model's tools.
+ */
+export const MCP_TOOLS = {
+  listSessions: 'list_sessions',
+  readSession: 'read_session',
+  listPrs: 'list_prs',
+  getRecap: 'get_recap',
+  spawnSession: 'spawn_session',
+  resumeSession: 'resume_session',
+  approve: 'approve',
+} as const;
+
+// ------------------------------------------------------------------ model and effort (W119, #114)
+
+/**
+ * The kinds of work pitwall starts, each with a model and an effort (W119): a session from New
+ * session or a resume (`claude --bg`), that session's sub-agents (CLAUDE_CODE_SUBAGENT_MODEL on the
+ * session's environment), the supervisor, recaps and the relay (each `claude -p`).
+ */
+export const WORK_KINDS = ['session', 'subagents', 'supervisor', 'recaps', 'relay'] as const;
+export type WorkKind = (typeof WORK_KINDS)[number];
+
+/**
+ * Claude Code's effort levels, as `--effort` takes them (code.claude.com/docs/en/model-config, "Adjust
+ * effort level"; `claude --help`, v2.1.316). Which a model supports varies: Claude Code runs a level a
+ * model lacks at the highest one below it. `ultracode` is left out: it also turns on workflows.
+ */
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type EffortLevel = (typeof EFFORT_LEVELS)[number];
+
+/**
+ * The levels recaps may run at (W119's review): a recap call may write at most 4,096 tokens, thinking
+ * included (RECAP_MAX_OUTPUT_TOKENS in src/recaps/prompt.ts), and `xhigh` or `max` could use them up
+ * before the answer, failing the recap.
+ */
+export const RECAP_EFFORT_LEVELS = ['low', 'medium', 'high'] as const satisfies readonly EffortLevel[];
+
+/**
+ * Claude Code's documented model aliases (code.claude.com/docs/en/model-config, "Model aliases"),
+ * which `--model` takes. Each names the latest model of its kind on your provider.
+ */
+export const MODEL_ALIASES = ['opus', 'sonnet', 'haiku', 'fable', 'best', 'opusplan', 'opus[1m]', 'sonnet[1m]'] as const;
+
+/**
+ * The aliases a session's sub-agents can take: CLAUDE_CODE_SUBAGENT_MODEL accepts "a model alias or
+ * model ID" (code.claude.com/docs/en/sub-agents, "Choose a model"), and an agent definition's `model`
+ * the four below, so only those.
+ */
+export const SUBAGENT_MODEL_ALIASES = ['opus', 'sonnet', 'haiku', 'fable'] as const;
+
+/** The aliases Preferences offers each kind, besides what pitwall's layers name (W119). */
+export const OFFERED_WORK_MODELS = ['opus', 'sonnet', 'haiku', 'fable'] as const;
+
+/**
+ * A full model name, such as `claude-opus-5-5` or `claude-haiku-4-5-20251001`: `claude-`, a family,
+ * then numbers joined by `-`. Never free text on a command line: only these characters, at most 64.
+ */
+export const MODEL_ID_PATTERN = /^claude-(?:opus|sonnet|haiku|fable)(?:-[0-9]{1,8}){1,3}$/;
+
+/**
+ * "Claude Code's default": in an override, or in the config file, no `--model` or `--effort` at all,
+ * whatever pitwall's own default for that work is. For a model it's also Claude Code's own special
+ * value, "clears any model override and reverts to the runtime default" (model-config).
+ */
+export const WORK_DEFAULT = 'default';
+
+/** Whether `value` is a model pitwall passes to `--model` for `kind`: an alias, or a full model name. */
+export function isWorkModel(value: unknown, kind: WorkKind = 'session'): value is string {
+  if (typeof value !== 'string' || value.length > 64) return false;
+  const aliases: readonly string[] = kind === 'subagents' ? SUBAGENT_MODEL_ALIASES : MODEL_ALIASES;
+  return aliases.includes(value) || MODEL_ID_PATTERN.test(value);
+}
+
+export function isEffortLevel(value: unknown): value is EffortLevel {
+  return typeof value === 'string' && (EFFORT_LEVELS as readonly string[]).includes(value);
+}
+
+/**
+ * A model and an effort. Absent: the next layer down decides (an override, then the config file, then
+ * pitwall's own). WORK_DEFAULT: Claude Code's default, with no flag. A session's sub-agents have no
+ * effort of their own: Claude Code documents no way to set it apart from the session's.
+ */
+export interface WorkChoice {
+  model?: string;
+  effort?: EffortLevel | typeof WORK_DEFAULT;
+}
+
+/** Each kind of work's choice. */
+export type WorkChoices = Record<WorkKind, WorkChoice>;
+
+/**
+ * GET WORK_PATH, and POST WORK_PATH's answer (W119): each layer, and what applies. pitwall's server
+ * keeps `overrides` for its run only: they change processes it starts, and are never written to the
+ * config file. `effective` is, field by field, the override, else the config file's, else pitwall's
+ * own; a field it lacks, or WORK_DEFAULT, means no flag, so Claude Code's default.
+ */
+export interface WorkSettings {
+  /** pitwall's own: no flags for sessions and sub-agents, SUPERVISOR_MODEL, RECAP_MODEL and the relay's Haiku. */
+  builtIn: WorkChoices;
+  /** The config file's `work` block, each kind as given. Empty kinds when it has none. */
+  config: WorkChoices;
+  /** Set in the app, for this run. */
+  overrides: WorkChoices;
+  effective: WorkChoices;
+  /** The config file it read, for the words "in <file>". Absent when there's none. */
+  configFile?: string;
+  /**
+   * What Claude Code would use where pitwall passes no `--model` or `--effort` (W122), read from its
+   * documented settings files and environment variables as the request came in. Absent when the
+   * server wasn't given a reader (tests, the gallery) or the read failed.
+   */
+  claude?: ClaudeDefaults;
+}
+
+/**
+ * A settings file Claude Code reads (code.claude.com/docs/en/settings, "Settings files and who they
+ * affect"): managed, a project's `.claude/settings.local.json`, its `.claude/settings.json`, and
+ * `~/.claude/settings.json`, in that order of precedence.
+ */
+export type ClaudeSettingsScope = 'managed' | 'local' | 'project' | 'user';
+
+/** Where one of Claude Code's defaults comes from (W122). */
+export type ClaudeDefaultSource =
+  /** An environment variable: in that settings file's `env` block, or, with no scope, pitwall's environment. */
+  | { kind: 'variable'; name: string; scope?: ClaudeSettingsScope }
+  /** A key in a settings file. */
+  | { kind: 'setting'; key: 'model' | 'effortLevel' | 'modelSettings' | 'maxEffortLevel'; scope: ClaudeSettingsScope }
+  /** The model's own default effort, or none for a model without effort levels. */
+  | { kind: 'model' }
+  /**
+   * Your account's default model, which only Claude Code sees: by plan, or an organization's default.
+   * For effort: the effort of that model, so it can't be known either.
+   */
+  | { kind: 'account' }
+  /** A session's sub-agents: the session's model. */
+  | { kind: 'session' };
+
+/** One default: the value, absent when it can't be known here, and where it comes from. */
+export interface ClaudeDefault {
+  /**
+   * A model alias or full name; an EffortLevel, `auto` for CLAUDE_CODE_EFFORT_LEVEL's "send none", or
+   * `none` for a model without effort levels.
+   */
+  value?: string;
+  source: ClaudeDefaultSource;
+  /**
+   * `unrecognised`: the source sets a model that isn't one isWorkModel() allows, so its value isn't
+   * sent (W122's review: a project's settings file, from a clone, can hold any text). `may-not-apply`:
+   * a user file's top-level `effortLevel` on a model the docs don't say it applies to.
+   */
+  note?: 'unrecognised' | 'may-not-apply';
+}
+
+/** Claude Code's defaults for each kind of work pitwall starts (W122). */
+export interface ClaudeDefaults {
+  /** With no `--model`: each kind's model. */
+  model: Record<WorkKind, ClaudeDefault>;
+  /**
+   * With no `--effort`: each kind's effort, by the model it would run on: WORK_DEFAULT for Claude
+   * Code's own model, else the alias or full name passed. Effort settings are per model. Sub-agents
+   * have none of their own.
+   */
+  effort: Record<WorkKind, Record<string, ClaudeDefault>>;
+  /**
+   * The directory whose project settings were read, as New session asked for it (`?dir=`), so it can
+   * tell this answer from one for an earlier choice. Absent: none, so sessions' are your settings alone.
+   */
+  dir?: string;
+}
+
+/**
+ * POST WORK_PATH's body: the whole set of overrides, which replaces the last. A kind or a field left
+ * out has no override. Each model must pass isWorkModel(), or be WORK_DEFAULT, and each effort
+ * isEffortLevel(), or WORK_DEFAULT; sub-agents take no effort. Else 400 with `{ error }`, in pitwall's
+ * words, and nothing changes.
+ */
+export interface WorkUpdate {
+  overrides: Partial<Record<WorkKind, WorkChoice>>;
+}
+
+/**
+ * The model and effort settings (W119). GET answers WorkSettings; POST takes a WorkUpdate. GET takes
+ * `?dir=<absolute path>` (W122): a directory under a root, whose project settings then go into
+ * `claude`'s defaults for sessions. One that isn't is left out, as if none were given.
+ */
+export const WORK_PATH = '/api/work';

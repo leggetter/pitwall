@@ -97,6 +97,8 @@ const ICONS: Readonly<Record<string, string | readonly [glyph: string, style: ty
   undo: 'undo',
   // The session view's Sub-agents tab (W77): a session and the sub-agents it started, some of them by another.
   subagents: 'account_tree',
+  // The repo list's Supervisor item and its view (W114): a headset, the pit wall's race engineer on the radio.
+  supervisor: 'support_agent',
   // New session's Attach files (W82), and the type of each file in its list: an image, a PDF, or text.
   attach: 'attach_file',
   image: 'image',

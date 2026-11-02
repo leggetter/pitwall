@@ -1780,11 +1780,11 @@ describe('the shell', () => {
     expect(screen.getByRole('navigation', { name: 'Repos' })).toBeTruthy();
   });
 
-  it('has New session as a primary button with the add icon', () => {
+  it('has New session as an outline button with the add icon (Phil, 2026-11-02: the blue was too much)', () => {
     renderDashboard(mixedSnapshot());
 
     const button = screen.getByRole('button', { name: 'New session' });
-    expect(button.className).toBe('button primary md');
+    expect(button.className).toBe('button md');
     expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
   });
 

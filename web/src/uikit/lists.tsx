@@ -15,7 +15,7 @@ import { ago, APP_DIR, AWKWARD_ROWS, ENDED_ROWS, FINISHED_ROWS, group, JOBS_DIR,
 import { Specimen } from './kit.js';
 
 /** Rows all in one group, as a group's own list has them. */
-const inGroup = (label: string, sessions: SessionSummary[], key = APP_DIR): Listed[] => {
+export const inGroup = (label: string, sessions: SessionSummary[], key = APP_DIR): Listed[] => {
   const shown = group(label, sessions, { key });
   return sessions.map((session) => ({ session, group: shown }));
 };
@@ -28,7 +28,7 @@ const VIEW_GROUPS: Pick<SessionGroup, 'root' | 'key' | 'label' | 'kind'>[] = [
 ];
 
 /** Rows from several groups, as Needs you and All sessions have them. */
-const acrossGroups = (sessions: SessionSummary[]): Listed[] =>
+export const acrossGroups = (sessions: SessionSummary[]): Listed[] =>
   sessions.map((session, index) => {
     const { root, key, label, kind } = VIEW_GROUPS[index % VIEW_GROUPS.length]!;
     return { session, group: { root, key, label, kind, sessions: [session] } };
@@ -41,7 +41,7 @@ const acrossGroups = (sessions: SessionSummary[]): Listed[] =>
  * with, and pressing one marks it or takes the mark away (W88); with `leave` too, a marked row leaves,
  * as in Needs you.
  */
-function Rows({
+export function Rows({
   rows,
   showGroup = false,
   openSessionId,

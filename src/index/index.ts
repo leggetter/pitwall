@@ -18,13 +18,27 @@ import { createJobReader, type JobNeeds, type JobReader } from './jobs.js';
 import { inspectCwd, matchRoot, resolveRoots, type Realpath } from './roots.js';
 import { createSubagentTracker, isSafeAgentId, type SubagentLabels, type SubagentTracker } from './subagents.js';
 import { buildGroups, isFinished, restartHolds, toSessionSummary, type PlacedSession } from './summaries.js';
-import { createTranscriptReader, isSafeSessionId, readNewestEntries, type TranscriptReader } from './transcripts.js';
+import { createTranscriptReader, isSafeSessionId, readNewestEntries, type AwaySummary, type TranscriptInfo, type TranscriptReader } from './transcripts.js';
 import { createWorkedInScanner, type WorkedInScanner } from './workedIn.js';
 
 export { isSafeSessionId } from './transcripts.js';
 export { isSafeAgentId } from './subagents.js';
 export { ConversationCursorError, isWellFormedCursor } from './conversation.js';
 export type { AgentRow } from './agents.js';
+export type { AwaySummary } from './transcripts.js';
+
+/**
+ * What the index read of a listed session's transcript on a poll that the snapshot doesn't carry,
+ * for M5's recaps (src/recaps/): IndexerOptions.sessionFacts.
+ */
+export interface SessionFacts {
+  /** Its transcript, which the recap engine reads its first prompt and compaction summary from (recapSources.ts). */
+  file?: string;
+  /** Whether its last turn has ended, by W69's rule (TranscriptInfo.turnEnded). */
+  turnEnded?: boolean;
+  /** Claude Code's newest recap of it (TranscriptInfo.awaySummary). */
+  awaySummary?: AwaySummary;
+}
 
 export interface IndexerOptions {
   /** Absolute paths. The indexer resolves them with realpath. */
@@ -50,11 +64,23 @@ export interface IndexerOptions {
    * its conversation as 'to-pitwall' entries (W46). Without it, they stay tool calls.
    */
   relayName?: string;
+  /**
+   * Called after each poll whose `claude agents` listing succeeded, before the snapshot's listeners,
+   * with what the index read of each listed session's transcript that the snapshot doesn't carry
+   * (SessionFacts), by session id: for M5's recap engine. A hook that throws is ignored.
+   */
+  sessionFacts?: (facts: ReadonlyMap<string, SessionFacts>) => void;
 }
 
 export interface Indexer {
   /** The latest snapshot, or undefined before the first poll completes. */
   latest(): IndexSnapshot | undefined;
+  /**
+   * The rows of the last `claude agents --json --all` that succeeded, unfiltered: sessions outside
+   * the roots and pitwall's own included, which the snapshot leaves out. For the supervisor's
+   * recipient gate (W120). Undefined before the first. Optional, so a stand-in can leave it out.
+   */
+  liveRows?(): readonly AgentRow[] | undefined;
   /** Called with every new snapshot. Returns an unsubscribe function. */
   subscribe(listener: (snapshot: IndexSnapshot) => void): () => void;
   /**
@@ -189,6 +215,8 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
   const intervalMs = options.intervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const listeners = new Set<(snapshot: IndexSnapshot) => void>();
   let latest: IndexSnapshot | undefined;
+  /** The last successful listing's rows, unfiltered (liveRows()). */
+  let liveRows: readonly AgentRow[] | undefined;
   /** The session ids in `latest`: the only ones conversation() answers for. */
   let current = new Set<string>();
   /** Where the relay's messages came from, per transcript, for the conversation's 'to-pitwall' entries. */
@@ -205,8 +233,10 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
     running = true;
     try {
       let snapshot: IndexSnapshot;
+      let facts: Map<string, SessionFacts> | undefined;
+      let rows: readonly AgentRow[] | undefined;
       try {
-        snapshot = await poll(options, deps, latest, restarts);
+        ({ snapshot, facts, rows } = await poll(options, deps, latest, restarts));
       } catch (err) {
         // poll() handles every expected failure itself; this guards against bugs.
         const message = oneLine(err instanceof Error ? err.message : String(err));
@@ -222,7 +252,12 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
       if (alert !== undefined) snapshot.relayAlert = alert;
       const off = calls(() => options.relayOff?.(), undefined);
       if (off !== undefined) snapshot.relayOff = off;
+      if (facts !== undefined) {
+        const told = facts;
+        calls(() => options.sessionFacts?.(told), undefined);
+      }
       latest = snapshot;
+      if (rows !== undefined) liveRows = rows;
       current = new Set(snapshot.groups.flatMap((group) => group.sessions.map((session) => session.sessionId)));
       relayBook?.retain(current);
       for (const listener of [...listeners]) {
@@ -265,6 +300,7 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
 
   return {
     latest: () => latest,
+    liveRows: () => liveRows,
     subscribe(listener) {
       listeners.add(listener);
       return () => {
@@ -365,7 +401,7 @@ async function poll(
   deps: IndexerDeps,
   previous: IndexSnapshot | undefined,
   restarts: Map<string, number>,
-): Promise<IndexSnapshot> {
+): Promise<{ snapshot: IndexSnapshot; facts?: Map<string, SessionFacts>; rows?: readonly AgentRow[] }> {
   const resolvedRoots = await resolveRoots(options.roots, deps.realpath);
   const result = await deps.agents.list();
   const nowMs = deps.now();
@@ -375,8 +411,9 @@ async function poll(
     // Keep the last known sessions, flagged by the source error, rather than
     // blanking the list because one call failed.
     const source: SourceHealth = { ok: false, error: result.error };
-    return { generatedAt, roots: resolvedRoots, groups: previous?.groups ?? [], source };
+    return { snapshot: { generatedAt, roots: resolvedRoots, groups: previous?.groups ?? [], source } };
   }
+  const facts = new Map<string, SessionFacts>();
 
   // Every session `claude agents --all` lists, those left out below included, and those in rows
   // parseAgentRows() skipped, such as one with an unknown kind (W81): none of them has ended.
@@ -402,13 +439,14 @@ async function poll(
     if (restartedAtMs !== undefined && !restartHolds(restartedAtMs, transcript)) restarts.delete(row.sessionId);
     const relay = calls(() => options.relayExchange?.(row.sessionId), undefined);
     if (relay !== undefined) summary.relay = relay;
+    facts.set(row.sessionId, factsOf(deps.transcripts.transcriptFile(row.sessionId), transcript));
     return { root, group, summary };
   });
 
   const live = placed.filter((p): p is PlacedSession => p !== undefined);
   deps.transcripts.retain(new Set(live.map((p) => p.summary.sessionId)));
   deps.jobs?.retain(new Set(rows.flatMap((row) => (row.shortId === undefined ? [] : [row.shortId]))));
-  const kept = [...live, ...(await placeEnded(listed, resolvedRoots, options, deps, nowMs))];
+  const kept = [...live, ...(await placeEnded(listed, resolvedRoots, options, deps, nowMs, facts))];
   deps.groups.prune();
   addWorkedIn(kept, resolvedRoots, deps);
   addSubagentsRunning(kept, deps);
@@ -416,7 +454,18 @@ async function poll(
   const keptIds = new Set(kept.map((p) => p.summary.sessionId));
   for (const id of restarts.keys()) if (!keptIds.has(id)) restarts.delete(id);
 
-  return { generatedAt, roots: resolvedRoots, groups: buildGroups(kept, deps.home), source: { ok: true } };
+  for (const id of facts.keys()) if (!keptIds.has(id)) facts.delete(id);
+
+  return { snapshot: { generatedAt, roots: resolvedRoots, groups: buildGroups(kept, deps.home), source: { ok: true } }, facts, rows: result.rows };
+}
+
+/** SessionFacts from a session's transcript file and what was read of it. */
+function factsOf(file: string | undefined, transcript: TranscriptInfo): SessionFacts {
+  const facts: SessionFacts = {};
+  if (file !== undefined) facts.file = file;
+  if (transcript.turnEnded !== undefined) facts.turnEnded = transcript.turnEnded;
+  if (transcript.awaySummary !== undefined) facts.awaySummary = { ...transcript.awaySummary };
+  return facts;
 }
 
 /**
@@ -432,6 +481,7 @@ async function placeEnded(
   options: IndexerOptions,
   deps: IndexerDeps,
   nowMs: number,
+  facts: Map<string, SessionFacts>,
 ): Promise<PlacedSession[]> {
   const scanner = deps.ended;
   if (scanner === undefined) return [];
@@ -455,6 +505,7 @@ async function placeEnded(
     const summary = toSessionSummary(row, ended.transcript, nowMs, { cwdMissing: missing, ended: true });
     const relay = calls(() => options.relayExchange?.(ended.sessionId), undefined);
     if (relay !== undefined) summary.relay = relay;
+    facts.set(ended.sessionId, factsOf(ended.file, ended.transcript));
     return { root, group, summary };
   });
   return placed.filter((p): p is PlacedSession => p !== undefined);

@@ -11,10 +11,11 @@ import { ConnectionBadge } from '../components/ConnectionBadge.js';
 import { FINISHED_ASKED_HINT, STALE_HINT } from '../components/SessionRow.js';
 import { Dashboard } from '../components/Dashboard.js';
 import { DIRECTORY_TEXT, NewSessionDialog } from '../components/NewSessionDialog.js';
-import { PreferencesDialog, RepoListPreferences, SessionViewPreferences, type PreferencesProps } from '../components/Preferences.js';
+import { PreferencesDialog, RepoListPreferences, SessionViewPreferences, WorkPreferences, type PreferencesProps } from '../components/Preferences.js';
 import { ShortcutsDialog } from '../components/ShortcutsDialog.js';
 import { NoTokenNotice, TokenRejectedNotice } from '../components/Notice.js';
 import { shortenHome } from '../format.js';
+import { DRAFT_HINTS, DRAFT_LABEL, draftText, type FromSession } from '../fromSession.js';
 import type { GroupBy } from '../groupBy.js';
 import { PANEL_WIDTH_KEY } from '../panelWidth.js';
 import { memoryNavigation } from '../selection.js';
@@ -77,7 +78,7 @@ async function fill(root: HTMLElement, values: { directory?: string; path?: stri
   if (values.path !== undefined) type(await element<HTMLInputElement>(root, 'input[aria-label="Directory path"]'), values.path);
   if (values.name !== undefined) type(await field<HTMLInputElement>(root, 'Name'), values.name);
   if (values.model) choose(await field<HTMLSelectElement>(root, 'Model'), values.model);
-  if (values.alias !== undefined) type(await element<HTMLInputElement>(root, 'input[aria-label="Model alias"]'), values.alias);
+  if (values.alias !== undefined) type(await element<HTMLInputElement>(root, 'input[aria-label="Model alias or full name"]'), values.alias);
   if (values.prompt !== undefined) type(await field<HTMLTextAreaElement>(root, 'First prompt'), values.prompt);
 }
 
@@ -171,6 +172,8 @@ interface DialogCase {
   /** A waiting state's spinner shows at once. */
   waited?: 'shown';
   run?: (root: HTMLElement) => Promise<unknown>;
+  /** Opened from a session's New session from here (W118): its directory, name and the text selected in its conversation. */
+  from?: FromSession;
 }
 
 const DIALOG_CASES: DialogCase[] = [
@@ -352,6 +355,28 @@ const DIALOG_CASES: DialogCase[] = [
       await text(root, 'Starting…');
     },
   },
+  {
+    title: 'From a session: text selected',
+    note: "New session from here (W118), with text selected in the session's conversation: its directory chosen, the prompt blank, and Draft from this session on, saying what it adds.",
+    frame: 'dialog-tall',
+    from: { cwd: JOBS_DIR, sessionId: '00000000-0000-4000-8000-000000000118', name: 'pitwall-test-nightly-export', selection: 'The export retries three times, then gives up.\n\nThe timeout is 30 s.' },
+  },
+  {
+    title: 'From a session: drafted',
+    note: "After Draft from this session: the line with the session's ID and the selection, quoted, at the start of the prompt, with focus at its end. The button is off while the draft is there.",
+    frame: 'dialog-tall',
+    from: { cwd: JOBS_DIR, sessionId: '00000000-0000-4000-8000-000000000118', name: 'pitwall-test-nightly-export', selection: 'The export retries three times, then gives up.\n\nThe timeout is 30 s.' },
+    run: async (root) => {
+      await press(root, DRAFT_LABEL);
+      await text(root, DRAFT_HINTS.added);
+    },
+  },
+  {
+    title: 'From a session: nothing selected',
+    note: 'With no text selected in its conversation, Draft from this session is off, and says to select text there first.',
+    frame: 'dialog-tall',
+    from: { cwd: JOBS_DIR, sessionId: '00000000-0000-4000-8000-000000000118', name: 'pitwall-test-nightly-export', selection: '' },
+  },
 ];
 
 export function Dialogs() {
@@ -362,7 +387,12 @@ export function Dialogs() {
           <Stubbed options={dialog.options}>
             <Reopenable>
               {(close) => {
-                const shown = <NewSessionDialog snapshot={DIALOG_SNAPSHOT} onClose={close} onStarted={close} />;
+                const from = dialog.from;
+                const shown = from ? (
+                  <NewSessionDialog snapshot={DIALOG_SNAPSHOT} onClose={close} onStarted={close} prefill={{ cwd: from.cwd }} draft={{ text: draftText(from) }} />
+                ) : (
+                  <NewSessionDialog snapshot={DIALOG_SNAPSHOT} onClose={close} onStarted={close} />
+                );
                 return dialog.run ? <Scenario run={dialog.run}>{shown}</Scenario> : shown;
               }}
             </Reopenable>
@@ -447,6 +477,24 @@ function RepoListSection() {
   );
 }
 
+/** Made-up model and effort settings (W119): a config file that puts sessions on opus at high, and their sub-agents on haiku. */
+const MADE_UP_WORK = {
+  builtIn: { session: {}, subagents: {}, supervisor: { model: 'claude-opus-5-5' }, recaps: { model: 'claude-haiku-5-5' }, relay: { model: 'haiku' } },
+  config: { session: { model: 'opus', effort: 'high' as const }, subagents: { model: 'haiku' }, supervisor: {}, recaps: {}, relay: {} },
+  overrides: { session: {}, subagents: {}, supervisor: {}, recaps: { effort: 'low' as const }, relay: {} },
+  effective: { session: { model: 'opus', effort: 'high' as const }, subagents: { model: 'haiku' }, supervisor: { model: 'claude-opus-5-5' }, recaps: { model: 'claude-haiku-5-5', effort: 'low' as const }, relay: { model: 'haiku' } },
+  configFile: '/Users/example/.pitwall/config.json',
+};
+
+/** Models and effort on its own, from made-up settings, with no API: a choice changes only this specimen. */
+function WorkSection() {
+  return (
+    <SectionStage>
+      <WorkPreferences initial={MADE_UP_WORK} recaps={{ calls: 37, budget: 200, costUsd: 0.04 }} supervisor={{ status: 'idle', approvals: [], costUsd: 0.12 }} />
+    </SectionStage>
+  );
+}
+
 /** Session view on its own, with settings of its own. */
 function SessionViewSection() {
   const settings = usePreferenceState();
@@ -481,6 +529,12 @@ export function PreferencesDialogs() {
         note="Open running background sessions on (W54), for the views that open after the choice, never the one that's open; then The terminal takes the keyboard (W57), whose labels read on from it, for each attach after the choice."
       >
         <SessionViewSection />
+      </Specimen>
+      <Specimen
+        title="Models and effort"
+        note="W119: a Model and an Effort select for each kind of work pitwall starts, sub-agents a Model only, since Claude Code has no separate effort for them. Each select's first option is the default and where it's from, the config file or pitwall's own; here recaps are overridden to low. Recaps' cost today and the supervisor's this run sit with their rows. pitwall's server keeps the choices for its run; this specimen has no server, so a choice changes only it. In the dialog, it says so while it loads, and when it can't."
+      >
+        <WorkSection />
       </Specimen>
     </>
   );

@@ -88,7 +88,7 @@ export function Tooltips() {
         </Scenario>
       </Specimen>
       <Specimen title="New session, with its shortcut" note="A text button: its tooltip repeats its label only to show n." width={1100}>
-        <Scenario run={hoverOn('.app-header .button.primary', 'New session')}>
+        <Scenario run={hoverOn('.app-header .button:not(.icon-button)', 'New session')}>
           <div className="uikit-tip-stage">
             <Header state="live" roots={[LONG_ROOT]} updatedAt={ago(0.1)} onNewSession={noop} onShortcuts={noop} />
           </div>

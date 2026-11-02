@@ -23,6 +23,8 @@ import { memoryDrafts, memoryShortcuts, scriptedAttach, stubApi, stubClipboard }
 import { Confirmations, Conversations, EndedViews, Menus, MessageBoxes, SessionViews, Terminals } from './views.js';
 import { SubagentViews } from './subagents.js';
 import { PullRequestSpecimens } from './prs.js';
+import { RecapSpecimens } from './recaps.js';
+import { SupervisorSpecimens } from './supervisor.js';
 import './gallery.css';
 
 interface Section {
@@ -80,6 +82,20 @@ const SECTIONS: Section[] = [
       "M4 (W95, W106): a row is a piece of work. The repo list's counts, with a cloned repo of PR rows alone and one that isn't cloned; session rows with the PRs they own and PR rows with none; the Pull requests view in each state, with its hidden line; PrView with its details and sessions, and its other states; the session view's PR links and its Pull requests tab; and the page with a PR open. W107: a PR row's New session or Clone and start, Resume on an ended session's row, the PR view's action, Clone and start's confirmation, cloning and failing, and New session after a clone.",
     Content: PullRequestSpecimens,
   },
+  {
+    id: 'recaps',
+    title: 'Recaps',
+    intro:
+      "M5 (W111): the recap strip between the session view's header and its tabs, in every state: You need to, Waiting on CI, another session and someone else, Done, May be out of date, Claude Code's recap, collapsed, refreshing, the day's budget spent, loading, none yet and failed; the session rows' recap reasons on line 2; and the app strip's recap lines.",
+    Content: RecapSpecimens,
+  },
+  {
+    id: 'supervisor',
+    title: 'Supervisor',
+    intro:
+      "M5 (W114): the repo list's Supervisor item in each state, with its drafts' count; its view in each of the supervisor's states, off with a new conversation, starting, idle, working, held and failed, and with --no-supervisor; its draft cards of both kinds, long, editing, sending, failed and gone; its message box sending, queued, refused, maybe sent and stopping; and the page with its view open and Needs you counting its drafts, and the app strip's line.",
+    Content: SupervisorSpecimens,
+  },
   { id: 'menus', title: 'Menus', intro: 'MenuButton: an icon button and its menu, which the session view\'s actions use, and its radio group, which nothing in the app uses since Preferences became a dialog (W59).', Content: Menus },
   { id: 'message-box', title: 'Message box', intro: "RelayBox, in the session view's footer: typing, at and over the limit, sending, each send's result, the latest exchange, a session that can't be messaged, and a draft the tab kept through a reload.", Content: MessageBoxes },
   {
@@ -94,7 +110,7 @@ const SECTIONS: Section[] = [
     id: 'new-session',
     title: 'New session dialog',
     intro:
-      'NewSessionDialog, on Dialog: empty, filled, the directory combobox (W70: its list, narrowed, loading, many, none to list, cut short and failed), with errors, starting, and after a failure; and files for the first prompt (W82): dragged over it, attached, uploading, failed, refused, not on this machine, and starting with them.',
+      'NewSessionDialog, on Dialog: empty, filled, the directory combobox (W70: its list, narrowed, loading, many, none to list, cut short and failed), with errors, starting, and after a failure; and files for the first prompt (W82): dragged over it, attached, uploading, failed, refused, not on this machine, and starting with them; and from a session (W118): text selected, drafted and nothing selected.',
     Content: Dialogs,
   },
   {
@@ -107,7 +123,7 @@ const SECTIONS: Section[] = [
     id: 'preferences',
     title: 'Preferences dialog',
     intro:
-      "PreferencesDialog, on Dialog (W59, W62): its sections, Repo list and Session view, with a radio group for each setting, as it opens, with other choices, in a short window, and each section alone. Each keeps its own settings here. The single-key shortcuts and the theme are the keyboard shortcuts dialog's and the header's switch's alone.",
+      "PreferencesDialog, on Dialog (W59, W62, W119): its sections, Repo list and Session view, with a radio group for each setting, and Models and effort, with a Model and an Effort select for each kind of work, as it opens, with other choices, in a short window, and each section alone. Each keeps its own settings here. The single-key shortcuts and the theme are the keyboard shortcuts dialog's and the header's switch's alone.",
     Content: PreferencesDialogs,
   },
   { id: 'tooltips', title: 'Tooltips', intro: 'Tooltip on each kind of control it is on in the app, each opened by hovering it.', Content: Tooltips },

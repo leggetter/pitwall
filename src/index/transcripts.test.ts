@@ -8,6 +8,7 @@ import {
   applyLine,
   ASSISTANT_TEXT_KEEP,
   assistantTextOf,
+  AWAY_SUMMARY_MAX,
   createTranscriptReader,
   defaultConfigDir,
   encodeProjectDir,
@@ -383,6 +384,23 @@ describe("applyEntry: the turn's end and the newest prompt (W69)", () => {
   it("ignores a sidechain's entries, which a sub-agent can write after the main turn ended", () => {
     expect(fieldsOf(user('go'), assistant([text('Asked?')]), turnDuration(), assistant([text('sub-agent')], 's1', { isSidechain: true })).turnEnded).toBe(true);
     expect(fieldsOf(user('go'), assistant([text('Asked?')]), turnDuration({ isSidechain: true })).turnEnded).toBeUndefined();
+  });
+
+  it("keeps Claude Code's newest away recap with its time, not a sub-agent's, nor one without a time or text (W110)", () => {
+    const first = { type: 'system', subtype: 'away_summary', content: '  older  ', timestamp: nextTimestamp() };
+    const second = { type: 'system', subtype: 'away_summary', content: 'Waiting on your go-ahead.', timestamp: nextTimestamp() };
+    expect(fieldsOf(user('go'), first, assistant([text('ok')]), second).awaySummary).toEqual({ text: 'Waiting on your go-ahead.', at: new Date(Date.parse(second.timestamp)).toISOString() });
+    expect(fieldsOf(first).awaySummary?.text).toBe('older');
+    expect(fieldsOf(first, { ...second, isSidechain: true }).awaySummary?.text).toBe('older');
+    expect(fieldsOf({ ...second, timestamp: undefined }).awaySummary).toBeUndefined();
+    expect(fieldsOf({ ...second, timestamp: 'not a time' }).awaySummary).toBeUndefined();
+    expect(fieldsOf({ ...second, content: '   ' }).awaySummary).toBeUndefined();
+    expect(fieldsOf({ ...second, content: 42 }).awaySummary).toBeUndefined();
+    expect(fieldsOf({ ...second, content: 'x'.repeat(AWAY_SUMMARY_MAX + 10) }).awaySummary?.text).toHaveLength(AWAY_SUMMARY_MAX);
+    // Through the line reader's pre-filter, as the transcript reader reads it.
+    const fields: Fields = {};
+    applyLine(fields, JSON.stringify(second));
+    expect(fields.awaySummary?.text).toBe('Waiting on your go-ahead.');
   });
 
   it('ignores other system entries and the away recap', () => {

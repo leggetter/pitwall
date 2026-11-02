@@ -26,11 +26,15 @@ import { parseArgs } from 'node:util';
 import { ConfigError, loadConfig, ownersByRoot, type LoadedConfig } from './config.js';
 import { startIndexer } from './index/index.js';
 import { createPrPoller, prsOff } from './prs/index.js';
+import { createRecapEngine } from './recaps/engine.js';
+import { createSupervisor } from './supervisor/supervisor.js';
 import { childEnvironment } from './server/command.js';
 import { createRelayManager, DEFAULT_PORT, PortInUseError, startServer } from './server/index.js';
+import { createClaudeDefaultsReader } from './server/claudeDefaults.js';
+import { createWorkStore } from './server/work.js';
 import { type DirCheckContext, LaunchDirError, pitwallHome, prepareLaunchDir, removeWhenUsed, writeLaunchFile } from './server/launch.js';
 import { RELAY_NAME } from './server/relayPrompt.js';
-import { DEFAULT_POLL_INTERVAL_MS, PRS_POLL_INTERVAL_MS } from './shared/protocol.js';
+import { DEFAULT_POLL_INTERVAL_MS, PRS_POLL_INTERVAL_MS, RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, RECAP_MODEL, SUPERVISOR_MODEL } from './shared/protocol.js';
 
 /** The shortest and longest poll interval `--interval` accepts, in seconds. */
 export const INTERVAL_MIN_SECONDS = 1;
@@ -43,7 +47,7 @@ export const INTERVAL_MAX_SECONDS = 300;
  */
 export const TOKEN_MIN_DIFFERENT = 8;
 
-export const USAGE = `Usage: pitwall [root...] [--config <path>] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs]
+export const USAGE = `Usage: pitwall [root...] [--config <path>] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs] [--no-recaps] [--no-supervisor]
 
 Lists the Claude Code sessions running under each root, in a local web UI.
 The roots default to the config file's, then to the current directory.
@@ -62,6 +66,22 @@ Options:
                         Without it, pitwall runs gh api graphql at start, every
                         ${PRS_POLL_INTERVAL_MS / 60_000} minutes and on Refresh, for your open PRs on
                         github.com. gh must be installed and logged in.
+  --no-recaps           Don't recap your sessions, and never run a recap call.
+                        Without it, once a session's turn has ended and it's
+                        been idle ${RECAP_DEBOUNCE_MS / 60_000} minutes, and when you ask, pitwall sends
+                        excerpts of its transcript to ${RECAP_MODEL}, with
+                        claude -p and whatever login or API key claude finds
+                        in pitwall's environment, at most ${RECAP_DAILY_BUDGET} calls a day,
+                        for a short recap: why it started, where it is and
+                        what's next.
+  --no-supervisor       Turn the supervisor off, and never run it. Without it,
+                        pitwall starts the supervisor only when you open it or
+                        send it a message: a claude -p session on
+                        ${SUPERVISOR_MODEL}, on whatever login or API key claude
+                        finds, that answers from what pitwall knows of your
+                        sessions and PRs, and reads a session's latest turns
+                        when you ask about it. It messages a session or starts
+                        one only after you approve its draft in the page.
   -h, --help            Show this help.
   -v, --version         Show the version.
 
@@ -85,6 +105,20 @@ Config file:
                         owner no other root lists, or "none" for its own
                         clones only. Without it, each owner goes to the root
                         with the most clones from it.
+  work                  The model and effort for each kind of work pitwall
+                        starts: "session" (New session, and resuming a
+                        session pitwall started),
+                        "subagents" (a new session's sub-agents, model only),
+                        "supervisor", "recaps" and "relay", each
+                        { "model": ..., "effort": ... }. A model is opus,
+                        sonnet, haiku, fable or another Claude Code alias, or
+                        a full name such as claude-opus-5-5; an effort is low,
+                        medium, high, xhigh or max (recaps: up to high);
+                        "default" for either is
+                        Claude Code's own. Without them, sessions get Claude
+                        Code's defaults, the supervisor ${SUPERVISOR_MODEL},
+                        recaps ${RECAP_MODEL} and the relay haiku. Preferences
+                        can change them for a run, without writing the file.
 
   A flag wins over an environment variable, which wins over the file. Roots
   given as arguments replace the file's, and each keeps its "github" settings
@@ -167,6 +201,10 @@ export type CliCommand =
       open: boolean;
       /** False with `--no-prs`: pitwall never runs gh. */
       prs: boolean;
+      /** False with `--no-recaps`: pitwall never runs a recap call. */
+      recaps: boolean;
+      /** False with `--no-supervisor`: pitwall never runs the supervisor. */
+      supervisor: boolean;
     };
 
 export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): CliCommand {
@@ -182,6 +220,8 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
         interval: { type: 'string' },
         'no-open': { type: 'boolean' },
         'no-prs': { type: 'boolean' },
+        'no-recaps': { type: 'boolean' },
+        'no-supervisor': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'v' },
       },
@@ -202,6 +242,8 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     ...(values.interval === undefined ? {} : { intervalMs: parseInterval(values.interval) * 1000 }),
     open: !values['no-open'] && env.PITWALL_NO_OPEN !== '1',
     prs: !values['no-prs'],
+    recaps: !values['no-recaps'],
+    supervisor: !values['no-supervisor'],
   };
 }
 
@@ -539,11 +581,28 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
 
   const intervalMs = command.intervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   // The relay (D8) starts on the first message. The index leaves its own session out, and shows its exchanges.
-  const relay = createRelayManager();
+  // The model and effort for each kind of work (W119): the config file's `work`, then the app's
+  // overrides for this run. The relay, recaps and the supervisor read it at each start or call.
+  // Claude Code's own defaults (W122), read from its documented settings files and pitwall's
+  // environment at each GET, for Preferences' and New session's words.
+  const work = createWorkStore({
+    ...(config.work === undefined ? {} : { config: config.work }),
+    ...(config.found ? { configFile: config.file } : {}),
+    claude: createClaudeDefaultsReader({ roots: () => roots }),
+  });
+  const relay = createRelayManager({ work: () => work.choice('relay') });
+  // Recaps (M5, W110): the server starts them once it's listening. The index leaves their calls out, and
+  // hands them what it read of each transcript. With --no-recaps, there's no engine, and no call.
+  // Your messages through the relay are yours in a recap's input, by their ids (W110's review).
+  const recaps = command.recaps ? createRecapEngine({ relay: { name: RELAY_NAME, sent: (msgId) => relay.sentByRelay(msgId) }, work: () => work.choice('recaps') }) : undefined;
+  // The supervisor (M5, W113): started only when the page asks. The index leaves it out, as it does the relay.
+  // With --no-supervisor, there's none, and pitwall never runs it.
+  const supervisor = command.supervisor ? createSupervisor({ work: () => work.choice('supervisor') }) : undefined;
   const indexer = startIndexer({
     roots,
     intervalMs,
-    exclude: (row) => relay.isRelay(row),
+    exclude: (row) => relay.isRelay(row) || recaps?.isOwn(row) === true || supervisor?.isOwn(row) === true,
+    ...(recaps === undefined ? {} : { sessionFacts: (facts) => recaps.observe(facts) }),
     relayExchange: (sessionId) => relay.exchange(sessionId),
     relayAlert: () => relay.alert(),
     relayOff: () => relay.off(),
@@ -562,6 +621,7 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
       indexer,
       token,
       relay,
+      work,
       onAuthenticated: () => launchFileUsed?.(),
       webRoot: resolveWebRoot(),
       // Attachments for New session's first prompt go in its attachments folder (W79), made on the first upload.
@@ -570,10 +630,14 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
       // With the index, each PR is placed under the clone of its repo, or the root that claims its
       // owner, with each configured root's `github.owners` by real path (W105, W103).
       prs: command.prs ? createPrPoller({ index: indexer, ownersByRoot: ownersByRoot(config, roots) }) : prsOff(),
+      ...(recaps === undefined ? {} : { recaps }),
+      ...(supervisor === undefined ? {} : { supervisor }),
       ...(command.port === undefined ? {} : { port: command.port }),
     });
   } catch (error) {
     indexer.stop();
+    void recaps?.close();
+    void supervisor?.close();
     if (error instanceof PortInUseError) {
       console.error(
         `pitwall: port ${error.port} on 127.0.0.1 is already in use. Pick another with --port <n>, or use --port 0 for a free one.`,

@@ -8,15 +8,18 @@
 import { useEffect, useState } from 'react';
 import {
   endSessionPath,
+  isWorkModel,
   removePath,
   resumePath,
   SPAWN_PATH,
+  SPAWN_PROMPT_MAX,
   stopPath,
   type EndSessionRequest,
   type EndSessionWorking,
   type IndexSnapshot,
   type SessionSummary,
   type SpawnRequest,
+  WORK_DEFAULT,
 } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
 import { couldNot, shortenHome, tryAgainIn } from './format.js';
@@ -25,9 +28,7 @@ import { couldNot, shortenHome, tryAgainIn } from './format.js';
 
 /** Letters, digits, space, `.`, `_` and `-`, at most 64. Not starting with `-` or a space, nor ending with a space. */
 export const NAME_PATTERN = /^[A-Za-z0-9._](?:[A-Za-z0-9 ._-]{0,62}[A-Za-z0-9._-])?$/;
-/** A short model alias: letters, digits, `-` and `.`, at most 40, not starting with `-`. */
-export const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.-]{0,39}$/;
-export const MAX_PROMPT_LENGTH = 16_384;
+export const MAX_PROMPT_LENGTH = SPAWN_PROMPT_MAX;
 
 /** A session the server started. It shows up in the list on a later poll. */
 export interface StartedSession {
@@ -236,8 +237,8 @@ export function nameProblem(name: string): string | undefined {
 }
 
 export function modelProblem(model: string): string | undefined {
-  if (model === '' || MODEL_PATTERN.test(model)) return undefined;
-  return 'A short alias such as sonnet: letters, digits, "-" and ".", at most 40.';
+  if (model === '' || model === WORK_DEFAULT || isWorkModel(model)) return undefined;
+  return 'A Claude Code alias, such as sonnet, opus[1m] or opusplan, or a full model name, such as claude-opus-5-5.';
 }
 
 export function promptProblem(prompt: string): string | undefined {

@@ -5,7 +5,7 @@
 
 import type { PullRequestSummary } from '../../../src/shared/protocol.js';
 import { plainText } from '../format.js';
-import { prKey, prName, prStateBadges, type SessionPrBadge } from '../prs.js';
+import { NEEDS_YOU_FOR, prKey, prName, prNeedState, prRef, prStateBadges, type SessionPrBadge } from '../prs.js';
 import { Badge } from './Badge.js';
 import { Tooltip } from './Tooltip.js';
 
@@ -23,15 +23,15 @@ export function PrStateBadges({ pr }: { pr: PullRequestSummary }) {
 }
 
 /**
- * The session row's PR badge (W106): "#42", then "+2" when the session owns more open PRs, in subtle
- * danger while the PR it names needs attention, subtle neutral otherwise. Its state, "CI failing", is
+ * The session row's PR badge (W106): "#42", then "+2" when the session owns more open PRs, in its
+ * state's colour (SessionPrBadge.look): red only for failing checks or conflicts. Its state, "CI failing", is
  * in its hidden text and its hover tooltip, and line 2 says it while the PR needs you: on line 1 it
  * cut the session's name beside the status badge in a 440 px list (#109's review). Not a control: the
  * session view's Pull requests tab has each PR.
  */
 export function SessionPrBadgeView({ badge }: { badge: SessionPrBadge }) {
   return (
-    <Badge look={badge.attention ? 'subtle-danger' : 'subtle-neutral'} hint={badge.hint} className="pr-badge">
+    <Badge look={badge.look} hint={badge.hint} className="pr-badge">
       <span className="visually-hidden">Pull request </span>#{badge.pr.number}
       {badge.state !== undefined && <span className="visually-hidden">, {badge.state}</span>}
       {badge.attention && <span className="visually-hidden">, needs attention</span>}
@@ -79,5 +79,26 @@ export function SessionPrLinks({ linked, onOpen }: { linked: readonly PullReques
         </span>
       ))}
     </div>
+  );
+}
+
+/**
+ * The session view's line on why it needs you when that's a PR it owns, not the session itself
+ * (W128): "Needs you for example/demo-app#42: conflicts", the PR a link button that opens its PR
+ * view, as the line of PR links has it, and the PR badge's words for why (prNeedText()).
+ */
+export function PrNeedNote({ pr, onOpen }: { pr: PullRequestSummary; onOpen: (pr: PullRequestSummary) => void }) {
+  const state = prNeedState(pr);
+  return (
+    <p className="session-view-pr-need" data-pr-need={prKey(pr)}>
+      {NEEDS_YOU_FOR}{' '}
+      <Tooltip content={`${prName(pr)}: ${plainText(pr.title)}`} relation="description">
+        {/* Its name holds its visible text, owner/repo#n with no space (label in name, #130's review). */}
+        <button type="button" className="link-button pr-link" aria-label={`Pull request ${prRef(pr)}`} onClick={() => onOpen(pr)}>
+          {prRef(pr)}
+        </button>
+      </Tooltip>
+      {state !== undefined && `: ${state}`}
+    </p>
   );
 }

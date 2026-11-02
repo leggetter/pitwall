@@ -6,7 +6,9 @@
 // - Fields: Directory, a select of the groups' directories plus "Another directory under a root…",
 //   which reveals a combobox of the directories under the roots (W70), fetched once per opening, the
 //   first time it's chosen, and narrowed as you type (directories.ts); Name and Model, optional,
-//   Model's "Other…" revealing a field; and the first prompt. With a root tab open (W38), the
+//   Model's "Other…" revealing a field, and Effort (W119), each starting from pitwall's defaults for
+//   sessions, which the first option names once they've loaded, or Claude Code's own, resolved for
+//   the directory chosen (W122, modelEffort.ts); and the first prompt. With a root tab open (W38), the
 //   directories are that tab's, and a typed one must be in that tab, so the session is listed where
 //   it was started from. A chosen directory is sent as its absolute path; a typed one as before, or
 //   from a `~/` path under a root.
@@ -29,6 +31,12 @@
 //   change, a subtitle that names the PR, and a notice at the top of the body, as after a clone, which
 //   says how to trust the new folder. What was typed is measured against the prefill, so a click on
 //   the backdrop still closes it until you change something.
+// - From a session (W118, fromSession.ts): New session from here opens it prefilled with that
+//   session's directory, added to the choices when no group has it, as a worktree's, and a blank
+//   prompt. Draft from this session, under the prompt, adds the text you selected in that session's
+//   conversation, quoted, after a line with the session's ID, never its name, at the prompt's start, and puts focus at the
+//   prompt's end; it's off, saying why beside it, with no selection, while the draft is in the prompt,
+//   or when it wouldn't fit.
 
 import {
   useContext,
@@ -42,8 +50,9 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
-import type { DirectoryList, IndexSnapshot, SpawnRequest } from '../../../src/shared/protocol.js';
+import { EFFORT_LEVELS, WORK_DEFAULT, type DirectoryList, type EffortLevel, type IndexSnapshot, type SpawnRequest, type WorkSettings } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
+import { DRAFT_HINTS, DRAFT_LABEL, draftState, withDraft } from '../fromSession.js';
 import { ATTACH_TEXT, attachmentsProblem, draggingFiles, pastedFiles, useAttachments } from '../attachments.js';
 import {
   directoryCount,
@@ -56,6 +65,7 @@ import {
   type DirectoryOption,
 } from '../directories.js';
 import { plainText, shortenHome } from '../format.js';
+import { claudeChoiceText, fetchWorkSettings, modelInEffect, sessionDefaultText } from '../modelEffort.js';
 import {
   directoryChoices,
   directoryProblem,
@@ -138,6 +148,11 @@ export interface NewSessionDialogProps {
   subtitle?: ReactNode;
   /** At the top of the body: what happened before it opened, such as a clone, and what to do next. */
   notice?: ReactNode;
+  /**
+   * Opened from a session (W118): Draft from this session, under the prompt, adds `text`, the quoted
+   * selection and the line with the session's ID (draftText()), or is off when it's undefined.
+   */
+  draft?: { text: string | undefined } | undefined;
 }
 
 /**
@@ -181,9 +196,9 @@ function directoryAnnouncement(listing: Listing, truncated: boolean, listed: num
   return truncated ? `${count} Not every directory is listed.` : count;
 }
 
-export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, subtitle, notice }: NewSessionDialogProps) {
+export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, subtitle, notice, draft }: NewSessionDialogProps) {
   const api = useContext(ApiContext);
-  const ids = { dir: useId(), customDir: useId(), name: useId(), model: useId(), customModel: useId(), prompt: useId() };
+  const ids = { dir: useId(), customDir: useId(), name: useId(), model: useId(), customModel: useId(), effort: useId(), prompt: useId(), draft: useId() };
   const alive = useRef(true);
   const submitting = useRef(false);
 
@@ -208,6 +223,10 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
   const [name, setName] = useState(prefill?.name ?? '');
   const [modelChoice, setModelChoice] = useState('');
   const [customModel, setCustomModel] = useState('');
+  const [effort, setEffort] = useState<'' | EffortLevel | typeof WORK_DEFAULT>('');
+  // pitwall's defaults for sessions (W119), for the first options' words. Without them, "Default".
+  // With the directory they were asked for (W122), so an answer for an earlier choice never shows.
+  const [loadedWork, setWork] = useState<{ settings: WorkSettings; dir: string | undefined }>();
   const [prompt, setPrompt] = useState(prefill?.prompt ?? '');
   const [busy, setBusy] = useState(false);
   // Problems show once a submit has been tried, then follow the typing.
@@ -220,6 +239,9 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
   const fileInput = useRef<HTMLInputElement>(null);
   const attachButton = useRef<HTMLButtonElement>(null);
   const fileList = useRef<HTMLUListElement>(null);
+  const promptField = useRef<HTMLTextAreaElement>(null);
+  // Set when Draft from this session adds the draft, so focus goes to the prompt's end once it's there.
+  const drafted = useRef(false);
   // After Remove or Try again, the row whose Remove takes focus, by its place in the list.
   const focusRow = useRef<number | undefined>(undefined);
   const busyNow = useRef(busy);
@@ -249,6 +271,7 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
       if (alive.current && !controller.signal.aborted) setListing(list ? { kind: 'ready', list } : { kind: 'failed' });
     });
   };
+
 
   // With no directory to choose but a typed one, the field is there from the start.
   useEffect(() => {
@@ -346,6 +369,42 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
   // The chosen option's path only while the field shows exactly its label, untrimmed, so what's sent is what's shown.
   const cwd = dirChoice !== OTHER ? dirChoice : accepted !== undefined && customDir === accepted.label ? accepted.path : resolveTypedDirectory(typed, snapshot.roots);
   const model = modelChoice === OTHER ? customModel.trim() : modelChoice;
+
+  // The defaults for sessions (W119), and Claude Code's own for the directory chosen (W122), whose
+  // project settings can change them: as the dialog opens, then a quarter second after the directory
+  // last changed, so typing one doesn't ask at each key. Only a directory without a problem is sent;
+  // the server checks it again, and reads none it doesn't find under a root. Until the answer for the
+  // directory chosen comes, or when it fails, the first options say "Default", which the server still
+  // applies.
+  const settingsDir = directoryProblem(cwd, snapshot.roots, tab) === undefined ? cwd : undefined;
+  const firstFetch = useRef(true);
+  useEffect(() => {
+    if (!api) return;
+    const controller = new AbortController();
+    const load = () =>
+      void fetchWorkSettings(api, controller.signal, settingsDir).then((loaded) => {
+        if (loaded === undefined || controller.signal.aborted) return;
+        // An answer that read another directory's project settings is someone else's: leave it.
+        if (loaded.claude?.dir !== undefined && loaded.claude.dir !== settingsDir) return;
+        setWork({ settings: loaded, dir: settingsDir });
+      });
+    if (firstFetch.current) {
+      firstFetch.current = false;
+      load();
+      return () => controller.abort();
+    }
+    const timer = setTimeout(load, 250);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [api, settingsDir]);
+  // Only the answer for the directory chosen now: until it comes, or when it fails, "Default", never
+  // the last directory's.
+  const work = loadedWork !== undefined && loadedWork.dir === settingsDir ? loadedWork.settings : undefined;
+  const defaults = work?.effective.session;
+  // The model a session would run on, for its effort's default: the choice, else the default's.
+  const effortModel = modelChoice === '' ? undefined : modelChoice === OTHER ? model || undefined : modelChoice;
   const problems = {
     cwd: dirChoice !== OTHER ? directoryProblem(cwd, snapshot.roots, tab) : typedDirectoryProblem(typed, cwd, snapshot.roots, tab),
     name: nameProblem(name),
@@ -381,6 +440,7 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
     const request: SpawnRequest = { cwd, prompt };
     if (name !== '') request.name = name;
     if (model !== '') request.model = model;
+    if (effort !== '') request.effort = effort;
     if (attachments.ids.length > 0) request.attachments = [...attachments.ids];
     submitting.current = true;
     setBusy(true);
@@ -436,6 +496,23 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
     event.target.value = '';
     if (!busy) attachments.add(files);
   };
+  // Draft from this session (W118): what it can do now, and adding the draft.
+  const draftNow = draft === undefined ? undefined : draftState(prompt, draft.text);
+  const addDraft = () => {
+    if (busy || draftNow !== 'ready' || draft?.text === undefined) return;
+    drafted.current = true;
+    setPrompt(withDraft(prompt, draft.text));
+  };
+  useEffect(() => {
+    if (!drafted.current) return;
+    drafted.current = false;
+    const field = promptField.current;
+    if (!field) return;
+    field.focus();
+    field.setSelectionRange(field.value.length, field.value.length);
+    field.scrollTop = field.scrollHeight;
+  }, [prompt]);
+
   const removeFile = (key: string) => {
     focusRow.current = attachments.items.findIndex((item) => item.key === key);
     attachments.remove(key);
@@ -572,7 +649,8 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
         </label>
         <span className="select">
           <select id={ids.model} className="select-input" value={modelChoice} onChange={edit(setModelChoice)} {...disabled}>
-            <option value="">Default</option>
+            <option value="">{sessionDefaultText(work, 'model')}</option>
+            {defaults?.model !== undefined && defaults.model !== WORK_DEFAULT && <option value={WORK_DEFAULT}>{claudeChoiceText(work, 'session', 'model')}</option>}
             {MODELS.map((alias) => (
               <option key={alias} value={alias}>
                 {alias}
@@ -587,8 +665,8 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
             id={ids.customModel}
             type="text"
             className="field-input mono"
-            aria-label="Model alias"
-            maxLength={40}
+            aria-label="Model alias or full name"
+            maxLength={64}
             autoComplete="off"
             spellCheck={false}
             value={customModel}
@@ -607,11 +685,32 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
       </div>
 
       <div className="field">
+        <label className="field-label" htmlFor={ids.effort}>
+          Effort <span className="field-optional">optional</span>
+        </label>
+        <span className="select">
+          <select id={ids.effort} className="select-input" value={effort} onChange={edit((value) => setEffort(value as typeof effort))} {...disabled}>
+            <option value="">{sessionDefaultText(work, 'effort', effortModel)}</option>
+            {defaults?.effort !== undefined && defaults.effort !== WORK_DEFAULT && (
+              <option value={WORK_DEFAULT}>{claudeChoiceText(work, 'session', 'effort', effortModel ?? (work === undefined ? undefined : modelInEffect(work, 'session')))}</option>
+            )}
+            {EFFORT_LEVELS.map((level) => (
+              <option key={level} value={level}>
+                {level}
+              </option>
+            ))}
+          </select>
+          <Icon name="select" className="select-icon" />
+        </span>
+      </div>
+
+      <div className="field">
         <label className="field-label" htmlFor={ids.prompt}>
           First prompt
         </label>
         <div className="prompt-drop" ref={dropTarget}>
           <textarea
+            ref={promptField}
             id={ids.prompt}
             className="field-input field-prompt"
             rows={6}
@@ -655,6 +754,16 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
           <p className="field-problem" id={filesProblem}>
             {shown.attachments}
           </p>
+        )}
+        {draftNow !== undefined && (
+          <div className="attach-row draft-row">
+            <Button size="sm" icon="conversation" disabled={busy || draftNow !== 'ready'} aria-describedby={ids.draft} onClick={addDraft}>
+              {DRAFT_LABEL}
+            </Button>
+            <p className="field-hint" id={ids.draft}>
+              {DRAFT_HINTS[draftNow]}
+            </p>
+          </div>
         )}
         {/* There from the start, empty, so what each file comes to is announced; two taking turns, so a sentence said twice is read twice. */}
         {attachments.announcements.map((text, region) => (

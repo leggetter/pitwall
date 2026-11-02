@@ -3,7 +3,8 @@
 // header with its name and title, status, kind, last activity and directory, where it started and
 // the repos it worked in when there are any (W34), and the actions menu, with Open in VS Code and Open
 // in Cursor for the editors pitwall's server found (W72, editors.ts);
-// the Conversation and Terminal tabs; the body, which is all that scrolls; and the footer: the message
+// the recap strip (W111, RecapStrip.tsx) while the snapshot says recaps are on; the Conversation and
+// Terminal tabs; the body, which is all that scrolls; and the footer: the message
 // box for an interactive session, or for a background one a note that it takes messages in its
 // terminal (W47). Under line 2, a line says where to answer while it waits on you, and another what to
 // do about a directory that has gone (W47).
@@ -53,12 +54,18 @@
 // It shows once the session owns one or is strongly linked to one, and stays, as Sub-agents does. The
 // header's PR links (W95) name the ones it owns.
 //
+// New session from here (W118, fromSession.ts), first in the actions menu, opens New session in the
+// session's directory, with a blank prompt and Draft from this session, which quotes the text that
+// was selected in this view's conversation entries as the menu's button was pressed, or the menu
+// opened. It's there for live and
+// ended sessions alike, off, saying why, while the directory has gone or the session isn't listed.
+//
 // The conversation is its own component (Conversation.tsx, W27), and the terminal's internals are
 // W29's. The message box (RelayBox) and the inline confirmations (SessionActions, and the terminal's
 // restart) are W24's; the tooltips, toasts and copy buttons are W25's.
 
 import { Fragment, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
-import type { Editor, EditorId, PullRequestSummary, SessionSummary } from '../../../src/shared/protocol.js';
+import { prNeedsAttention, type Editor, type EditorId, type PullRequestSummary, type RecapHealth, type SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { AttachContext, type AttachStatus } from '../attach.js';
 import type { BackgroundTab } from '../backgroundTab.js';
@@ -67,11 +74,13 @@ import { COPIED, COPY_FAILED, selectText, useCopy } from '../copy.js';
 import { DraftStorageContext, hasStoredDraft } from '../drafts.js';
 import { EditorsContext, openInEditor, openLabel, openToast } from '../editors.js';
 import { focusGesture, spendGesture, type FocusGesture } from '../focusGesture.js';
+import { conversationSelection, NEW_FROM_HERE_HINTS, NEW_FROM_HERE_LABEL, type FromSession } from '../fromSession.js';
 import { DEFAULT_TERMINAL_FOCUS, type TerminalFocus } from '../terminalFocus.js';
 import { formatRoots, plainText, shortenHome } from '../format.js';
 import { PANEL_MENU_STEP, PANEL_MIN, panelLimits, panelReset, shownPanel, type PanelWidthStore } from '../panelWidth.js';
 import type { NotNeeded } from '../notNeeded.js';
 import { replyInConversation } from '../relay.js';
+import { finishedWaitingOnYou, WAITING_ON_TEXT } from '../recap.js';
 import { attachCommand, isNotNeeded, needsAttention, resumeCommand, statusBadge } from '../sessions.js';
 import { SHORTCUT_KEYS } from '../shortcuts.js';
 import { moveTabFocus } from '../tabs.js';
@@ -85,13 +94,14 @@ import { COPY_RESUME_COMMAND, EndedFooter, isDormant, RESUME_LABEL, useResume } 
 import { EmptyState } from './EmptyState.js';
 import { Icon } from './Icon.js';
 import { InfoTip } from './InfoTip.js';
-import { SessionPrLinks } from './PrBadges.js';
+import { PrNeedNote, SessionPrLinks } from './PrBadges.js';
 import { SessionPrsPanel, sessionPrsCount, type LinkedPr } from './SessionPrs.js';
 import { MenuButton, type MenuEntry } from './Menu.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
 import { RelayBox } from './RelayBox.js';
 import { SessionConfirm, useSessionActions } from './SessionActions.js';
-import { finishedAskedHint, NOT_NEEDED_TEXT, SESSION_VIEW_ID, STALE_HINT } from './SessionRow.js';
+import { RecapStrip } from './RecapStrip.js';
+import { finishedAskedHint, finishedRecapHint, NOT_NEEDED_TEXT, SESSION_VIEW_ID, STALE_HINT, titleHint } from './SessionRow.js';
 import { StarButton } from './StarButton.js';
 import { SubagentsPanel, subagentsCount, useSubagents } from './Subagents.js';
 import { SessionTerminal, type RestartPhase } from './Terminal.js';
@@ -394,11 +404,23 @@ export interface SessionViewProps {
    */
   prs?: { owned: readonly PullRequestSummary[]; linked: readonly LinkedPr[]; onOpen: (pr: PullRequestSummary) => void } | undefined;
   /**
+   * How recaps are doing, the snapshot's RecapHealth (M5, W111): with it, the recap strip sits between
+   * the header and the tabs. Left out, as with recaps off and in the gallery's and tests' views that
+   * aren't about recaps, there's none.
+   */
+  recaps?: RecapHealth | undefined;
+  /**
    * The newest poll's time, a snapshot's or a heartbeat's generatedAt: while its Sub-agents tab is open
    * and any of them run, the tab asks for the list again at this pace (W77). Left out, as in the
    * gallery and the tests of a view alone, it follows the session's activity instead.
    */
   polledAt?: string | undefined;
+  /**
+   * New session from here (W118): the actions menu's first item, which gives the session's directory
+   * and name, and the text selected in its conversation. Left out, as in the gallery and the tests of
+   * a view alone, there's no such item.
+   */
+  onNewSession?: ((from: FromSession) => void) | undefined;
 }
 
 type Tab = 'conversation' | 'terminal' | 'subagents' | 'prs';
@@ -430,13 +452,16 @@ export function SessionView({
   polledAt,
   backLabel,
   prs,
+  recaps,
+  onNewSession,
 }: SessionViewProps) {
   const api = useContext(ApiContext);
   const attachEnv = useContext(AttachContext);
+  const conversationPanelId = useId();
   const ids = {
     title: useId(),
     conversationTab: useId(),
-    conversationPanel: useId(),
+    conversationPanel: conversationPanelId,
     terminalTab: useId(),
     terminalPanel: useId(),
     subagentsTab: useId(),
@@ -449,6 +474,39 @@ export function SessionView({
   const heading = headingRef ?? ownHeading;
   const menuButton = useRef<HTMLButtonElement>(null);
   const returnFocusToMenu = useCallback(() => focusQuietly(menuButton.current), []);
+  // The text selected in the conversation's entries as the menu's button is pressed, by pointer or
+  // key, before the press can move it, or as the menu opens with no press first, as from a screen
+  // reader's click: what New session from here's Draft from this session quotes (W118). Used once.
+  const pressedSelection = useRef('');
+  const pressed = useRef(false);
+  const readSelection = useCallback(() => {
+    pressedSelection.current = conversationSelection(document.getElementById(conversationPanelId));
+  }, [conversationPanelId]);
+  const onMenuOpen = useCallback(
+    (open: boolean) => {
+      if (open && !pressed.current) readSelection();
+      pressed.current = false;
+    },
+    [readSelection],
+  );
+  useEffect(() => {
+    const button = menuButton.current;
+    if (!button) return;
+    const read = () => {
+      readSelection();
+      pressed.current = true;
+    };
+    // Only the keys that open it: Tab past the button changes nothing.
+    const readKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Enter' || event.key === ' ' || event.key === 'ArrowDown' || event.key === 'ArrowUp') read();
+    };
+    button.addEventListener('pointerdown', read, true);
+    button.addEventListener('keydown', readKey, true);
+    return () => {
+      button.removeEventListener('pointerdown', read, true);
+      button.removeEventListener('keydown', readKey, true);
+    };
+  }, [readSelection]);
   const conversationTab = useRef<HTMLButtonElement>(null);
   const terminalTab = useRef<HTMLButtonElement>(null);
   const subagentsTab = useRef<HTMLButtonElement>(null);
@@ -791,7 +849,26 @@ export function SessionView({
           },
         ]
       : [];
+  // New session from here (W118), first, for a live or ended session, off while its directory has gone or it isn't listed.
+  const newFromHereEntries: MenuEntry[] = onNewSession
+    ? [
+        {
+          id: 'new-from-here',
+          label: NEW_FROM_HERE_LABEL,
+          icon: 'add',
+          disabled: !listed || session.cwdMissing === true,
+          hint: session.cwdMissing ? NEW_FROM_HERE_HINTS.missing : NEW_FROM_HERE_HINTS.unlisted,
+          onSelect: () => {
+            const selection = pressedSelection.current;
+            pressedSelection.current = '';
+            onNewSession({ cwd: session.cwd, sessionId: session.sessionId, name: session.name, selection });
+          },
+        },
+        { kind: 'separator', id: 'new-from-here-separator' },
+      ]
+    : [];
   const entries: MenuEntry[] = [
+    ...newFromHereEntries,
     { id: 'copy-id', label: 'Copy session ID', icon: 'copy', onSelect: () => copy('Session ID', sessionId) },
     ...(command ? [{ id: 'copy-attach', label: 'Copy attach command', icon: 'terminal' as const, onSelect: () => copy('Attach command', command) }] : []),
     ...(resumeCopy ? [{ id: 'copy-resume', label: COPY_RESUME_COMMAND, icon: 'terminal' as const, onSelect: () => copy('Resume command', resumeCopy) }] : []),
@@ -890,6 +967,8 @@ export function SessionView({
 
   // The Pull requests tab shows once the session owns an open PR or is strongly linked to one (W106). Then it stays, as Sub-agents does.
   const ownedPrs = prs?.owned ?? [];
+  // Why it needs you, when that's a PR it owns and not the session itself (W128), as its row says it.
+  const prNeed = needsAttention(session, notNeeded?.entries) ? undefined : ownedPrs.find(prNeedsAttention);
   const linkedPrs = prs?.linked ?? [];
   const hasPrs = ownedPrs.length > 0 || linkedPrs.length > 0;
   const [prsRevealed, setPrsRevealed] = useState(false);
@@ -906,7 +985,7 @@ export function SessionView({
           end={
             <>
               {star && <StarButton sessionId={sessionId} name={session.name} starred={star.starred} onStar={star.onStar} size="md" shortcut={SHORTCUT_KEYS.star} />}
-              <MenuButton label="Session actions" icon="more" entries={entries} buttonRef={menuButton} />
+              <MenuButton label="Session actions" icon="more" entries={entries} buttonRef={menuButton} onOpenChange={onMenuOpen} />
             </>
           }
         >
@@ -915,8 +994,9 @@ export function SessionView({
             <span className="session-view-name">{name}</span>
             {title && (
               // The " · " is drawn with the title, so it goes when the title has given way. Screen
-              // readers get it from the hidden text instead. The whole title is in a tooltip when it's cut.
-              <Tooltip content={title} relation="none" onlyIfCut>
+              // readers get it from the hidden text instead. The whole title is in a tooltip, with where
+              // it came from, as the row has it; one whose source isn't known has it only when it's cut.
+              <Tooltip content={titleHint(title, session.titleSource)} relation="none" onlyIfCut={session.titleSource === undefined}>
                 <span className="session-view-subtitle">
                   <span className="visually-hidden"> · </span>
                   {title}
@@ -937,6 +1017,12 @@ export function SessionView({
             <span className="session-view-badge">
               <Badge look="outline">Asked you</Badge>
               <InfoTip text={finishedAskedHint(session)} className="session-view-info" />
+            </span>
+          )}
+          {finishedWaitingOnYou(session) && (
+            <span className="session-view-badge">
+              <Badge look="outline">{WAITING_ON_TEXT.you}</Badge>
+              <InfoTip text={finishedRecapHint(session)} className="session-view-info" />
             </span>
           )}
           {session.stale && (
@@ -999,6 +1085,7 @@ export function SessionView({
             <InfoTip text={WORKED_IN_NOTE} className="session-view-info" />
           </p>
         )}
+        {prs && prNeed !== undefined && <PrNeedNote pr={prNeed} onOpen={prs.onOpen} />}
         {prs && prs.owned.length > 0 && <SessionPrLinks linked={prs.owned} onOpen={prs.onOpen} />}
         {refused && (
           <p className="session-view-copy-fallback">
@@ -1016,6 +1103,9 @@ export function SessionView({
       {(canAct || (!background && listed)) && (
         <SessionConfirm actions={actions} session={session} ended={ended || !session.alive} onReturnFocus={returnFocusToMenu} />
       )}
+
+      {/* Why it was started, where it is and what's next (W111), between the header and the tabs, on every tab. */}
+      <RecapStrip session={session} health={recaps} listed={listed} hidden={hidden} />
 
       <div className="session-tabs" role="tablist" aria-label="Session view" onKeyDown={onTabsKey}>
         <button
@@ -1253,6 +1343,10 @@ export interface WaitingSessionViewProps {
   compact?: boolean;
   headingRef?: RefObject<HTMLHeadingElement | null>;
   animate?: boolean;
+  /** Its heading, visually hidden: "Session" by default, or "Supervisor" for ?supervisor (W114). */
+  title?: string;
+  /** Its status line, visually hidden: "Loading the session" by default. */
+  label?: string;
 }
 
 /**
@@ -1261,21 +1355,21 @@ export interface WaitingSessionViewProps {
  * snapshot replaces it with the session, or with the unlisted state. It takes no focus, and never
  * attaches, sends or changes anything.
  */
-export function WaitingSessionView({ waiting, slow, onClose, layout = 'overlay', compact = false, headingRef, animate = true }: WaitingSessionViewProps) {
+export function WaitingSessionView({ waiting, slow, onClose, layout = 'overlay', compact = false, headingRef, animate = true, title = 'Session', label = 'Loading the session' }: WaitingSessionViewProps) {
   const titleId = useId();
   return (
     <Frame layout={layout} animate={animate} titleId={titleId} onEscape={onClose}>
       <header className="session-view-head">
         <Top compact={compact} onClose={onClose}>
           <h2 className="session-view-title" id={titleId} ref={headingRef} tabIndex={-1}>
-            <span className="visually-hidden">Session</span>
+            <span className="visually-hidden">{title}</span>
             {waiting.shown && <SkeletonHeading />}
           </h2>
         </Top>
         {waiting.shown && <SkeletonMeta />}
       </header>
       <div className="session-view-body">
-        <WaitingStatus waiting={waiting} label="Loading the session" slow={slow} />
+        <WaitingStatus waiting={waiting} label={label} slow={slow} />
       </div>
     </Frame>
   );

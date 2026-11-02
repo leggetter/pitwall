@@ -46,10 +46,11 @@ describe('the app strip', () => {
     expect(strip()).toBeNull();
   });
 
-  it('sits above the header, as the app’s first row', () => {
+  it('sits above the header, in the app’s first row, which holds a line for each of its states (W111)', () => {
     const { container } = renderViews(live({ ...base(), relayAlert: SENT, relayOff: OFF }));
     const app = container.querySelector('.app')!;
-    expect(app.firstElementChild).toBe(strip());
+    expect(app.firstElementChild?.className).toBe('app-strips');
+    expect(app.firstElementChild?.firstElementChild).toBe(strip());
     expect(app.firstElementChild?.nextElementSibling?.tagName.toLowerCase()).toBe('header');
   });
 

@@ -9,11 +9,15 @@ import {
   DIRECTORIES_PATH,
   PROTOCOL_VERSION,
   SPAWN_PATH,
+  SUPERVISOR_INTERRUPT_PATH,
+  SUPERVISOR_MESSAGE_PATH,
+  SUPERVISOR_START_PATH,
   WS_CLOSE_TOO_MANY,
   type AttachClientMessage,
   type AttachServerMessage,
   type ConversationEntry,
   type RelayResult,
+  type SessionRecap,
 } from '../../../src/shared/protocol.js';
 import type { ApiClient, ApiResult, ApiUpload } from '../api.js';
 import type { AttachEnv } from '../attach.js';
@@ -35,6 +39,7 @@ import {
   SUBAGENT_OLDER,
   SUBAGENT_TRANSCRIPT,
   SUBAGENTS,
+  SUPERVISOR_CONVERSATION,
   TERMINAL_OUTPUT,
   TRUNCATED_SUBAGENTS,
   TRUST_HINT,
@@ -124,17 +129,49 @@ export interface StubOptions {
    */
   upload?: 'uploaded' | 'uploading' | 'failed' | 'failed-retrying' | 'refused' | 'unavailable';
   /**
+   * Recaps (W111): what GET recapPath() answers, by session id, from `recaps`, and a 404 for the rest.
+   * `recapFetch`: `ok`, the default; `loading` never answers; `failed` is a 500. What Refresh gets,
+   * `recapRefresh`: `ok`, the default, after which no new recap comes; `sending` never answers;
+   * `spent`, a 429 with the day's budget spent; `off`, a 409; `failed`, a 500.
+   */
+  recaps?: Readonly<Record<string, SessionRecap>>;
+  recapFetch?: 'ok' | 'loading' | 'failed';
+  recapRefresh?: 'ok' | 'sending' | 'spent' | 'off' | 'failed';
+  /**
+   * Plan status (W123): what POST planStatusRefreshPath() gets. `found`, the default, a made-up plan
+   * made now; `none`, no plan found; `making` never answers; `spent`, a 429 with the day's budget
+   * spent. GET planStatusPath() is always a 404: the gallery's sessions have none made yet.
+   */
+  planStatus?: 'found' | 'none' | 'making' | 'spent';
+  /**
    * What Clone and start gets (W107), in the server's words (src/server/clone.ts). `cloned` answers
    * with a made-up clone's directory and the command that trusts it; `cloning` never answers;
    * `failed` is gh failing, a 502.
    */
   clone?: 'cloned' | 'cloning' | 'failed';
+  /**
+   * The supervisor (W114). `supervisorConversation`: its newest page, `entries`, from the fixtures by
+   * default, or `none`, a 404, a new conversation; `loading` never answers. `supervisorSend`: what a
+   * message gets, `ok`, `sending`, which never answers, `refused`, a 409 while it's held, or `unreachable`.
+   * `supervisorStart` and `supervisorStop`: `ok`, `busy`, which never answers, or `failed`, a 502.
+   * `approval`: what a decision gets, `ok`, `deciding`, which never answers, `gone`, a 404, or `failed`, a 500.
+   */
+  supervisorConversation?: 'ok' | 'none' | 'loading';
+  supervisorEntries?: ConversationEntry[];
+  supervisorSend?: 'ok' | 'sending' | 'refused' | 'unreachable';
+  supervisorStart?: 'ok' | 'busy' | 'failed';
+  supervisorStop?: 'ok' | 'busy' | 'failed';
+  approval?: 'ok' | 'deciding' | 'gone' | 'failed';
 }
 
 /** Where the stubbed Clone and start says it cloned the gallery's not-cloned repo (W107). */
 export const CLONED_DIR = '/Users/example/code/sdk-docs';
 
 const SESSION_PATH = /^\/api\/sessions\/([^/?]+)\/([a-z-]+)(?:\?before=(.*))?$/;
+/** Refresh's recapRefreshPath() (W111). */
+const RECAP_REFRESH_PATH = /^\/api\/sessions\/([^/?]+)\/recap\/refresh$/;
+/** Plan status's planStatusRefreshPath() (W123). */
+const PLAN_REFRESH_PATH = /^\/api\/sessions\/([^/?]+)\/plan-status\/refresh$/;
 /** A session's sub-agents, or one's transcript, with its cursor. */
 const SUBAGENTS_PATH = /^\/api\/sessions\/([^/?]+)\/subagents(?:\/([A-Za-z0-9]+)\/conversation(?:\?before=(.*))?)?$/;
 
@@ -145,6 +182,7 @@ export function stubApi(options: StubOptions = {}): ApiClient {
   const fetchedOlder = new Map<string, number>();
   let listed = 0;
   const answer = (method: 'GET' | 'POST', path: string, body?: unknown): Promise<ApiResult> => {
+    if (path.startsWith('/api/supervisor/')) return supervisor(options, method, path);
     if (method === 'POST' && path === SPAWN_PATH) return spawn(options.spawn ?? 'started');
     if (method === 'POST' && path === CLONE_PATH) {
       const clone = options.clone ?? 'cloned';
@@ -168,6 +206,8 @@ export function stubApi(options: StubOptions = {}): ApiClient {
       listed += 1;
       return subagents(sessionId, options.subagents, listed - 1);
     }
+    if (method === 'POST' && RECAP_REFRESH_PATH.test(path)) return recapRefresh(options.recapRefresh ?? 'ok');
+    if (method === 'POST' && PLAN_REFRESH_PATH.test(path)) return planStatus(options.planStatus ?? 'found');
     const match = SESSION_PATH.exec(path);
     if (!match) return Promise.resolve(failed(404));
     const sessionId = decodeURIComponent(match[1] ?? '');
@@ -179,6 +219,12 @@ export function stubApi(options: StubOptions = {}): ApiClient {
       counts.set(sessionId, times + 1);
       if (options.entries && (options.conversation ?? 'ok') === 'ok') return Promise.resolve(ok({ sessionId, entries: options.entries }));
       return conversation(sessionId, options.conversation ?? 'ok', older, times);
+    }
+    if (method === 'GET' && route === 'recap') {
+      const recap = options.recaps?.[sessionId];
+      if (options.recapFetch === 'loading') return forever();
+      if (options.recapFetch === 'failed') return Promise.resolve(failed(500));
+      return Promise.resolve(recap ? ok(recap) : failed(404));
     }
     if (method === 'POST' && route === 'relay') return relay(options.relay ?? { status: 'delivered' });
     if (method === 'POST' && (route === 'stop' || route === 'remove')) return action(route, options[route] ?? 'done');
@@ -199,6 +245,94 @@ export function stubApi(options: StubOptions = {}): ApiClient {
     // An unused upload removed (W82): done, as the server's 204.
     delete: (path) => Promise.resolve(path.startsWith(`${ATTACHMENTS_PATH}/`) ? { kind: 'ok', status: 204, body: undefined } : failed(404)),
   };
+}
+
+/** The supervisor's routes (W114), in made-up words, as the contract answers them. */
+function supervisor(options: StubOptions, method: 'GET' | 'POST', path: string): Promise<ApiResult> {
+  if (method === 'GET' && path.startsWith('/api/supervisor/conversation')) {
+    const kind = options.supervisorConversation ?? 'ok';
+    if (kind === 'loading') return forever();
+    if (kind === 'none') return Promise.resolve(failed(404));
+    return Promise.resolve(ok({ sessionId: 'pitwall-test-supervisor', entries: options.supervisorEntries ?? SUPERVISOR_CONVERSATION }));
+  }
+  if (method !== 'POST') return Promise.resolve(failed(405));
+  const action = (result: 'ok' | 'busy' | 'failed' | undefined, error: string) =>
+    result === 'busy' ? forever() : result === 'failed' ? Promise.resolve(failed(502, { ok: false, error })) : Promise.resolve(ok({ ok: true }));
+  if (path === SUPERVISOR_START_PATH) return action(options.supervisorStart, "Made up: claude exited as it started.");
+  if (path === SUPERVISOR_INTERRUPT_PATH) return action(options.supervisorStop, "Made up: the turn had already ended.");
+  if (path === SUPERVISOR_MESSAGE_PATH) {
+    switch (options.supervisorSend ?? 'ok') {
+      case 'sending':
+        return forever();
+      case 'refused':
+        return Promise.resolve(failed(409, { ok: false, error: 'Made up: a background session has its conversation, so it can’t take messages.' }));
+      case 'unreachable':
+        return Promise.resolve(failed());
+      case 'ok':
+        return Promise.resolve(ok({ ok: true }));
+    }
+  }
+  if (path.startsWith('/api/supervisor/approvals/')) {
+    switch (options.approval ?? 'ok') {
+      case 'deciding':
+        return forever();
+      case 'gone':
+        return Promise.resolve(failed(404, { ok: false, error: 'Made up: no such approval.' }));
+      case 'failed':
+        return Promise.resolve(failed(500));
+      case 'ok':
+        return Promise.resolve(ok({ ok: true }));
+    }
+  }
+  return Promise.resolve(failed(404));
+}
+
+function recapRefresh(result: NonNullable<StubOptions['recapRefresh']>): Promise<ApiResult> {
+  switch (result) {
+    case 'sending':
+      return forever();
+    case 'spent':
+      return Promise.resolve(failed(429, { ok: false, error: "Made up: today's recaps are used up.", busy: 'spent' }));
+    case 'off':
+      return Promise.resolve(failed(409, { ok: false, error: 'Made up: recaps are off.' }));
+    case 'failed':
+      return Promise.resolve(failed(500));
+    case 'ok':
+      return Promise.resolve(ok({ ok: true }));
+  }
+}
+
+/** A made-up plan status (W123), made now. */
+function planStatus(result: NonNullable<StubOptions['planStatus']>): Promise<ApiResult> {
+  const at = new Date().toISOString();
+  switch (result) {
+    case 'making':
+      return forever();
+    case 'spent':
+      return Promise.resolve(failed(429, { ok: false, error: "Made up: today's recaps are used up.", busy: 'spent' }));
+    case 'none':
+      return Promise.resolve(ok({ ok: true, status: { found: false, items: [], at, throughAt: at } }));
+    case 'found':
+      return Promise.resolve(
+        ok({
+          ok: true,
+          status: {
+            found: true,
+            plan: 'Fix the made-up export on large files, then backport it, in four steps',
+            items: [
+              { text: 'Step 1: find why files over 2 GB fail', state: 'done' },
+              { text: 'Step 2: fix the size field, with a test', state: 'done' },
+              { text: 'Step 3: get #42 reviewed and merged', state: 'now' },
+              { text: 'Step 4: backport the fix to 1.x', state: 'next' },
+              { text: 'Rewrite the upload step', state: 'dropped' },
+            ],
+            changes: 'You dropped the upload step rewrite: the size field fix is enough. The backport was added after you asked about 1.x.',
+            at,
+            throughAt: at,
+          },
+        }),
+      );
+  }
 }
 
 /** `times` is how many uploads came before this one. */

@@ -42,6 +42,7 @@ export type SessionStatus =
   | 'blocked'
   | 'restarted'
   | 'asked'
+  | 'recap'
   | 'blocked-stale'
   | 'failed'
   | 'done'
@@ -71,6 +72,8 @@ export interface StatusBadge {
  * - 'claude-code' and 'blocked': "Blocked". The job's own line is on the row's line 2.
  * - 'restarted': "Waiting for your prompt".
  * - 'asked': "Asked you", subtle, as before W69.
+ * - 'recap': "Waiting on you", subtle as Asked you is (M5, W111): its current recap says it's waiting
+ *   on you, as a job Claude Code calls done can be (Phil, 2026-10-29). It takes Done's place.
  * A blocked job that needs nothing of you shows as its process does: idle, with no badge in the list
  * and "Idle" in the session view, or Busy, or Not running. A stale one keeps its "Blocked" text,
  * outlined. A finished session shows its state (done, stopped or failed) even when it asked
@@ -99,6 +102,8 @@ function needsBadge(session: SessionSummary): StatusBadge {
       return { status: 'restarted', label: 'Waiting for your prompt', look: 'solid-warning' };
     case 'asked':
       return { status: 'asked', label: 'Asked you', look: 'subtle-warning' };
+    case 'recap':
+      return { status: 'recap', label: 'Waiting on you', look: 'subtle-warning' };
   }
   // A stale blocked job keeps its "Blocked" text but loses the attention styling.
   if (session.state === 'blocked' && session.stale) return { status: 'blocked-stale', label: `Blocked${reason}`, look: 'outline' };
@@ -120,6 +125,17 @@ function needsBadge(session: SessionSummary): StatusBadge {
 export function needsText(session: SessionSummary): string | undefined {
   if (!needsAttention(session) || session.needsYou?.reason !== 'claude-code') return undefined;
   const text = session.needsYou.text?.trim();
+  return text === undefined || text === '' ? undefined : text;
+}
+
+/**
+ * What a session's current recap says it's waiting on you for, its `next`, as plain text, for the
+ * row's line 2 (M5, W111): set only while that's why it needs you ('recap'). Empty text gives
+ * undefined, and line 2 says "Waiting on you" alone.
+ */
+export function recapNeedsText(session: SessionSummary): string | undefined {
+  if (!needsAttention(session) || session.needsYou?.reason !== 'recap') return undefined;
+  const text = (session.needsYou.text ?? session.recap?.next)?.trim();
   return text === undefined || text === '' ? undefined : text;
 }
 

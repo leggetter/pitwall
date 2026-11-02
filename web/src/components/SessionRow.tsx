@@ -9,8 +9,8 @@
 //
 // A session is a piece of work (W106, work.ts): its row carries the open pull requests it owns, the
 // most urgent as a badge, "#128 CI failing", with "+2" for more. It needs you when the session does
-// or when one of those PRs needs attention, and then line 2 says why, "CI is failing on #128", unless
-// the session needs you itself, which comes first. A finished or ended session that owns an open PR
+// or when one of those PRs needs attention, and then line 2 says so, "Needs you for example/demo-app#128:
+// CI failing" (W128), unless the session needs you itself, which comes first. A finished or ended session that owns an open PR
 // isn't finished work, so its row isn't muted; its badge still says Ended, and, where the list offers
 // it, its line 2 ends with Resume (W107, RowResume.tsx), where a session that needs you has its Not
 // needed now toggle: it resumes an ended interactive session, or a background one that isn't running.
@@ -26,8 +26,9 @@ import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import { prNeedsAttention, type PullRequestSummary, type SessionGroup, type SessionSummary } from '../../../src/shared/protocol.js';
 import { absoluteTime, plainText } from '../format.js';
 import type { NotNeeded } from '../notNeeded.js';
-import { prReason, sessionPrBadge } from '../prs.js';
-import { groupLabel, isNotNeeded, needsAttention, needsText, rowStatusBadge } from '../sessions.js';
+import { prNeedText, sessionPrBadge } from '../prs.js';
+import { ENDED_RECAP_HINT, FINISHED_RECAP_HINT, finishedWaitingOnYou, quietWaitingOn, WAITING_ON_TEXT } from '../recap.js';
+import { groupLabel, isNotNeeded, needsAttention, needsText, recapNeedsText, rowStatusBadge } from '../sessions.js';
 import { runningText } from '../subagents.js';
 import { Badge, StatusBadge } from './Badge.js';
 import { Highlight } from './Highlight.js';
@@ -53,14 +54,22 @@ const TITLE_HINTS: Record<NonNullable<SessionSummary['titleSource']>, string> = 
   pitwall: "pitwall's title, from the session's recent turns",
 };
 
+/** Line 2's label for what a recap says you need to do (W111), as "Asked:" and "Needs:" are. */
+export const RECAP_NEXT_LABEL = 'Next:';
+
+/** The hint for a finished or ended session's Waiting on you (W111): it isn't counted as needing you. */
+export function finishedRecapHint(session: SessionSummary): string {
+  return session.ended ? ENDED_RECAP_HINT : FINISHED_RECAP_HINT;
+}
+
 /** What a row marked not needed now says on line 2, quietly, after its group's label (W88). */
 export const NOT_NEEDED_TEXT = 'Not needed now';
 
 /** The id of the session view, which every row's name controls. */
 export const SESSION_VIEW_ID = 'session-view';
 
-/** The title's tooltip: the whole title, which may be cut short on screen, and where it came from. */
-function titleHint(title: string, source: SessionSummary['titleSource']): string {
+/** The title's tooltip: the whole title, which may be cut short on screen, and where it came from. The session view's heading has it too. */
+export function titleHint(title: string, source: SessionSummary['titleSource']): string {
   const from = source === undefined ? undefined : TITLE_HINTS[source];
   return from === undefined ? title : `${title}\n${from}`;
 }
@@ -69,8 +78,9 @@ function titleHint(title: string, source: SessionSummary['titleSource']): string
 const OWN_CLICK = 'a, button, input, select, textarea, label, summary, [role="button"]';
 
 /**
- * Line 2: what a background job's own line says it needs (W69), or what the session asked you, or
- * else what you last asked it, or why the transcript can't say.
+ * Line 2: what a background job's own line says it needs (W69), or what its recap says it's waiting
+ * on you for (M5, W111), or what the session asked you, or else what you last asked it, or why the
+ * transcript can't say.
  */
 function whatItWants(session: SessionSummary): { content: ReactNode; hint?: string } | undefined {
   // Claude Code's line, from the job's file, not the transcript: shown whatever the transcript's state.
@@ -81,6 +91,21 @@ function whatItWants(session: SessionSummary): { content: ReactNode; hint?: stri
       content: (
         <span className="asked">
           <span className="asked-label">Needs:</span> {text}
+        </span>
+      ),
+      hint: text,
+    };
+  }
+  // Its recap's `next`, from the index's recap, not the transcript: shown whatever the transcript's
+  // state, as Needs is. "Next:", as Asked and Needs have theirs: the badge already says it waits on you.
+  // With no next, the badge says it all, and line 2 says what it did last.
+  const next = recapNeedsText(session);
+  if (next !== undefined) {
+    const text = plainText(next);
+    return {
+      content: (
+        <span className="asked">
+          <span className="asked-label">{RECAP_NEXT_LABEL}</span> {text}
         </span>
       ),
       hint: text,
@@ -162,9 +187,11 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
   const badge = rowStatusBadge(session, notNeeded);
   const name = plainText(session.name);
   const title = session.title ? plainText(session.title) : '';
-  const reason = !own && prNeed !== undefined ? prReason(prNeed, true) : undefined;
+  const reason = !own && prNeed !== undefined ? prNeedText(prNeed) : undefined;
   const wants: { content: ReactNode; hint?: string } | undefined =
     reason !== undefined ? { content: <span className="asked pr-reason">{reason}</span>, hint: reason } : whatItWants(session);
+  // What an idle session's recap says it waits on, when that isn't you (W111): quiet, first on line 2, never needing you.
+  const waitingOn = quietWaitingOn(session, attention);
   const pr = sessionPrBadge(owned);
   // Line 2's label: the group's, in Needs you and All sessions.
   const label = showGroup ? plainText(groupLabel(group)) : undefined;
@@ -197,6 +224,11 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
         Asked you
       </Badge>
     ),
+    finishedWaitingOnYou(session) && (
+      <Badge key="recap" look="outline" hint={finishedRecapHint(session)}>
+        {WAITING_ON_TEXT.you}
+      </Badge>
+    ),
     session.stale && (
       <Badge key="stale" look="subtle-neutral" className="stale" hint={STALE_HINT}>
         Stale
@@ -205,7 +237,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
   ].filter(Boolean);
 
   // Line 2, when there's anything to say (W88's toggle has a line 2 to itself when there isn't).
-  const line2 = (label !== undefined || wants || running || marked) && (
+  const line2 = (label !== undefined || wants || running || marked || waitingOn !== undefined) && (
     <Tooltip content={wants?.hint} relation="none" onlyIfCut>
       <p className="session-what">
         {/* What gives way, with an ellipsis, before the running count does. */}
@@ -215,7 +247,18 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
               <span className="session-group">
                 <Highlight text={label} />
               </span>
-              {(marked || wants) && (
+              {(marked || wants || waitingOn !== undefined) && (
+                <span className="session-what-sep" aria-hidden="true">
+                  {' · '}
+                </span>
+              )}
+            </>
+          )}
+          {waitingOn !== undefined && (
+            // Quiet, as the group's label is, and before what it last did, so it's seen when that's cut short.
+            <>
+              <span className="session-waiting-on">{waitingOn}</span>
+              {wants && (
                 <span className="session-what-sep" aria-hidden="true">
                   {' · '}
                 </span>
@@ -238,7 +281,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
         {running !== undefined && (
           // Quiet, and never cut: "· 2 sub-agents running", after whatever is before it.
           <span className="session-running">
-            {(label !== undefined || wants || marked) && (
+            {(label !== undefined || wants || marked || waitingOn !== undefined) && (
               <span className="session-what-sep" aria-hidden="true">
                 {' · '}
               </span>

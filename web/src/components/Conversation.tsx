@@ -221,6 +221,11 @@ export interface ConversationOptions {
    * idle session (spike 007, finding 6). The next fetch waits for the last one's answer.
    */
   pollMs?: number | undefined;
+  /**
+   * Polls while there's no transcript yet, too, as well as once a page is in: the supervisor's view
+   * (W114), whose transcript is written with its first turn, a moment after you send it a message.
+   */
+  pollMissing?: boolean | undefined;
 }
 
 /**
@@ -229,7 +234,7 @@ export interface ConversationOptions {
  * the bottom, and counts those that arrive while they aren't.
  */
 export function useConversation(lastActivityAt: string | undefined, loader: PageLoader | undefined, options: ConversationOptions = {}): ConversationController {
-  const { pollMs } = options;
+  const { pollMs, pollMissing = false } = options;
   const [state, setState] = useState<ConversationState>(() => ({
     status: loader ? 'loading' : 'unavailable',
     entries: [],
@@ -486,7 +491,8 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
     const tick = async () => {
       timer = undefined;
       if (stopped || hidden()) return;
-      if (newestOut.current === 0 && stateRef.current.status === 'ready') await loadNewest({ replace: false });
+      const { status } = stateRef.current;
+      if (newestOut.current === 0 && (status === 'ready' || (pollMissing && status === 'missing'))) await loadNewest({ replace: false });
       if (!stopped) schedule();
     };
     const onVisibility = () => {
@@ -505,7 +511,7 @@ export function useConversation(lastActivityAt: string | undefined, loader: Page
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [polling, loader, loadNewest]);
+  }, [polling, loader, loadNewest, pollMissing]);
 
   // Follow new entries only when already at the bottom; keep the place when older ones arrive above.
   // A notice or an alert at the end, at the bottom, is followed the same way.
@@ -951,10 +957,16 @@ export interface ConversationPanelProps {
   working?: WorkingLineState | undefined;
   /** Whether the working line's announcements may speak: once the first page has come back, while the session's listed. */
   workingReady?: boolean;
+  /**
+   * What shows in place of the status line while there's nothing to show, and no transcript yet:
+   * the supervisor's new conversation (W114), with what it's for and questions to ask it. Left out,
+   * the status line says "Nothing to show yet." or "No transcript for this session."
+   */
+  empty?: ReactNode;
 }
 
 /** The Conversation tab's panel: the body that scrolls, which is also a Tab stop so the keyboard can scroll it. */
-export function ConversationPanel({ conversation, id, labelledBy, hidden, role = 'tabpanel', emptyLine, missingLine, userSpeaker, working, workingReady = false }: ConversationPanelProps) {
+export function ConversationPanel({ conversation, id, labelledBy, hidden, role = 'tabpanel', emptyLine, missingLine, userSpeaker, working, workingReady = false, empty }: ConversationPanelProps) {
   const { state, loadEarlier, retry, scroller, onScroll, onInput, sync, jumpToLatest, restorePlace, follow } = conversation;
   const rows = useMemo(() => conversationRows(state.entries), [state.entries]);
   // The calls of the folds that are open (conversation.ts: foldOpen). Every fold starts closed.
@@ -980,14 +992,18 @@ export function ConversationPanel({ conversation, id, labelledBy, hidden, role =
   const { entries } = state;
   // The working line, once a page is in (W102). It comes and goes, and a waiting line's text can wrap
   // to another line, without new entries: at the bottom, the conversation stays there.
-  const line = working !== undefined && working.mode !== 'idle' && state.status === 'ready' ? working : undefined;
+  // With an empty state of its own, as the supervisor's has, before there's any transcript too.
+  const line = working !== undefined && working.mode !== 'idle' && (state.status === 'ready' || (empty !== undefined && state.status === 'missing')) ? working : undefined;
   const lineShape = line === undefined ? '' : line.mode === 'waiting' ? `waiting\u0000${line.text}\u0000${line.where ?? ''}` : 'working';
   useLayoutEffect(() => {
     follow();
   }, [lineShape, follow]);
   // The first page: "Loading the conversation…" after --pw-delay-spinner, and what's slow after --pw-delay-long.
   const waiting = useWaiting(scroller, state.status === 'loading');
-  const status = statusLine(state, waiting.shown, { empty: emptyLine, missing: missingLine });
+  // Nothing at all yet, a page with no entries or no transcript: the caller's empty state, when it has one.
+  const nothing = entries.length === 0 && ((state.status === 'ready' && state.before === undefined) || state.status === 'missing');
+  const emptyShown = empty !== undefined && nothing;
+  const status = emptyShown ? undefined : statusLine(state, waiting.shown, { empty: emptyLine, missing: missingLine });
   return (
     <div
       className="session-view-body"
@@ -1049,6 +1065,7 @@ export function ConversationPanel({ conversation, id, labelledBy, hidden, role =
           )}
         </ol>
       )}
+      {emptyShown && empty}
       {line !== undefined && <WorkingLine line={line} />}
       {entries.length > 0 && state.failure !== undefined && (
         // At the end, where new entries would have come: what's shown is kept.

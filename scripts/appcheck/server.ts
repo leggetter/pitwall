@@ -9,8 +9,10 @@
 // session's uploads (W82), with the contract's checks, keeping nothing of a file but its size, and
 // your made-up open pull requests (W95): GET PRS_PATH, the 'prs' message right after the first
 // snapshot and on each change, and POST PRS_REFRESH_PATH, with the contract's 409 and 429; and
+// recaps (W111), off unless a case turns them on: GET recapPath() and POST recapRefreshPath().
 // Clone and start (W107), POST CLONE_PATH, which clones nothing: the world places the repo's PRs under
-// a made-up clone a moment later, as discovery would.
+// a made-up clone a moment later, as discovery would. The supervisor (W114), off unless a case turns
+// it on: its conversation, a message, Start, Stop and a decision for each draft, which run no claude.
 //
 // It never runs `claude`, reads no transcript, `~/.claude`, `.env` or `~/.pitwall`, and holds no real
 // token: the token is random per run and only ever reaches the page in its URL's fragment. It imports
@@ -40,31 +42,48 @@ import type {
   EndSessionResult,
   IndexSnapshot,
   PullRequestList,
+  PlanStatus,
+  PlanStatusResult,
+  RecapRefreshResult,
   RelayResult,
+  SessionRecap,
   ResumeResult,
   SessionSummary,
   SpawnRequest,
   SpawnResult,
   SubagentList,
+  SupervisorDecision,
 } from '../../src/shared/protocol.js';
-import { COPY_SHORT_ID, NAMES, terminalScreen, World, type ResetOptions, type TerminalSize } from './fixtures.js';
+import { COPY_SHORT_ID, NAMES, PLAN_CALL_MS, RECAP_CALL_MS, SUPERVISOR_HELD_ERROR, SUPERVISOR_STEP_MS, terminalScreen, World, type ResetOptions, type TerminalSize } from './fixtures.js';
 
 type Security = typeof import('../../src/server/security.js');
 type Static = typeof import('../../src/server/static.js');
 type Protocol = typeof import('../../src/shared/protocol.js');
+type Work = typeof import('../../src/server/work.js');
+type ClaudeDefaultsModule = typeof import('../../src/server/claudeDefaults.js');
 
 /** pitwall's own modules, from the build. */
 export interface Built {
   security: Security;
   static: Static;
   protocol: Protocol;
+  /** The model and effort store and its checks (W119), so the fake server answers WORK_PATH as the real one. */
+  work: Work;
+  /** Claude Code's defaults (W122), worked out from made-up settings files, never this machine's. */
+  claudeDefaults: ClaudeDefaultsModule;
 }
 
-/** Imports the three modules the fake server uses from a server build, such as dist. */
+/** Imports the five modules the fake server uses from a server build, such as dist. */
 export async function importBuilt(dist: string): Promise<Built> {
   const load = (path: string) => import(pathToFileURL(join(dist, path)).href);
-  const [security, staticFiles, protocol] = await Promise.all([load('server/security.js'), load('server/static.js'), load('shared/protocol.js')]);
-  return { security: security as Security, static: staticFiles as Static, protocol: protocol as Protocol };
+  const [security, staticFiles, protocol, work, claudeDefaults] = await Promise.all([
+    load('server/security.js'),
+    load('server/static.js'),
+    load('shared/protocol.js'),
+    load('server/work.js'),
+    load('server/claudeDefaults.js'),
+  ]);
+  return { security: security as Security, static: staticFiles as Static, protocol: protocol as Protocol, work: work as Work, claudeDefaults: claudeDefaults as ClaudeDefaultsModule };
 }
 
 export interface Records {
@@ -75,7 +94,9 @@ export interface Records {
   /** Every size the page gave an attached session, in order: its `open`'s, then each resize's (W74). */
   sizes: Array<{ name: string; from: 'open' | 'resize' } & TerminalSize>;
   /** `attachments` only when the request had them (W82). */
-  spawns: Array<{ cwd: string; name?: string | undefined; model?: string | undefined; promptLength: number; attachments?: string[] | undefined }>;
+  spawns: Array<{ cwd: string; name?: string | undefined; model?: string | undefined; effort?: string | undefined; promptLength: number; attachments?: string[] | undefined }>;
+  /** Each POST of WORK_PATH (W119): the overrides sent, and the status they got. */
+  workPosts: Array<{ overrides: unknown; status: number }>;
   /**
    * Each upload to ATTACHMENTS_PATH (W82), in the order they were answered: its name, type and size,
    * the status it got, and its id when kept. `aborted` is one the page gave up on before its answer.
@@ -93,13 +114,51 @@ export interface Records {
   ends: Array<{ name: string; whileWorking: boolean; status: number }>;
   /** Each refresh of the PR list the server answered (W95), by its status: 200, 409 or 429. */
   refreshes: number[];
+  /** Each GET of a session's recap (W111), by the session's name and its status: 200 or 404. */
+  recapFetches: Array<{ name: string; status: number }>;
+  /** Each POST asking for a new recap (W111), by the session's name and its status: 200, 404, 409 or 429. */
+  recapRefreshes: Array<{ name: string; status: number }>;
+  /** Each GET of a session's plan status (W123), by the session's name and its status: 200 or 404. */
+  planFetches: Array<{ name: string; status: number }>;
+  /** Each POST making a plan status (W123), by the session's name and its status: 200, 404, 409 or 429. */
+  planMakes: Array<{ name: string; status: number }>;
   /** Each Clone and start the server answered (W107): the repo the page sent, and the status it got. */
   clones: Array<{ repo: unknown; status: number }>;
+  /** Each message to the supervisor (W114), by its length and the status it got. Never its text. */
+  supervisorMessages: Array<{ length: number; status: number }>;
+  /** Each Start and Stop of the supervisor, and each decision for one of its drafts, with the status each got (W114). */
+  supervisorStarts: number[];
+  supervisorStops: number[];
+  decisions: Array<{ id: string; decision: string; length?: number; status: number }>;
   /** Every HTTP request and upgrade, as `METHOD /path status`. */
   requests: string[];
 }
 
-const emptyRecords = (): Records => ({ attaches: [], inputs: [], sizes: [], spawns: [], relays: [], actions: [], resumes: [], opens: [], ends: [], refreshes: [], clones: [], uploads: [], deletes: [], requests: [] });
+const emptyRecords = (): Records => ({
+  attaches: [],
+  inputs: [],
+  sizes: [],
+  spawns: [],
+  workPosts: [],
+  relays: [],
+  actions: [],
+  resumes: [],
+  opens: [],
+  ends: [],
+  refreshes: [],
+  recapFetches: [],
+  recapRefreshes: [],
+  planFetches: [],
+  planMakes: [],
+  clones: [],
+  supervisorMessages: [],
+  supervisorStarts: [],
+  supervisorStops: [],
+  decisions: [],
+  uploads: [],
+  deletes: [],
+  requests: [],
+});
 
 /** How long a made-up clone takes, so Clone shows it's busy (W107). */
 const CLONE_MS = 600;
@@ -208,7 +267,22 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
   const apiKey = security.randomSecret();
   const headers = Object.entries(security.securityHeaders(port));
   const world = new World();
+  world.setRecapBudget(protocol.RECAP_DAILY_BUDGET);
   let records = emptyRecords();
+  // The model and effort (W119): a made-up config file's defaults, sessions at high effort and their
+  // sub-agents on haiku; and Claude Code's own (W122), from made-up settings: your settings' Opus 5.5,
+  // and a project that saves Opus 5.5 at xhigh, for New session's directory.
+  const madeUpWork = () =>
+    built.work.createWorkStore({
+      config: { ...built.work.emptyChoices(), session: { effort: 'high' }, subagents: { model: 'haiku' } },
+      configFile: '/Users/example/.pitwall/config.json',
+      claude: async (layers, dir) => {
+        const user = { scope: 'user' as const, model: 'claude-opus-5-5' };
+        const project = { scope: 'project' as const, modelSettings: { 'claude-opus-5-5': { effortLevel: 'xhigh' } } };
+        return built.claudeDefaults.claudeDefaults({ session: dir === undefined ? [user] : [project, user], managed: [] }, {}, layers, dir);
+      },
+    });
+  let work = madeUpWork();
   // The uploads kept (W82), by id, and the names that have had their one failure.
   const uploaded = new Map<string, { used: boolean }>();
   const failedOnce = new Set<string>();
@@ -272,6 +346,14 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (method === 'GET' && url.pathname === protocol.PRS_PATH) return json(res, 200, world.prList() satisfies PullRequestList);
     if (method === 'POST' && url.pathname === protocol.PRS_REFRESH_PATH) return refreshPrs(req, res);
     if (method === 'POST' && url.pathname === protocol.CLONE_PATH) return clone(req, res);
+    if (method === 'GET' && url.pathname === protocol.WORK_PATH) return json(res, 200, await work.describe(url.searchParams.get('dir') || undefined));
+    if (method === 'POST' && url.pathname === protocol.WORK_PATH) {
+      const body = await readJson(req);
+      const result = work.update(body);
+      records.workPosts.push({ overrides: isRecord(body) ? body.overrides : undefined, status: result.ok ? 200 : 400 });
+      return result.ok ? json(res, 200, await work.describe()) : json(res, 400, { error: result.error });
+    }
+    if (url.pathname.startsWith('/api/supervisor/')) return supervisor(req, res, method, url);
     if (method === 'POST' && url.pathname === protocol.SPAWN_PATH) return spawn(req, res);
     if (method === 'POST' && url.pathname === protocol.ATTACHMENTS_PATH) return upload(req, res);
     // An unused upload removed (W82): attachmentPath(id).
@@ -288,13 +370,32 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       return json(res, 200, page satisfies ConversationPage);
     }
 
-    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|stop|remove|resume|open|subagents|end)$/.exec(url.pathname);
+    // Refresh a session's recap (W111): recapRefreshPath(id).
+    const recapRefresh = /^\/api\/sessions\/([^/]+)\/recap\/refresh$/.exec(url.pathname);
+    if (recapRefresh && method === 'POST') return refreshRecap(req, res, decodeURIComponent(recapRefresh[1]!));
+    // Make a session's plan status (W123): planStatusRefreshPath(id).
+    const planMake = /^\/api\/sessions\/([^/]+)\/plan-status\/refresh$/.exec(url.pathname);
+    if (planMake && method === 'POST') return makePlanStatus(req, res, decodeURIComponent(planMake[1]!));
+
+    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|stop|remove|resume|open|subagents|end|recap|plan-status)$/.exec(url.pathname);
     if (!match) return end(res, 404);
     const session = world.session(decodeURIComponent(match[1]!));
     if (!session) return end(res, 404);
     const route = match[2];
     if (route === 'conversation' && method === 'GET') return json(res, 200, world.conversation(session.sessionId) satisfies ConversationPage | undefined);
     if (route === 'subagents' && method === 'GET') return json(res, 200, world.subagents(session.sessionId) satisfies SubagentList | undefined);
+    if (route === 'recap' && method === 'GET') {
+      // recapPath(id) (W111): the session's whole recap, or 404 while it has none, as the contract says.
+      const recap = world.recapHealth() ? world.recap(session.sessionId) : undefined;
+      records.recapFetches.push({ name: session.name, status: recap ? 200 : 404 });
+      return recap ? json(res, 200, recap satisfies SessionRecap) : end(res, 404);
+    }
+    if (route === 'plan-status' && method === 'GET') {
+      // planStatusPath(id) (W123): the newest plan status, or 404 before one is made.
+      const status = world.planStatus(session.sessionId);
+      records.planFetches.push({ name: session.name, status: status ? 200 : 404 });
+      return status ? json(res, 200, status satisfies PlanStatus) : end(res, 404);
+    }
     if (route === 'relay' && method === 'POST') {
       if (session.kind !== 'interactive' || !session.alive) return json(res, 409, { status: 'failed', detail: 'Made up: only a running interactive session.' } satisfies RelayResult);
       const body = await readJson(req);
@@ -390,6 +491,154 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       answer.done();
       broadcastPrs();
     });
+  }
+
+  /**
+   * Ask for a new recap (W111), as the contract has recapRefreshPath() answer, in made-up words: no
+   * body is read; 404 for a session it doesn't list or with no transcript, 409 with recaps off, 429,
+   * with `busy`, with the day's budget spent or a call for it running, otherwise 200, and the new recap in the snapshot a moment
+   * later, or, while recaps are failing, none.
+   */
+  async function refreshRecap(req: IncomingMessage, res: ServerResponse, sessionId: string) {
+    await readJson(req);
+    const session = world.session(sessionId);
+    const answer = session ? world.refreshRecap(sessionId) : ({ result: 'not-recapped' } as const);
+    const record = (status: number) => {
+      if (session) records.recapRefreshes.push({ name: session.name, status });
+    };
+    if (answer.result === 'off') {
+      record(409);
+      return json(res, 409, { ok: false, error: 'Made up: recaps are off, as with --no-recaps.' } satisfies ActionResult);
+    }
+    if (answer.result === 'not-recapped') {
+      record(404);
+      return json(res, 404, { ok: false, error: "Made up: pitwall can't recap this session: it has no transcript pitwall can read." } satisfies ActionResult);
+    }
+    if (answer.result === 'spent' || answer.result === 'running') {
+      record(429);
+      return json(res, 429, { ok: false, error: answer.result === 'spent' ? "Made up: today's recaps are used up." : 'Made up: a recap of it is already being made.', busy: answer.result } satisfies RecapRefreshResult);
+    }
+    record(200);
+    json(res, 200, { ok: true } satisfies ActionResult);
+    later(RECAP_CALL_MS, () => {
+      answer.done();
+      broadcast();
+    });
+  }
+
+  /**
+   * Make a plan status (W123), as the contract has planStatusRefreshPath() answer, in made-up words:
+   * no body is read; 404, 409 and 429 as for a recap; otherwise 200 with the plan status once the
+   * made-up call ends, PLAN_CALL_MS later, and the snapshot flags it.
+   */
+  async function makePlanStatus(req: IncomingMessage, res: ServerResponse, sessionId: string) {
+    await readJson(req);
+    const session = world.session(sessionId);
+    const answer = session ? world.makePlanStatus(sessionId) : ({ result: 'not-recapped' } as const);
+    const record = (status: number) => {
+      if (session) records.planMakes.push({ name: session.name, status });
+    };
+    if (answer.result === 'off') {
+      record(409);
+      return json(res, 409, { ok: false, error: 'Made up: plan status is off, as with --no-recaps.' } satisfies PlanStatusResult);
+    }
+    if (answer.result === 'not-recapped') {
+      record(404);
+      return json(res, 404, { ok: false, error: "Made up: pitwall can't read this session's plan." } satisfies PlanStatusResult);
+    }
+    if (answer.result === 'spent' || answer.result === 'running') {
+      record(429);
+      return json(res, 429, { ok: false, error: answer.result === 'spent' ? "Made up: today's recaps are used up." : 'Made up: a plan status of it is being made.', busy: answer.result } satisfies PlanStatusResult);
+    }
+    later(PLAN_CALL_MS, () => {
+      const status = answer.done();
+      record(200);
+      json(res, 200, { ok: true, status } satisfies PlanStatusResult);
+      broadcast();
+    });
+  }
+
+  /**
+   * The supervisor's routes (W114), as the contract answers them, in made-up words, running no claude:
+   * its conversation, 404 while it has none; a message, `{ text }` as JSON, 409 with none or while it's
+   * held, 413 over SUPERVISOR_MESSAGE_MAX, then the made-up turn's steps a moment apart; Start, 409 the
+   * same; Stop; and a decision for a draft, 404 for one it doesn't have, then the draft gone a moment later.
+   */
+  async function supervisor(req: IncomingMessage, res: ServerResponse, method: string, url: URL) {
+    // A step, then a longer one, so a part sees each state: working lasts twice as long as starting.
+    const run = (steps: Array<() => void>) =>
+      steps.forEach((step, index) =>
+        later(SUPERVISOR_STEP_MS * (2 * index + 1), () => {
+          step();
+          broadcast();
+        }),
+      );
+    if (method === 'GET' && url.pathname === '/api/supervisor/conversation') {
+      const page = world.supervisorConversation(url.searchParams.get('before') ?? undefined);
+      return page ? json(res, 200, page satisfies ConversationPage) : end(res, url.searchParams.has('before') ? 410 : 404);
+    }
+    if (method !== 'POST') return end(res, 405);
+    if (url.pathname === protocol.SUPERVISOR_MESSAGE_PATH) {
+      if (!/^application\/json\s*(;|$)/i.test(req.headers['content-type'] ?? '')) return json(res, 415, { ok: false, error: 'Send the request as application/json.' } satisfies ActionResult);
+      const body = await readJson(req);
+      const text = isRecord(body) && typeof body.text === 'string' ? body.text : undefined;
+      const answer = (status: number, result: ActionResult) => {
+        records.supervisorMessages.push({ length: text?.length ?? 0, status });
+        json(res, status, result);
+      };
+      if (text === undefined || text.trim() === '') return answer(400, { ok: false, error: 'The message must be { "text": "…" }, with some text.' });
+      if (text.length > protocol.SUPERVISOR_MESSAGE_MAX) return answer(413, { ok: false, error: `Messages to the supervisor are at most ${protocol.SUPERVISOR_MESSAGE_MAX} characters.` });
+      const taken = world.supervisorMessage(text);
+      if (taken.result === 'refused') return answer(409, { ok: false, error: SUPERVISOR_HELD_ERROR });
+      answer(200, { ok: true });
+      broadcast();
+      run(taken.steps);
+      return;
+    }
+    if (url.pathname === protocol.SUPERVISOR_START_PATH) {
+      await readJson(req);
+      const taken = world.supervisorStart();
+      records.supervisorStarts.push(taken.result === 'refused' ? 409 : 200);
+      if (taken.result === 'refused') return json(res, 409, { ok: false, error: SUPERVISOR_HELD_ERROR } satisfies ActionResult);
+      json(res, 200, { ok: true } satisfies ActionResult);
+      broadcast();
+      run(taken.steps);
+      return;
+    }
+    if (url.pathname === protocol.SUPERVISOR_INTERRUPT_PATH) {
+      await readJson(req);
+      // As the real route: 409 when no turn is running.
+      if (world.supervisorState()?.status !== 'working') {
+        records.supervisorStops.push(409);
+        return json(res, 409, { ok: false, error: "The supervisor isn't working on anything." } satisfies ActionResult);
+      }
+      records.supervisorStops.push(200);
+      json(res, 200, { ok: true } satisfies ActionResult);
+      later(SUPERVISOR_STEP_MS, () => {
+        if (world.supervisorInterrupt()) broadcast();
+      });
+      return;
+    }
+    const approval = /^\/api\/supervisor\/approvals\/([^/]+)$/.exec(url.pathname);
+    if (approval) {
+      const id = decodeURIComponent(approval[1]!);
+      const body = await readJson(req);
+      const decision = asDecision(body);
+      const answer = (status: number, result: ActionResult) => {
+        records.decisions.push({ id, decision: decision?.decision ?? 'invalid', ...(decision?.decision === 'edit' ? { length: decision.text.length } : {}), status });
+        json(res, status, result);
+      };
+      if (!decision) return answer(400, { ok: false, error: 'The decision must be send, edit with its text, or decline.' });
+      const taken = world.supervisorDecide(id, decision);
+      if (taken.result === 'missing') return answer(404, { ok: false, error: 'There is no such approval.' });
+      answer(200, { ok: true });
+      later(SUPERVISOR_STEP_MS / 2, () => {
+        taken.done();
+        broadcast();
+      });
+      return;
+    }
+    return end(res, 404);
   }
 
   /**
@@ -607,9 +856,10 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       prompt: body.prompt,
       ...(typeof body.name === 'string' ? { name: body.name } : {}),
       ...(typeof body.model === 'string' ? { model: body.model } : {}),
+      ...(typeof body.effort === 'string' && (protocol.EFFORT_LEVELS as readonly string[]).includes(body.effort) ? { effort: body.effort as SpawnRequest['effort'] } : {}),
       ...(attachments ? { attachments } : {}),
     };
-    records.spawns.push({ cwd: request.cwd, name: request.name, model: request.model, promptLength: request.prompt.length, attachments: request.attachments });
+    records.spawns.push({ cwd: request.cwd, name: request.name, model: request.model, effort: request.effort, promptLength: request.prompt.length, attachments: request.attachments });
     const started = world.spawn(request, root);
     json(res, 201, { ok: true, shortId: started.summary.shortId ?? '', name: started.summary.name } satisfies SpawnResult);
     later(options.listDelayMs ?? 800, () => {
@@ -741,6 +991,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       for (const ws of [...indexSockets, ...attachSockets]) ws.terminate();
       world.reset(resetOptions);
       records = emptyRecords();
+      work = madeUpWork();
       uploaded.clear();
       failedOnce.clear();
       resumeOrder.listedFirst = false;
@@ -816,4 +1067,13 @@ function readUpload(req: IncomingMessage, limit = 10 * 1024 * 1024): Promise<{ s
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** A SupervisorDecision, exactly: send or decline alone, or edit with its text and nothing else. */
+function asDecision(body: unknown): SupervisorDecision | undefined {
+  if (!isRecord(body)) return undefined;
+  const keys = Object.keys(body).sort().join(',');
+  if ((body.decision === 'send' || body.decision === 'decline') && keys === 'decision') return { decision: body.decision };
+  if (body.decision === 'edit' && keys === 'decision,text' && typeof body.text === 'string' && body.text.trim() !== '' && body.text.length <= 20_000) return { decision: 'edit', text: body.text };
+  return undefined;
 }

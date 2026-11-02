@@ -36,7 +36,35 @@
 //   static files                Host only. They are the public build output.
 //
 // The snapshot, on GET /api/snapshot and /ws, carries each session's PR links only to PRs in the
-// current list, and goes out again when the list changes that (snapshotLinks.ts, D14, W105).
+// current list, and goes out again when the list changes that (snapshotLinks.ts, D14, W105). With
+// recaps on, it carries each session's recap first, and goes out again when one lands
+// (snapshotRecaps.ts, M5, W110):
+//
+//   GET /api/sessions/:sessionId/recap           then recapRoutes.ts: the session's SessionRecap, else 404
+//   POST /api/sessions/:sessionId/recap/refresh  then recapRoutes.ts: a recap now; 409 with --no-recaps,
+//                                                429 when the day's budget is spent or one is running
+//   GET /api/sessions/:sessionId/plan-status     then recapRoutes.ts: its newest PlanStatus (W123), else 404
+//   POST /api/sessions/:sessionId/plan-status/refresh
+//                                                then recapRoutes.ts: a plan status now, answered once the
+//                                                call ends; 409, 429 as for a recap, 502 when it failed
+//
+// With the supervisor on (M5, W112, W113), the snapshot carries its state too, and goes out again when
+// that changes (snapshotSupervisor.ts):
+//
+//   POST /api/supervisor/message, /start, /interrupt   then supervisorRoutes.ts; 409 with --no-supervisor
+//   GET /api/supervisor/conversation   its own transcript, paged as a session's, under the same limit;
+//                                      404 before it has one, and with --no-supervisor
+//   POST /api/supervisor/approvals/:id  your decision on one of its drafts (W115), supervisorRoutes.ts
+//
+// The model and effort for each kind of work (W119), pitwall's defaults, the config file's and the
+// app's overrides for this run (work.ts):
+//
+//   GET /api/work, POST /api/work       then work.ts: WorkSettings; POST replaces the overrides, JSON,
+//                                      at most 4 KiB, each value checked, else 400 and nothing changes
+//   /mcp                                outside /api/*, so neither the token nor the apiKey is taken
+//                                      there: Host only, then mcp.ts: no Origin, POST, the running
+//                                      supervisor's own bearer token, JSON, at most 64 KiB. 404 with
+//                                      --no-supervisor
 //
 // The token can read the API, for scripts. The apiKey, which only a client
 // that answered a challenge gets, can read it too, and is the only credential
@@ -48,19 +76,24 @@ import type { Duplex } from 'node:stream';
 import { getRequestListener } from '@hono/node-server';
 import { Hono, type Context } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
+import { readFileSync } from 'node:fs';
+import { createAgentsSource } from '../index/agents.js';
 import { ConversationCursorError, isSafeAgentId, isWellFormedCursor, type Indexer } from '../index/index.js';
+import { readSavedPermission } from '../index/jobs.js';
 import { prsOff } from '../prs/index.js';
 import {
   ATTACH_PATH,
   CONVERSATION_STALE_STATUS,
   conversationPath,
+  MCP_PATH,
   SNAPSHOT_PATH,
+  supervisorConversationPath,
   subagentConversationPath,
   subagentsPath,
   WS_PATH,
   type ConversationPage,
 } from '../shared/protocol.js';
-import { CommandSlots, DEFAULT_MAX_CONCURRENT_COMMANDS, registerActions, type ActionOptions } from './actions.js';
+import { checkDirectory, CommandSlots, createResumeRunner, createSpawnRunner, DEFAULT_MAX_CONCURRENT_COMMANDS, registerActions, type ActionOptions } from './actions.js';
 import { createAttachServer, type AttachOptions } from './attach.js';
 import { AttachmentStore, registerAttachments, type AttachmentStoreOptions } from './attachments.js';
 import { createCloneRoute, type CloneOptions } from './clone.js';
@@ -68,8 +101,16 @@ import { registerDirectories, type DirectoryOptions } from './directories.js';
 import { registerEditors, type EditorOptions } from './editors.js';
 import { registerEndSession, type EndOptions } from './end.js';
 import type { RunningServer, ServerOptions } from './index.js';
+import { registerMcp } from './mcp.js';
+import { createSupervisorTools } from './mcpTools.js';
 import { registerPrs } from './prs.js';
+import { registerRecaps } from './recapRoutes.js';
 import { createSnapshotView, type SnapshotView } from './snapshotLinks.js';
+import { createRecapView } from './snapshotRecaps.js';
+import { createSupervisorView } from './snapshotSupervisor.js';
+import { createApproveTool, createResumeSessionTool, createSpawnSessionTool, recipientNames, type SupervisorActionSources } from './supervisorActions.js';
+import { registerSupervisor } from './supervisorRoutes.js';
+import type { Supervisor } from '../supervisor/supervisor.js';
 import { createRelayManager } from './relay.js';
 import { registerRelay } from './relayRoute.js';
 import {
@@ -90,6 +131,7 @@ import { resolveSession } from './sessions.js';
 import { BUILDING_PAGE, BUILDING_SCRIPT, BUILDING_SCRIPT_PATH, resolveStaticFile } from './static.js';
 import { HandshakeSlots } from './handshake.js';
 import { DEFAULT_AUTH_TIMEOUT_MS, handleClient, MAX_PAYLOAD_BYTES } from './websocket.js';
+import { createWorkStore, registerWork } from './work.js';
 
 export const DEFAULT_PORT = 4517;
 
@@ -102,6 +144,18 @@ const CONVERSATION_ROUTE = decodeURIComponent(conversationPath(':sessionId'));
 /** The sub-agent routes (W76), decoded the same way. */
 const SUBAGENTS_ROUTE = decodeURIComponent(subagentsPath(':sessionId'));
 const SUBAGENT_CONVERSATION_ROUTE = decodeURIComponent(subagentConversationPath(':sessionId', ':agentId'));
+/** The supervisor's own conversation (W113). */
+const SUPERVISOR_CONVERSATION_ROUTE = supervisorConversationPath();
+
+/** pitwall's version, for the MCP server's serverInfo: package.json's, two folders up from src/server and dist/server alike. */
+function packageVersion(): string {
+  try {
+    const parsed = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version?: unknown };
+    return typeof parsed.version === 'string' ? parsed.version : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
 
 /**
  * The status for a `before` cursor made for another version of the
@@ -166,6 +220,11 @@ export interface ServerInternals {
   attachments?: Omit<AttachmentStoreOptions, 'home'>;
   /** Clone and start (W107, clone.ts): tests pass a fake runFile and file system calls, so no test runs gh or touches a real root. */
   clone?: CloneOptions;
+  /**
+   * A resume card's saved permission mode (W129), from a background job's state.json by the job-file
+   * adapter (src/index/jobs.ts): tests pass a fake, so none reads the user's jobs folder.
+   */
+  savedPermission?: SupervisorActionSources['savedPermission'];
 }
 
 export async function startServerWithInternals(
@@ -198,28 +257,103 @@ export async function startServerWithInternals(
   const commandSlots = internals.actions?.slots ?? new CommandSlots(internals.actions?.maxConcurrentCommands ?? DEFAULT_MAX_CONCURRENT_COMMANDS);
   // Uploads for New session's first prompt (W79), which spawn looks up. Swept once listening.
   const attachments = new AttachmentStore({ ...internals.attachments, home: options.pitwallHome });
+  // The model and effort for each kind of work (W119): the CLI's store, or pitwall's own defaults.
+  const work = options.work ?? createWorkStore();
   // Your open PRs (M4): the CLI's poller, or off. Started once listening, stopped on close().
   const prs = options.prs ?? prsOff();
+  // Per-session recaps (M5, W110), or off. Started once listening, closed on close().
+  const recaps = options.recaps;
+  // With recaps, each session's recap, its title and Needs you's 'recap' reason, under W105's view.
+  const recapped = recaps === undefined ? undefined : createRecapView(indexer, recaps);
+  // The supervisor (M5, W113), or off. Started only when the page asks, stopped on close().
+  const supervisor = options.supervisor;
+  // With it, the snapshot carries its state, under W105's view.
+  const supervised = supervisor === undefined ? undefined : createSupervisorView(recapped ?? indexer, supervisor);
   // The snapshot clients get: each session's PR links cut to those matching a PR in the list (D14, W105).
-  const snapshots = createSnapshotView(indexer, prs);
+  const snapshots = createSnapshotView(supervised ?? recapped ?? indexer, prs);
+  // Every session this pitwall started or resumed, for its run: only those resume with the defaults for sessions (W119's review).
+  const started = new Set<string>();
+  // New sessions, from the spawn route and the supervisor's spawn_session (W115): one set of limits.
+  const actionOptions: ActionOptions = { token, spawned, resumed, work, started, ...internals.actions, slots: commandSlots, attachments };
+  const spawner = internals.actions?.spawner ?? createSpawnRunner(actionOptions);
+  // Resuming, from the Resume route and the supervisor's resume_session (W127): one set of checks and limits.
+  const resumer = internals.actions?.resumer ?? createResumeRunner(indexer, { ...actionOptions, slots: commandSlots, limiter: spawner.limiter });
+  // What the supervisor can do behind your click (W115): its approvals, checked against this snapshot.
+  const supervisorActions: SupervisorActionSources | undefined =
+    supervisor === undefined
+      ? undefined
+      : {
+          snapshots,
+          ownSessionIds: () => supervisor.ownSessionIds(),
+          approvals: supervisor.approvals(),
+          spawner,
+          onSpawned: () => indexer.pollSoon(),
+          resumer,
+          // The recipient's fresh, unfiltered check (W120), as the relay's and resume's.
+          agents: internals.actions?.agents ?? createAgentsSource(internals.actions?.claudeBin === undefined ? {} : { claudeBin: internals.actions.claudeBin }),
+          // What a resume card says of its permission mode (W129, L1), behind the job-file adapter, failing soft.
+          savedPermission: internals.savedPermission ?? ((shortId, sessionId) => readSavedPermission(shortId, sessionId)),
+        };
+  // pitwall's MCP server, for the supervisor alone (W112, W115): read-only tools over what pitwall
+  // already has, spawn_session, resume_session (W127), and approve, the permission prompt tool.
+  const mcp =
+    supervisor === undefined || supervisorActions === undefined
+      ? undefined
+      : {
+          token: () => supervisor.mcpToken(),
+          version: packageVersion(),
+          tools: [
+            ...createSupervisorTools({
+              snapshots,
+              conversation: (sessionId, before) => indexer.conversation(sessionId, before),
+              ...(recaps === undefined ? {} : { recaps }),
+              prs,
+              ownSessionIds: () => supervisor.ownSessionIds(),
+            }),
+            createSpawnSessionTool(supervisorActions),
+            createResumeSessionTool(supervisorActions),
+            createApproveTool(supervisorActions),
+          ],
+        };
+  // The names its recipient gate lets through to an approval, kept up with the list (W115).
+  const offRecipients =
+    supervisor === undefined
+      ? undefined
+      : (() => {
+          const update = () => supervisor.setRecipients(recipientNames(snapshots.latest(), supervisor.ownSessionIds(), indexer.liveRows?.()));
+          update();
+          return snapshots.subscribe(update);
+        })();
   // Clone and start (W107): its route, its sweep of what a killed pitwall left once listening, and on close() its running clone stopped.
   const clone = createCloneRoute(indexer, prs, internals.clone);
   // The directory list (W70), your open PRs, Refresh (M4) and Clone and start (W107), then the input routes: attachments
   // (W79), spawn, stop and remove (W12), resume (W66), the editors and open in an editor (W72), whose
-  // detection starts here, end session (W90), which never ends the relay, the relay (W11), then any a
-  // test adds.
+  // detection starts here, end session (W90), which never ends the relay or the supervisor, the relay
+  // (W11), recaps (W110), the supervisor's routes and its MCP server (W112, W113), then any a test adds.
   const routes = (app: Hono) => {
     registerDirectories(app, indexer, internals.directories);
     registerPrs(app, prs);
     clone.register(app);
     registerAttachments(app, attachments);
-    registerActions(app, indexer, { token, spawned, resumed, ...internals.actions, slots: commandSlots, attachments });
+    registerActions(app, indexer, { ...actionOptions, spawner, resumer });
     registerEditors(app, indexer, { token, ...internals.editors, slots: commandSlots });
-    registerEndSession(app, indexer, { isRelay: (row) => relay.isRelay(row), ...internals.end, slots: commandSlots });
+    registerEndSession(app, indexer, {
+      isRelay: (row) => relay.isRelay(row) || recaps?.isOwn(row) === true,
+      isSupervisor: (row) => supervisor?.isOwn(row) === true,
+      ...internals.end,
+      slots: commandSlots,
+    });
     registerRelay(app, indexer, relay);
+    registerRecaps(app, indexer, recaps);
+    registerSupervisor(app, supervisor, supervisorActions);
+    registerMcp(app, mcp);
+    registerWork(app, work, async (dir) => {
+      const checked = await checkDirectory(dir, indexer.latest()?.roots ?? []);
+      return checked.ok ? checked.path : undefined;
+    });
     internals.routes?.(app);
   };
-  const app = createApp({ snapshots, indexer, token, apiKey, webRoot, port: () => port ?? -1, routes });
+  const app = createApp({ snapshots, indexer, token, apiKey, webRoot, port: () => port ?? -1, routes, ...(supervisor === undefined ? {} : { supervisor }) });
   const honoListener = getRequestListener(app.fetch);
 
   const server = createServer((req, res) => {
@@ -285,6 +419,11 @@ export async function startServerWithInternals(
   attachments.start();
   // The first fetch of your open PRs, now that there's a server to show them.
   prs.start();
+  // Recaps from the index's snapshots, now that there's a server to show them, and from the PR list,
+  // for a finished session that owns a PR that needs you (W128).
+  recaps?.start(indexer, prs);
+  // The supervisor's MCP config names this server's MCP URL, now that its port is known. Nothing starts yet.
+  supervisor?.bind({ mcpUrl: `http://${LOOPBACK_HOST}:${port}${MCP_PATH}` });
   clone.start();
 
   let closed: Promise<void> | undefined;
@@ -292,9 +431,14 @@ export async function startServerWithInternals(
     url: `http://${LOOPBACK_HOST}:${port}`,
     port,
     close() {
+      // The supervisor's drafts denied first, while their calls can still be answered (W115).
+      supervisor?.approvals().cancelAll("pitwall is closing, so this wasn't sent.");
+      offRecipients?.();
       // No more fetches, and no more 'prs' messages to clients that are closing.
       prs.stop();
       snapshots.stop();
+      supervised?.stop();
+      recapped?.stop();
       closed ??= Promise.all([
         closeAll(server, wss, () => {
           closing = true;
@@ -304,6 +448,9 @@ export async function startServerWithInternals(
         // gh and git run in a session of their own, so nothing else stops them: SIGTERM, then the temp folder removed.
         clone.close(),
         attachments.close(),
+        recaps?.close(),
+        // Its stdin closed, then SIGTERM and SIGKILL if it lingers; its MCP config removed.
+        supervisor?.close(),
       ]).then(() => undefined);
       return closed;
     },
@@ -329,9 +476,11 @@ interface AppContext {
   webRoot: string;
   port(): number;
   routes: ServerInternals['routes'];
+  /** The supervisor, for its conversation's pages (W113). Absent with --no-supervisor. */
+  supervisor?: Pick<Supervisor, 'conversation'>;
 }
 
-function createApp({ snapshots, indexer, token, apiKey, webRoot, port, routes }: AppContext): Hono {
+function createApp({ snapshots, indexer, token, apiKey, webRoot, port, routes, supervisor }: AppContext): Hono {
   const app = new Hono();
   // Conversation pages being read now.
   let conversationReads = 0;
@@ -426,6 +575,14 @@ function createApp({ snapshots, indexer, token, apiKey, webRoot, port, routes }:
     const agentId = c.req.param('agentId');
     if (agentId === undefined || !isSafeAgentId(agentId)) return c.body(null, 404);
     return pageOf(c, (before) => indexer.subagentConversation(lookup.session.sessionId, agentId, before));
+  });
+
+  // The supervisor's own conversation (W113), from its transcript, which the index never lists, paged
+  // and limited as a session's is. 404 before it has one, and with --no-supervisor.
+  app.get(SUPERVISOR_CONVERSATION_ROUTE, async (c) => {
+    c.header('Cache-Control', 'no-store');
+    if (supervisor === undefined) return c.body(null, 404);
+    return pageOf(c, (before) => supervisor.conversation(before));
   });
 
   routes?.(app);

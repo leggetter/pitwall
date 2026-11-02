@@ -22,10 +22,15 @@
 // - A message whose markdown would take more than MAX_ELEMENTS elements is shown as the text it was
 //   written in, with a note saying so, so no message, however hostile, takes long to draw.
 //
+// - In the supervisor's view, a session or a PR it names is a link button that opens it (W125,
+//   mentions.ts), from MentionsContext: only in text, never in code, a code block or a link's text.
+//   Elsewhere there's no context, and text is only text.
+//
 // It's memoised on its text, so a conversation that re-renders as entries arrive doesn't parse or
 // render a message again.
 
 import { createContext, memo, useCallback, useContext, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { mentionLabel, type Mentions, type MentionTarget } from '../mentions.js';
 import { asksFirst, elementCount, httpUrl, MAX_ELEMENTS, parseMarkdown, type Align, type Block, type Inline } from '../markdown.js';
 import { CopyButton } from './CopyButton.js';
 import { InlineConfirm } from './InlineConfirm.js';
@@ -42,7 +47,18 @@ export const LINK_CONSEQUENCE = "Its text doesn't show where it goes: ";
 /** The question's confirm button, which repeats its verb and object (5: Labels). */
 export const OPEN_LINK = 'Open link';
 
+/**
+ * The supervisor's view's mentions (W125): what its replies can name, and what opening one does. None
+ * elsewhere, so no other conversation links a name.
+ */
+export interface MentionsValue {
+  mentions: Mentions;
+  open: (target: MentionTarget) => void;
+}
+export const MentionsContext = createContext<MentionsValue | undefined>(undefined);
+
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
+  const mentions = useContext(MentionsContext);
   const blocks = useMemo(() => {
     const parsed = parseMarkdown(text);
     return elementCount(parsed, MAX_ELEMENTS) > MAX_ELEMENTS ? undefined : parsed;
@@ -57,25 +73,28 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
   }
   // The message is a host too, for any link outside a paragraph, heading, table or code block, though
   // links are only ever in those, so none should reach it.
-  return <Asking>{blocks.map((block, index) => renderBlock(block, index))}</Asking>;
+  return <Asking>{blocks.map((block, index) => renderBlock(block, index, mentions))}</Asking>;
 });
 
-function renderBlocks(blocks: Block[]): ReactNode[] {
-  return blocks.map((block, index) => renderBlock(block, index));
+/** What text may link (W125): the view's mentions, or none, as in code and links' text. */
+type Linking = MentionsValue | undefined;
+
+function renderBlocks(blocks: Block[], m: Linking): ReactNode[] {
+  return blocks.map((block, index) => renderBlock(block, index, m));
 }
 
-function renderBlock(block: Block, key: number): ReactNode {
+function renderBlock(block: Block, key: number, m: Linking): ReactNode {
   switch (block.type) {
     case 'paragraph':
       return (
         <Asking key={key}>
-          <p className="md-p">{renderInlines(block.children)}</p>
+          <p className="md-p">{renderInlines(block.children, m)}</p>
         </Asking>
       );
     case 'heading':
       return (
         <Asking key={key}>
-          <p className={`md-heading md-h${block.level}`}>{renderInlines(block.children)}</p>
+          <p className={`md-heading md-h${block.level}`}>{renderInlines(block.children, m)}</p>
         </Asking>
       );
     case 'code':
@@ -86,7 +105,7 @@ function renderBlock(block: Block, key: number): ReactNode {
         </Asking>
       );
     case 'list': {
-      const items = block.items.map((item, index) => <li key={index}>{renderBlocks(item)}</li>);
+      const items = block.items.map((item, index) => <li key={index}>{renderBlocks(item, m)}</li>);
       return block.ordered ? (
         <ol key={key} className="md-list" start={block.start === 1 ? undefined : block.start}>
           {items}
@@ -100,7 +119,7 @@ function renderBlock(block: Block, key: number): ReactNode {
     case 'quote':
       return (
         <blockquote key={key} className="md-quote">
-          {renderBlocks(block.children)}
+          {renderBlocks(block.children, m)}
         </blockquote>
       );
     case 'rule':
@@ -108,41 +127,88 @@ function renderBlock(block: Block, key: number): ReactNode {
     case 'table':
       return (
         <Asking key={key}>
-          <Table align={block.align} head={block.head} rows={block.rows} />
+          <Table align={block.align} head={block.head} rows={block.rows} m={m} />
         </Asking>
       );
   }
 }
 
-function renderInlines(inlines: Inline[]): ReactNode[] {
-  return inlines.map((inline, index) => renderInline(inline, index));
+/**
+ * Inlines as elements. With mentions, a run of text, as the parser may split it, is searched as one,
+ * and `whole` says it's all of a bold or italic span's (mentions.ts: a generic name links only there).
+ */
+function renderInlines(inlines: Inline[], m: Linking = undefined, whole = false): ReactNode[] {
+  if (m === undefined) return inlines.map((inline, index) => renderInline(inline, index, undefined));
+  const nodes: ReactNode[] = [];
+  let run = '';
+  const flush = () => {
+    if (run === '') return;
+    const alone = whole && nodes.length === 0;
+    for (const part of m.mentions.split(run, alone && inlines.every((inline) => inline.type === 'text'))) {
+      nodes.push(part.kind === 'text' ? part.text : <Mention key={`m${nodes.length}`} text={part.text} target={part.target} open={m.open} />);
+    }
+    run = '';
+  };
+  inlines.forEach((inline, index) => {
+    if (inline.type === 'text') {
+      run += inline.text;
+      return;
+    }
+    flush();
+    nodes.push(renderInline(inline, index, m));
+  });
+  flush();
+  return nodes;
 }
 
-function renderInline(inline: Inline, key: number): ReactNode {
+function renderInline(inline: Inline, key: number, m: Linking): ReactNode {
   switch (inline.type) {
     case 'text':
       return inline.text;
     case 'break':
       return <br key={key} />;
     case 'strong':
-      return <strong key={key}>{renderInlines(inline.children)}</strong>;
+      return <strong key={key}>{renderInlines(inline.children, m, true)}</strong>;
     case 'em':
-      return <em key={key}>{renderInlines(inline.children)}</em>;
+      return <em key={key}>{renderInlines(inline.children, m, true)}</em>;
     case 'del':
-      return <del key={key}>{renderInlines(inline.children)}</del>;
+      return <del key={key}>{renderInlines(inline.children, m)}</del>;
     case 'code':
+      // Never a mention: code is as written.
       return (
         <code key={key} className="md-code-span">
           {inline.linked ? renderInlines(inline.linked) : inline.text}
         </code>
       );
     case 'link':
+      // Never a mention in a link's text: links don't nest.
       return (
         <Link key={key} href={inline.href} asks={asksFirst(inline)}>
           {renderInlines(inline.children)}
         </Link>
       );
   }
+}
+
+/**
+ * A session or PR the supervisor named (W125): a link button, in the text's own face, that opens
+ * pitwall's view of it, as its row does. Its name says what it opens, by the name pitwall knows; its
+ * text is the reply's. Nothing navigates: no href, no new tab.
+ */
+function Mention({ text, target, open }: { text: string; target: MentionTarget; open: (target: MentionTarget) => void }) {
+  return (
+    <button
+      type="button"
+      className="link-button md-mention"
+      aria-label={mentionLabel(target, text)}
+      data-mention={target.kind}
+      data-mention-session={target.kind === 'session' ? target.sessionId : undefined}
+      data-mention-pr={target.kind === 'pr' ? target.key : undefined}
+      onClick={() => open(target)}
+    >
+      {text}
+    </button>
+  );
 }
 
 /** Opens a link's question in the block it's in, with the link to put focus back on. */
@@ -267,7 +333,7 @@ function CodeBlock({ language, text, linked }: { language: string; text: string;
 const ALIGN: Record<Exclude<Align, undefined>, string> = { left: 'md-align-left', center: 'md-align-center', right: 'md-align-right' };
 
 /** A GFM table, with header cells as th and the columns' alignment, scrolling sideways on its own. */
-function Table({ align, head, rows }: { align: Align[]; head: Inline[][]; rows: Inline[][][] }) {
+function Table({ align, head, rows, m }: { align: Align[]; head: Inline[][]; rows: Inline[][][]; m: Linking }) {
   const cellClass = (column: number) => {
     const side = align[column];
     return side === undefined ? undefined : ALIGN[side];
@@ -279,7 +345,7 @@ function Table({ align, head, rows }: { align: Align[]; head: Inline[][]; rows: 
           <tr>
             {head.map((cell, column) => (
               <th key={column} scope="col" className={cellClass(column)}>
-                {renderInlines(cell)}
+                {renderInlines(cell, m)}
               </th>
             ))}
           </tr>
@@ -290,7 +356,7 @@ function Table({ align, head, rows }: { align: Align[]; head: Inline[][]; rows: 
               <tr key={index}>
                 {row.map((cell, column) => (
                   <td key={column} className={cellClass(column)}>
-                    {renderInlines(cell)}
+                    {renderInlines(cell, m)}
                   </td>
                 ))}
               </tr>

@@ -18,12 +18,20 @@ import type {
   PullRequestPlace,
   PullRequestRelation,
   PullRequestSummary,
+  RecapHealth,
   RelayExchange,
   SessionGroup,
+  PlanStatus,
+  SessionRecap,
   SessionSummary,
   SpawnRequest,
   SubagentList,
   SubagentSummary,
+  SupervisorApproval,
+  SupervisorHandoff,
+  SupervisorDecision,
+  SupervisorState,
+  SupervisorStatus,
 } from '../../src/shared/protocol.js';
 
 export const CODE = '/Users/example/code';
@@ -198,6 +206,89 @@ export const PRS_SEARCH_ERRORS = {
   mentioned: 'Made up: gh api failed with exit code 1.',
 } as const;
 
+/**
+ * What recaps say (M5, W111): 'off', the default, as with --no-recaps, so the parts before W111 see
+ * the session view as they did; 'ok', with some calls made today and made-up recaps for some
+ * sessions (RECAPPED); 'spent', the day's budget used up; 'failing', the latest call failed, and so
+ * does each one asked for.
+ */
+export type RecapsState = 'off' | 'ok' | 'spent' | 'failing';
+
+/** The error 'failing' says, in pitwall's made-up words. */
+export const RECAPS_ERROR = "Made up: claude -p didn't answer within 60 seconds.";
+
+/** How long a made-up recap call takes, so Refresh shows its spinner. */
+export const RECAP_CALL_MS = 600;
+
+/** How long a made-up plan status call takes (W123), so Plan status shows its spinner. */
+export const PLAN_CALL_MS = 700;
+
+/** The sessions whose made-up transcript shows no plan (W123): the rest work through PLANNED's. */
+export const NO_PLAN = NAMES.finished;
+
+/** The made-up plan a plan status finds (W123), for every session but NO_PLAN. */
+export const PLANNED = {
+  plan: 'Add the made-up health route to the API, in its plan file',
+  items: [
+    { text: 'W1: the route and its test', state: 'done' },
+    { text: 'W2: fix the lint errors on #51', state: 'now' },
+    { text: 'W3: rate limit the route', state: 'dropped' },
+    { text: 'W4: mark #51 ready', state: 'next' },
+    { text: 'W5: document the route in the made-up API guide', state: 'next' },
+  ],
+  changes: 'W3 was dropped: the made-up gateway already limits the route.',
+} as const;
+
+/**
+ * The sessions with a recap while recaps are on, by role: what each waits on, and whether it's
+ * current. A current recap that waits on you adds Needs you's 'recap' reason, as the index does
+ * (W110), unless the session needs you for another reason already. The rest have none, and a view
+ * opened on one asks for one.
+ */
+export const RECAPPED = {
+  /** NAMES.conversation: current, waiting on you. */
+  you: NAMES.conversation,
+  /** NAMES.asked: waiting on you, but older than its latest turn, so its view asks for a new one. */
+  stale: NAMES.asked,
+  /** NAMES.fromRoot: current, waiting on someone else, so its row says so quietly. */
+  someoneElse: NAMES.fromRoot,
+  /** NAMES.inApi: current, waiting on another session. */
+  anotherSession: NAMES.inApi,
+  /** NAMES.running2: current, waiting on CI; it works, so its row says nothing of it. */
+  ci: NAMES.running2,
+  /** NAMES.finished: current, nothing pending: Done. */
+  done: NAMES.finished,
+  /** NAMES.running3: only Claude Code's own recap. */
+  claudeCode: NAMES.running3,
+} as const;
+
+/**
+ * The supervisor (M5, W114): 'none', the default, as with --no-supervisor, so the parts before W114
+ * see the repo list and the page as they did; otherwise its status as the page finds it. A message
+ * sent to it while it's off or idle starts a made-up turn: 'starting' for a moment when it was off,
+ * then 'working', with your message in its conversation, then 'idle', with its made-up reply.
+ */
+export type SupervisorWorldState = 'none' | SupervisorStatus;
+
+/** How long a made-up supervisor turn's steps take, so the page shows each one. */
+export const SUPERVISOR_STEP_MS = 700;
+
+/** What a held supervisor's made-up error says, naming the claude stop command, as the contract has it. */
+export const SUPERVISOR_HELD_ERROR =
+  "A background session is running the supervisor's conversation, so pitwall can't resume it. Run `claude stop pt114bg1` to hand it back, then press Start. pitwall won't stop it for you.";
+export const SUPERVISOR_FAILED_ERROR = 'The supervisor stopped as it started (exit code 1). Press Start to try again.';
+
+/** The made-up reply each message gets, in markdown, naming made-up sessions and example/* repos. */
+export const SUPERVISOR_REPLY =
+  'Two sessions need you:\n\n1. **pitwall-test-docs** waits on a permission prompt to run the made-up docs build.\n2. **pitwall-test-review** asked whether to retry the failed batch on `example/api-server` now or tonight.\n\nNothing else needs you.';
+
+/** Its made-up drafts, oldest first: a message to a session, and a new session for a PR. */
+export const SUPERVISOR_APPROVALS = {
+  message: 'pt114-approval-message',
+  spawn: 'pt114-approval-spawn',
+  resume: 'pt127-approval-resume',
+} as const;
+
 /** The cursor of SUBAGENTS.drafting's newest page, for its Load earlier. */
 const SUBAGENT_CURSOR = 'pt77-older';
 
@@ -213,6 +304,17 @@ export interface ResetOptions {
   prs?: PrsState;
   /** Group labels by key, in place of the made-up ones, such as a longer name for a heading. */
   labels?: Readonly<Record<string, string>>;
+  /** What recaps say (W111): 'off', as with --no-recaps, by default. */
+  recaps?: RecapsState;
+  /** The supervisor (W114): 'none', as with --no-supervisor, by default. */
+  supervisor?: SupervisorWorldState;
+  /**
+   * Whether it has made-up drafts waiting on you, a message and a new session (W114), or 'long', one
+   * message of 14 lines with a no-break space, which the card draws as its code (W120).
+   */
+  approvals?: boolean | 'long' | 'resume';
+  /** Whether its conversation has made-up turns already, with a page behind Load earlier, or none, a new one. */
+  supervisorHistory?: boolean;
 }
 
 /** The made-up index: a snapshot, conversations, and what POSTs have changed since the last reset. */
@@ -233,15 +335,43 @@ export class World {
   /** When the latest fetch finished, and started: a refresh within PRS_REFRESH_MIN_MS of the start gets 429. */
   #prsFetchedAt = 0;
   #prsFetchStarted = 0;
+  /** Recaps (W111): their state, the recaps by session id, today's calls, the calls running, and the day's budget. */
+  #recapsState: RecapsState = 'off';
+  #recaps = new Map<string, SessionRecap>();
+  /** Plan statuses made (W123), by session id, and the calls running. */
+  #plans = new Map<string, PlanStatus>();
+  #planning = new Set<string>();
+  #recapCalls = 0;
+  #recapping = new Set<string>();
+  #recapBudget = 200;
+  /** When the latest made-up call failed, for RecapHealth.errorAt, with 'failing'. */
+  #recapErrorAt = 0;
   /** The repos Clone and start has cloned since the last reset (W107), by repo, with where. */
   #cloned = new Map<string, string>();
   /** Whether a clone fails, as gh does for a repo you can't see (W107). */
   #cloneFails = false;
   /** PRs listed with another relation than their own until the next reset, by key (W108): `notYours()`. */
   #relations = new Map<string, PullRequestRelation>();
+  /** The supervisor (W114): its status, drafts, conversation and cost, and its timers' generation. */
+  #supervisor: SupervisorWorldState = 'none';
+  #approvals: SupervisorApproval[] = [];
+  /** What you approved (W124): each message sent and session started, oldest first. */
+  #handoffs: SupervisorHandoff[] = [];
+  #supervisorEntries: ConversationEntry[] = [];
+  #supervisorOlder: ConversationEntry[] = [];
+  #supervisorCost = 0;
+  #supervisorTurnAt: string | undefined;
+  /** Each made-up turn's number: Stop and a reset end the one running, so its later steps do nothing. */
+  #supervisorTurn = 0;
 
   constructor() {
     this.reset();
+  }
+
+  /** The day's recap budget, from the build's RECAP_DAILY_BUDGET, which the fake server passes. */
+  setRecapBudget(budget: number): void {
+    this.#recapBudget = budget;
+    if (this.#recapsState === 'spent') this.#recapCalls = budget;
   }
 
   reset(options: ResetOptions = {}): void {
@@ -260,6 +390,223 @@ export class World {
     this.#cloneFails = false;
     this.#relations = new Map();
     this.#sessions = new Map(this.#baseSessions().map((each) => [each.sessionId, each]));
+    this.#recapsState = options.recaps ?? 'off';
+    this.#recapCalls = this.#recapsState === 'spent' ? this.#recapBudget : 37;
+    this.#recapping = new Set();
+    this.#plans = new Map();
+    this.#planning = new Set();
+    this.#recapErrorAt = this.#now - 3 * MINUTE;
+    this.#recaps = new Map(this.#recapsState === 'off' ? [] : this.#baseRecaps().map((each) => [this.byName(each.name).sessionId, each.recap]));
+    this.#supervisorTurn += 1;
+    this.#supervisor = options.supervisor ?? 'none';
+    this.#handoffs = [];
+    this.#approvals = options.approvals === 'long' ? [this.#longApproval()] : options.approvals === 'resume' ? [this.#resumeApproval()] : options.approvals ? this.#baseApprovals() : [];
+    const history = options.supervisorHistory ?? (this.#supervisor !== 'none' && this.#supervisor !== 'off');
+    this.#supervisorEntries = history ? this.#supervisorTurns() : [];
+    this.#supervisorOlder = history ? this.#supervisorOlderTurns() : [];
+    this.#supervisorCost = history ? 0.0425 : 0;
+    this.#supervisorTurnAt = history ? this.#ago(4) : undefined;
+  }
+
+  // --- The supervisor (W114) ---------------------------------------------------------------------
+
+  /** Its state, as the snapshot carries it: absent with 'none', as with --no-supervisor. */
+  supervisorState(): SupervisorState | undefined {
+    if (this.#supervisor === 'none') return undefined;
+    const state: SupervisorState = { status: this.#supervisor, approvals: [...this.#approvals] };
+    if (this.#supervisorEntries.length > 0) state.sessionId = 'pt114-supervisor-session';
+    if (this.#supervisor === 'held') state.error = SUPERVISOR_HELD_ERROR;
+    if (this.#supervisor === 'failed') state.error = SUPERVISOR_FAILED_ERROR;
+    if (this.#supervisorTurnAt !== undefined) state.lastTurnAt = this.#supervisorTurnAt;
+    if (this.#supervisorCost > 0) state.costUsd = this.#supervisorCost;
+    if (this.#handoffs.length > 0) state.handoffs = [...this.#handoffs];
+    return state;
+  }
+
+  /** Its conversation's newest page, or the older one behind Load earlier; undefined for none yet, a 404, or a cursor it doesn't know. */
+  supervisorConversation(before: string | undefined): ConversationPage | undefined {
+    if (this.#supervisor === 'none' || this.#supervisorEntries.length === 0) return undefined;
+    const sessionId = 'pt114-supervisor-session';
+    if (before === undefined) return { sessionId, entries: [...this.#supervisorEntries], ...(this.#supervisorOlder.length > 0 ? { before: 'pt114-older' } : {}) };
+    return before === 'pt114-older' ? { sessionId, entries: [...this.#supervisorOlder] } : undefined;
+  }
+
+  /**
+   * A message to it (SUPERVISOR_MESSAGE_PATH), as the contract answers: 'refused' with none or while
+   * it's held (409); otherwise taken, and `steps`, which the server runs a moment apart: starting, if it
+   * was off or failed, then working with your message in its conversation, then idle with its reply.
+   */
+  supervisorMessage(text: string): { result: 'refused' } | { result: 'taken'; steps: Array<() => void> } {
+    if (this.#supervisor === 'none' || this.#supervisor === 'held') return { result: 'refused' };
+    const steps: Array<() => void> = [];
+    if (this.#supervisor === 'off' || this.#supervisor === 'failed') {
+      this.#supervisor = 'starting';
+    }
+    const turn = ++this.#supervisorTurn;
+    const live = () => turn === this.#supervisorTurn;
+    steps.push(() => {
+      if (!live()) return;
+      this.#supervisor = 'working';
+      this.#supervisorEntries.push({ kind: 'user', text, at: new Date().toISOString() });
+      this.#supervisorEntries.push({ kind: 'tool', text: 'mcp__pitwall__list_sessions', toolName: 'mcp__pitwall__list_sessions', at: new Date().toISOString() });
+    });
+    steps.push(() => {
+      if (!live()) return;
+      this.#supervisorEntries.push({ kind: 'assistant', text: SUPERVISOR_REPLY, markdown: true, at: new Date().toISOString() });
+      this.#supervisor = 'idle';
+      this.#supervisorTurnAt = new Date().toISOString();
+      this.#supervisorCost += 0.0099;
+    });
+    return { result: 'taken', steps };
+  }
+
+  /** Start (SUPERVISOR_START_PATH): 'refused' with none or while it's held; otherwise starting, then idle a moment later. */
+  supervisorStart(): { result: 'refused' } | { result: 'taken'; steps: Array<() => void> } {
+    if (this.#supervisor === 'none' || this.#supervisor === 'held') return { result: 'refused' };
+    if (this.#supervisor !== 'off' && this.#supervisor !== 'failed') return { result: 'taken', steps: [] };
+    this.#supervisor = 'starting';
+    return {
+      result: 'taken',
+      steps: [
+        () => {
+          this.#supervisor = 'idle';
+        },
+      ],
+    };
+  }
+
+  /** Stop (SUPERVISOR_INTERRUPT_PATH): its running turn stops, with Claude Code's notice. */
+  supervisorInterrupt(): boolean {
+    if (this.#supervisor !== 'working') return false;
+    this.#supervisorTurn += 1;
+    this.#supervisorEntries.push({ kind: 'notice', text: '[Request interrupted by user]', at: new Date().toISOString() });
+    this.#supervisor = 'idle';
+    this.#supervisorTurnAt = new Date().toISOString();
+    return true;
+  }
+
+  /** A decision for one approval (supervisorApprovalPath()): 'missing' for one it doesn't have (404), else it goes, `done` a moment later, as pitwall acts on it. */
+  supervisorDecide(id: string, decision: SupervisorDecision): { result: 'missing' } | { result: 'taken'; done: () => void } {
+    const approval = this.#approvals.find((each) => each.id === id);
+    if (!approval) return { result: 'missing' };
+    return {
+      result: 'taken',
+      done: () => {
+        this.#approvals = this.#approvals.filter((each) => each.id !== id);
+        const what = decision.decision === 'decline' ? "You didn't send it." : decision.decision === 'edit' ? 'You sent your edit.' : 'You sent it.';
+        const named = approval.kind === 'message' ? `Message to ${approval.to}` : approval.kind === 'resume' ? `Resume ${approval.name}` : `New session in ${approval.directory}`;
+        this.#supervisorEntries.push({ kind: 'notice', text: `${named}: ${what}`, at: new Date().toISOString() });
+        // What went, for the panel's Sent and started (W124): a message to the session of that name, or
+        // a new background session, listed at once, that needs you, as one that has a question would.
+        if (decision.decision !== 'decline') {
+          const at = new Date().toISOString();
+          if (approval.kind === 'message') {
+            const to = [...this.#sessions.values()].find((each) => each.name === approval.to);
+            this.#handoffs.push({ id: `pt124-handoff-${this.#handoffs.length + 1}`, kind: 'message', name: approval.to, at, ...(to === undefined ? {} : { sessionId: to.sessionId }) });
+          } else if (approval.kind === 'resume') {
+            // W127: resumed with the message as its next turn, so it's working, not waiting for a prompt.
+            const resumed = this.resume(approval.sessionId);
+            resumed.list();
+            const now = this.#sessions.get(approval.sessionId);
+            if (now !== undefined) {
+              const working: SessionSummary = { ...now, status: 'busy', state: 'working' };
+              delete working.needsYou;
+              this.#sessions.set(approval.sessionId, working);
+            }
+            this.#handoffs.push({ id: `pt127-handoff-${this.#handoffs.length + 1}`, kind: 'resume', name: approval.name, sessionId: approval.sessionId, shortId: resumed.shortId, at });
+          } else {
+            const started = this.spawn({ cwd: approval.directory, prompt: approval.prompt, ...(approval.name === undefined ? {} : { name: approval.name }) }, CODE);
+            started.summary.needsYou = { reason: 'claude-code', text: 'Which base branch should the made-up review compare against?' };
+            started.summary.state = 'blocked';
+            started.list();
+            this.#handoffs.push({ id: `pt124-handoff-${this.#handoffs.length + 1}`, kind: 'spawn', name: started.summary.name, shortId: started.summary.shortId!, at });
+          }
+        }
+        // Told what you decided, it takes a short turn, so its last turn moves.
+        this.#supervisorTurnAt = new Date().toISOString();
+      },
+    };
+  }
+
+  /** Puts the supervisor in `status`, as its process would, for a step that needs it there. */
+  setSupervisor(status: Exclude<SupervisorWorldState, 'none'>): void {
+    this.#supervisor = status;
+  }
+
+  #baseApprovals(): SupervisorApproval[] {
+    return [
+      {
+        id: SUPERVISOR_APPROVALS.message,
+        kind: 'message',
+        to: NAMES.asked,
+        text: 'Please retry the made-up failed batch on example/api-server tonight, in the nightly window, not now. Tell me here when it has run.',
+        at: this.#ago(5),
+        expiresAt: this.#ago(-24),
+      },
+      {
+        id: SUPERVISOR_APPROVALS.spawn,
+        kind: 'spawn',
+        directory: DEMO_APP,
+        name: 'pr-57',
+        prompt: 'Review https://github.com/example/demo-app/pull/57. Say what blocks it, if anything.',
+        at: this.#ago(2),
+        expiresAt: this.#ago(-27),
+      },
+    ];
+  }
+
+  /** W127: NAMES.ended, a finished session, resumed with a message as its next turn. */
+  #resumeApproval(): SupervisorApproval {
+    const ended = this.byName(NAMES.ended);
+    return {
+      id: SUPERVISOR_APPROVALS.resume,
+      kind: 'resume',
+      sessionId: ended.sessionId,
+      name: ended.name,
+      directory: ended.cwd,
+      text: 'The user asked me to pass this on: please finish the made-up guide’s last section, then open a draft PR for it.',
+      at: this.#ago(1),
+      expiresAt: this.#ago(-28),
+      // W129: its folder and last activity, a name another listed session shares, and a mode that skips the prompts, so the card shows each line.
+      ...(ended.lastActivityAt === undefined ? {} : { lastActivityAt: ended.lastActivityAt }),
+      sameName: 2,
+      permission: { kind: 'mode', mode: 'bypassPermissions' },
+    };
+  }
+
+  /** A message taller than its card shows, with a character drawn as its code (W120). */
+  #longApproval(): SupervisorApproval {
+    const steps = Array.from({ length: 12 }, (_, index) => `${index + 1}. Check the made-up step ${index + 1} of the nightly batch.`);
+    return {
+      id: SUPERVISOR_APPROVALS.message,
+      kind: 'message',
+      to: NAMES.asked,
+      text: ['Please work through these before tonight\u00a0and tell me what failed:', ...steps, 'Thanks.'].join('\n'),
+      at: this.#ago(3),
+      expiresAt: this.#ago(-26),
+    };
+  }
+
+  #supervisorTurns(): ConversationEntry[] {
+    return [
+      { kind: 'user', text: "What's running, in a sentence each?", at: this.#ago(6) },
+      { kind: 'tool', text: 'mcp__pitwall__list_sessions', toolName: 'mcp__pitwall__list_sessions', at: this.#ago(5.9) },
+      {
+        kind: 'assistant',
+        markdown: true,
+        at: this.#ago(5.8),
+        text: '- **pitwall-test-nightly-export** is running the made-up export tests.\n- **pitwall-test-retry-worker** is waiting on CI for its backoff change on `example/api-server`.\n- **pitwall-test-index-rebuild** is half way through the made-up index rebuild.',
+      },
+      { kind: 'user', text: 'Ask pitwall-test-review to retry the batch tonight, and start a session to review example/demo-app#57.', at: this.#ago(5.2) },
+      { kind: 'assistant', markdown: true, at: this.#ago(5), text: "I've drafted both for you: a message to **pitwall-test-review**, and a session to review example/demo-app#57. They're in the cards below, and go only when you send them. `pitwall-test-review` in code stays text." },
+    ];
+  }
+
+  #supervisorOlderTurns(): ConversationEntry[] {
+    return [
+      { kind: 'user', text: 'Which sessions need me, and why?', at: this.#ago(40) },
+      { kind: 'assistant', markdown: true, at: this.#ago(39.8), text: 'Only **pitwall-test-docs**: it waits on a permission prompt.' },
+    ];
   }
 
   /**
@@ -290,8 +637,200 @@ export class World {
       if (home) home.sessions.unshift(summary);
       else groups.push({ key: summary.cwd, label: summary.cwd.slice(root.length + 1), kind: 'directory', root, sessions: [summary] });
     }
-    const named = groups.map((group) => ({ ...group, label: this.#labels[group.key] ?? group.label }));
-    return { generatedAt: new Date().toISOString(), roots: this.roots, groups: named.filter((group) => group.sessions.length > 0), source: { ok: true } };
+    const named = groups.map((group) => ({ ...group, label: this.#labels[group.key] ?? group.label, sessions: group.sessions.map((each) => this.#withRecap(each)) }));
+    const health = this.recapHealth();
+    return {
+      generatedAt: new Date().toISOString(),
+      roots: this.roots,
+      groups: named.filter((group) => group.sessions.length > 0),
+      source: { ok: true },
+      ...(health ? { recaps: health } : {}),
+      ...(this.#supervisor === 'none' ? {} : { supervisor: this.supervisorState() }),
+    };
+  }
+
+  /** How recaps are doing (W111), as the snapshot carries it: absent with recaps off. */
+  recapHealth(): RecapHealth | undefined {
+    if (this.#recapsState === 'off') return undefined;
+    const health: RecapHealth = { calls: this.#recapCalls, budget: this.#recapBudget, costUsd: Math.round(this.#recapCalls * 11) / 10_000 };
+    return this.#recapsState === 'failing' ? { ...health, error: RECAPS_ERROR, errorAt: new Date(this.#recapErrorAt).toISOString() } : health;
+  }
+
+  /** A listed session's whole recap (W111), as GET recapPath() answers it, with `stale` from its activity; undefined without one. */
+  recap(sessionId: string): SessionRecap | undefined {
+    const recap = this.#recaps.get(sessionId);
+    const session = this.#sessions.get(sessionId);
+    if (!recap || !session) return undefined;
+    return this.#isStale(recap, session) ? { ...recap, stale: true } : recap;
+  }
+
+  /**
+   * Refresh (W111), in the order the contract gives recapRefreshPath()'s answers: 'off' with recaps
+   * off (409); 'not-recapped' for a session with no transcript (404), none here, since every made-up
+   * session has one, ended ones included (D26); 'spent' with the day's budget used up, and 'running'
+   * while a call for it runs (429); otherwise 'started', and `done`, which ends the call: a new recap,
+   * through its latest activity, or with 'failing' none.
+   */
+  refreshRecap(sessionId: string): { result: 'off' } | { result: 'not-recapped' } | { result: 'spent' } | { result: 'running' } | { result: 'started'; done: () => void } {
+    if (this.#recapsState === 'off') return { result: 'off' };
+    const session = this.#sessions.get(sessionId);
+    if (!session || session.transcript !== 'ok') return { result: 'not-recapped' };
+    if (this.#recapCalls >= this.#recapBudget) return { result: 'spent' };
+    if (this.#recapping.has(sessionId)) return { result: 'running' };
+    this.#recapping.add(sessionId);
+    this.#recapCalls += 1;
+    return {
+      result: 'started',
+      done: () => {
+        this.#recapping.delete(sessionId);
+        if (this.#recapsState === 'failing') {
+          this.#recapErrorAt = Date.now();
+          return;
+        }
+        const now = new Date().toISOString();
+        const through = this.#sessions.get(sessionId)?.lastActivityAt ?? now;
+        const was = this.#recaps.get(sessionId);
+        const made = was && was.source === 'pitwall' ? was : this.#firstRecap(session);
+        this.#recaps.set(sessionId, { ...made, at: now, throughAt: through });
+      },
+    };
+  }
+
+  /** A listed session's newest plan status (W123), as GET planStatusPath() answers it; undefined before one is made. */
+  planStatus(sessionId: string): PlanStatus | undefined {
+    return this.#recapsState === 'off' ? undefined : this.#plans.get(sessionId);
+  }
+
+  /**
+   * Plan status (W123), in the order the contract gives planStatusRefreshPath()'s answers: 'off' (409),
+   * 'not-recapped' (404), 'spent' or 'running' (429), otherwise 'started', and `done`, which ends the
+   * call and gives its plan status: PLANNED, or no plan for NO_PLAN. Counted as a recap call.
+   */
+  makePlanStatus(sessionId: string): { result: 'off' } | { result: 'not-recapped' } | { result: 'spent' } | { result: 'running' } | { result: 'started'; done: () => PlanStatus } {
+    if (this.#recapsState === 'off') return { result: 'off' };
+    const session = this.#sessions.get(sessionId);
+    if (!session || session.transcript !== 'ok') return { result: 'not-recapped' };
+    if (this.#recapCalls >= this.#recapBudget) return { result: 'spent' };
+    if (this.#planning.has(sessionId)) return { result: 'running' };
+    this.#planning.add(sessionId);
+    this.#recapCalls += 1;
+    return {
+      result: 'started',
+      done: () => {
+        this.#planning.delete(sessionId);
+        const at = new Date().toISOString();
+        const through = this.#sessions.get(sessionId)?.lastActivityAt ?? at;
+        const status: PlanStatus =
+          session.name === NO_PLAN
+            ? { found: false, items: [], at, throughAt: through }
+            : { found: true, plan: PLANNED.plan, items: PLANNED.items.map((item) => ({ ...item })), changes: PLANNED.changes, at, throughAt: through };
+        this.#plans.set(sessionId, status);
+        return status;
+      },
+    };
+  }
+
+  /** The session as the snapshot lists it with its recap (W111): the summary, the title from it, and Needs you's 'recap' while it's current and waits on you. */
+  #withRecap(session: SessionSummary): SessionSummary {
+    const recap = this.#recapsState === 'off' ? undefined : this.recap(session.sessionId);
+    const planAt = this.planStatus(session.sessionId)?.at;
+    if (!recap) return planAt === undefined ? session : { ...session, planStatusAt: planAt };
+    if (planAt !== undefined) session = { ...session, planStatusAt: planAt };
+    const yours = recap.todos.filter((todo) => todo.owner === 'you');
+    const next = yours[0]?.text;
+    const summary = { waitingOn: recap.waitingOn, title: recap.title, forYou: yours.length, at: recap.at, source: recap.source, ...(next === undefined ? {} : { next }), ...(recap.stale ? { stale: true as const } : {}) };
+    const listed: SessionSummary = { ...session, recap: summary };
+    if (recap.source === 'pitwall') Object.assign(listed, { title: recap.title, titleSource: 'pitwall' });
+    const needs = recap.source === 'pitwall' && recap.waitingOn === 'you' && next !== undefined && !recap.stale && !session.stale && !session.finished && session.needsYou === undefined;
+    return needs ? { ...listed, needsYou: { reason: 'recap', text: next } } : listed;
+  }
+
+  /** Older than the session's latest activity. */
+  #isStale(recap: SessionRecap, session: SessionSummary): boolean {
+    return session.lastActivityAt !== undefined && Date.parse(session.lastActivityAt) > Date.parse(recap.throughAt);
+  }
+
+  /** The made-up recaps, by session name (RECAPPED). */
+  #baseRecaps(): { name: string; recap: SessionRecap }[] {
+    const through = (name: string) => this.byName(name).lastActivityAt ?? this.#ago(10);
+    const made = (name: string, extra: Partial<SessionRecap>): { name: string; recap: SessionRecap } => ({
+      name,
+      recap: {
+        summary: 'You asked it to add a made-up health route to the API, with a test. The route and its test are in, and the made-up CI run on #51 is red on lint.',
+        todos: [
+          { text: 'Say whether to fix the lint errors on #51 now, or leave them for the made-up follow-up', owner: 'you' },
+          { text: 'Fix the lint errors, if you say now', owner: 'session' },
+          { text: 'Say whether to mark #51 ready', owner: 'you' },
+        ],
+        waitingOn: 'you',
+        title: 'Add a made-up health route',
+        at: through(name),
+        throughAt: through(name),
+        source: 'pitwall',
+        ...extra,
+      },
+    });
+    return [
+      made(RECAPPED.you, {}),
+      made(RECAPPED.stale, {
+        summary: 'You asked it to review the made-up retry change. It reviewed it and asked whether to retry the failed batch now.',
+        todos: [{ text: 'Say whether to retry the made-up failed batch now, or wait for tonight', owner: 'you' }],
+        title: 'Review the made-up retry change',
+        at: this.#ago(19),
+        throughAt: this.#ago(20),
+      }),
+      made(RECAPPED.someoneElse, {
+        summary: 'You asked it to tidy both made-up services. It pushed #19 and asked for a review.',
+        todos: [{ text: 'Approve #19', owner: 'someone else' }],
+        waitingOn: 'someone else',
+        title: 'Tidy both made-up services',
+      }),
+      made(RECAPPED.anotherSession, {
+        summary: 'You asked it to add a made-up route. Its sub-agents are drafting the route and its tests.',
+        todos: [
+          { text: "Land pitwall-test-api's made-up health route first", owner: 'someone else' },
+          { text: 'Add the route on top of it', owner: 'session' },
+        ],
+        waitingOn: 'another session',
+        title: 'Add a made-up route',
+      }),
+      made(RECAPPED.ci, {
+        summary: 'You asked it to make the made-up retry worker back off. It pushed the backoff to its branch.',
+        todos: [
+          { text: 'Finish the made-up CI run on its branch', owner: 'CI' },
+          { text: 'Say whether to open the PR once it passes', owner: 'you' },
+        ],
+        waitingOn: 'CI',
+        title: 'Back off the made-up retry worker',
+      }),
+      made(RECAPPED.done, { summary: 'You asked it to run the made-up migration. It ran, and every table checks out.', todos: [], waitingOn: 'nothing', title: 'Run the made-up migration' }),
+      made(RECAPPED.claudeCode, { summary: 'The made-up index rebuild is half done; it runs until the last shard is in.', todos: [], waitingOn: 'nothing', title: '', source: 'claude-code' }),
+    ];
+  }
+
+  /** A first recap for a session that had none, made up from its role. */
+  #firstRecap(session: SessionSummary): SessionRecap {
+    const now = new Date().toISOString();
+    const base = { at: now, throughAt: now, source: 'pitwall' as const };
+    if (session.name === NAMES.waiting) {
+      return {
+        ...base,
+        summary: 'You asked it to update the made-up getting started guide. It rewrote the install steps and wants to run the made-up docs build.',
+        todos: [{ text: 'Answer its permission prompt to run the made-up docs build', owner: 'you' }],
+        waitingOn: 'you',
+        title: 'Update the getting started guide',
+      };
+    }
+    if (session.ended) {
+      return {
+        ...base,
+        summary: 'You asked it to tidy the made-up release notes. It tidied them, and the session ended before you said whether to publish them.',
+        todos: [{ text: 'Say whether to publish the made-up release notes', owner: 'you' }],
+        waitingOn: 'you',
+        title: 'Tidy the made-up release notes',
+      };
+    }
+    return { ...base, summary: `You asked it to tidy the made-up export job, in ${session.name}. It retries three times now, with backoff.`, todos: [], waitingOn: 'nothing', title: 'Tidy the made-up export job' };
   }
 
   /**
@@ -555,6 +1094,11 @@ export class World {
     const open: SessionSummary = { ...was };
     delete open.ended;
     this.#sessions.set(sessionId, { ...open, pid: 42_001, alive: true, status: 'idle', finished: false, lastActivityAt: new Date().toISOString() });
+  }
+
+  /** Until the next reset, the session isn't listed, as after its transcript went (W118: an open view keeps what it showed). */
+  unlist(sessionId: string): void {
+    this.#sessions.delete(sessionId);
   }
 
   /**

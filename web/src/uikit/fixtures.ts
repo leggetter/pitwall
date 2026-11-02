@@ -12,6 +12,7 @@ import type {
   SessionGroup,
   SessionSummary,
   SubagentSummary,
+  SupervisorApproval,
 } from '../../../src/shared/protocol.js';
 
 /** The gallery's clock. Fixture times are set back from it, so "4m ago" reads as written. */
@@ -954,7 +955,7 @@ export const SUBAGENTS: SubagentSummary[] = [
 const TASKS = ['Read', 'Check', 'Review', 'Search', 'Summarise', 'Draft', 'Test', 'Trace'];
 const THINGS = ['the made-up export job', 'the retry tests', 'the made-up routes', 'the batch writer', 'the made-up docs', 'the queue worker', 'the made-up changelog', 'the timeout handling', 'the CSV export'];
 
-/** 72 sub-agents, the most one of Phil's sessions started in a week (PLAN.md): three running, and every eighth started by another. */
+/** 72 sub-agents, the most one of Phil's sessions started in a week (docs/plan-archive.md): three running, and every eighth started by another. */
 export const MANY_SUBAGENTS: SubagentSummary[] = (() => {
   const made: SubagentSummary[] = [];
   for (let i = 0; i < 72; i++) {
@@ -1014,3 +1015,52 @@ export const SUBAGENT_CONVERSATION: ConversationEntry[] = [
 
 /** An interactive session with sub-agents, two of them running. */
 export const VIEW_SUBAGENTS = session('view-subagents', { title: 'Export retries', subagentsRunning: 2, lastActivityAt: ago(0.1) });
+
+// --- The supervisor (W114) ------------------------------------------------------------------------
+
+/** A made-up conversation with the supervisor: a question, its read of the sessions, and a draft it made. */
+export const SUPERVISOR_CONVERSATION: ConversationEntry[] = [
+  { kind: 'user', at: ago(6), text: 'Which sessions need me, and why?' },
+  { kind: 'tool', at: ago(5.9), toolName: 'mcp__pitwall__list_sessions', text: 'mcp__pitwall__list_sessions' },
+  {
+    kind: 'assistant',
+    at: ago(5.8),
+    markdown: true,
+    text: 'Two need you:\n\n1. **pitwall-test-docs** waits on a permission prompt to run the made-up docs build.\n2. **pitwall-test-api** asked whether to retry the failed batch now or tonight.\n\n`pitwall-test-export` is working on the retry change; nothing for you there yet.',
+  },
+  { kind: 'user', at: ago(3), text: 'Tell pitwall-test-api to retry it tonight.' },
+  { kind: 'assistant', at: ago(2.9), markdown: true, text: "I've drafted that message for you. It's in the card below, and goes only when you send it." },
+];
+
+/** Its drafts: a message to a session, a new session, and a resume (W127), oldest first. */
+export const SUPERVISOR_MESSAGE: SupervisorApproval = {
+  id: 'pitwall-test-approval-1',
+  kind: 'message',
+  to: 'pitwall-test-api',
+  text: 'Please retry the made-up failed batch tonight, in the nightly window, not now. Tell me in this session when it has run.',
+  at: ago(2.9),
+  expiresAt: ago(-26),
+};
+/** W127: a finished session resumed with a message as its next turn. */
+export const SUPERVISOR_RESUME: SupervisorApproval = {
+  id: 'pitwall-test-approval-3',
+  kind: 'resume',
+  sessionId: '00000000-0000-4000-8000-000000000127',
+  name: 'pitwall-test-precision',
+  directory: `${ROOT}/pitwall-test-app`,
+  text: 'The user asked me to pass this on: please carry on with the made-up integer precision fix, then update its PR.',
+  at: ago(0.5),
+  expiresAt: ago(-29),
+  lastActivityAt: ago(60 * 26),
+  sameName: 2,
+  permission: { kind: 'mode', mode: 'bypassPermissions' },
+};
+export const SUPERVISOR_SPAWN: SupervisorApproval = {
+  id: 'pitwall-test-approval-2',
+  kind: 'spawn',
+  directory: `${ROOT}/pitwall-test-app`,
+  name: 'pr-57',
+  prompt: 'Review https://github.com/example/demo-app/pull/57. Say what blocks it, if anything.',
+  at: ago(1),
+  expiresAt: ago(-28),
+};

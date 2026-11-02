@@ -42,7 +42,24 @@ export interface TranscriptInfo {
    * which holds until a prompt newer than the restart.
    */
   lastPromptMs?: number;
+  /**
+   * Claude Code's newest recap of the session (spike 007, finding 8): the newest `system` entry with
+   * `subtype: "away_summary"`, in file order, its `content` trimmed and at most AWAY_SUMMARY_MAX
+   * characters, with its time. Internal and undocumented. For M5's recaps, which show it until
+   * pitwall has one of its own (SessionRecap's 'claude-code' source); the snapshot doesn't carry it.
+   */
+  awaySummary?: AwaySummary;
 }
+
+/** Claude Code's own short recap of a session, an `away_summary` entry (TranscriptInfo.awaySummary). */
+export interface AwaySummary {
+  text: string;
+  /** ISO 8601. */
+  at: string;
+}
+
+/** The longest `away_summary` kept. Real ones are about 230 characters (spike 007, spike 010). */
+export const AWAY_SUMMARY_MAX = 2000;
 
 export interface TranscriptReaderOptions {
   /** Default `$CLAUDE_CONFIG_DIR`, or `~/.claude` when it isn't set. */
@@ -442,6 +459,8 @@ export interface Fields {
   turnEnded?: boolean;
   /** The newest prompt's timestamp, in file order (TranscriptInfo.lastPromptMs). */
   lastPromptMs?: number;
+  /** The newest `away_summary` with a time, in file order (TranscriptInfo.awaySummary). */
+  awaySummary?: AwaySummary;
 }
 
 /** Applies one JSONL line. Lines that don't parse, and entry types the index doesn't use, are skipped. */
@@ -455,7 +474,8 @@ export function applyLine(fields: Fields, line: string): void {
     !line.includes('"custom-title"') &&
     !line.includes('"agent-name"') &&
     !line.includes('"continued-in"') &&
-    !line.includes('"turn_duration"')
+    !line.includes('"turn_duration"') &&
+    !line.includes('"away_summary"')
   ) {
     return;
   }
@@ -497,6 +517,9 @@ export function applyEntry(fields: Fields, entry: unknown): void {
   if (type === 'system') {
     // Claude Code writes it when a turn ends, after the turn's last entry (spike 007, finding 4). Not activity.
     if (turnSignalOf(entry) === 'ended') fields.turnEnded = true;
+    // Its own recap, written when you've been away (spike 007, finding 8). Not activity either.
+    const away = awaySummaryOf(entry);
+    if (away !== undefined) fields.awaySummary = away;
     return;
   }
   if (type !== 'user' && type !== 'assistant') return;
@@ -556,6 +579,22 @@ export function assistantTextOf(entry: Record<string, unknown>): { id?: string; 
   const text = textOf(message.content)?.trim();
   if (!text) return undefined;
   return typeof message.id === 'string' ? { id: message.id, text } : { text };
+}
+
+/**
+ * An `away_summary` entry's recap: a `system` entry with `subtype: "away_summary"` and a `content`
+ * string, not a sidechain's, with a timestamp that parses. Its content trimmed, at most
+ * AWAY_SUMMARY_MAX characters, and its time in ISO 8601. Internal and undocumented, so anything else
+ * is ignored. Part of the transcript adapter, for M5's recaps (recapSources.ts reads it too).
+ */
+export function awaySummaryOf(entry: Record<string, unknown>): AwaySummary | undefined {
+  if (entry.type !== 'system' || entry.subtype !== 'away_summary' || entry.isSidechain === true) return undefined;
+  if (typeof entry.content !== 'string' || typeof entry.timestamp !== 'string') return undefined;
+  const ms = Date.parse(entry.timestamp);
+  if (!Number.isFinite(ms)) return undefined;
+  const text = cap(entry.content, 4 * AWAY_SUMMARY_MAX).trim();
+  if (text === '') return undefined;
+  return { text: truncate(text, AWAY_SUMMARY_MAX), at: new Date(ms).toISOString() };
 }
 
 /**
@@ -810,6 +849,7 @@ function toInfo(state: FileState): TranscriptInfo {
   if (fields.aiTitle !== undefined) info.aiTitle = fields.aiTitle;
   if (fields.turnEnded !== undefined) info.turnEnded = fields.turnEnded;
   if (fields.lastPromptMs !== undefined) info.lastPromptMs = fields.lastPromptMs;
+  if (fields.awaySummary !== undefined) info.awaySummary = { ...fields.awaySummary };
   return info;
 }
 

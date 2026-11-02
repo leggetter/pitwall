@@ -1,7 +1,10 @@
 import type { Indexer } from '../index/index.js';
 import type { PrSource } from '../prs/index.js';
+import type { RecapEngine } from '../recaps/engine.js';
+import type { Supervisor } from '../supervisor/supervisor.js';
 import type { RelayManager } from './relay.js';
 import { startServerWithInternals } from './server.js';
+import type { WorkStore } from './work.js';
 
 export { DEFAULT_PORT, PortInUseError } from './server.js';
 export { createRelayManager, type RelayManager } from './relay.js';
@@ -42,6 +45,30 @@ export interface ServerOptions {
    * gh, so a test never reaches GitHub.
    */
   prs?: PrSource;
+  /**
+   * Per-session recaps (M5, W110): the engine the CLI makes with createRecapEngine(), so the indexer
+   * can hide its calls and hand it what it read. The server starts it once it's listening, composes
+   * its view of the snapshot under W105's, serves recapPath() and recapRefreshPath(), and closes it on
+   * close(). Without it, recaps are off, as with `--no-recaps`: no snapshot has `recap` or `recaps`,
+   * GET recapPath() answers 404, Refresh answers 409, and nothing runs a recap call, so a test never
+   * reaches the model.
+   */
+  recaps?: RecapEngine;
+  /**
+   * The supervisor (M5, W113): the one the CLI makes with createSupervisor(), so the indexer can
+   * hide it. The server gives it its MCP server's URL once listening, composes its state into the
+   * snapshot, serves its routes and pitwall's MCP server (W112), and closes it on close(). It starts
+   * only when the page asks. Without it, the supervisor is off, as with `--no-supervisor`: no
+   * snapshot has `supervisor`, its routes answer 409 or 404, the MCP route 404, and nothing runs it,
+   * so a test never reaches the model.
+   */
+  supervisor?: Supervisor;
+  /**
+   * The model and effort for each kind of work (W119): the config file's defaults and the app's
+   * overrides, for this run. The CLI makes it, so the relay, recaps and the supervisor read the same
+   * one. Default: a new one with no config, which is pitwall's own defaults.
+   */
+  work?: WorkStore;
 }
 
 export interface RunningServer {

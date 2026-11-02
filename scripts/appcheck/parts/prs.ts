@@ -319,11 +319,17 @@ const part: Part = {
       await page.waitFor('it marked', `${toggle}?.getAttribute('aria-pressed') === 'true'`);
       await page.settle(150);
       t.expect((await page.evaluate<string[]>(rows)).includes(NAMES.asked), '#612 still needs you, so it stays');
-      t.expectEqual(await page.evaluate(`${row(NAMES.asked)}?.closest('li').querySelector('.session-what-text')?.textContent`), 'demo-app · Not needed now · #612 has merge conflicts', 'line 2 says why');
+      t.expectEqual(await page.evaluate(`${row(NAMES.asked)}?.closest('li').querySelector('.session-what-text')?.textContent`), 'demo-app · Not needed now · Needs you for example/event-relay#612: conflicts', 'line 2 says why, naming the PR (W128)');
       t.expect(await page.evaluate<boolean>(`${toasts}.includes(${q(`Marked ${NAMES.asked} not needed now. It stays in Needs you while #612 needs you.`)})`), 'the toast says it stays, and why');
       const colours = await page.evaluate<{ reason: string; muted: string }>(`(() => { const li = ${row(NAMES.asked)}.closest('li'); return { reason: getComputedStyle(li.querySelector('.pr-reason')).color, muted: getComputedStyle(li.querySelector('.session-not-needed')).color }; })()`);
       t.expect(colours.reason !== colours.muted, "the PR's reason isn't muted: it still holds", colours);
       await t.shot('marked-with-pr');
+      // Its view says so too, the PR a link (W128).
+      await openFromRow(t, NAMES.asked);
+      const need = await page.evaluate<{ text: string; link: string } | null>(`(() => { const p = ${SESSION_VIEW}.querySelector('.session-view-pr-need'); return p ? { text: p.textContent, link: p.querySelector('button.pr-link')?.getAttribute('aria-label') ?? '' } : null; })()`);
+      t.expectEqual(need, { text: 'Needs you for example/event-relay#612: conflicts', link: 'Pull request example/event-relay#612' }, 'its view says why, the PR a link');
+      await t.shot('view-pr-need');
+      await closeView();
       await page.click(`the toggle on ${NAMES.asked} again`, toggle);
       await page.waitFor('the mark gone', `${toggle}?.getAttribute('aria-pressed') === 'false'`);
     });
