@@ -35,7 +35,7 @@ Last updated: 2026-11-02, on `m5/integration`. This file lives on the integratio
 3. **Handoff:** this coordinator session ends (the `handoff` skill) and a new one starts with "Read NOW.md".
 4. **M5.1, efficiency** (work profiles, a Usage view with a run rate, the supervisor applying them): "M5.1 - Efficiency" in `PLAN.md`.
 5. **W86** on or after 2026-11-04: `npm install <pkg>@<version> --before=<date>`, the newest version at least 14 days old. **W89** is parked.
-6. **M6, triage,** on the coordination model of split work, shared state and graded oversight (Phil, 2026-11-02), with Peers part of it, show only (Phil, 2026-11-02, option A): "M6 - Triage" in `PLAN.md`. Then the considerations: chatting with a session, a session asking the supervisor to spin off work.
+6. **M6, triage,** on the coordination model of split work, shared state, graded oversight, and shared decisions first with a goal check at the end (Phil, 2026-11-02), with Peers part of it, show only (Phil, 2026-11-02, option A): "M6 - Triage" in `PLAN.md`. Then the considerations: chatting with a session, a session asking the supervisor to spin off work.
 
 ## Open questions for Phil
 
