@@ -219,36 +219,36 @@ describe('the actions menu', () => {
   it('has Open in VS Code and Open in Cursor after the copies, with two editors found', async () => {
     renderDashboard([VSCODE, CURSOR]);
     const view = await openView('pitwall-test-bg');
-    expect(openMenu(view)).toEqual(['Copy session ID', 'Copy attach command', '—', 'Open in VS Code', 'Open in Cursor', '—', 'Stop session', 'Remove session']);
+    expect(openMenu(view)).toEqual(['New session from here', '—', 'Copy session ID', 'Copy attach command', '—', 'Open in VS Code', 'Open in Cursor', '—', 'Stop session', 'Remove session']);
   });
 
   it('has the one found, with one', async () => {
     renderDashboard([CURSOR]);
     const view = await openView('pitwall-test-bg');
-    expect(openMenu(view)).toEqual(['Copy session ID', 'Copy attach command', '—', 'Open in Cursor', '—', 'Stop session', 'Remove session']);
+    expect(openMenu(view)).toEqual(['New session from here', '—', 'Copy session ID', 'Copy attach command', '—', 'Open in Cursor', '—', 'Stop session', 'Remove session']);
   });
 
   it('has neither, and no separator for them, with none found', async () => {
     renderDashboard([]);
     const view = await openView('pitwall-test-bg');
-    expect(openMenu(view)).toEqual(['Copy session ID', 'Copy attach command', '—', 'Stop session', 'Remove session']);
+    expect(openMenu(view)).toEqual(['New session from here', '—', 'Copy session ID', 'Copy attach command', '—', 'Stop session', 'Remove session']);
   });
 
   it('has them for an interactive session', async () => {
     renderDashboard([CURSOR]);
-    expect(openMenu(await openView('pitwall-test-interactive'))).toEqual(['Copy session ID', '—', 'Open in Cursor', '—', 'End session']);
+    expect(openMenu(await openView('pitwall-test-interactive'))).toEqual(['New session from here', '—', 'Copy session ID', '—', 'Open in Cursor', '—', 'End session']);
   });
 
   it('has them for an ended session, whose directory may still be there, before Resume in background', async () => {
     renderDashboard([CURSOR]);
     await openFinished();
-    expect(openMenu(await openView('pitwall-test-ended'))).toEqual(['Copy session ID', 'Copy resume command', '—', 'Open in Cursor', '—', 'Resume in background']);
+    expect(openMenu(await openView('pitwall-test-ended'))).toEqual(['New session from here', '—', 'Copy session ID', 'Copy resume command', '—', 'Open in Cursor', '—', 'Resume in background']);
   });
 
   it("doesn't have them when the session's directory has gone", async () => {
     renderDashboard([VSCODE, CURSOR]);
     const menu = openMenu(await openView('pitwall-test-gone'));
-    expect(menu).toEqual(['Copy session ID', 'Copy attach command', '—', 'Stop session', 'Remove session']);
+    expect(menu).toEqual(['New session from here', '—', 'Copy session ID', 'Copy attach command', '—', 'Stop session', 'Remove session']);
   });
 
   it("doesn't have them once it's no longer listed", async () => {

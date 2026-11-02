@@ -137,6 +137,7 @@ import type { ConnectionView } from '../connection.js';
 import { focusGesture, type FocusGesture } from '../focusGesture.js';
 import { useTerminalFocus } from '../terminalFocus.js';
 import { formatRoots, plainText, shortenHome } from '../format.js';
+import { draftText, type FromSession } from '../fromSession.js';
 import { everyGroupId, groupByPhrase, groupSessions, useGroupBy, type GroupBy } from '../groupBy.js';
 import { browserStorage, FINISHED_STATE_KEY, readGroupState, writeGroupState, type GroupState, type StorageSource } from '../groupState.js';
 import { absentGroup, useHiddenGroups, type HiddenGroup } from '../hidden.js';
@@ -324,6 +325,13 @@ type PrStart = { pr: PullRequestSummary; step: 'clone' } | { pr: PullRequestSumm
 const prSubtitle = (pr: PullRequestSummary) => (
   <>
     Starts a background session for <bdi>{plainText(prName(pr))}</bdi> with <code>claude --bg</code>. Its prompt names the pull request, so the session owns it until another acts on it.
+  </>
+);
+
+/** New session's subtitle from a session (W118): which one's directory it opens in. */
+const fromSessionSubtitle = (name: string) => (
+  <>
+    Starts a background session with <code>claude --bg</code> in <bdi>{plainText(name)}</bdi>&apos;s directory, which you can change.
   </>
 );
 
@@ -615,6 +623,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // New session for a PR (W107): for a cloned repo, the dialog prefilled in its directory; for one
   // that isn't, Clone and start's confirmation first, then the dialog in the new clone.
   const [prStart, setPrStart] = useState<PrStart>();
+  // New session from here (W118): the dialog in a session's directory, with Draft from this session.
+  const [fromSession, setFromSession] = useState<FromSession>();
   const startPr = useCallback((pr: PullRequestSummary) => {
     if (pr.place?.kind === 'cloned') setPrStart({ pr, step: 'new', cwd: pr.place.key });
     else if (pr.place?.kind === 'not-cloned') setPrStart({ pr, step: 'clone' });
@@ -1713,6 +1723,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       terminalFocus={terminalFocus}
       polledAt={updatedAt}
       recaps={snapshot?.recaps}
+      onNewSession={snapshot ? setFromSession : undefined}
       backLabel={hiddenIn === undefined ? backLabel : undefined}
       prs={{
         owned: work.owned.get(session.sessionId) ?? [],
@@ -1997,6 +2008,22 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             const link = pendingLink(prStart.pr, request.prompt, new Date().toISOString());
             if (link) setPendingLinks((current) => new Map(current).set(session.shortId, link));
             setPrStart(undefined);
+            started.wait(session);
+            toasts.show({ tone: 'success', key: startedKey(session.shortId), message: startedText(session.name) });
+          }}
+        />
+      )}
+
+      {fromSession && snapshot && (
+        <NewSessionDialog
+          snapshot={dialogSnapshot ?? snapshot}
+          tab={tab}
+          prefill={{ cwd: fromSession.cwd }}
+          subtitle={fromSessionSubtitle(fromSession.name)}
+          draft={{ text: draftText(fromSession) }}
+          onClose={() => setFromSession(undefined)}
+          onStarted={(session) => {
+            setFromSession(undefined);
             started.wait(session);
             toasts.show({ tone: 'success', key: startedKey(session.shortId), message: startedText(session.name) });
           }}
