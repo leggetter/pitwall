@@ -428,7 +428,9 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     const previous = recaps.get(session.sessionId);
     if (previous !== undefined && activity <= parseMs(previous.throughAt)) return false;
     const failed = failures.get(session.sessionId);
-    if (failed !== undefined && failed.throughMs >= activity && nowMs - failed.atMs < RETRY_AFTER_FAILURE_MS) return false;
+    // A finished session gets no new activity, so a call that keeps failing would retry every
+    // RETRY_AFTER_FAILURE_MS all day (#130's review): for one, a failure waits for new activity, or a refresh.
+    if (failed !== undefined && failed.throughMs >= activity && (forPr || nowMs - failed.atMs < RETRY_AFTER_FAILURE_MS)) return false;
     if (nowMs - activity < debounceMs) return false;
     // A finished session has no turn running, whatever its transcript's last mark says.
     return forPr || turnOver(session);

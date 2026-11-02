@@ -293,6 +293,22 @@ describe('when a session is recapped', () => {
     expect(h.calls).toHaveLength(2);
   });
 
+  it("doesn't retry a finished session's failed recap until it has new activity (#130's review)", async () => {
+    const h = harness();
+    h.start();
+    const old = new Date(h.clock.now - 3 * 24 * 60 * MINUTE).toISOString();
+    const done = h.add('done', { finished: true, alive: false, pid: undefined, lastActivityAt: old, prLinks: OPENED_42 }, { turnEnded: false });
+    await h.poll([done]);
+    await h.setPrs([pullRequest({ mergeable: 'conflicts' })]);
+    expect(h.calls).toHaveLength(1);
+    await h.reply(h.calls[0], envelope('Sure! Here is your recap.'));
+    // A running session would be tried again after RETRY_AFTER_FAILURE_MS; a finished one waits for activity.
+    h.clock.now += 2 * RETRY_AFTER_FAILURE_MS;
+    await h.setPrs([pullRequest({ mergeable: 'conflicts', checks: 'failing' })]);
+    await h.poll([done]);
+    expect(h.calls).toHaveLength(1);
+  });
+
   it('finds the sessions that own a PR that needs you, as the page does (W128)', () => {
     const mine = session('mine', { prLinks: OPENED_42 });
     // Prompted with the PR's URL ranks below opening it, so it doesn't own it.

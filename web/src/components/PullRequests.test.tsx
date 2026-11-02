@@ -562,7 +562,7 @@ describe('sessions and PRs', () => {
     // It needs you only for #42 (W128): its header says so, and the PR is a link.
     const need = sessionView()!.querySelector<HTMLElement>('.session-view-pr-need')!;
     expect(need.textContent).toBe('Needs you for example/demo-app#42: CI failing');
-    expect(within(need).getByRole('button', { name: 'Pull request example/demo-app #42' }).textContent).toBe('example/demo-app#42');
+    expect(within(need).getByRole('button', { name: 'Pull request example/demo-app#42' }).textContent).toBe('example/demo-app#42');
     // Its header links to each open PR it owns, most urgent first.
     const links = within(sessionView()!.querySelector<HTMLElement>('.session-view-prs')!).getAllByRole('button', { name: /^Pull request / });
     expect(links.map((link) => link.getAttribute('aria-label'))).toEqual(['Pull request example/demo-app #42', 'Pull request example/demo-app #43']);
