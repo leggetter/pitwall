@@ -684,6 +684,12 @@ export interface ResumeOutcome {
    * resume would start a copy. The supervisor's resume_session says to message it instead (W127).
    */
   running?: true;
+  /**
+   * When the resume may have happened though it didn't answer ok (#131's review): 'copy', Claude Code
+   * started a copy but its id wasn't one pitwall would act on; 'unknown', claude timed out or didn't
+   * report an id. A prompt given may have gone, so the supervisor mustn't say it wasn't sent.
+   */
+  uncertain?: 'copy' | 'unknown';
 }
 
 /**
@@ -804,7 +810,7 @@ export function createResumeRunner(
       if (result.kind === 'failed') {
         if (result.reason === 'timeout') {
           indexer.pollSoon();
-          return answer({ ok: false, error: `claude --resume ${result.message}. The session may still appear in the list.` }, 504);
+          return answer({ ok: false, error: `claude --resume ${result.message}. The session may still appear in the list.` }, 504, { uncertain: 'unknown' });
         }
         return answer({ ok: false, error: `Couldn't run claude: ${result.message}.` }, 502);
       }
@@ -829,7 +835,7 @@ export function createResumeRunner(
           copied.copyShortId = copy.shortId;
           options.spawned?.add(copy.shortId);
         }
-        return answer(copied, 409);
+        return answer(copied, 409, copy.shortId === undefined ? { uncertain: 'copy' } : {});
       }
       const resumed = parseBackgrounded(result.stdout);
       if (!resumed) {
@@ -838,6 +844,7 @@ export function createResumeRunner(
         return answer(
           { ok: false, error: `Claude Code didn't report the resumed session's id${line ? `: ${line}` : '.'} It may still appear in the list.` },
           502,
+          { uncertain: 'unknown' },
         );
       }
       options.spawned?.add(resumed.shortId);

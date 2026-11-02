@@ -671,6 +671,33 @@ describe('a finished session resumed with a message, behind your click (W127)', 
     ws.close();
   });
 
+  it("never says a message wasn't sent when it may have gone: a copy with no id, or no id reported (#131's review)", async () => {
+    const cases: [CommandResult, (text: string) => void][] = [
+      [
+        { kind: 'exited', code: 0, stdout: '', stderr: 'note: session aaaaaaaa is open in another Claude Code process, so this started a copy as not/an/id. The original conversation is unchanged.\n' },
+        (text) => {
+          expect(JSON.parse(text)).toMatchObject({ resumed: false, copy: true });
+          expect(text).toContain('the message went to the copy');
+        },
+      ],
+      [{ kind: 'exited', code: 0, stdout: 'something else\n', stderr: '' }, (text) => expect(text).toContain('may or may not have been sent')],
+    ];
+    for (const [resumed, check] of cases) {
+      const { server, queue } = await start({ sessions: [finished()], resumed });
+      const { ws, apiKey } = await authedClient(server.port);
+      const input = { id: FINISHED_ID, message: 'Go on.' };
+      const answer = approve(server.port, RESUME, input, 'toolu_unsure');
+      await until(() => queue.list().length === 1);
+      await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send' });
+      await answer;
+      const result = await callTool(server.port, 'resume_session', input, { 'claudecode/toolUseId': 'toolu_unsure' });
+      check(result.text);
+      expect(result.text).not.toContain("wasn't sent");
+      expect(queue.handoffs()).toEqual([]);
+      ws.close();
+    }
+  });
+
   it('a workspace Claude Code doesn’t trust resumes nothing, and says what the user can run', async () => {
     const untrusted: CommandResult = { kind: 'exited', code: 1, stdout: '', stderr: 'Workspace not trusted. Run claude in this folder first.\n' };
     const { server, queue } = await start({ sessions: [finished()], resumed: untrusted });
