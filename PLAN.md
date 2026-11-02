@@ -206,6 +206,7 @@ Small improvements that aren't needed now, gathered from reviews and try-outs so
   - **Code-split the web UI:** the main bundle is 571 KB (176 KB gzipped), over Vite's 500 kB warning; the supervisor panel, the PR views and Preferences could load on demand. Served from localhost, so it costs only parse time.
   - **The Supervisor item's selected look** matches All sessions' when its view is open; a lighter current-only look might read better (W114's review).
   - **The PR list's placeholder** shows for about 8 s after a restart, until the first fetch.
+  - **Open in Terminal on the "Workspace not trusted" card:** a button that opens a terminal in the directory with `claude` running, so you accept Claude Code's trust prompt without copying the command; pitwall still never trusts a directory for you (Phil, 2026-11-02: a UX nag, not for now).
   - **"Not needed" on Needs you:** hides a session's Needs you until it takes a new turn, so a wrong reason can be cleared without the model or stopping the session. The recap prompt's rule for a session you've said is done covers the case seen ([#140](https://github.com/leggetter/pitwall/issues/140)).
 - **Pull requests**
   - **Snooze a PR's attention,** by its key and a hash of its state, as Not needed now does for sessions, so an abandoned PR of yours doesn't stay in Needs you (W106).
