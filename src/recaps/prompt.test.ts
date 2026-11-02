@@ -137,7 +137,9 @@ describe('parseRecapAnswer', () => {
       title: 'Fix nightly export failing on large files',
     });
     for (const waitingOn of ['you', 'another session', 'CI', 'someone else', 'nothing']) {
-      expect(parseRecapAnswer(answer({ waitingOn }))?.waitingOn).toBe(waitingOn);
+      // 'nothing' only without a to-do for you (#123's review).
+      const todos = waitingOn === 'nothing' ? [{ text: 'Run the checks', owner: 'session' }] : undefined;
+      expect(parseRecapAnswer(answer({ waitingOn, ...(todos ? { todos } : {}) }))?.waitingOn).toBe(waitingOn);
     }
     for (const owner of RECAP_TODO_OWNERS) {
       expect(parseRecapAnswer(answer({ todos: [{ text: 'a', owner }, TODOS[0]] }))?.todos[0]).toEqual({ text: 'a', owner });

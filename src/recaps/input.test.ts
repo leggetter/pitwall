@@ -247,7 +247,7 @@ describe('the input', () => {
       '[10-28 15:50] Claude: CI passed.',
       '</turns-since-previous-recap>',
       '</session-3f9a1c2e3f9a1c2e>',
-      'Revise the previous recap with what the newer turns show: keep its summary steady, changing only what they change, and drop the to-dos they finished. Answer with the JSON object only.',
+      'Revise the previous recap with what the newer turns show: keep its summary steady, changing only what they change, and drop the to-dos they finished, a question you answered included. Answer with the JSON object only.',
     ]);
   });
 
