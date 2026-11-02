@@ -239,7 +239,7 @@ export function handoffSession(handoff: SupervisorHandoff, sessions: readonly Se
 /** Why a session needs you, as a short line: Claude Code's own line, the recap's, its question, or its badge. */
 export function needsReason(session: SessionSummary, badge: StatusBadge = statusBadge(session)): string {
   const text = needsText(session) ?? recapNeedsText(session) ?? (session.needsYou?.reason === 'asked' ? session.askedYou?.excerpt : undefined);
-  const line = text === undefined ? '' : plainText(text).replace(/\s+/g, ' ').trim();
+  const line = text === undefined ? '' : visibleString(plainText(text)).replace(/\s+/g, ' ').trim();
   if (line !== '') return line.length > NEEDS_REASON_MAX ? `${line.slice(0, NEEDS_REASON_MAX - 1).trimEnd()}…` : line;
   return `${badge.label.charAt(0).toLowerCase()}${badge.label.slice(1)}`;
 }
@@ -275,7 +275,7 @@ export function handoffRows(handoffs: readonly SupervisorHandoff[] | undefined, 
 }
 
 /** What a row says it did. */
-export const handoffVerb = (handoff: SupervisorHandoff) => (handoff.kind === 'spawn' ? 'Started' : 'Message sent to');
+export const handoffVerb = (handoff: SupervisorHandoff) => (handoff.kind === 'spawn' ? 'Started' : 'Message approved for');
 
 /** How many approvals wait on you: each counts in Needs you's total and the page title (SupervisorState.approvals). */
 export function approvalsWaiting(state: SupervisorState | undefined): number {

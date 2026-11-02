@@ -1,7 +1,7 @@
 // The supervisor's read-only tools on pitwall's MCP server (M5, W112; mcp.ts serves them):
 //
 //   list_sessions   the listed sessions, never pitwall's own: slim rows by default (W124): id, name,
-//                   repo, state, Needs you and why, last activity, the PRs each owns or is linked to,
+//                   repo, state, Needs you and why, last activity, the PRs each owns,
 //                   the recap's summary; `detail: true` for the directory, title and whole recap.
 //                   Unfinished ones by default; filtered by `repo`, `pr` (owner/repo#n, through the
 //                   sessions' PR links) and `query` (words in a name, title or recap), so the
@@ -176,6 +176,9 @@ function error(text: string): McpToolResult {
 }
 
 /** Adds `items` to an answer until it would pass `maxChars` (ANSWER_MAX_CHARS) or `maxItems`; how many were left out. */
+/** What list_sessions' truncation note takes, in characters, at most. */
+const HINT_ROOM = 400;
+
 function fit<T>(base: Record<string, unknown>, key: string, items: T[], maxItems: number, maxChars: number = ANSWER_MAX_CHARS): Record<string, unknown> {
   const kept: T[] = [];
   let size = JSON.stringify({ ...base, [key]: [], shown: 0, omitted: 0 }).length;
@@ -320,7 +323,8 @@ export function createSupervisorTools(sources: SupervisorToolSources): McpTool[]
       };
       const base: Record<string, unknown> = { ...header(), counts, recaps: sources.recaps === undefined ? 'off' : 'on' };
       if (wantedPr !== undefined && target === undefined) base.prOpen = false;
-      const answer = fit(base, 'sessions', items, LIST_MAX_ITEMS, detail ? ANSWER_MAX_CHARS : LIST_SLIM_MAX_CHARS);
+      // Room for `truncated` and `hint`, which go on after fit() has measured, so the answer stays under the cap.
+      const answer = fit(base, 'sessions', items, LIST_MAX_ITEMS, (detail ? ANSWER_MAX_CHARS : LIST_SLIM_MAX_CHARS) - HINT_ROOM);
       if ((answer.omitted as number) > 0) {
         answer.truncated = true;
         answer.hint = `pitwall left out ${String(answer.omitted)} of the ${String(chosen.length)} matching sessions to keep this answer short. Narrow it with repo, pr, query or needsYou${detail ? ', or leave out detail' : ''}.`;
