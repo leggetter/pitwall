@@ -2,53 +2,45 @@
 
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
-Last updated: 2026-11-02, on `m5/integration`. This file lives on the integration branch, like `PLAN.md`; `main` doesn't have it until M5 merges.
+Last updated: 2026-11-02, on `main`, as M5 merged.
 
 ## Current milestone
 
-**M5, the supervisor, on `m5/integration`.** Built, not yet in `main`. Every row of its work breakdown has merged into the integration branch, [#110](https://github.com/leggetter/pitwall/pull/110) to [#125](https://github.com/leggetter/pitwall/pull/125) (W110 to W123): per-session recaps, pitwall's MCP server, the supervisor process and its panel, approvals, New session from here, model and effort per kind of work, W116's findings, recaps as a summary and to-dos, a wider Preferences, and Plan status on the recap strip.
+**M5, the supervisor, is done:** merged into `main` in [#MERGEPR](https://github.com/leggetter/pitwall/pull/MERGEPR) on 2026-11-02, built on `m5/integration` as W109 to W129 ([#110](https://github.com/leggetter/pitwall/pull/110) to [#137](https://github.com/leggetter/pitwall/pull/137)). Phil tried it on port 4519 and gave the word; the full app check ran before the merge (1,976 steps; its two stale checks fixed in #137).
 
-- **Security:** W116's review approved M5 for `main` once W120's fixes merged; its re-check confirmed all seven fixed ([#122](https://github.com/leggetter/pitwall/pull/122)). Two Info items from the re-check are in "Nice to have, later". The re-review of W124 to W128 (2026-11-02) approved M5 for `main` with non-blocking findings, which W129 fixes.
-- **Merging into `main`** waits on Phil's try-out and his word. The full app check (`npm run appcheck`) is for that merge (AGENTS.md, "Efficiency").
+- **Security:** W116's review and W120's fixes ([#122](https://github.com/leggetter/pitwall/pull/122)); the re-review of W124 to W128 and W129's fixes ([#133](https://github.com/leggetter/pitwall/pull/133)), whose re-check approved M5 for `main`. Its unfixed Info notes: a look-alike name doesn't trigger the resume card's shared-name note; resume errors show a folder outside `untrusted`; the `claude` command list isn't checked against Claude Code 2.1.316's hidden commands.
+- **M5.1, efficiency, is next.** Start it on a new `m5.1/integration` branch from `main`, as M4 and M5 were built.
 
 ## Open work
 
 | Item | State |
 | --- | --- |
-| W124, the supervisor's v3 prompt, cheaper lookups and Open hand-offs (Phil's first use) | In review, into `m5/integration` |
-| W125, session names in the supervisor's replies open the session; list_prs's old PRs don't need you | In review, into `m5/integration` |
-| W126, why a recap's answer was refused; a fence and a disagreeing waitingOn repaired (Phil's report, 2026-11-02) | In review, into `m5/integration` |
-| W127, the supervisor resumes a finished session and sends it a message (resume_session, spike 011, prompt v5) | In review, into `m5/integration` ([#131](https://github.com/leggetter/pitwall/pull/131)) |
-| W129, the security re-review's findings (W124 to W128): resume message checks, the resume card's folder, activity, shared name and permission mode, and doc fixes | In review, into `m5/integration` ([#133](https://github.com/leggetter/pitwall/pull/133)) |
-| W128, Needs you names the PR; a recap for a finished session whose PR needs you; Rename pushed to "Nice to have, later" | Merged ([#130](https://github.com/leggetter/pitwall/pull/130)) |
-| M5 try-out | Phil's, on port 4519; started, W124 came from it |
-| Merge `m5/integration` into `main` | Waits on Phil's word after the try-out |
+| Move M5's detail from `PLAN.md` to `docs/plan-archive.md` (the "M5 - Supervisor" section and "M5 work breakdown", verbatim), leaving a one-line pointer, as M0 to M4 were | Not started; mechanical, a smaller model will do |
+| M5.1, efficiency | Not started |
 | W86, bump `vite` and `happy-dom` | Phil approved (2026-10-28); on or after 2026-11-04, when the fixes are 14 days old |
 | W89, the first paste into New session's prompt is lost | Parked (Phil, 2026-11-02): he'll say if it happens again; Grammarly, which injects itself into the box, is suspected but not confirmed |
-| M5.1, efficiency | After M5; not started |
+| A flaky `src/cli.test.ts` clean-up (`ENOTEMPTY`) | In "Nice to have, later" |
 | M6, triage | After M5.1; not started |
 
 ## Next, in order
 
-1. **Phil tries M5** on port 4519. Fix what he finds on `m5/integration`: W124 is the first round ("M5 work breakdown" in `PLAN.md`).
-2. **Merge `m5/integration` into `main`**, on Phil's word, after the full app check.
-3. **Handoff:** this coordinator session ends (the `handoff` skill) and a new one starts with "Read NOW.md".
-4. **M5.1, efficiency** (work profiles, a Usage view with a run rate, the supervisor applying them): "M5.1 - Efficiency" in `PLAN.md`.
-5. **W86** on or after 2026-11-04: `npm install <pkg>@<version> --before=<date>`, the newest version at least 14 days old. **W89** is parked.
-6. **M6, triage,** on the coordination model of split work, shared state, graded oversight, and shared decisions first with a goal check at the end (Phil, 2026-11-02), with Peers part of it, show only (Phil, 2026-11-02, option A): "M6 - Triage" in `PLAN.md`. Then the considerations: chatting with a session, a session asking the supervisor to spin off work.
+1. **Archive M5** (the first row above), on `main` or the new integration branch, before M5.1 adds to `PLAN.md`.
+2. **M5.1, efficiency:** work profiles, a Usage view with a run rate, the supervisor applying them ("M5.1 - Efficiency" in `PLAN.md`). Break it into W items in `PLAN.md` first, starting at W130.
+3. **W86** on or after 2026-11-04: `npm install <pkg>@<version> --before=<date>`, the newest version at least 14 days old.
+4. **M6, triage,** on the coordination model: split work, shared state, graded oversight, and shared decisions first with a goal check at the end, with Peers part of it, show only (Phil, 2026-11-02): "M6 - Triage" and "Considering: Peers" in `PLAN.md`. Then the considerations: chatting with a session, a session asking the supervisor to spin off work.
 
 ## Open questions for Phil
 
-- **Is M5 ready for `main`?** It waits on your try-out (port 4519) and your word. Lean: merge once the try-out is clean.
+- None open. Decided on 2026-11-02: Peers is show only; W89 is parked; the IDE extension is used rarely, so no spike; the supervisor survives restarts, as built.
 
 ## Standing context
 
 Read these as the work needs them, not all at the start.
 
 - **[`AGENTS.md`](AGENTS.md):** the rules (never touch a real session, pinned dependencies at least 14 days old, security rules, worktrees in `.worktrees/<name>`), "Efficiency", and the commands and layout.
-- **[`PLAN.md`](PLAN.md):** read the section the work is in. "Architecture" and "Interfaces pitwall relies on" for what pitwall depends on; "Security" before touching the server, a spawned process or storage; "M5 - Supervisor" and "M5 work breakdown" for M5; "M5.1", "M6", "Considering: Peers" and "Later: chatting with a session" for what's after; "Nice to have, later" for small items.
-- **[`docs/decisions.md`](docs/decisions.md):** settled decisions D1 to D26 with their reasoning. D4 (the supervisor), D8 (the relay), D24 (the config file) and D26 (recaps) matter for M5.
+- **[`PLAN.md`](PLAN.md):** read the section the work is in. "Architecture" and "Interfaces pitwall relies on" for what pitwall depends on; "Security" before touching the server, a spawned process or storage; "M5.1", "M6", "Considering: Peers" and "Later: chatting with a session" for what's next; "Nice to have, later" for small items.
+- **[`docs/decisions.md`](docs/decisions.md):** settled decisions D1 to D26 with their reasoning. D4 (the supervisor), D8 (the relay), D24 (the config file) and D26 (recaps) matter for what's next.
 - **[`docs/design-system.md`](docs/design-system.md):** tokens, layout and components, before a UI change. A UI change runs the app check: [`scripts/appcheck/README.md`](scripts/appcheck/README.md).
 - **[`docs/plan-archive.md`](docs/plan-archive.md):** history, for M0 to M4: work breakdowns, findings, reviews and decisions. Look a W number up here when an old one is cited.
-- **[`docs/spikes/`](docs/spikes/):** what each spike measured; 009 (the supervisor process), 010 (recaps) and 011 (resuming a finished session with a message, W127) are M5's.
+- **[`docs/spikes/`](docs/spikes/):** what each spike measured; 009 (the supervisor process), 010 (recaps) and 011 (resuming a finished session with a message) are M5's.
 - **[`README.md`](README.md):** for newcomers; update it when what pitwall does changes.

@@ -16,7 +16,7 @@ M3.1 was built on `m3.1/integration` ([PR #69](https://github.com/leggetter/pitw
 
 M4, Phil's open pull requests, was built on `m4/integration` (W92 to W117) and merged into `main` on 2026-11-02 in [PR #117](https://github.com/leggetter/pitwall/pull/117), after Phil's try-out and W108's security review.
 
-M5, the supervisor, is built on `m5/integration` (W109 to W123): per-session recaps, pitwall's MCP server, the supervisor and its panel, approvals, New session from here, and model and effort per kind of work. It waits on Phil's try-out before it merges into `main`. See "M5 - Supervisor" and "M5 work breakdown" in `PLAN.md`.
+M5, the supervisor, was built on `m5/integration` (W109 to W129) and merged into `main` on 2026-11-02 in [PR #MERGEPR](https://github.com/leggetter/pitwall/pull/MERGEPR), after Phil's try-out, W116's security review and the re-review of W124 to W128: per-session recaps, pitwall's MCP server, the supervisor and its panel, approvals for messages, new sessions and resumes, New session from here, and model and effort per kind of work. M5.1, efficiency, is next. See `NOW.md`.
 
 ## Rules
 
