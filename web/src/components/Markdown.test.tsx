@@ -774,6 +774,18 @@ describe('Markdown: mentions in the supervisor’s replies (W125)', () => {
     expect(buttons()[0]!.parentElement!.tagName).toBe('STRONG');
   });
 
+  it('keeps a bold span with a hidden character in it plain, the character not left outside a button', () => {
+    const { buttons, root } = renderMentions('**\uFEFFwebsite** and **\uFEFFpr-894** and **pr-894**');
+    expect(buttons().map((button) => button.textContent)).toEqual(['pr-894']);
+    expect(root.textContent).toContain('\uFEFFwebsite');
+    expect(root.textContent).toContain('\uFEFFpr-894');
+  });
+
+  it('labels a button with the text it shows (WCAG 2.5.3), the session’s name after it when they differ', () => {
+    const { buttons } = renderMentions('**PR-894**');
+    expect(buttons().map((button) => [button.textContent, button.getAttribute('aria-label')])).toEqual([['PR-894', 'Open session PR-894']]);
+  });
+
   it('never links in code, a code block or a link’s text', () => {
     const { buttons, root } = renderMentions('`pr-894` and [pr-894](https://example.com/pr-894)\n\n```\npr-894\n```');
     expect(buttons()).toEqual([]);
@@ -782,7 +794,7 @@ describe('Markdown: mentions in the supervisor’s replies (W125)', () => {
 
   it('links in lists, quotes, headings and tables, and a PR by owner/name#n', () => {
     const { buttons, open } = renderMentions('# pr-894\n\n- pr-894\n\n> pr-894\n\n| a |\n| - |\n| pr-894 |\n\nexample/demo-app#51');
-    expect(buttons().map((button) => button.getAttribute('aria-label'))).toEqual([...Array(4).fill('Open session pr-894'), 'Open pull request example/demo-app #51']);
+    expect(buttons().map((button) => button.getAttribute('aria-label'))).toEqual([...Array(4).fill('Open session pr-894'), 'Open pull request example/demo-app#51']);
     fireEvent.click(buttons()[4]!);
     expect(open).toHaveBeenCalledWith({ kind: 'pr', key: 'example/demo-app/51', name: 'example/demo-app #51' });
   });

@@ -200,7 +200,7 @@ function Mention({ text, target, open }: { text: string; target: MentionTarget; 
     <button
       type="button"
       className="link-button md-mention"
-      aria-label={mentionLabel(target)}
+      aria-label={mentionLabel(target, text)}
       data-mention={target.kind}
       data-mention-session={target.kind === 'session' ? target.sessionId : undefined}
       data-mention-pr={target.kind === 'pr' ? target.key : undefined}

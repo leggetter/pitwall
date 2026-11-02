@@ -50,6 +50,38 @@ describe('createMentions: sessions', () => {
     expect(show(only.split('pr-​894 and pr 894 and pr-894'))).toBe('pr-​894 and pr 894 and pr-894');
   });
 
+  it("doesn't trim a character that doesn't show: U+FEFF or NBSP beside a name or a bold span", () => {
+    const feff = createMentions([session({ name: '\uFEFFpr-894' }), session({ name: 'pr-895\u00a0' }), session({ name: '\uFEFFwebsite' }), session({ name: 'plain-name' })]);
+    for (const text of ['\uFEFFpr-894', 'pr-894', 'pr-895\u00a0', 'pr-895']) expect(show(feff.split(text)), JSON.stringify(text)).toBe(text);
+    for (const text of ['\uFEFFwebsite', 'website']) expect(show(feff.split(text, true)), JSON.stringify(text)).toBe(text);
+    // The same span with a hidden character around a name that does show: not a link either.
+    expect(show(feff.split('\uFEFFplain-name', true))).toBe('\uFEFFplain-name');
+    const site = createMentions([session({ name: 'website' })]);
+    for (const text of ['\uFEFFwebsite', 'website\u00a0', '\u00a0website', 'website\uFEFF']) expect(show(site.split(text, true)), JSON.stringify(text)).toBe(text);
+    expect(show(site.split(' website ', true))).toBe(' [website→website] ');
+    // Spaces and tabs around it are still the text's, outside the button.
+    expect(show(feff.split(' \tplain-name \n', true))).toBe(' \t[plain-name→plain-name] \n');
+  });
+
+  it('folds case the same way on both sides, so a name with İ links', () => {
+    const turkish = createMentions([session({ name: 'İstanbul-fix' }), session({ name: 'Straße-fix' })]);
+    expect(show(turkish.split('İstanbul-fix and Straße-fix and STRAßE-FIX'))).toBe('[İstanbul-fix→İstanbul-fix] and [Straße-fix→Straße-fix] and [STRAßE-FIX→Straße-fix]');
+    // "i̇" (i and a combining dot) is not "İ": a different text, so a different name.
+    expect(show(turkish.split('i̇stanbul-fix'))).toBe('i̇stanbul-fix');
+  });
+
+  it('finds a thousand long names with a shared prefix in a long reply in well under 100 ms', () => {
+    const sessions = Array.from({ length: 1000 }, (_, n) => session({ name: `pitwall-test-session-number-${n}-feature` }));
+    const sentence = 'pitwall-test-session-number-7-feature needs you; pitwall-test-session-number-999-feature, pitwall-test-session-number-1000-feature is not a session, and so on for a while. ';
+    const reply = sentence.repeat(120); // about 20 KB
+    const started = performance.now();
+    const mentions = createMentions(sessions);
+    const parts = mentions.split(reply);
+    const took = performance.now() - started;
+    expect(parts.filter((part) => part.kind === 'mention')).toHaveLength(240);
+    expect(took).toBeLessThan(100);
+  });
+
   it(`never links a name under ${MENTION_MIN_LENGTH} characters, even in bold`, () => {
     const short = createMentions([session({ name: 'api' }), session({ name: 'ui' }), session({ name: 'a-1' })]);
     expect(show(short.split('the api and the ui, a-1'))).toBe('the api and the ui, a-1');
@@ -117,9 +149,13 @@ describe('createMentions: PRs', () => {
 });
 
 describe('mentionLabel', () => {
-  it('says what it opens, with any hidden character drawn as its code', () => {
-    expect(mentionLabel({ kind: 'session', sessionId: 'x', name: 'pr-894' })).toBe('Open session pr-894');
-    expect(mentionLabel({ kind: 'pr', key: 'example/demo-app/51', name: 'example/demo-app #51' })).toBe('Open pull request example/demo-app #51');
+  it('says what it opens, and holds the visible text as it shows (WCAG 2.5.3), with any hidden character drawn as its code', () => {
+    const session = { kind: 'session', sessionId: 'x', name: 'pr-894' } as const;
+    expect(mentionLabel(session)).toBe('Open session pr-894');
+    expect(mentionLabel(session, 'pr-894')).toBe('Open session pr-894');
+    expect(mentionLabel(session, 'PR-894')).toBe('Open session PR-894');
+    expect(mentionLabel(session, 'a1b2c3d4')).toBe('Open session a1b2c3d4 (pr-894)');
+    expect(mentionLabel({ kind: 'pr', key: 'example/demo-app/51', name: 'Example/Demo-App #51' }, 'example/demo-app#51')).toBe('Open pull request example/demo-app#51');
     expect(mentionLabel({ kind: 'session', sessionId: 'x', name: 'a​b' })).toBe('Open session a[U+200B]b');
   });
 });

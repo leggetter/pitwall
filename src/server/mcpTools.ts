@@ -11,7 +11,8 @@
 //   read_session    one session's latest turns, through the conversation adapter (the index's
 //                   pages), newest first, with a `before` cursor for older ones
 //   list_prs        your open PRs: relation, state, place and the session that owns each. One no
-//                   session owns, not updated in PRS_SHOWN_DAYS, is older, as in the web UI: left
+//                   session owns, not updated in PRS_SHOWN_DAYS, is older, as in the web UI (unless
+//                   unclaimed, which the UI doesn't list at all): left
 //                   out and counted unless `older: true`, and never needsYou (W125)
 //   get_recap       one session's whole recap
 //
@@ -472,7 +473,8 @@ export function createSupervisorTools(sources: SupervisorToolSources): McpTool[]
       const at = Number.isNaN(fetched) ? now() : fetched;
       const placed = list.prs.map((pr) => {
         const owner = prOwner(pr, sessions);
-        return { pr, owner, older: owner === undefined && prIsOlder(pr, at) };
+        // An unclaimed one isn't listed in the web UI, old or not, so it isn't "older" either.
+        return { pr, owner, older: owner === undefined && pr.place?.kind !== 'unclaimed' && prIsOlder(pr, at) };
       });
       const older = placed.filter((each) => each.older).length;
       const prs = placed.filter((each) => (args.older === true || !each.older) && (args.needsYou !== true || (!each.older && prNeedsAttention(each.pr))));
@@ -484,11 +486,14 @@ export function createSupervisorTools(sources: SupervisorToolSources): McpTool[]
       if (list.fetchedAt !== undefined) base.fetchedAt = list.fetchedAt;
       if (list.truncated === true) base.truncated = true;
       if (older > 0) {
+        // What the answer holds: older: true includes them, unless needsYou: true, which they never meet.
+        const included = args.older === true && args.needsYou !== true;
         base.older = {
           count: older,
-          note:
-            args.older === true
-              ? `${older} of these have no session and weren't updated in ${PRS_SHOWN_DAYS} days, each marked older: pitwall lists them behind Show older, and they never need the user, whatever their checks or conflicts.`
+          note: included
+            ? `${older} of these have no session and weren't updated in ${PRS_SHOWN_DAYS} days, each marked older: pitwall lists them behind Show older, and they never need the user, whatever their checks or conflicts.`
+            : args.older === true
+              ? `${older} have no session and weren't updated in ${PRS_SHOWN_DAYS} days: pitwall lists them behind Show older, and they never need the user, so needsYou: true leaves them out, though older: true was given. Call list_prs with older: true and without needsYou to list them.`
               : `${older} more have no session and weren't updated in ${PRS_SHOWN_DAYS} days: pitwall lists them behind Show older, and they never need the user, so they're left out. Call list_prs with older: true only if the user asks about old pull requests.`,
         };
       }
