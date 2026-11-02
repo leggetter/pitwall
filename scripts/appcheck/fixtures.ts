@@ -566,7 +566,7 @@ export class World {
         text: '- **pitwall-test-nightly-export** is running the made-up export tests.\n- **pitwall-test-retry-worker** is waiting on CI for its backoff change on `example/api-server`.\n- **pitwall-test-index-rebuild** is half way through the made-up index rebuild.',
       },
       { kind: 'user', text: 'Ask pitwall-test-review to retry the batch tonight, and start a session to review example/demo-app#57.', at: this.#ago(5.2) },
-      { kind: 'assistant', markdown: true, at: this.#ago(5), text: "I've drafted both for you. They're in the cards below, and go only when you send them." },
+      { kind: 'assistant', markdown: true, at: this.#ago(5), text: "I've drafted both for you: a message to **pitwall-test-review**, and a session to review example/demo-app#57. They're in the cards below, and go only when you send them. `pitwall-test-review` in code stays text." },
     ];
   }
 

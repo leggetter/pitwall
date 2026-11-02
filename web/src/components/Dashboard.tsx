@@ -1841,6 +1841,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         sessions={supervisorSessions}
         notNeeded={notNeeded.entries}
         onOpenSession={openSessionFromPr}
+        prs={prList?.prs}
+        onOpenPr={openPrView}
       />
     );
   } else if (supervisorOpen && !snapshot) {

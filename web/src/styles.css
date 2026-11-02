@@ -3876,6 +3876,22 @@ ol.md-list {
 }
 
 /*
+ * A session or PR the supervisor named (W125): a link button in the text's own face, size and weight,
+ * so a bold name stays bold, told apart by --pw-link and its underline, as a link is.
+ */
+.link-button.md-mention {
+  border-radius: var(--pw-radius-xs);
+  font: inherit;
+  text-align: inherit;
+}
+
+@media (hover: hover) {
+  .link-button.md-mention:hover {
+    text-decoration-thickness: 2px;
+  }
+}
+
+/*
  * The question a link asks before it opens (W55), after the paragraph, heading or table the link is
  * in: an inline confirmation, in the text colour even inside a quote, whose text is muted.
  */

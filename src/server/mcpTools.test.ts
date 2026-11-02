@@ -396,6 +396,49 @@ describe('list_prs', () => {
     expect(((await call(made.list_prs!, { needsYou: true })).json.prs as unknown[]).length).toBe(2);
   });
 
+  it('leaves out an older PR no session owns, counts it, and never says it needs you, as the web UI does (W125)', async () => {
+    const day = 24 * 60 * 60 * 1000;
+    const fetchedAt = NOW - 60_000;
+    const old = (days: number) => new Date(fetchedAt - days * day).toISOString();
+    const owner = session('owner', { name: 'pitwall-test-owner', prLinks: [{ kind: 'opened', repo: 'made-up/repo', number: 3, lastAt: new Date(NOW).toISOString() }] });
+    const made = tools({
+      sessions: [owner],
+      prs: {
+        fetchedAt: new Date(fetchedAt).toISOString(),
+        prs: [
+          pr(1, { mergeable: 'conflicts', updatedAt: old(89) }),
+          pr(2, { mergeable: 'conflicts', updatedAt: old(91) }),
+          pr(3, { checks: 'failing', updatedAt: old(400) }),
+          pr(4, { relation: 'review-requested', updatedAt: old(2000) }),
+        ],
+      },
+    });
+    const plain = (await call(made.list_prs!)).json;
+    expect((plain.prs as Record<string, unknown>[]).map((each) => [each.number, each.needsYou, each.older ?? false])).toEqual([
+      [1, true, false],
+      [3, true, false],
+    ]);
+    expect(plain.older).toMatchObject({ count: 2 });
+    expect((plain.older as { note: string }).note).toContain('older: true');
+    const needing = (await call(made.list_prs!, { needsYou: true })).json;
+    expect((needing.prs as Record<string, unknown>[]).map((each) => each.number)).toEqual([1, 3]);
+    const all = (await call(made.list_prs!, { older: true })).json;
+    expect((all.prs as Record<string, unknown>[]).map((each) => [each.number, each.needsYou, each.older ?? false])).toEqual([
+      [1, true, false],
+      [2, false, true],
+      [3, true, false],
+      [4, false, true],
+    ]);
+    expect(all.older).toMatchObject({ count: 2 });
+    expect(((await call(made.list_prs!, { older: true, needsYou: true })).json.prs as Record<string, unknown>[]).map((each) => each.number)).toEqual([1, 3]);
+    expect((await call(made.list_prs!, { older: 'yes' })).isError).toBe(true);
+  });
+
+  it('says nothing of older PRs when there are none', async () => {
+    const { json } = await call(tools({ prs: { fetchedAt: new Date(NOW).toISOString(), prs: [pr(1)] } }).list_prs!);
+    expect(json.older).toBeUndefined();
+  });
+
   it('says why there’s no list with --no-prs or when gh failed', async () => {
     const { json } = await call(tools({ prs: { source: { ok: false, reason: 'off', error: 'Pull requests are off: pitwall was started with --no-prs.' } } }).list_prs!);
     expect(json.source).toEqual({ ok: false, reason: 'off', untrusted: { error: 'Pull requests are off: pitwall was started with --no-prs.' } });
