@@ -1173,10 +1173,12 @@ export class World {
         relay: { sentAt: this.#ago(30), status: 'delivered', reply: { at: this.#ago(29), text: 'Thanks, looking at it now.' } },
         prLinks: [this.#link('opened', PRS.conflicts, 70), this.#link('opened', PRS.approved, 9 * 60), this.#link('mentioned', PRS.failing, 15)],
       }),
-      session(NAMES.conversation, { title: 'Add a made-up health route', lastUserPrompt: 'Add a made-up health route to the API, with a test.', prLinks: [this.#link('opened', PRS.failing, 26)] }),
+      // Context (W133): below the 200K threshold here, between the two on running2, over 400K on
+      // running3, and none on the rest, so their session view says "unavailable".
+      session(NAMES.conversation, { title: 'Add a made-up health route', lastUserPrompt: 'Add a made-up health route to the API, with a test.', contextTokens: 85_000, prLinks: [this.#link('opened', PRS.failing, 26)] }),
       job(NAMES.running, { prLinks: [this.#link('pushed', PRS.approved, 8 * 60)] }),
-      job(NAMES.running2),
-      job(NAMES.running3),
+      job(NAMES.running2, { contextTokens: 245_000 }),
+      job(NAMES.running3, { contextTokens: 612_000 }),
       job(NAMES.prompting, { status: 'waiting', state: 'blocked', waitingFor: 'permission prompt', needsYou: { reason: 'prompt' } }),
       job(NAMES.finished, { state: 'done', alive: false, pid: undefined, finished: true, lastActivityAt: this.#ago(95) }),
       session(NAMES.fromRoot, { cwd: CODE, title: 'Tidy both made-up services', workedIn: [worked('api-server', 12, 140), worked('demo-app', 3, 60)], prLinks: [this.#link('pushed', PRS.quiet, 3 * 60)] }),

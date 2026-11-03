@@ -113,6 +113,8 @@ Behind those it answers from `fixtures.ts`:
 
 - a session's sub-agents and each one's transcript (W77): `inApi` has five, in `SUBAGENTS`, two running, one of them started by the other, then done, failed and stopped ones, and its conversation names them; every other session has none. `drafting`'s transcript has a page behind Load earlier, and a cursor the fake server doesn't know gets 410.
 
+- each session's context (W133), `contextTokens`: `conversation` at 85K, below the 200K threshold, `running2` at 245K, between the two, `running3` at 612K, over 400K, and none on the rest, so their session view says "unavailable".
+
 It records what the page sent, such as attaches, keys typed into a terminal, the sizes it gave each attached session, spawns and the files they named, uploads and the status each got, uploads removed, relayed messages, resumes, opens in an editor, ends, refreshes of the PR list, and recaps fetched and asked for, for parts to check through `t.server.records`.
 
 **A case** is one part at one window and theme, on a fresh page: storage cleared, the fake server's data reset, and the app loaded with the token in its fragment, as the CLI opens it. A part's steps run in order. `t.fresh({ storage })` sets `localStorage` items before the app's own scripts run, on that load alone, such as a starred session. Every fresh page asks for reduced motion; `t.fresh({ motion: true })` leaves motion on, as for the working line's spinner (W102), until the next fresh page. `t.fresh({ forcedColors: true })` emulates forced colours, as a Windows contrast theme sets them, until the next fresh page, and `t.fresh({ labels: { [key]: label } })` gives groups other names, such as a longer one for a heading.

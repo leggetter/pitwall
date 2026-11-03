@@ -1065,6 +1065,7 @@ A row of tabs that switches what's below them: the session view's Conversation, 
 - **A sub-agent's state** (W77, [Sub-agents](#sub-agents)), from `SubagentState`, with the session states' looks: "Running", as Working is, subtle info with its dot; "Done", subtle success; "Failed", subtle danger; "Stopped", subtle neutral; and no badge when its state is unknown, rather than one that says so.
 - **Other badges:**
   - **Pull requests** (W95, W106): a PR's state badges, Review requested and Mentioned among them (W101), and the session row's "#51 CI failing" badge: see [Pull requests](#pull-requests). The Pull requests item's count is a need-you count, solid warning, since W106: PRs count in Needs you.
+  - **Context** (W133): a session's context over 200K, subtle warning, and over 400K, subtle danger: see [Context gauge](#context-gauge).
   - **Counts:** subtle neutral ("4", "2 of 5").
   - **Needs-you counts:** solid warning ("2 need you").
   - **Errors in folded tool calls:** subtle danger: "1 error" or "3 errors" on a fold's toggle, and "error" on each failed call.
@@ -1095,7 +1096,7 @@ The spinner is the [`Spinner`](#skeletons-and-spinners) component, with no spinn
   1. **Identity:**
      - The name (m 14/20, 500, `--pw-text`), then " · " and the title (m 14/20, 400, `--pw-text-muted`), on one line with an ellipsis. The full title and where it came from are in a tooltip; a title whose source isn't known has one only when it's cut. The name has the session's id and start time in a tooltip.
      - These tooltips, and those below, open on hover only: in a row, only the name's button and the toggles are focusable, and the tooltip on its heading doesn't open for the button's focus. The toggles' own tooltips, their names, open on focus too, as every icon button's does. The full title and line 2 are in the DOM, so screen readers have them, and the session view shows them all.
-     - Then, at the right, while the session owns an open pull request (W106), its [PR badge](#pull-requests), "#51" in its state's colour, and "+2" for more (W95), then the status badge(s) and the relative time (meta, `--pw-text-subtle`, tabular). The badges sit just before the time, whose slot is fixed and right-aligned (see [Timestamps](#timestamps)), so they line up down the list and stay put as the time ticks.
+     - Then, at the right, while its last call carried over 200K tokens of context (W133), its [context badge](#context-gauge), "412K", first, as the PR badge is, so the status badges still line up; then, while the session owns an open pull request (W106), its [PR badge](#pull-requests), "#51" in its state's colour, and "+2" for more (W95), then the status badge(s) and the relative time (meta, `--pw-text-subtle`, tabular). The badges sit just before the time, whose slot is fixed and right-aligned (see [Timestamps](#timestamps)), so they line up down the list and stay put as the time ticks.
      - Last, the [star toggle](#starred-sessions) (W53): a ghost sm icon button, filled and always shown while the session is starred, outlined and shown only on the row's hover and focus otherwise, and always on a touch screen. Its slot is kept on every row, so nothing moves as it shows, and its negative block margins keep line 1 20 px tall. It's after the time, which is where the eye already goes down the list, and outside the name's button, so pressing it never opens the session.
      - **Line 1 never wraps.** The title gives way first, then the name, then the status badge, which leaves the name and the time at least 10em. "Stale" and a finished session's "Asked you" are short and stay whole. The " · " is drawn with the title (CSS `::before`, not read out), so it goes when the title has.
   2. **What it wants or did last,** on one line with an ellipsis, when the transcript is readable:
@@ -1134,6 +1135,24 @@ The spinner is the [`Spinner`](#skeletons-and-spinners) component, with no spinn
 - **Needs you has no row tint,** only the bar and the badge. On 2026-10-20, nine of Phil's fifteen sessions needed him, and tinting every one of them turned most of the list yellow. The Needs you view collects them instead.
 - **Transcript notes:** "Transcript not found" or "Transcript unreadable", meta, `--pw-text-subtle`, in place of what line 2 would say, after the group label in Needs you and All sessions.
 - **Height:** never fixed; rows grow with zoom and text spacing.
+
+### Context gauge
+
+How many tokens of context a session's last call carried (W133, `SessionSummary.contextTokens`): what the model read again, cached or not, from the transcript's usage records. Every call sends all of it again, so a big context costs on every turn. On 2026-11-02, pitwall's own coordinator ran at 760K to 916K per call, and nothing on its row said so. `ContextGauge.tsx`, with the levels and numbers in `web/src/context.ts`.
+
+| Context | Row | Session view, line 2 | Under line 2 |
+|---|---|---|---|
+| Not known (no usage read yet, or no transcript) | nothing | "Context unavailable", meta, with an info button saying why | nothing |
+| At or below 200K (`CONTEXT_WARN_TOKENS`) | nothing | "Context 85K", meta, tabular, with an info button saying what it is | nothing |
+| Over 200K | subtle warning badge, "212K" | subtle warning badge, "Context 212K", with the info button | the note: hand it off, or `/compact` |
+| Over 400K (`CONTEXT_HIGH_TOKENS`) | subtle danger badge, "612K" | subtle danger badge, "Context 612K", with the info button | the note, "Hand it off to a new session now" |
+
+- **The thresholds are the protocol's** (`src/shared/protocol.ts`), so the server and the page agree. "Over" is strictly more than.
+- **Numbers are short and rounded down:** "850", "85K", "412K", "1.2M", so one over a threshold never shows below it.
+- **Quiet below 200K in the list:** most sessions are, and a number on every row is noise the list doesn't need (1: Exceptions only; healthy states stay quiet). The view always shows it.
+- **In a row, first among the badges,** as the PR badge is, so the status badges still line up against the time's slot. It's short and stays whole (`flex: none`); the title and the name give way first. Not on a finished row, which is muted; its view still shows it.
+- **Colour is never the only signal:** the number says how big, and the badge carries its level in visually hidden text, so a screen reader hears "Context 412K, over 400K". The row badge's tooltip, on hover, has the number in full and what to do; the view's info button and note say it for the keyboard.
+- **Why a badge, not line 2's quiet text** (as the sub-agents count is): it's a warning, in the warning and danger tones the Badges table gives warnings, and it's the session's state, not what it's doing.
 
 ### Repo list items
 
@@ -1461,12 +1480,14 @@ See [Repo list](#repo-list):
    - Then the row's other badges: "Asked you" (outline) for a finished session that asked, "Waiting on you" (outline) for a finished or ended one whose current recap waits on you (W111), and "Stale" (subtle neutral), each followed by an info button (`InfoTip`) whose name and tooltip are its explanation, the row's hover-only hint.
    - The kind as meta text in `--pw-text-subtle` ("Interactive" or "Background"). An interactive session adds an info button (`InfoTip`), so Tab reaches it: its name and its tooltip are "Typing /bg in its terminal moves it to the background, so pitwall can attach to it and stop it." An [ended](#ended-sessions) one has none: it has no terminal to type /bg in (W67).
    - "Active 5m ago" (meta, `--pw-text-subtle`, a [timestamp](#timestamps), the absolute time in its tooltip).
+   - Its context (W133, [Context gauge](#context-gauge)): "Context 85K" (meta), or its badge, "Context 412K", over 200K, or "Context unavailable", each with an info button.
    - The cwd (path type, `--pw-text-subtle`, middle ellipsis, the full path, home and all, in a tooltip) with a [copy button](#copy), "Copy path". It takes the rest of the line, or a line of its own below 16em.
    - When the directory no longer exists (`cwdMissing`): "Directory no longer exists" (meta, `--pw-text-muted`), its own item so it wraps rather than squeezing the path, with "The working directory no longer exists, for example after a worktree was removed." in a tooltip.
    - **Under line 2, where to answer while it waits on you** (W47): a line of its own while a running session has the solid Waiting or Blocked badge: a prompt on screen, or a background job whose own line says what it needs, or that's blocked with a job file pitwall couldn't read (`needsYou`, W69). Not for Waiting for your prompt, which has nothing to answer, nor for a blocked job that needs nothing of you, which shows Idle. The status badge already says it's waiting and on what, `waitingFor` as Claude Code gives it, as text, so the line says only where (`waitingNote()`). A question dialog open in a terminal seems not to be in the transcript until it's answered (seen on one session, not yet confirmed), so the badge and this line may be all pitwall can show of it. The same look and reading as the line below, and above it when both apply.
      - **Interactive:** "Answer it in its terminal: pitwall can't, and a message sent below waits until you do."
      - **Background:** "Answer it in its Terminal tab, which attaches to it." No button opens the tab from here, as for the footer's note: selecting the tab is what attaches (D9). None where the Terminal tab is off.
      - **No line** once it's no longer listed, or isn't running.
+   - **Under line 2, what to do about a big context** (W133): over 200K, a line of its own, the same look and reading as the line above: "Its last call carried 412K tokens of context, over 400K, and every call sends all of it again. Hand it off to a new session now, with the `handoff` skill where its repo has one, or run `/compact` in it." Without "now" between 200K and 400K. No line at or below 200K, or when the size isn't known.
    - **Under line 2, what to do about a directory that has gone** (W47): a line of its own, visible rather than in a tooltip, saying why the session is still listed and what ends it or takes it off the list, by kind and state (`cwdMissingNote()`). Meta text in `--pw-text-muted`, with `/exit` as inline code (2.7). It's a plain `<p>`: no live region, no id, and nothing is named or described by it, so a screen reader reads it once, in place, after "Directory no longer exists". Line 2 itself is as it was.
      - **Interactive, and running:** "It's still running in its terminal, so it's listed. End session, in the actions menu, ends it, as `/exit` there does." End session ends it though its directory has gone, since its process is still running (W90).
      - **Background, and running** (it has a process, whatever its state, stale and idle ones included): "It's still running, so it's listed. Stop session, in the actions menu, ends it."
