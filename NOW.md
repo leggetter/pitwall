@@ -2,7 +2,7 @@
 
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
-Last updated: 2026-11-03, on `m5.1/recap-schedule`: W132's security review approved #146 with one fix, made; merging into `m5.1/integration`. W133 next.
+Last updated: 2026-11-03, on `m5.1/integration`: W132 merged ([#146](https://github.com/leggetter/pitwall/pull/146)) after its security review; Phil answered its three questions. W133 next.
 
 ## Current milestone
 
@@ -16,7 +16,7 @@ Last updated: 2026-11-03, on `m5.1/recap-schedule`: W132's security review appro
 
 | Item | State |
 | --- | --- |
-| W132, recaps when they're worth it | [#146](https://github.com/leggetter/pitwall/pull/146): recaps kept in `$PITWALL_HOME/recap-store/` (D26's "What's kept"), updates 15 minutes after a turn, the strip asking on open only when it's worth it, 500 a day. Security review (2026-11-03, xhigh): approve with fixes. Fixed: `remove()` now checks the folder as `load()` and `save()` do, so it never deletes through a linked `recap-store`; README says expired recaps go when pitwall starts. Info, left: expiry only at start; `RECAP_STORE_MAX_FILES` isn't ordered by age; a planted file chooses its session's recap text (no wider than writing the transcript) |
+| W132, recaps when they're worth it | Merged in [#146](https://github.com/leggetter/pitwall/pull/146) on 2026-11-03: recaps kept in `$PITWALL_HOME/recap-store/` (D26's "What's kept"), updates 15 minutes after a turn, the strip asking on open only when it's worth it, 500 a day. Security review (2026-11-03, xhigh): approve with fixes. Fixed: `remove()` now checks the folder as `load()` and `save()` do, so it never deletes through a linked `recap-store`; README says expired recaps go when pitwall starts. Info, left: expiry only at start; `RECAP_STORE_MAX_FILES` isn't ordered by age; a planted file chooses its session's recap text (no wider than writing the transcript) |
 | W133, a context gauge and a hand-off hook ("M5.1 work breakdown") | Planned (Phil, 2026-11-03: A and B; C later) |
 | [#143](https://github.com/leggetter/pitwall/issues/143) (Session view: expand the conversation or terminal to the full page) | Later (Phil, 2026-11-03) |
 | W86, bump `vite` and `happy-dom` | Phil approved (2026-10-28); on or after 2026-11-04, when the fixes are 14 days old |
@@ -34,9 +34,7 @@ Last updated: 2026-11-03, on `m5.1/recap-schedule`: W132's security review appro
 
 ## Open questions for Phil
 
-- **Kept recaps last 30 days** (W132 chose `ENDED_LISTED_DAYS`, not the 14 the brief suggested), so ended sessions' recaps stay that long. Lean: fine.
-- **Claude Code's `cleanupPeriodDays`** (W132's review): kept recaps last 30 days whatever it's set to, so a recap of a transcript Claude Code has cleaned up, or you deleted, can outlive it until pitwall sees the session leave. Lean: a follow-up in "Nice to have, later", using the shorter of the two.
-- **A session with no recap yet** still gets one asked for when you open it, even while it works; only a stale one waits for its turn to end (W132). Lean: fine, since it's one call per session.
+None. W132's three were answered (Phil, 2026-11-03): kept recaps last 30 days; a session with no recap yet still gets one on open; `cleanupPeriodDays` is a follow-up in `PLAN.md`'s "Nice to have, later".
 
 ## Standing context
 
