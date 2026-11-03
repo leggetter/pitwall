@@ -10,8 +10,9 @@ import { WebSocket } from 'ws';
 import type { Indexer } from '../index/index.js';
 import type { RecapChildEvents } from '../recaps/call.js';
 import { memoryBudget } from '../recaps/budget.js';
+import { memoryRecapStore } from '../recaps/store.js';
 import { createRecapEngine, type RecapEngine } from '../recaps/engine.js';
-import { planStatusPath, planStatusRefreshPath, recapPath, recapRefreshPath, SNAPSHOT_PATH, WS_PATH, type IndexSnapshot, type PlanStatusResult, type ServerMessage, type SessionSummary } from '../shared/protocol.js';
+import { planStatusPath, planStatusRefreshPath, RECAP_DAILY_BUDGET, recapPath, recapRefreshPath, SNAPSHOT_PATH, WS_PATH, type IndexSnapshot, type PlanStatusResult, type ServerMessage, type SessionSummary } from '../shared/protocol.js';
 import { pitwallOrigin, proofFor } from '../test/proof.js';
 import type { RunningServer } from './index.js';
 import { startServerWithInternals } from './server.js';
@@ -97,6 +98,7 @@ function engineWithFakeClaude(options: { budget?: number } = {}) {
     claudeVersion: async () => '2.1.312 (Claude Code)',
     now: () => NOW,
     budgetStore: memoryBudget(),
+    recapStore: memoryRecapStore(),
     log: () => undefined,
     ...(options.budget === undefined ? {} : { budget: options.budget }),
   });
@@ -378,7 +380,7 @@ describe('the snapshot with recaps', () => {
     const recaps = engineWithFakeClaude();
     const { server } = await start({ recaps: recaps.engine });
     const before = JSON.parse((await request(server.port, SNAPSHOT_PATH, 'GET', { authorization: `Bearer ${TOKEN}` })).body) as IndexSnapshot;
-    expect(before.recaps).toEqual({ calls: 0, budget: 200, costUsd: 0 });
+    expect(before.recaps).toEqual({ calls: 0, budget: RECAP_DAILY_BUDGET, costUsd: 0 });
     const { apiKey, ws, messages } = await authedClient(server.port);
     await waitFor(() => messages.some((m) => m.type === 'snapshot'));
     await post(server.port, recapRefreshPath('a'), apiKey);
@@ -394,7 +396,7 @@ describe('the snapshot with recaps', () => {
       needsYou: { reason: 'recap', text: NEXT },
     });
     expect(after.groups[0]?.sessions[0]?.sessionId).toBe('a');
-    expect(after.recaps).toEqual({ calls: 1, budget: 200, costUsd: 0.001 });
+    expect(after.recaps).toEqual({ calls: 1, budget: RECAP_DAILY_BUDGET, costUsd: 0.001 });
     // The whole recap only from GET recapPath(): the list's snapshot has no summary (D14).
     expect(JSON.stringify(after)).not.toContain(RECAP.summary);
     ws.close();

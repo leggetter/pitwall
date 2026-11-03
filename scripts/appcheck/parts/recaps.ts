@@ -319,7 +319,7 @@ const part: Part = {
 
     await t.step('the day’s budget spent: the app strip says so, Refresh is off, and nothing is asked for', async () => {
       await t.fresh({ search: '?view=all', recaps: 'spent' });
-      t.expect((await page.evaluate<string | null>(APP_STRIP))?.startsWith("Today's 200 recaps are used up") ?? false, 'the app strip', await page.evaluate(APP_STRIP));
+      t.expect((await page.evaluate<string | null>(APP_STRIP))?.startsWith("Today's 500 recaps are used up") ?? false, 'the app strip', await page.evaluate(APP_STRIP));
       const shown = await open(RECAPPED.stale);
       t.expect(shown.stale && shown.staleOnLine1 && shown.summary?.startsWith('You asked it to review the made-up retry change.') === true, 'its stale recap, which says so on line 1, beside its age', shown);
       t.expectEqual(shown.off, true, 'Refresh is off');
@@ -328,7 +328,7 @@ const part: Part = {
       t.expectEqual(server.records.recapRefreshes.length, 0, 'nothing asked for');
       await page.click('Plan status', PLAN_BUTTON);
       const spent = await page.waitFor<Plan>('Plan status to say why', `(() => { const p = ${plan}; return p && p.state === 'error' ? p : null; })()`);
-      t.expect(spent.note?.startsWith("Today's 200 recaps are used up") ?? false, 'Plan status says the budget is spent', spent.note);
+      t.expect(spent.note?.startsWith("Today's 500 recaps are used up") ?? false, 'Plan status says the budget is spent', spent.note);
       t.expectEqual(server.records.planMakes.length, 0, 'and makes none');
       await t.shot('budget');
     });

@@ -90,11 +90,11 @@ const settle = () => act(async () => {});
 /** Past --pw-delay-attach, which the strip waits before asking for a recap (500 ms with no stylesheet). */
 const pastAskDelay = () => act(async () => void (await vi.advanceTimersByTimeAsync(600)));
 
-function renderStrip(props: { session: SessionSummary; health?: RecapHealth | undefined; listed?: boolean; hidden?: boolean }, api: ApiClient, toast: ShowToast = vi.fn()) {
+function renderStrip(props: { session: SessionSummary; health?: RecapHealth | undefined; listed?: boolean; hidden?: boolean; turnEnded?: boolean }, api: ApiClient, toast: ShowToast = vi.fn()) {
   const ui = (next: typeof props) => (
     <ToastContext.Provider value={toast}>
       <ApiContext.Provider value={api}>
-        <RecapStrip session={next.session} health={'health' in next ? next.health : HEALTH} listed={next.listed ?? true} hidden={next.hidden ?? false} />
+        <RecapStrip session={next.session} health={'health' in next ? next.health : HEALTH} listed={next.listed ?? true} hidden={next.hidden ?? false} {...(next.turnEnded === undefined ? {} : { turnEnded: next.turnEnded })} />
       </ApiContext.Provider>
     </ToastContext.Provider>
   );
@@ -265,6 +265,45 @@ describe('asking for a new recap as the view opens', () => {
     view.update({ session: target(recap) });
     await settle();
     expect(strip()?.dataset.recap).toBe('shown');
+    expect(server.post).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks for nothing for a stale recap while the session works, shows the one it has, and Refresh still asks (W132)', async () => {
+    const stale = full({ stale: true });
+    const server = fakeApi({ recap: stale });
+    renderStrip({ session: target(stale, { status: 'busy' }) }, server.api);
+    await pastAskDelay();
+    expect(server.post).not.toHaveBeenCalled();
+    expect(strip()?.dataset.recap).toBe('shown');
+    expect(refreshButton()?.disabled).toBe(false);
+    act(() => refreshButton()!.click());
+    await settle();
+    expect(server.post).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks for a stale recap once the page says the turn has ended, whatever Claude Code's status (W132)", async () => {
+    const stale = full({ stale: true });
+    const server = fakeApi({ recap: stale });
+    // A plugin's monitor can keep Claude Code's status at busy with no turn running (spike 007, finding 6).
+    renderStrip({ session: target(stale, { status: 'busy' }), turnEnded: true }, server.api);
+    await pastAskDelay();
+    expect(server.post).toHaveBeenCalledTimes(1);
+  });
+
+  it('decides by the session as it is when the wait is up, so a turn that ends meanwhile asks (W132)', async () => {
+    const stale = full({ stale: true });
+    const server = fakeApi({ recap: stale });
+    const view = renderStrip({ session: target(stale, { status: 'busy' }) }, server.api);
+    await act(async () => void (await vi.advanceTimersByTimeAsync(200)));
+    view.update({ session: target(stale, { status: 'idle' }) });
+    await pastAskDelay();
+    expect(server.post).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks for one with none, even while the session works (W132)', async () => {
+    const server = fakeApi();
+    renderStrip({ session: target(undefined, { status: 'busy' }) }, server.api);
+    await pastAskDelay();
     expect(server.post).toHaveBeenCalledTimes(1);
   });
 

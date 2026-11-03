@@ -127,7 +127,7 @@ export const WORK_TEXT = {
   supervisorOff: 'The supervisor is off for this run (--no-supervisor).',
 } as const;
 
-/** "Today: $0.04 for 37 of 200 calls", from the snapshot's recaps. */
+/** "Today: $0.04 for 37 of 500 calls", from the snapshot's recaps. */
 export function recapCostText(health: IndexSnapshot['recaps']): string {
   if (health === undefined) return WORK_TEXT.recapsOff;
   const calls = `${health.calls} of ${health.budget} ${health.budget === 1 ? 'call' : 'calls'}`;

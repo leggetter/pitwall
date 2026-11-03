@@ -9,11 +9,13 @@
 //
 // - **When the view fetches:** recapPath() once the view is shown, and again whenever the snapshot's
 //   `recap.at` changes. Only for a session that has a recap: one with none has nothing to fetch.
-// - **When it asks for one:** once, as the view is first shown, when its recap is stale or it has
-//   none, after --pw-delay-attach, so a session only passed through with j or k is never recapped,
-//   as it's never attached (W54). Never again by itself, whatever arrives: the recap engine makes the
-//   next one 5 minutes after a turn ends (W110), and Refresh is there for the rest. Not while the
-//   day's budget is spent, which the snapshot says (RecapHealth).
+// - **When it asks for one:** once, as the view is first shown, after --pw-delay-attach, so a session
+//   only passed through with j or k is never recapped, as it's never attached (W54), and only when
+//   it's worth a call (W132, asksOnOpen()): when the session has no recap, or its recap is stale and
+//   its turn has ended. Not while it works, since its recap would be stale again at the turn's end,
+//   and the engine updates it 15 minutes after that (RECAP_UPDATE_DEBOUNCE_MS). Never again by
+//   itself, whatever arrives: Refresh is there for the rest. Not while the day's budget is spent,
+//   which the snapshot says (RecapHealth).
 // - **No strip** with recaps off (no `recaps` on the snapshot, or a 409), and for a session the server
 //   says it can't recap (a 404): one with no transcript it can read. An ended session has one: it's
 //   recapped when you ask (D26), and its view asks once as it opens, as any other's does.
@@ -47,6 +49,7 @@ import type { BadgeLook } from './sessions.js';
 import { couldNot, plainText } from './format.js';
 import { browserStorage, type StorageSource } from './groupState.js';
 import { ATTACH_DELAY_MS, cssTime } from './timing.js';
+import { turnMode } from './working.js';
 import type { ShowToast } from './components/Toast.js';
 
 /** Whether the strip is collapsed: "true" or "false", nothing else (D14). */
@@ -279,6 +282,22 @@ export interface UseRecapOptions {
   toast: ShowToast;
   /** The element the strip is in, for --pw-delay-attach. */
   delayFrom?: () => Element | null | undefined;
+  /**
+   * Whether the conversation's newest page says the turn has ended (ConversationPage.turnEnded), as
+   * the working line reads it: Claude Code's status alone can say busy with no turn running.
+   */
+  turnEnded?: boolean;
+}
+
+/**
+ * Whether the strip asks for a recap as the view opens (W132): when the session has none, or its
+ * recap is stale and its turn has ended, by the working line's rule (turnMode()). Not while it works:
+ * a recap made then is stale at the turn's end, and the engine makes the next one by itself.
+ */
+export function asksOnOpen(session: SessionSummary, listed: boolean, turnEnded: boolean | undefined): boolean {
+  const summary = session.recap;
+  if (summary === undefined) return true;
+  return summary.stale === true && turnMode(session, listed, turnEnded) !== 'working';
 }
 
 type Phase = 'idle' | 'queued' | 'asking' | 'awaiting';
@@ -287,7 +306,7 @@ type Phase = 'idle' | 'queued' | 'asking' | 'awaiting';
 const TOAST_KEY = 'recap-refresh';
 
 /** The recap behind one session's strip: what to show, and Refresh. See the top of this file for when it fetches and asks. */
-export function useRecap({ api, session, health, listed, hidden, toast, delayFrom }: UseRecapOptions): RecapController {
+export function useRecap({ api, session, health, listed, hidden, toast, delayFrom, turnEnded }: UseRecapOptions): RecapController {
   const { sessionId } = session;
   const summary = session.recap;
   const summaryAt = summary?.at;
@@ -385,10 +404,14 @@ export function useRecap({ api, session, health, listed, hidden, toast, delayFro
     [api, sessionId],
   );
 
-  // Once, as the view is first shown: a stale recap, or none, asks for one, after --pw-delay-attach.
-  // Hidden before then, as by a root tab's switch, it decides again when it's shown.
+  // Once, as the view is first shown: none, or a stale recap once the turn has ended, asks for one
+  // (asksOnOpen()), after --pw-delay-attach, by the session as it is then, since the conversation's
+  // first page, which says whether the turn has ended, may come meanwhile. Hidden before then, as by a
+  // root tab's switch, it decides again when it's shown.
   const stale = summary !== undefined ? summary.stale === true : fetched?.stale === true;
   const wanted = summary === undefined || summary.stale === true;
+  const asks = useRef<() => boolean>(() => false);
+  asks.current = () => asksOnOpen(session, listed, turnEnded);
   useEffect(() => {
     if (decided || !enabled || hidden || !listed) return;
     if (!wanted || budgetSpent(health)) {
@@ -401,7 +424,8 @@ export function useRecap({ api, session, health, listed, hidden, toast, delayFro
       () => {
         fired = true;
         setDecided(true);
-        post(true);
+        if (asks.current()) post(true);
+        else setPhase((current) => (current === 'queued' ? 'idle' : current));
       },
       cssTime(delayFrom?.() ?? undefined, '--pw-delay-attach', ATTACH_DELAY_MS),
     );

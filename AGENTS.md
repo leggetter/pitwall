@@ -23,6 +23,7 @@ M5, the supervisor, was built on `m5/integration` (W109 to W129) and merged into
 - **A UI change runs the app check:** `npm run build && npm run appcheck -- --out <dir>`, and adds or extends its part in `scripts/appcheck/parts/`. On macOS, never send key presses to Google Chrome's headless mode: it plays the user's alert sound for each key a page doesn't handle (W64). The harness refuses any browser but the pinned `chrome-headless-shell` there.
 - **The plan is the source of truth.** Update `NOW.md` in the same commit as the work, and `PLAN.md` where the design changed. A settled decision moves to `docs/decisions.md` with its reasoning, under the ID it had in the plan.
 - **Prefer documented Claude Code interfaces:** `claude agents --json`, `claude --bg`, `claude attach`, `claude logs`, and cross-session messaging. Anything internal goes behind one adapter module and fails soft: show "unavailable", never crash. That covers transcript JSONL, sub-agents' `subagents/` folders, `~/.claude/jobs/*/state.json` and the inbox socket wire format.
+- **A pitwall you start for a try-out or a check gets its own `PITWALL_HOME`,** or `--no-recaps` unless recaps are what's being tried: every pitwall on one home shares the recap budget, and on 2026-11-02 try-outs spent about 150 of Phil's 200 (W132).
 - **Never touch a real session.** During development and tests, don't message, stop, attach to or remove a session the user didn't name. Spikes and tests use throwaway sessions named `pitwall-test-*`, and remove them afterwards.
 - **Keep the security rules in `PLAN.md`:** localhost only, a token on every API request and WebSocket, `Host` and `Origin` checks. Don't weaken them for convenience, including in dev mode.
 - **TypeScript in strict mode,** Node >= 22, npm.
@@ -92,10 +93,11 @@ src/prs/                 your open pull requests (M4): three gh api graphql sear
                          on its own poller, each PR placed under its repo or root (W105, place.ts).
                          Entry point index.ts: createPrPoller(), prsOff() for --no-prs
 src/recaps/              per-session recaps (M5, W110, D26): engine.ts schedules them, a short claude -p on Haiku
-                         per session, at most 2 at a time and 200 a day, and decorates the snapshot; input.ts
+                         per session, at most 2 at a time and 500 a day, and decorates the snapshot; input.ts
                          builds the input, prompt.ts the command line, environment and strict parsing, call.ts
-                         runs one. Plan status (W123) is the same kind of call, made only when the page asks,
-                         from the same engine. The transcript reads are src/index/recapSources.ts; the
+                         runs one, store.ts keeps each session's recap on disk across restarts (W132). Plan
+                         status (W123) is the same kind of call, made only when the page asks, from the
+                         same engine. The transcript reads are src/index/recapSources.ts; the
                          snapshot's view and routes are src/server/snapshotRecaps.ts and recapRoutes.ts.
                          Off with --no-recaps
 src/supervisor/          the supervisor (M5, W113, W115, D4): one claude -p session on Opus 5.5 that pitwall starts

@@ -1038,7 +1038,7 @@ export function SessionView({
       )}
 
       {/* Why it was started, where it is and what's next (W111), between the header and the tabs, on every tab. */}
-      <RecapStrip session={session} health={recaps} listed={listed} hidden={hidden} />
+      <RecapStrip session={session} health={recaps} listed={listed} hidden={hidden} {...(conversation.state.turnEnded === undefined ? {} : { turnEnded: conversation.state.turnEnded })} />
 
       <div className="session-tabs" role="tablist" aria-label="Session view" onKeyDown={onTabsKey}>
         <button

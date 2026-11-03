@@ -150,7 +150,7 @@ describe('parseCliArgs', () => {
   it('says in the help what --no-recaps does: what it sends, to which model, on whose login, and how often', () => {
     expect(USAGE).toContain('[--no-prs] [--no-recaps]');
     expect(USAGE.replace(/\s+/g, ' ')).toContain(
-      "--no-recaps Don't recap your sessions, and never run a recap call. Without it, once a session's turn has ended and it's been idle 5 minutes, and when you ask, pitwall sends excerpts of its transcript to claude-haiku-5-5, with claude -p and whatever login or API key claude finds in pitwall's environment, at most 200 calls a day, for a short recap: why it started, where it is and what's next.",
+      "--no-recaps Don't recap your sessions, and never run a recap call. Without it, once a session's turn has ended and it's been idle 5 minutes, 15 for an update, and when you ask, pitwall sends excerpts of its transcript to claude-haiku-5-5, with claude -p and whatever login or API key claude finds in pitwall's environment, at most 500 calls a day, for a short recap: why it started, where it is and what's next.",
     );
   });
 
@@ -887,6 +887,23 @@ describe('pitwall (the process)', () => {
 
     child.kill('SIGTERM');
     expect((await result).code).toBe(0);
+  }, 30_000);
+
+  it.skipIf(process.platform === 'win32')('reads and writes no recap file with --no-recaps (W132)', async () => {
+    const home = fresh('home');
+    await mkdir(home, { mode: 0o700 });
+    await chmod(home, 0o700);
+    // A kept-recaps folder others can enter: an engine that read it would say so on stderr.
+    await mkdir(join(home, 'recap-store'), { mode: 0o755 });
+    await chmod(join(home, 'recap-store'), 0o755);
+    const { child, result, url } = await start(['--no-recaps', '--no-open'], { PITWALL_HOME: home });
+    expect((await firstSnapshot(url)).status).toBe(200);
+    child.kill('SIGTERM');
+    const { code, stderr } = await result;
+    expect(code).toBe(0);
+    expect(stderr).not.toContain('recaps:');
+    expect((await readdir(home)).sort()).toEqual(['recap-store']);
+    expect(await readdir(join(home, 'recap-store'))).toEqual([]);
   }, 30_000);
 
   it('removes PITWALL_TOKEN from its environment before it runs claude', async () => {

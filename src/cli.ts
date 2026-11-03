@@ -34,7 +34,7 @@ import { createClaudeDefaultsReader } from './server/claudeDefaults.js';
 import { createWorkStore } from './server/work.js';
 import { type DirCheckContext, LaunchDirError, pitwallHome, prepareLaunchDir, removeWhenUsed, writeLaunchFile } from './server/launch.js';
 import { RELAY_NAME } from './server/relayPrompt.js';
-import { DEFAULT_POLL_INTERVAL_MS, PRS_POLL_INTERVAL_MS, RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, RECAP_MODEL, SUPERVISOR_MODEL } from './shared/protocol.js';
+import { DEFAULT_POLL_INTERVAL_MS, PRS_POLL_INTERVAL_MS, RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, RECAP_MODEL, RECAP_UPDATE_DEBOUNCE_MS, SUPERVISOR_MODEL } from './shared/protocol.js';
 
 /** The shortest and longest poll interval `--interval` accepts, in seconds. */
 export const INTERVAL_MIN_SECONDS = 1;
@@ -68,7 +68,8 @@ Options:
                         github.com. gh must be installed and logged in.
   --no-recaps           Don't recap your sessions, and never run a recap call.
                         Without it, once a session's turn has ended and it's
-                        been idle ${RECAP_DEBOUNCE_MS / 60_000} minutes, and when you ask, pitwall sends
+                        been idle ${RECAP_DEBOUNCE_MS / 60_000} minutes, ${RECAP_UPDATE_DEBOUNCE_MS / 60_000} for an update, and
+                        when you ask, pitwall sends
                         excerpts of its transcript to ${RECAP_MODEL}, with
                         claude -p and whatever login or API key claude finds
                         in pitwall's environment, at most ${RECAP_DAILY_BUDGET} calls a day,
