@@ -17,7 +17,7 @@
 // A compaction that brings the context back under a level re-arms it.
 //
 // Plain JavaScript with no dependencies, checked through its JSDoc (tsconfig.json).
-import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs';
+import { closeSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -160,6 +160,11 @@ function readLevel(dir, sessionId) {
  */
 function writeLevel(dir, sessionId, level) {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
+  // A shared /tmp (Linux) lets another user plant the folder or a link: use it only when it's
+  // a real folder of ours; otherwise throw, and runHook stays silent.
+  const st = lstatSync(dir);
+  const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
+  if (!st.isDirectory() || (uid !== undefined && st.uid !== uid)) throw new Error('state folder not ours');
   writeFileSync(stateFile(dir, sessionId), JSON.stringify({ v: 1, level }), { mode: 0o600 });
 }
 
@@ -174,10 +179,15 @@ export function thresholdOf(env) {
 }
 
 /**
- * The state folder: PITWALL_HANDOFF_STATE_DIR when set (for tests), else under os.tmpdir().
+ * The state folder: PITWALL_HANDOFF_STATE_DIR when set (for tests), else a per-user folder under
+ * os.tmpdir(), which is per-user on macOS but can be a shared /tmp on Linux.
  * @param {NodeJS.ProcessEnv} env
  */
-export const stateDirOf = (env) => env.PITWALL_HANDOFF_STATE_DIR || path.join(os.tmpdir(), 'pitwall-handoff-nudge');
+export const stateDirOf = (env) => {
+  if (env.PITWALL_HANDOFF_STATE_DIR) return env.PITWALL_HANDOFF_STATE_DIR;
+  const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
+  return path.join(os.tmpdir(), uid === undefined ? 'pitwall-handoff-nudge' : `pitwall-handoff-nudge-${uid}`);
+};
 
 /**
  * The hook: the JSON to print, or undefined to print nothing and let the session stop. Never throws.

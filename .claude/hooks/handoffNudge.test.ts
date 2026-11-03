@@ -1,7 +1,7 @@
 // The hand-off nudge (W133 B): run as Claude Code runs it, node with the script reading a Stop
 // input on stdin, against made-up transcripts. No real session content, and no test runs claude.
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,10 +37,10 @@ function newSession(): string {
   return `00000000-0000-4000-8000-${String(++sessionN).padStart(12, '0')}`;
 }
 
-function run(input: Record<string, unknown> | string, threshold = 1000) {
+function run(input: Record<string, unknown> | string, threshold = 1000, dir = stateDir) {
   const result = spawnSync(process.execPath, [SCRIPT], {
     input: typeof input === 'string' ? input : JSON.stringify(input),
-    env: { ...process.env, PITWALL_HANDOFF_THRESHOLD: String(threshold), PITWALL_HANDOFF_STATE_DIR: stateDir },
+    env: { ...process.env, PITWALL_HANDOFF_THRESHOLD: String(threshold), PITWALL_HANDOFF_STATE_DIR: dir },
     encoding: 'utf8',
     timeout: 10_000,
   });
@@ -162,5 +162,14 @@ describe('the hook, run as Claude Code runs it', () => {
     const big = JSON.stringify({ type: 'api-request-blob', blob: 'x'.repeat(3 * 1024 * 1024) });
     const result = run(stop(newSession(), transcript([assistant('m1', usage(0, 5000, 0)), big, big])));
     expect(nudged(result.stdout)).toMatch(/about 5K/);
+  });
+
+  it('stays silent when the state folder is a link, as another user could plant in a shared /tmp', () => {
+    const real = path.join(tmp, 'elsewhere');
+    mkdirSync(real);
+    const link = path.join(tmp, 'linked-state');
+    symlinkSync(real, link);
+    const result = run(stop(newSession(), transcript([user, assistant('m1', usage(0, 5000, 0))])), 1000, link);
+    expect(result).toEqual({ status: 0, stdout: '', stderr: '' });
   });
 });

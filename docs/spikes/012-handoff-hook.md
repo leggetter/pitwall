@@ -11,7 +11,7 @@ No other session was touched. The test session's transcript folder and the temp 
 | 1 | Does a hook's input give the context size? | No. No hook input carries the main session's token usage. SessionStart's `context_tokens` is set only on resume or fork, and PostToolUse's `usage` belongs to a sub-agent ([hooks reference](https://code.claude.com/docs/en/hooks)) |
 | 2 | Can it be read from the transcript? | Yes, through `transcript_path`: the last main-chain `assistant` entry's `message.usage`, `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`. But it's a step behind (finding 2) |
 | 3 | Which event? | Stop, with `hookSpecificOutput.additionalContext`. The session acted on it at once (finding 3) |
-| 4 | Does it loop? | No. The continuation's Stop came with `stop_hook_active: true`, and the hook stayed silent. Claude Code also caps Stop continuations at 8 in a row |
+| 4 | Does it loop? | No. The continuation's Stop came with `stop_hook_active: true`, and the hook stayed silent. Claude Code also seemed to cap Stop continuations at 8 in a row (observed, not found in the hooks docs) |
 
 ## Findings
 
@@ -30,7 +30,7 @@ No other session was touched. The test session's transcript folder and the temp 
 
 - **Stop, not UserPromptSubmit.** A UserPromptSubmit hook's `additionalContext` waits for the next prompt, and a session that's left running, or that the supervisor drives, may not get one soon. A coordinator at 760K tokens also re-reads its context on every call of the turn in hand. Stop acts at the end of the turn that crossed the line, and the message tells the session to finish safely first.
 - **`additionalContext`, not `decision: "block"`.** Both continue the session through the same loop protections. `additionalContext` is recorded as hook feedback, not shown as a hook error, and the nudge isn't an error.
-- **Once per level per session:** at 200K, then at 400K. The levels nudged are kept in `os.tmpdir()/pitwall-handoff-nudge/<session id>.json`, never in the transcript's folder. A compaction that brings the context back under a level re-arms it. A compaction entry after the last usage means the size is unknown, so the hook says nothing until the next call.
+- **Once per level per session:** at 200K, then at 400K. The levels nudged are kept in `os.tmpdir()/pitwall-handoff-nudge-<uid>/<session id>.json`, used only when that folder is a real folder owned by the user, never in the transcript's folder. A compaction that brings the context back under a level re-arms it. A compaction entry after the last usage means the size is unknown, so the hook says nothing until the next call.
 - **Sub-agents are left alone.** Claude Code fires SubagentStop, not Stop, when a sub-agent finishes, and that event isn't hooked. Sidechain entries in the main transcript, where older versions wrote a sub-agent's calls, are skipped. A Stop input with an `agent_id` is ignored as well.
 - **pitwall's own `claude -p` calls don't get it.** The supervisor and recaps run with `--setting-sources ""`, so the repo's `.claude/settings.json` isn't loaded. Sessions started in this repo, from pitwall or a terminal, do get it, and so do worktrees, since the file is checked in.
 
