@@ -221,6 +221,20 @@ export function recapStoreDir(home: string, log: (message: string) => void = () 
     }
   }
 
+  /** Whether a folder is one save() would write to: a real directory of this user's that no one else can enter. Makes nothing. */
+  function isOurs(folder: string): boolean {
+    try {
+      const stats = lstatSync(folder);
+      if (stats.isSymbolicLink() || !stats.isDirectory()) return false;
+      if (process.platform === 'win32') return true;
+      const uid = process.getuid?.();
+      if (uid !== undefined && stats.uid !== uid) return false;
+      return (stats.mode & 0o077) === 0;
+    } catch {
+      return false;
+    }
+  }
+
   function unlinkQuietly(file: string): void {
     try {
       unlinkSync(file);
@@ -293,7 +307,8 @@ export function recapStoreDir(home: string, log: (message: string) => void = () 
       }
     },
     remove(sessionId) {
-      if (!isSessionUuid(sessionId)) return;
+      // The same checks as load() and save(), so a recap-store swapped for a link never has files deleted through it.
+      if (!isSessionUuid(sessionId) || !isOurs(home) || !isOurs(dir)) return;
       unlinkQuietly(fileOf(sessionId));
     },
   };

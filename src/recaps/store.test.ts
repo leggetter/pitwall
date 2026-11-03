@@ -220,6 +220,30 @@ describe('recapStoreDir', () => {
     expect(await readdir(join(tmp, `target-${n}`))).toEqual([]);
   });
 
+  it.skipIf(!posix)('removes nothing through a folder that is a link, or that others can enter', async () => {
+    const target = join(tmp, `remove-target-${n}`);
+    await mkdir(target, { mode: 0o700 });
+    await writeFile(join(target, `${A}.json`), storedText(A, recap()), { mode: 0o600 });
+    const linkedHome = await home();
+    await symlink(target, join(linkedHome, RECAP_STORE_DIR_NAME));
+    recapStoreDir(linkedHome).remove(A);
+    expect(await readdir(target)).toEqual([`${A}.json`]);
+
+    const looseHome = await home();
+    const loose = join(looseHome, RECAP_STORE_DIR_NAME);
+    await mkdir(loose, { mode: 0o755 });
+    await chmod(loose, 0o755);
+    await writeFile(join(loose, `${A}.json`), storedText(A, recap()), { mode: 0o600 });
+    recapStoreDir(looseHome).remove(A);
+    expect(await readdir(loose)).toEqual([`${A}.json`]);
+
+    const ownHome = await home();
+    const own = recapStoreDir(ownHome);
+    own.save(A, recap());
+    own.remove(A);
+    expect(await readdir(join(ownHome, RECAP_STORE_DIR_NAME))).toEqual([]);
+  });
+
   it('never throws, and writes nothing, when pitwall’s home is missing', () => {
     const store = recapStoreDir(join(tmp, 'missing', 'home'));
     expect(store.load(NOW).recaps.size).toBe(0);
