@@ -235,7 +235,7 @@ Small improvements that aren't needed now, gathered from reviews and try-outs so
   - **End session refuses any interactive session named `pitwall-supervisor`,** wherever it runs, unlike the index's folder rule (W116's re-check).
   - **`--max-turns 30`** hasn't been seen live; it needs a 30-step turn (W120).
 - **Recaps**
-  - **Keep recaps across restarts,** under `~/.pitwall`, so a restart doesn't recap every session again (spike 010).
+  - **Honour Claude Code's `cleanupPeriodDays`** for kept recaps: keep each for the shorter of it and 30 days, so a recap doesn't outlive the transcript it summarises once Claude Code has cleaned it up or you've deleted it (W132's security review; Phil, 2026-11-03). Kept recaps themselves are W132's.
   - **`--effort low` for recaps,** half the time, if quality holds (spike 010). Now a setting (W119: `work.recaps.effort`, or Preferences); measuring its quality is what's left.
 
 ## Suggested actions
