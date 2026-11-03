@@ -21,7 +21,7 @@ export function ContextBadge({ tokens }: { tokens: number | undefined }) {
   const level = contextLevel(tokens);
   if (level === 'ok') return null;
   return (
-    <Badge look={CONTEXT_LOOKS[level]} hint={contextHint(tokens)} className="context-badge">
+    <Badge look={CONTEXT_LOOKS[level]} hint={contextHint(tokens)} className="context-badge context-badge-row">
       <span className="visually-hidden">Context </span>
       {formatTokens(tokens)}
       <span className="visually-hidden">{levelText(level)}</span>

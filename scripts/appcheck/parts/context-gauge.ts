@@ -20,13 +20,14 @@ const rowGauge = (name: string) => `(() => {
   return {
     text: badge?.textContent ?? null,
     shown: badge ? [...badge.querySelector('.badge-label').childNodes].filter((n) => !(n instanceof Element && n.matches('.visually-hidden'))).map((n) => n.textContent).join('') : null,
+    prefix: badge ? getComputedStyle(badge, '::before').content : null,
     look: badge ? [...badge.classList].find((c) => c.startsWith('badge-subtle-')) ?? null : null,
     first: badge ? badges[0] === badge : null,
     whole: badge ? badge.scrollWidth <= badge.clientWidth + 1 : null,
     oneLine: line.getBoundingClientRect().height <= 24.5,
   };
 })()`;
-type RowGauge = { text: string | null; shown: string | null; look: string | null; first: boolean | null; whole: boolean | null; oneLine: boolean };
+type RowGauge = { text: string | null; shown: string | null; prefix: string | null; look: string | null; first: boolean | null; whole: boolean | null; oneLine: boolean };
 
 const viewGauge = `(() => {
   const meta = ${VIEW}?.querySelector('.session-view-context');
@@ -69,6 +70,7 @@ const part: Part = {
         t.expect(each?.first === true, `${name}: first among its badges, so the status badges still line up`, each);
         t.expect(each?.whole === true, `${name}: the badge is whole`, each);
         t.expect(each?.oneLine === true, `${name}: line 1 stays one line`, each);
+        t.expect(each?.prefix?.includes('ctx') === true, `${name}: "ctx" before the number, so it isn't read as a PR number`, each);
       }
       const below = await page.evaluate<RowGauge | undefined>(rowGauge(NAMES.conversation));
       t.expectEqual(below?.text, null, 'no badge at 85K');

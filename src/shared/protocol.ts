@@ -484,13 +484,6 @@ export interface RelayAlert {
 }
 
 /**
- * WebSocket protocol version. Version 2 (M2) replaced M1's raw-token auth with
- * challenge-response, so the raw token never travels over the socket. Version
- * 3 binds the proof to the page's origin, so a page on another origin, such as
- * a server squatting on the port, can't pass a challenge on to a real pitwall
- * page and use its proof.
- */
-/**
  * A session's context (SessionSummary.contextTokens, W133) is flagged over this many tokens, in
  * warning: time to hand off or compact. On 2026-11-02, 87% of cache reads were at more than 200K.
  */
@@ -499,6 +492,13 @@ export const CONTEXT_WARN_TOKENS = 200_000;
 /** And over this many, in danger (W133). pitwall's own coordinator ran at 760K to 916K that day. */
 export const CONTEXT_HIGH_TOKENS = 400_000;
 
+/**
+ * WebSocket protocol version. Version 2 (M2) replaced M1's raw-token auth with
+ * challenge-response, so the raw token never travels over the socket. Version
+ * 3 binds the proof to the page's origin, so a page on another origin, such as
+ * a server squatting on the port, can't pass a challenge on to a real pitwall
+ * page and use its proof.
+ */
 export const PROTOCOL_VERSION = 3;
 
 /**

@@ -1216,6 +1216,13 @@ describe('context tokens (W133)', () => {
     expect(fields.contextTokens).toBe(310_001);
   });
 
+  it('forgets the size at a compaction summary, and takes the next call', () => {
+    const fields = fieldsOf(call('m1', usage(1, 600_000, 0)), { type: 'user', isCompactSummary: true, message: { role: 'user', content: 'a made-up summary' } });
+    expect(fields.contextTokens).toBeUndefined();
+    applyEntry(fields, call('m2', usage(1, 30_000, 0)));
+    expect(fields.contextTokens).toBe(30_001);
+  });
+
   it('skips a malformed line and keeps the call before it', () => {
     const fields: Fields = {};
     applyLine(fields, JSON.stringify(call('m1', usage(1, 50_000, 0))));
@@ -1251,10 +1258,25 @@ describe('context tokens (W133)', () => {
       const reader = createTranscriptReader({ configDir, initialWindowBytes: 1024, maxWindowBytes: 4096 });
       expect((await reader.read(SID, [CWD])).contextTokens).toBe(210_001);
       await writeFile(file, jsonl(call('m1', usage(1, 210_000, 0)), filler(9000), user('a prompt')));
-      const fresh = createTranscriptReader({ configDir, initialWindowBytes: 1024, maxWindowBytes: 4096 });
+      const fresh = createTranscriptReader({ configDir, initialWindowBytes: 1024, maxWindowBytes: 4096, contextWindowBytes: 4096 });
       const info = await fresh.read(SID, [CWD]);
       expect(info.transcript).toBe('ok');
       expect(info.contextTokens).toBeUndefined();
+    });
+
+    it('widens once more for the size alone, past large lines after the last call (spike 012)', async () => {
+      // Two big lines after the usage, as a call's own request lines can be, past the 4 KiB window.
+      await writeFile(file, jsonl(user('a prompt'), call('m1', usage(1, 230_000, 0)), filler(3000), filler(3000)));
+      const info = await createTranscriptReader({ configDir, initialWindowBytes: 1024, maxWindowBytes: 4096, contextWindowBytes: 16_384 }).read(SID, [CWD]);
+      expect(info.contextTokens).toBe(230_001);
+    });
+
+    it('forgets the size at a compaction, until the next call', async () => {
+      await writeFile(file, jsonl(user('start'), call('m1', usage(1, 500_000, 0)), { type: 'system', subtype: 'compact_boundary' }));
+      const reader = createTranscriptReader({ configDir });
+      expect((await reader.read(SID, [CWD])).contextTokens).toBeUndefined();
+      await appendFile(file, jsonl(call('m2', usage(1, 40_000, 0))));
+      expect((await reader.read(SID, [CWD])).contextTokens).toBe(40_001);
     });
 
     it('follows appended calls, reading only what was added', async () => {

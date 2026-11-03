@@ -80,6 +80,11 @@ export interface TranscriptReaderOptions {
    * a file may grow between polls before it's read afresh. Default 2 MiB.
    */
   maxWindowBytes?: number;
+  /**
+   * The widest first read, made only when the wider window still has no context size (W133): a call
+   * can append several lines of 1.5 to 1.9 MB after the line with its usage (spike 012). Default 8 MiB.
+   */
+  contextWindowBytes?: number;
   /** How long a transcript that couldn't be found anywhere is not searched for again. Default 30000. */
   missingRetryMs?: number;
 }
@@ -153,6 +158,7 @@ export function createTranscriptReader(options: TranscriptReaderOptions = {}): T
   const now = options.now ?? Date.now;
   const initialWindow = options.initialWindowBytes ?? 256 * KIB;
   const maxWindow = Math.max(options.maxWindowBytes ?? 2 * MIB, initialWindow);
+  const contextWindow = Math.max(options.contextWindowBytes ?? 8 * MIB, maxWindow);
   const missingRetryMs = options.missingRetryMs ?? 30_000;
 
   const files = new Map<string, FileState>();
@@ -219,7 +225,7 @@ export function createTranscriptReader(options: TranscriptReaderOptions = {}): T
         info.size < state.offset ||
         info.size - state.offset > maxWindow;
       if (reset || state === undefined) {
-        state = await firstRead(handle, file, info.size, info.ino, info.dev, initialWindow, maxWindow);
+        state = await firstRead(handle, file, info.size, info.ino, info.dev, initialWindow, maxWindow, contextWindow);
         files.set(sessionId, state);
       } else if (info.size > state.offset) {
         const chunk = await readRange(handle, state.offset, info.size);
@@ -315,7 +321,10 @@ export async function readNewestEntries(
 
 // --- Reading -----------------------------------------------------------------
 
-/** The last `initialWindow` bytes, or `maxWindow` when those lack a field. */
+/**
+ * The last `initialWindow` bytes, or `maxWindow` when those lack a field, or `contextWindow` when those
+ * still lack the context size (W133).
+ */
 async function firstRead(
   handle: FileHandle,
   file: string,
@@ -324,10 +333,19 @@ async function firstRead(
   dev: number,
   initialWindow: number,
   maxWindow: number,
+  contextWindow: number = maxWindow,
 ): Promise<FileState> {
   let state = await readWindow(handle, file, size, ino, dev, Math.min(size, initialWindow));
   if (size > initialWindow && !isComplete(state.fields)) {
     state = await readWindow(handle, file, size, ino, dev, Math.min(size, maxWindow));
+  }
+  if (size > maxWindow && contextWindow > maxWindow && state.fields.contextTokens === undefined) {
+    // Only the size is taken from it: the other fields keep the narrower window's reading.
+    const wide = await readWindow(handle, file, size, ino, dev, Math.min(size, contextWindow));
+    if (wide.fields.contextTokens !== undefined) {
+      state.fields.contextTokens = wide.fields.contextTokens;
+      state.fields.contextMessageId = wide.fields.contextMessageId;
+    }
   }
   return state;
 }
@@ -486,7 +504,8 @@ export function applyLine(fields: Fields, line: string): void {
     !line.includes('"agent-name"') &&
     !line.includes('"continued-in"') &&
     !line.includes('"turn_duration"') &&
-    !line.includes('"away_summary"')
+    !line.includes('"away_summary"') &&
+    !line.includes('"compact_boundary"')
   ) {
     return;
   }
@@ -524,6 +543,12 @@ export function applyEntry(fields: Fields, entry: unknown): void {
     const name = setNameOf(entry);
     if (name !== undefined) fields.setName = name;
     return;
+  }
+  if (entry.isCompactSummary === true || (type === 'system' && entry.subtype === 'compact_boundary')) {
+    // A compaction (W133): the size before it no longer holds, and the next call's says what's left.
+    // Until then it's unknown, as the hand-off hook reads it (.claude/hooks/handoffNudge.mjs).
+    delete fields.contextTokens;
+    delete fields.contextMessageId;
   }
   if (type === 'system') {
     // Claude Code writes it when a turn ends, after the turn's last entry (spike 007, finding 4). Not activity.
