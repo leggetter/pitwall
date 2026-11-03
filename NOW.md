@@ -2,11 +2,11 @@
 
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
-Last updated: 2026-11-03, on `m5.1/integration`: W132 merged ([#146](https://github.com/leggetter/pitwall/pull/146)) after its security review; Phil answered its three questions. W133 B, the hand-off hook, merged ([#148](https://github.com/leggetter/pitwall/pull/148)); W133 A, the context gauge, in review ([#149](https://github.com/leggetter/pitwall/pull/149)).
+Last updated: 2026-11-03, on `m5.1/integration`: W133 merged, B, the hand-off hook ([#148](https://github.com/leggetter/pitwall/pull/148)), and A, the context gauge ([#149](https://github.com/leggetter/pitwall/pull/149)), each after a fresh review. W86 next, on or after 11-04.
 
 ## Current milestone
 
-**M5.1, efficiency, in progress** on `m5.1/integration` (branched from `main` 2026-11-02). Merged into it: the M5 archive, [#141](https://github.com/leggetter/pitwall/pull/141) (fixes #140, recaps of sessions you ended), W130 [#142](https://github.com/leggetter/pitwall/pull/142) (D27: New session in the selected session's directory; fixes #139), [#144](https://github.com/leggetter/pitwall/pull/144) (plan) and W131 [#145](https://github.com/leggetter/pitwall/pull/145) (`scripts/usage-report.ts`). M5 is in `main` ([#138](https://github.com/leggetter/pitwall/pull/138)); its detail is in `docs/plan-archive.md`.
+**M5.1, efficiency, in progress** on `m5.1/integration` (branched from `main` 2026-11-02). Merged into it: the M5 archive, [#141](https://github.com/leggetter/pitwall/pull/141) (fixes #140, recaps of sessions you ended), W130 [#142](https://github.com/leggetter/pitwall/pull/142) (D27: New session in the selected session's directory; fixes #139), [#144](https://github.com/leggetter/pitwall/pull/144) (plan) W131 [#145](https://github.com/leggetter/pitwall/pull/145) (`scripts/usage-report.ts`), W132 [#146](https://github.com/leggetter/pitwall/pull/146) (recaps kept across restarts) and W133 [#148](https://github.com/leggetter/pitwall/pull/148), [#149](https://github.com/leggetter/pitwall/pull/149) (the hand-off hook and the context gauge). M5 is in `main` ([#138](https://github.com/leggetter/pitwall/pull/138)); its detail is in `docs/plan-archive.md`.
 
 - **What the usage showed** (W131; 14 days to 11-02, every repo): 11.35B tokens, 97.7% of them cache reads, 87% of those at more than 200K of context; sub-agents 58%. On 11-02 the pitwall coordinator and its 44 sub-agent runs were about half the day. Phil: "The problem isn't the global rules. It's pitwall" (2026-11-03), so the global rules are set aside for W133.
 - **Effort:** Phil's `~/.claude/settings.json` sets Opus 5.5 to high since 10-30 (it was xhigh from about 10-08). The week from 11-02 is the test against 10-20 to 10-29.
@@ -16,8 +16,8 @@ Last updated: 2026-11-03, on `m5.1/integration`: W132 merged ([#146](https://git
 
 | Item | State |
 | --- | --- |
-| W132, recaps when they're worth it | Merged in [#146](https://github.com/leggetter/pitwall/pull/146) on 2026-11-03: recaps kept in `$PITWALL_HOME/recap-store/` (D26's "What's kept"), updates 15 minutes after a turn, the strip asking on open only when it's worth it, 500 a day. Security review (2026-11-03, xhigh): approve with fixes. Fixed: `remove()` now checks the folder as `load()` and `save()` do, so it never deletes through a linked `recap-store`; README says expired recaps go when pitwall starts. Info, left: expiry only at start; `RECAP_STORE_MAX_FILES` isn't ordered by age; a planted file chooses its session's recap text (no wider than writing the transcript) |
-| W133, a context gauge and a hand-off hook ("M5.1 work breakdown") | B, the hand-off hook, merged in [#148](https://github.com/leggetter/pitwall/pull/148): a Stop hook in `.claude/settings.json` that tells a session to finish safely and use the `handoff` skill at 200K and again at 400K of context ([spike 012](docs/spikes/012-handoff-hook.md)). A, the context gauge, in review in [#149](https://github.com/leggetter/pitwall/pull/149). C later (Phil, 2026-11-03) |
+| W132, recaps when they're worth it | Merged ([#146](https://github.com/leggetter/pitwall/pull/146)). Its security review's Info notes, left: expiry only at start; `RECAP_STORE_MAX_FILES` isn't ordered by age; a planted file chooses its session's recap text (no wider than writing the transcript) |
+| W133, a context gauge and a hand-off hook | Merged on 2026-11-03. B ([#148](https://github.com/leggetter/pitwall/pull/148), [spike 012](docs/spikes/012-handoff-hook.md)): a Stop hook in `.claude/settings.json`, nudging at 200K and 400K; checked in `-p` mode only, so the first interactive session past 200K is its real try-out, and a session's first turn is never nudged (the transcript lags a call). A ([#149](https://github.com/leggetter/pitwall/pull/149)): "ctx 245K" on rows over 200K, red over 400K, and the number in the session view; forgotten at a compaction until the next call. C, "Hand off" in Needs you, later (Phil, 2026-11-03) |
 | [#143](https://github.com/leggetter/pitwall/issues/143) (Session view: expand the conversation or terminal to the full page) | Later (Phil, 2026-11-03) |
 | W86, bump `vite` and `happy-dom` | Phil approved (2026-10-28); on or after 2026-11-04, when the fixes are 14 days old |
 | W89, the first paste into New session's prompt is lost | Parked (Phil, 2026-11-02): he'll say if it happens again; Grammarly, which injects itself into the box, is suspected but not confirmed |
@@ -26,15 +26,14 @@ Last updated: 2026-11-03, on `m5.1/integration`: W132 merged ([#146](https://git
 
 ## Next, in order
 
-1. **W133**: review and merge A ([#149](https://github.com/leggetter/pitwall/pull/149)). Then hand off; a coordinator hands off after each merged work item.
-2. **W86** on or after 2026-11-04: `npm install <pkg>@<version> --before=<date>`, the newest version at least 14 days old.
-3. **On 2026-11-09:** `npx tsx scripts/usage-report.ts --days 7` against the 10-20 to 10-29 figures, for the high-effort week; then one blog-editing session on Sonnet for Phil to judge (agreed; not the evals post).
-4. **The rest of M5.1** from W134: work profiles, the Usage view with a run rate, the supervisor applying them ("M5.1 - Efficiency" in `PLAN.md`).
-5. **M6, triage,** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
+1. **W86** on or after 2026-11-04: `npm install <pkg>@<version> --before=<date>`, the newest version at least 14 days old.
+2. **On 2026-11-09:** `npx tsx scripts/usage-report.ts --days 7` against the 10-20 to 10-29 figures, for the high-effort week; then one blog-editing session on Sonnet for Phil to judge (agreed; not the evals post).
+3. **The rest of M5.1** from W134: work profiles, the Usage view with a run rate, the supervisor applying them ("M5.1 - Efficiency" in `PLAN.md`). Not yet broken into work items; see the open question.
+4. **M6, triage,** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
 
 ## Open questions for Phil
 
-None. W132's three were answered (Phil, 2026-11-03): kept recaps last 30 days; a session with no recap yet still gets one on open; `cleanupPeriodDays` is a follow-up in `PLAN.md`'s "Nice to have, later".
+- **When to break W134 onward into work items** (work profiles, the Usage view with a run rate, the supervisor applying them): now, or after the 11-09 usage report? Lean: break down work profiles now, since they don't depend on the numbers, and the Usage view's weekly target after 11-09.
 
 ## Standing context
 
