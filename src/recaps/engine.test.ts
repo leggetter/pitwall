@@ -6,9 +6,10 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionFacts } from '../index/index.js';
 import type { RecapSourceReader, RecapSources } from '../index/recapSources.js';
-import { PLAN_TURNS_CAP, RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, RECAP_MODEL, RECAP_TURNS_CAP, type ConversationEntry, type ConversationPage, type IndexSnapshot, type PullRequestList, type PullRequestSummary, type SessionSummary, type WorkChoice } from '../shared/protocol.js';
+import { PLAN_TURNS_CAP, RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, RECAP_MODEL, RECAP_TURNS_CAP, RECAP_UPDATE_DEBOUNCE_MS, type ConversationEntry, type ConversationPage, type IndexSnapshot, type PullRequestList, type PullRequestSummary, type SessionSummary, type WorkChoice } from '../shared/protocol.js';
 import { modelRejectedMessage } from '../server/work.js';
 import { memoryBudget } from './budget.js';
+import { memoryRecapStore } from './store.js';
 import type { RecapChildEvents, RecapSpawner } from './call.js';
 import { createRecapEngine, ownersNeedingYou, OWN_NAME_MS, PAUSE_AFTER_FAILURES, PLAN_MAX_CONCURRENT, PLAN_MODEL_REJECTED, RETRY_AFTER_FAILURE_MS, secondsToMidnight, type RecapEngineOptions, type RecapIndex } from './engine.js';
 import { CALL_FAILED, RECAP_REFUSALS, PLAN_STATUS_SYSTEM_PROMPT, planStatusArgs, recapArgs, RECAP_NAME } from './prompt.js';
@@ -137,6 +138,7 @@ function harness(options: Partial<RecapEngineOptions> = {}) {
     now: () => clock.now,
     relay: { name: 'pitwall-relay', sent: (msgId) => msgId === 'sent-by-our-relay' },
     budgetStore: memoryBudget(),
+    recapStore: memoryRecapStore(),
     log: (message) => logs.push(message),
     randomId: () => '0123456789abcdef',
     env: { PATH: '/usr/bin:/bin', HOME: '/made-up/home' },
@@ -286,8 +288,8 @@ describe('when a session is recapped', () => {
     await h.setPrs([pullRequest({ mergeable: 'conflicts', checks: 'failing' })]);
     await h.poll(sessions);
     expect(h.calls).toHaveLength(1);
-    // Its transcript changes: one more, once it's been quiet RECAP_DEBOUNCE_MS.
-    const later = { ...done, lastActivityAt: new Date(h.clock.now - RECAP_DEBOUNCE_MS).toISOString() };
+    // Its transcript changes: one more, an update, once it's been quiet RECAP_UPDATE_DEBOUNCE_MS (W132).
+    const later = { ...done, lastActivityAt: new Date(h.clock.now - RECAP_UPDATE_DEBOUNCE_MS).toISOString() };
     h.pages.get('done')!.push({ kind: 'user', text: 'Is the PR still needed?', at: later.lastActivityAt });
     await h.poll([later, ended, stale, noTranscript]);
     expect(h.calls).toHaveLength(2);
@@ -339,7 +341,7 @@ describe('when a session is recapped', () => {
     // A new turn, then idle.
     const newer = new Date(h.clock.now + MINUTE).toISOString();
     h.pages.get('a')!.push({ kind: 'user', text: 'Yes, open it.', at: newer }, { kind: 'assistant', text: 'Opened #43.', at: newer });
-    h.clock.now += 7 * MINUTE;
+    h.clock.now += 16 * MINUTE;
     a = { ...a, lastActivityAt: newer };
     expect(h.engine.recap(a)?.stale).toBe(true);
     await h.poll([a]);
@@ -357,7 +359,8 @@ describe('when a session is recapped', () => {
     expect(Date.parse(newer)).toBeGreaterThan(Date.parse(firstThrough));
 
     // Activity with nothing the input shows, such as a tool's result: no call, and the recap holds through it.
-    const toolResult = new Date(h.clock.now - 6 * MINUTE).toISOString();
+    h.clock.now += 16 * MINUTE;
+    const toolResult = new Date(h.clock.now - RECAP_UPDATE_DEBOUNCE_MS).toISOString();
     a = { ...a, lastActivityAt: toolResult };
     await h.poll([a]);
     expect(h.calls).toHaveLength(2);
@@ -390,6 +393,181 @@ describe('when a session is recapped', () => {
     await h.poll([a]);
     expect(h.calls[0]!.input).toContain(`<claude-code-recap at="${a.lastActivityAt}">\nClaude Code says: waiting for review.\n</claude-code-recap>`);
     expect(h.calls[0]!.input).toContain('<compaction-summary>\n1. Primary Request and Intent:\nFix a.\n</compaction-summary>');
+  });
+});
+
+describe('kept across restarts (W132)', () => {
+  // Made-up session ids, as Claude Code's: kept recaps are filed by a session's UUID.
+  const A = '00000000-0000-4000-8000-00000000000a';
+  const B = '00000000-0000-4000-8000-00000000000b';
+  const C = '00000000-0000-4000-8000-00000000000c';
+
+  /** A first run that recaps `ids`, then a second run on the same store, as a restart is. */
+  async function restarted(ids: string[], first: Partial<RecapEngineOptions> = {}) {
+    const store = memoryRecapStore();
+    const one = harness({ recapStore: store, ...first });
+    one.start();
+    const sessions = ids.map((id) => one.add(id));
+    await one.poll(sessions);
+    // Two at a time: each reply lets the next call start.
+    for (let i = 0; i < one.calls.length; i++) await one.reply(one.calls[i], envelope(answer()));
+    await one.engine.close();
+    const two = harness({ recapStore: store });
+    return { store, one, two, sessions };
+  }
+
+  it('keeps each recap with the transcript position it covers, and a restart recaps no session that has not moved on', async () => {
+    const { store, one, two, sessions } = await restarted([A, B]);
+    expect(one.calls).toHaveLength(2);
+    const kept = store.current();
+    expect([...kept.keys()].sort()).toEqual([A, B]);
+    expect(kept.get(A)).toEqual({ ...answer(), at: new Date(one.clock.now).toISOString(), throughAt: sessions[0]!.lastActivityAt, source: 'pitwall' });
+
+    two.start();
+    const [a, b] = [two.add(A), two.add(B)];
+    await two.poll([a, b]);
+    two.clock.now += 60 * MINUTE;
+    await two.poll([a, b]);
+    expect(two.calls).toHaveLength(0);
+    // Shown as before, and Needs you's 'recap' reason with it, which a restart no longer loses.
+    expect(two.engine.recap(a)).toEqual(kept.get(A));
+    expect(two.engine.decorate(a)).toMatchObject({ recap: { source: 'pitwall', waitingOn: 'you', next: NEXT }, needsYou: { reason: 'recap', text: NEXT }, title: 'Fix the nightly export', titleSource: 'pitwall' });
+    expect(two.logs).toEqual([]);
+  });
+
+  it("updates one whose transcript moved on, from its kept recap, and keeps the update", async () => {
+    const { store, two } = await restarted([A]);
+    two.start();
+    two.clock.now += 30 * MINUTE;
+    const newer = new Date(two.clock.now - RECAP_UPDATE_DEBOUNCE_MS).toISOString();
+    two.pages.set(A, [
+      { kind: 'user', text: 'Yes, open it.', at: newer },
+      { kind: 'assistant', text: 'Opened #43.', at: newer },
+    ]);
+    two.add(A);
+    const a = { ...session(A, {}, two.clock), lastActivityAt: newer };
+    expect(two.engine.recap(a)?.stale).toBe(true);
+    await two.poll([a]);
+    expect(two.calls).toHaveLength(1);
+    expect(two.calls[0]!.input).toContain('<previous-recap>\n{"summary":"You asked it to fix the nightly export.');
+    expect(two.calls[0]!.input).toContain('User: Yes, open it.');
+    await two.reply(two.calls[0], envelope(answer({ summary: 'It opened #43.' })));
+    expect(store.current().get(A)).toMatchObject({ summary: 'It opened #43.', throughAt: newer });
+  });
+
+  it('keeps a throughAt moved on without a call, so a restart makes no call for it either', async () => {
+    const { store, two } = await restarted([A]);
+    two.start();
+    two.clock.now += 30 * MINUTE;
+    // Activity the input shows no turn for, such as a tool's result.
+    const toolResult = new Date(two.clock.now - RECAP_UPDATE_DEBOUNCE_MS).toISOString();
+    two.pages.set(A, [{ kind: 'assistant', text: 'Fixed. Shall I open a PR?', at: new Date(Date.parse('2026-10-29T12:00:00.000Z') - 6 * MINUTE).toISOString() }]);
+    two.add(A);
+    await two.poll([{ ...session(A, {}, two.clock), lastActivityAt: toolResult }]);
+    expect(two.calls).toHaveLength(0);
+    expect(store.current().get(A)?.throughAt).toBe(toolResult);
+  });
+
+  it('recaps a finished session for its PR once, not again on every start (W128)', async () => {
+    const store = memoryRecapStore();
+    const prs = [pullRequest({ mergeable: 'conflicts' })];
+    const old = new Date(Date.parse('2026-10-29T12:00:00.000Z') - 3 * 24 * 60 * MINUTE).toISOString();
+    const finished = { finished: true, alive: false, pid: undefined, lastActivityAt: old, prLinks: OPENED_42 };
+    for (const run of [1, 2, 3]) {
+      const h = harness({ recapStore: store });
+      h.start();
+      await h.setPrs(prs);
+      await h.poll([h.add(A, finished)]);
+      expect(h.calls, `run ${run}`).toHaveLength(run === 1 ? 1 : 0);
+      if (run === 1) await h.reply(h.calls[0], envelope(answer()));
+      await h.engine.close();
+    }
+  });
+
+  it('forgets a kept recap once its session was listed and has left, never for a failed listing or a session not listed yet', async () => {
+    const { store, two } = await restarted([A, B, C]);
+    two.start();
+    const [a, b] = [two.add(A), two.add(B)];
+    // C isn't listed by this run, as under roots another pitwall on this home has: it stays on disk.
+    await two.poll([a, b]);
+    expect([...store.current().keys()].sort()).toEqual([A, B, C]);
+    // A listing that failed keeps the last sessions: nothing is forgotten.
+    await two.poll([], false);
+    expect([...store.current().keys()].sort()).toEqual([A, B, C]);
+    // B has left: gone, in memory and on disk.
+    await two.poll([a]);
+    expect([...store.current().keys()].sort()).toEqual([A, C]);
+    expect(two.engine.recap(b)).toBeUndefined();
+    // C, listed later, has its kept recap and needs no call.
+    const c = two.add(C);
+    await two.poll([a, c]);
+    expect(two.engine.recap(c)?.source).toBe('pitwall');
+    expect(two.calls).toHaveLength(0);
+  });
+
+  it('keeps nothing for a session id that is not a UUID', async () => {
+    const { store } = await restarted(['not-a-uuid']);
+    expect(store.current().size).toBe(0);
+  });
+
+  it("counts kept recaps it couldn't use in the log, never their text, and makes those sessions new ones", async () => {
+    const logs: string[] = [];
+    const h = harness({
+      recapStore: { load: () => ({ recaps: new Map(), ignored: 2, expired: 1 }), save: () => undefined, remove: () => undefined },
+      log: (message) => logs.push(message),
+    });
+    expect(logs).toEqual(["ignored 2 kept recaps pitwall couldn't use; those sessions get new ones."]);
+    h.start();
+    await h.poll([h.add(A)]);
+    expect(h.calls).toHaveLength(1);
+  });
+});
+
+describe('the two waits after a turn ends (W132)', () => {
+  it(`makes a first recap ${RECAP_DEBOUNCE_MS / MINUTE} minutes after a turn ends, and an update only ${RECAP_UPDATE_DEBOUNCE_MS / MINUTE}`, async () => {
+    expect(RECAP_DEBOUNCE_MS).toBe(5 * MINUTE);
+    expect(RECAP_UPDATE_DEBOUNCE_MS).toBe(15 * MINUTE);
+    const h = harness();
+    h.start();
+    let a = h.add('a', { lastActivityAt: new Date(h.clock.now - RECAP_DEBOUNCE_MS + 1000).toISOString() });
+    await h.poll([a]);
+    expect(h.calls).toHaveLength(0);
+    h.clock.now += 1000;
+    await h.poll([a]);
+    expect(h.calls).toHaveLength(1);
+    await h.reply(h.calls[0], envelope(answer()));
+
+    // A new turn ends: no update 5 minutes on, nor 1 second short of 15.
+    const turnEnd = new Date(h.clock.now).toISOString();
+    h.pages.get('a')!.push({ kind: 'user', text: 'Yes, open it.', at: turnEnd }, { kind: 'assistant', text: 'Opened #43.', at: turnEnd });
+    a = { ...a, lastActivityAt: turnEnd };
+    h.clock.now += RECAP_DEBOUNCE_MS;
+    await h.poll([a]);
+    h.clock.now += RECAP_UPDATE_DEBOUNCE_MS - RECAP_DEBOUNCE_MS - 1000;
+    await h.poll([a]);
+    expect(h.calls).toHaveLength(1);
+    // Meanwhile the recap there stands in, marked stale.
+    expect(h.engine.decorate(a).recap?.stale).toBe(true);
+    h.clock.now += 1000;
+    await h.poll([a]);
+    expect(h.calls).toHaveLength(2);
+    expect(h.calls[1]!.input).toContain('<previous-recap>');
+  });
+
+  it('answers a refresh at once, whatever the waits, so Refresh still works', async () => {
+    const h = harness();
+    h.start();
+    const a = h.add('a', { lastActivityAt: new Date(h.clock.now - MINUTE).toISOString() });
+    await h.poll([a]);
+    expect(h.calls).toHaveLength(0);
+    expect(h.engine.refresh(a)).toEqual({ kind: 'queued' });
+    await tick();
+    expect(h.calls).toHaveLength(1);
+  });
+
+  it(`allows ${RECAP_DAILY_BUDGET} calls a day`, () => {
+    expect(RECAP_DAILY_BUDGET).toBe(500);
+    expect(harness().engine.health()).toMatchObject({ budget: 500 });
   });
 });
 
@@ -458,15 +636,15 @@ describe('the queue and the budget', () => {
 
 describe("the day's count on file", () => {
   it('starts from what an earlier run today counted, and keeps only the day, the calls and the cost', async () => {
-    const store = memoryBudget({ day: '2026-10-29', calls: 199, costUsd: 0.2 });
+    const store = memoryBudget({ day: '2026-10-29', calls: RECAP_DAILY_BUDGET - 1, costUsd: 0.2 });
     const h = harness({ budgetStore: store, now: () => Date.parse('2026-10-29T12:00:00.000Z') });
-    expect(h.engine.health()).toMatchObject({ calls: 199, costUsd: 0.2 });
+    expect(h.engine.health()).toMatchObject({ calls: RECAP_DAILY_BUDGET - 1, costUsd: 0.2 });
     h.start();
     await h.poll([h.add('a'), h.add('b')]);
     expect(h.calls).toHaveLength(1);
-    expect(store.current()).toEqual({ day: '2026-10-29', calls: 200, costUsd: 0.2 });
+    expect(store.current()).toEqual({ day: '2026-10-29', calls: RECAP_DAILY_BUDGET, costUsd: 0.2 });
     await h.reply(h.calls[0], envelope(answer()));
-    expect(store.current()).toEqual({ day: '2026-10-29', calls: 200, costUsd: 0.2011 });
+    expect(store.current()).toEqual({ day: '2026-10-29', calls: RECAP_DAILY_BUDGET, costUsd: 0.2011 });
     expect(JSON.stringify(store.current())).not.toMatch(/nightly|pitwall-test|made-up/);
     expect(h.engine.refresh(session('b', {}, h.clock))).toMatchObject({ kind: 'spent' });
   });

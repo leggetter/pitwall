@@ -88,13 +88,15 @@ export interface RecapStripProps {
   hidden?: boolean;
   /** Where the collapsed choice is kept; the browser's localStorage by default. */
   storage?: StorageSource;
+  /** Whether the conversation's newest page says the turn has ended, for asking as the view opens (W132). */
+  turnEnded?: boolean;
 }
 
-export function RecapStrip({ session, health, listed, hidden = false, storage }: RecapStripProps) {
+export function RecapStrip({ session, health, listed, hidden = false, storage, turnEnded }: RecapStripProps) {
   const api = useContext(ApiContext);
   const toast = useToast();
   const ref = useRef<HTMLElement>(null);
-  const recap = useRecap({ api, session, health, listed, hidden, toast, delayFrom: () => ref.current });
+  const recap = useRecap({ api, session, health, listed, hidden, toast, delayFrom: () => ref.current, ...(turnEnded === undefined ? {} : { turnEnded }) });
   const [collapsed, setCollapsed] = useRecapCollapsed(storage);
   const plan = usePlanStatus({ api, session, health, listed, hidden });
   const planButton = useRef<HTMLButtonElement>(null);

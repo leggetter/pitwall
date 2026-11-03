@@ -1733,11 +1733,22 @@ export interface RecapHealth {
 /** The model recaps run on (spike 010: as right as Sonnet 5.5 on 56 recaps, at a fifteenth of the cost). */
 export const RECAP_MODEL = 'claude-haiku-5-5';
 
-/** How long a session must be idle after a turn ends before it's recapped (spike 010: trailing, 5 minutes). */
+/** How long a session with no recap yet must be idle after a turn ends before it's recapped (spike 010: trailing, 5 minutes). */
 export const RECAP_DEBOUNCE_MS = 5 * 60 * 1000;
 
-/** The most recap calls in a day (spike 010: about twice the busiest day measured, 96). */
-export const RECAP_DAILY_BUDGET = 200;
+/**
+ * How long a session with a recap must be idle after a turn ends before the recap is updated (W132):
+ * longer than a first recap's wait, since the recap there stands in meanwhile, marked as maybe out of
+ * date, and a session that takes a turn every few minutes would otherwise be recapped after each.
+ */
+export const RECAP_UPDATE_DEBOUNCE_MS = 15 * 60 * 1000;
+
+/**
+ * The most recap calls in a day: 500 since W132 (Phil, 2026-11-02), up from spike 010's 200, about
+ * twice the busiest day measured, 96, which try-out pitwalls on the same home spent on 2026-11-02.
+ * Kept recaps and the longer update wait bring a day to about 40 to 50 automatic calls (W132).
+ */
+export const RECAP_DAILY_BUDGET = 500;
 
 /** Characters of the latest turns a recap reads (spike 010: 24k changed no answer and cost 37% more). */
 export const RECAP_TURNS_CAP = 8000;

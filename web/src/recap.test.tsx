@@ -11,6 +11,7 @@ import { Dashboard } from './components/Dashboard.js';
 import { SessionRow } from './components/SessionRow.js';
 import type { ConnectionView } from './connection.js';
 import {
+  asksOnOpen,
   budgetSpent,
   budgetText,
   cutText,
@@ -47,6 +48,30 @@ const RECAP: SessionRecap = {
 
 const summary = (extra: Partial<RecapSummary> = {}): RecapSummary => ({ waitingOn: 'you', title: 'Fix the made-up export', forYou: 2, at: minutesAgo(4), source: 'pitwall', ...extra });
 const HEALTH: RecapHealth = { calls: 3, budget: RECAP_DAILY_BUDGET, costUsd: 0.003 };
+
+describe('asking as the view opens (W132)', () => {
+  const summary: RecapSummary = { waitingOn: 'you', title: 'Fix the made-up export', forYou: 1, at: '2026-11-03T11:00:00.000Z', source: 'pitwall' };
+  it('asks with no recap, whether or not the session works', () => {
+    expect(asksOnOpen(session({ status: 'idle' }), true, undefined)).toBe(true);
+    expect(asksOnOpen(session({ status: 'busy' }), true, false)).toBe(true);
+  });
+  it('asks for a stale recap only once the turn has ended, by the working line’s rule', () => {
+    const stale = { ...summary, stale: true as const };
+    expect(asksOnOpen(session({ status: 'idle', recap: stale }), true, undefined)).toBe(true);
+    expect(asksOnOpen(session({ status: 'busy', recap: stale }), true, undefined)).toBe(false);
+    expect(asksOnOpen(session({ status: 'busy', recap: stale }), true, false)).toBe(false);
+    expect(asksOnOpen(session({ kind: 'background', status: undefined, state: 'working', recap: stale }), true, undefined)).toBe(false);
+    // The page's mark wins over a status a plugin's monitor keeps at busy.
+    expect(asksOnOpen(session({ status: 'busy', recap: stale }), true, true)).toBe(true);
+    // Waiting on you, ended, or no longer running: not working.
+    expect(asksOnOpen(session({ status: 'waiting', waitingFor: 'permission prompt', recap: stale }), true, undefined)).toBe(true);
+    expect(asksOnOpen(session({ ended: true, finished: true, alive: false, pid: undefined, status: undefined, recap: stale }), true, undefined)).toBe(true);
+  });
+  it('never asks for a current recap', () => {
+    expect(asksOnOpen(session({ status: 'idle', recap: summary }), true, true)).toBe(false);
+    expect(asksOnOpen(session({ status: 'busy', recap: summary }), true, false)).toBe(false);
+  });
+});
 
 describe('parseRecap', () => {
   it('reads a recap', () => {
@@ -229,7 +254,7 @@ describe('the app strip’s recap line', () => {
     expect(recapsStripText(spent)).toBe(`${budgetText(RECAP_DAILY_BUDGET)} Each session keeps its last recap.`);
     render(<AppStrips relayOff={undefined} recaps={spent} />);
     expect(document.querySelector('[data-strip="recaps"]')?.textContent).toBe(
-      "Today's 200 recaps are used up, so pitwall makes no more until midnight. Each session keeps its last recap.",
+      "Today's 500 recaps are used up, so pitwall makes no more until midnight. Each session keeps its last recap.",
     );
   });
 
@@ -249,6 +274,6 @@ describe('the Dashboard', () => {
   it('shows the app strip’s recap line from the snapshot', () => {
     const view: ConnectionView = { state: 'live', snapshot: snapshot([group({ sessions: [session({ name: 'pitwall-test-one' })] })], { recaps: { ...HEALTH, calls: RECAP_DAILY_BUDGET } }) };
     render(<Dashboard view={view} />);
-    expect(screen.getByText(/Today's 200 recaps are used up/)).toBeTruthy();
+    expect(screen.getByText(/Today's 500 recaps are used up/)).toBeTruthy();
   });
 });
