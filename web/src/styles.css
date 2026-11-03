@@ -2280,6 +2280,14 @@ mark.match {
   font-variant-ligatures: none;
 }
 
+/* The row's context badge (W133): "ctx" before its number, so a red "612K" isn't read as PR "#612" beside it.
+   Visual only, with empty alternative text: the visually hidden "Context " already says it to a screen reader. */
+.context-badge-row::before {
+  content: "ctx\00a0" / "";
+  font-weight: 400;
+  opacity: 0.8;
+}
+
 /* Its context (W133): "Context 85K" in line 2's meta text, or its badge over 200K, then its info button. */
 .session-view-context {
   display: inline-flex;

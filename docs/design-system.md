@@ -1144,13 +1144,13 @@ How many tokens of context a session's last call carried (W133, `SessionSummary.
 |---|---|---|---|
 | Not known (no usage read yet, or no transcript) | nothing | "Context unavailable", meta, with an info button saying why | nothing |
 | At or below 200K (`CONTEXT_WARN_TOKENS`) | nothing | "Context 85K", meta, tabular, with an info button saying what it is | nothing |
-| Over 200K | subtle warning badge, "212K" | subtle warning badge, "Context 212K", with the info button | the note: hand it off, or `/compact` |
-| Over 400K (`CONTEXT_HIGH_TOKENS`) | subtle danger badge, "612K" | subtle danger badge, "Context 612K", with the info button | the note, "Hand it off to a new session now" |
+| Over 200K | subtle warning badge, "ctx 212K" | subtle warning badge, "Context 212K", with the info button | the note: hand it off, or `/compact` |
+| Over 400K (`CONTEXT_HIGH_TOKENS`) | subtle danger badge, "ctx 612K" | subtle danger badge, "Context 612K", with the info button | the note, "Hand it off to a new session now" |
 
 - **The thresholds are the protocol's** (`src/shared/protocol.ts`), so the server and the page agree. "Over" is strictly more than.
 - **Numbers are short and rounded down:** "850", "85K", "412K", "1.2M", so one over a threshold never shows below it.
 - **Quiet below 200K in the list:** most sessions are, and a number on every row is noise the list doesn't need (1: Exceptions only; healthy states stay quiet). The view always shows it.
-- **In a row, first among the badges,** as the PR badge is, so the status badges still line up against the time's slot. It's short and stays whole (`flex: none`); the title and the name give way first. Not on a finished row, which is muted; its view still shows it.
+- **In a row, first among the badges,** as the PR badge is, so the status badges still line up against the time's slot. Its "ctx" prefix, drawn by CSS with empty alternative text, keeps a red "612K" from reading as a PR's "#612". It's short and stays whole (`flex: none`); the title and the name give way first. Not on a finished row, which is muted; its view still shows it.
 - **Colour is never the only signal:** the number says how big, and the badge carries its level in visually hidden text, so a screen reader hears "Context 412K, over 400K". The row badge's tooltip, on hover, has the number in full and what to do; the view's info button and note say it for the keyboard.
 - **Why a badge, not line 2's quiet text** (as the sub-agents count is): it's a warning, in the warning and danger tones the Badges table gives warnings, and it's the session's state, not what it's doing.
 
