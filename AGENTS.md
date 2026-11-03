@@ -42,7 +42,7 @@ Usage limits are weekly, and pitwall's own work should leave room for the weeken
 - **Match the model and effort to the work:** high effort for building and ordinary reviews, xhigh only for security reviews. Use a smaller model for mechanical work, such as plan and doc updates, where the session can choose.
 - **Small review fixes are made by the coordinating session,** not by another agent round. Resuming a big agent re-reads its whole context.
 - **Read what you need:** excerpts and `grep`, not whole large files, and counts, not full outputs.
-- **Long sessions get compacted or handed off:** a session whose every turn re-reads a very large context should hand off with the `handoff` skill (`.claude/skills/handoff/SKILL.md`), which updates `NOW.md` and commits, then `/clear` and start the next session with "Read NOW.md". Or compact.
+- **Long sessions get compacted or handed off:** a session whose every turn re-reads a very large context should hand off with the `handoff` skill (`.claude/skills/handoff/SKILL.md`), which updates `NOW.md` and commits, then `/clear` and start the next session with "Read NOW.md". Or compact. Past 200K tokens of context, the hand-off hook in `.claude/settings.json` says so after a turn.
 
 ## Commands
 
@@ -80,6 +80,10 @@ NOW.md                   where the work stands and what is next; every session r
 PLAN.md                  the living design: architecture, security, open milestones, open questions
 docs/plan-archive.md     history: M0 to M5 work breakdowns, findings and decisions
 .claude/skills/handoff/  the handoff skill: update NOW.md, commit, /clear
+.claude/settings.json    pitwall's own project settings, checked in: the hand-off hook, nothing else
+.claude/hooks/           handoffNudge.mjs, a Stop hook that tells a session past 200K tokens of context, and again
+                         past 400K, to finish safely and use the handoff skill (W133, spike 012); fails soft, leaves
+                         sub-agents alone. Its test sits beside it; typechecked and in npm test, not built
 README.md                for newcomers: what pitwall is, how to run it, how it works, the roadmap
 docs/decisions.md        settled decisions, D1 to D27, with their reasoning
 docs/design-system.md    the web UI's design system: tokens, layout, components, content, accessibility
@@ -140,7 +144,7 @@ THIRD_PARTY_NOTICES.md   licences for the bundled fonts and icons
 .env.example             how to make a fixed PITWALL_TOKEN for npm run dev (D7), and PITWALL_DEV_RECAPS;
                          .env is gitignored
 CLAUDE.md                imports this file for Claude Code
-tsconfig.json            server typecheck: src/ with tests, scripts/, config files
+tsconfig.json            server typecheck: src/ with tests, .claude/hooks/, scripts/, config files
 tsconfig.build.json      server build: src/ to dist/, without tests
 web/tsconfig.json        web UI typecheck (DOM, react-jsx, bundler resolution)
 vite.config.ts           web UI build

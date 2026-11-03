@@ -2,7 +2,7 @@
 
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
-Last updated: 2026-11-03, on `m5.1/integration`: W132 merged ([#146](https://github.com/leggetter/pitwall/pull/146)) after its security review; Phil answered its three questions. W133 next.
+Last updated: 2026-11-03, on `m5.1/integration`: W132 merged ([#146](https://github.com/leggetter/pitwall/pull/146)) after its security review; Phil answered its three questions. W133 B, the hand-off hook, in review.
 
 ## Current milestone
 
@@ -17,7 +17,7 @@ Last updated: 2026-11-03, on `m5.1/integration`: W132 merged ([#146](https://git
 | Item | State |
 | --- | --- |
 | W132, recaps when they're worth it | Merged in [#146](https://github.com/leggetter/pitwall/pull/146) on 2026-11-03: recaps kept in `$PITWALL_HOME/recap-store/` (D26's "What's kept"), updates 15 minutes after a turn, the strip asking on open only when it's worth it, 500 a day. Security review (2026-11-03, xhigh): approve with fixes. Fixed: `remove()` now checks the folder as `load()` and `save()` do, so it never deletes through a linked `recap-store`; README says expired recaps go when pitwall starts. Info, left: expiry only at start; `RECAP_STORE_MAX_FILES` isn't ordered by age; a planted file chooses its session's recap text (no wider than writing the transcript) |
-| W133, a context gauge and a hand-off hook ("M5.1 work breakdown") | Planned (Phil, 2026-11-03: A and B; C later) |
+| W133, a context gauge and a hand-off hook ("M5.1 work breakdown") | B, the hand-off hook, in review: a Stop hook in `.claude/settings.json` that tells a session to finish safely and use the `handoff` skill at 200K and again at 400K of context ([spike 012](docs/spikes/012-handoff-hook.md)). A, the context gauge, to do. C later (Phil, 2026-11-03) |
 | [#143](https://github.com/leggetter/pitwall/issues/143) (Session view: expand the conversation or terminal to the full page) | Later (Phil, 2026-11-03) |
 | W86, bump `vite` and `happy-dom` | Phil approved (2026-10-28); on or after 2026-11-04, when the fixes are 14 days old |
 | W89, the first paste into New session's prompt is lost | Parked (Phil, 2026-11-02): he'll say if it happens again; Grammarly, which injects itself into the box, is suspected but not confirmed |
@@ -26,7 +26,7 @@ Last updated: 2026-11-03, on `m5.1/integration`: W132 merged ([#146](https://git
 
 ## Next, in order
 
-1. **W133** in a worktree (`.worktrees/<name>`), A and B. Then hand off; a coordinator hands off after each merged work item.
+1. **W133**: review and merge B, then build A in a worktree (`.worktrees/<name>`). Then hand off; a coordinator hands off after each merged work item.
 2. **W86** on or after 2026-11-04: `npm install <pkg>@<version> --before=<date>`, the newest version at least 14 days old.
 3. **On 2026-11-09:** `npx tsx scripts/usage-report.ts --days 7` against the 10-20 to 10-29 figures, for the high-effort week; then one blog-editing session on Sonnet for Phil to judge (agreed; not the evals post).
 4. **The rest of M5.1** from W134: work profiles, the Usage view with a run rate, the supervisor applying them ("M5.1 - Efficiency" in `PLAN.md`).

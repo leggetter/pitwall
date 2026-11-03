@@ -25,5 +25,6 @@
     "allowJs": true,
     "checkJs": true
   },
-  "include": ["src/**/*.ts", "src/**/*.mjs", "scripts/**/*.ts", "vite.config.ts", "vitest.config.ts"]
+  // .claude/hooks/ is the hand-off hook (W133) and its test.
+  "include": ["src/**/*.ts", "src/**/*.mjs", ".claude/hooks/*.ts", ".claude/hooks/*.mjs", "scripts/**/*.ts", "vite.config.ts", "vitest.config.ts"]
 }
