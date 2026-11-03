@@ -2,7 +2,7 @@
 
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
-Last updated: 2026-11-02, on `m5.1/usage-report`: W131's usage report built and run once over the last 14 days; in review.
+Last updated: 2026-11-03, on `m5.1/w132-plan`: W131 merged, W132 next.
 
 ## Current milestone
 
@@ -17,7 +17,8 @@ Last updated: 2026-11-02, on `m5.1/usage-report`: W131's usage report built and 
 | --- | --- |
 | M5.1, efficiency | Not started |
 | [#140](https://github.com/leggetter/pitwall/issues/140) (Needs you: a recap keeps a session you said is done under Needs you) | Fixed in the recap prompt ([#141](https://github.com/leggetter/pitwall/pull/141)), merged into `m5.1/integration`. Checked live on Haiku: an ended session, old prompt 3 of 3 "you", new 2 of 2 "nothing"; one that asks you something, or that's done with only part of the work, still "you" (2 of 2 each). A "Not needed" action is in "Nice to have, later" |
-| W131, the usage report ("M5.1 work breakdown") | Built: `npx tsx scripts/usage-report.ts [--days 14] [--json]` (`src/usage/`), [#145](https://github.com/leggetter/pitwall/pull/145) into `m5.1/integration`. Run once over every repo's last 14 days (Phil agreed, 2026-11-02); the numbers went to Phil in chat, and the output stays in the worktree's gitignored `scratch/`. The global efficiency rules wait for Phil to read them, then go into the global `AGENTS.md` |
+| W131, the usage report | Merged ([#145](https://github.com/leggetter/pitwall/pull/145)); its figures drive the global efficiency rules, which wait on Phil |
+| W132, recaps when they're worth it ("M5.1 work breakdown") | Not started; a security review for keeping recaps on disk |
 | W86, bump `vite` and `happy-dom` | Phil approved (2026-10-28); on or after 2026-11-04, when the fixes are 14 days old |
 | W89, the first paste into New session's prompt is lost | Parked (Phil, 2026-11-02): he'll say if it happens again; Grammarly, which injects itself into the box, is suspected but not confirmed |
 | A flaky `src/cli.test.ts` clean-up (`ENOTEMPTY`) | In "Nice to have, later" |
@@ -25,8 +26,8 @@ Last updated: 2026-11-02, on `m5.1/usage-report`: W131's usage report built and 
 
 ## Next, in order
 
-1. **W131, the usage report** (`m5.1/usage-report`, in `.worktrees/usage-report`): built and run; review and merge its PR, then draft the global efficiency rules from its numbers for Phil's approval.
-2. **The rest of M5.1:** work profiles, the Usage view with a run rate, the supervisor applying them ("M5.1 - Efficiency" in `PLAN.md`), as W items from W132, shaped by W131's numbers.
+1. **W132, recaps when they're worth it:** build in a worktree, a security review of keeping recaps on disk, merge into `m5.1/integration`.
+2. **The rest of M5.1:** work profiles, the Usage view with a run rate, the supervisor applying them ("M5.1 - Efficiency" in `PLAN.md`), as W items from W133, shaped by W131's numbers.
 3. **W86** on or after 2026-11-04: `npm install <pkg>@<version> --before=<date>`, the newest version at least 14 days old.
 4. **M6, triage,** on the coordination model: split work, shared state, graded oversight, and shared decisions first with a goal check at the end, with Peers part of it, show only (Phil, 2026-11-02): "M6 - Triage" and "Considering: Peers" in `PLAN.md`. Then the considerations: chatting with a session, a session asking the supervisor to spin off work.
 
