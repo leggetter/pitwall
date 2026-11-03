@@ -2280,6 +2280,19 @@ mark.match {
   font-variant-ligatures: none;
 }
 
+/* Its context (W133): "Context 85K" in line 2's meta text, or its badge over 200K, then its info button. */
+.session-view-context {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--pw-space-1);
+  white-space: nowrap;
+}
+
+.session-view-context-value {
+  font-variant-numeric: tabular-nums;
+}
+
 /* "Not needed now" after the outlined status badge (W88), in line 2's meta text, as the row says it. */
 .session-view-not-needed {
   flex: none;
@@ -2300,13 +2313,15 @@ mark.match {
  */
 .session-view-waiting-note,
 .session-view-cwd-note,
+.session-view-context-note,
 .session-view-note {
   color: var(--pw-text-muted);
   font-size: var(--pw-text-s);
   line-height: var(--pw-leading-s);
 }
 
-.session-view-cwd-note code {
+.session-view-cwd-note code,
+.session-view-context-note code {
   padding: 0 var(--pw-space-1);
   line-height: 1;
   border-radius: var(--pw-radius-sm);

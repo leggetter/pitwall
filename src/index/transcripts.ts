@@ -49,6 +49,13 @@ export interface TranscriptInfo {
    * pitwall has one of its own (SessionRecap's 'claude-code' source); the snapshot doesn't carry it.
    */
   awaySummary?: AwaySummary;
+  /**
+   * How many tokens of context the session's newest call carried (W133): the newest main-chain
+   * assistant entry's `message.usage`, `input_tokens + cache_read_input_tokens +
+   * cache_creation_input_tokens` (contextTokensOf()). Internal and undocumented. Undefined when the
+   * entries read have no such usage.
+   */
+  contextTokens?: number;
 }
 
 /** Claude Code's own short recap of a session, an `away_summary` entry (TranscriptInfo.awaySummary). */
@@ -461,6 +468,10 @@ export interface Fields {
   lastPromptMs?: number;
   /** The newest `away_summary` with a time, in file order (TranscriptInfo.awaySummary). */
   awaySummary?: AwaySummary;
+  /** The newest main-chain call's context, in file order (TranscriptInfo.contextTokens). */
+  contextTokens?: number;
+  /** That call's `message.id`, so the same response written on several lines counts once. */
+  contextMessageId?: string;
 }
 
 /** Applies one JSONL line. Lines that don't parse, and entry types the index doesn't use, are skipped. */
@@ -539,6 +550,12 @@ export function applyEntry(fields: Fields, entry: unknown): void {
     // A turn is running again, once the transcript has marked one's end. A sidechain's entries are a
     // sub-agent's, which can run on after the main turn has ended.
     if (fields.turnEnded !== undefined && turnSignalOf(entry) === 'running') fields.turnEnded = false;
+    const context = contextTokensOf(entry);
+    // Claude Code writes a response once per content block, each line with its usage: the first counts.
+    if (context !== undefined && context.id !== fields.contextMessageId) {
+      fields.contextTokens = context.tokens;
+      fields.contextMessageId = context.id;
+    }
     const text = assistantTextOf(entry);
     if (text === undefined) return;
     const sameMessage =
@@ -564,6 +581,28 @@ export function applyEntry(fields: Fields, entry: unknown): void {
   if ((prompt !== undefined || typed) && at !== undefined && (fields.lastPromptMs === undefined || at > fields.lastPromptMs)) {
     fields.lastPromptMs = at;
   }
+}
+
+/**
+ * How many tokens of context an assistant entry's call carried (W133): its `message.usage`'s
+ * `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`, what the model read, from
+ * the cache or not, with the response's `message.id`. Undefined for a sidechain's entry (an older
+ * Claude Code's sub-agent, in the main file), a `<synthetic>` one Claude Code writes itself, one with
+ * no id or usage, and one whose total isn't a positive number. Follows src/usage/scan.ts's reading.
+ */
+export function contextTokensOf(entry: Record<string, unknown>): { id: string; tokens: number } | undefined {
+  if (entry.type !== 'assistant' || entry.isSidechain === true) return undefined;
+  const message = entry.message;
+  if (!isRecord(message) || typeof message.id !== 'string' || message.id === '') return undefined;
+  if (message.model === '<synthetic>') return undefined;
+  const usage = message.usage;
+  if (!isRecord(usage)) return undefined;
+  const tokens = tokenCount(usage.input_tokens) + tokenCount(usage.cache_read_input_tokens) + tokenCount(usage.cache_creation_input_tokens);
+  return tokens > 0 && Number.isSafeInteger(tokens) ? { id: message.id, tokens } : undefined;
+}
+
+function tokenCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
 /**
@@ -833,7 +872,8 @@ function isComplete(fields: Fields): boolean {
     fields.lastActivityMs !== undefined &&
     fields.assistantText !== undefined &&
     fields.userPrompt !== undefined &&
-    fields.aiTitle !== undefined
+    fields.aiTitle !== undefined &&
+    fields.contextTokens !== undefined
   );
 }
 
@@ -850,6 +890,7 @@ function toInfo(state: FileState): TranscriptInfo {
   if (fields.turnEnded !== undefined) info.turnEnded = fields.turnEnded;
   if (fields.lastPromptMs !== undefined) info.lastPromptMs = fields.lastPromptMs;
   if (fields.awaySummary !== undefined) info.awaySummary = { ...fields.awaySummary };
+  if (fields.contextTokens !== undefined) info.contextTokens = fields.contextTokens;
   return info;
 }
 

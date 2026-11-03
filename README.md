@@ -15,6 +15,7 @@ Claude Code has two kinds of session, and pitwall handles both. Interactive sess
 - **Lists every Claude Code session under a directory,** wherever it was started: Warp, Cursor or any other terminal. Sessions are grouped by git repo, with worktrees under the repo they belong to. Finished background sessions, and interactive sessions that ended recently, stay listed.
 - **Shows which sessions need you, and why:** a prompt on screen, a question it asked you, what Claude Code says a background session needs, or what its recap says it's waiting on you for.
 - **Recaps each session:** why it started and where it is, then its to-dos, each with who it waits on. Plan status, on the recap, shows where the session is in the plan it's working through: the milestones or work items done, the one it's on, the ones still to come, and how the plan changed.
+- **Shows how big each session's context is:** a row flags a session whose last call carried over 200K tokens of context, in amber, or over 400K, in red, since every call sends all of it again; its view has the number and suggests handing off or `/compact`.
 - **Opens a session** to read its conversation, and its sub-agents' in a tab of their own. While it works, the conversation ends with what it's doing and for how long, such as "Working · 2m 14s, Running Bash: npm test", or what it's waiting on you for.
 - **Lets you steer it:** send an interactive session a message, or drive a background session in a terminal in the page, permission prompts and dialogs included.
 - **Starts new sessions** in any directory under a root, with files attached to the first prompt. It also stops and removes background sessions, ends a running interactive session, leaving its terminal at the shell, and brings an ended interactive session back in the background.
@@ -57,7 +58,7 @@ node dist/cli.js ~/code
 
 - **It reads, and changes nothing:**
   - `claude agents --json --all`, every 5 seconds, for the list of sessions.
-  - Each session's transcript in `~/.claude/projects/`, its sub-agents' transcripts beside it, and a background job's state in `~/.claude/jobs/`, for what it's doing, whether it needs you, which repos it worked in, and the pull requests it opened, pushed to, was linked to by Claude Code, was given in a prompt or named in Claude's replies.
+  - Each session's transcript in `~/.claude/projects/`, its sub-agents' transcripts beside it, and a background job's state in `~/.claude/jobs/`, for what it's doing, whether it needs you, how big its context is, which repos it worked in, and the pull requests it opened, pushed to, was linked to by Claude Code, was given in a prompt or named in Claude's replies.
   - To find ended sessions, the start and end of every transcript in `~/.claude/projects/` changed in the last 30 days, whatever its directory, kept in memory. Only those under your roots are listed.
   - `ps` for when a session's process started, and, before End session, its command name and the parent pids, never a command line; `claude --version` before its relay starts; and `/Applications` and `~/Applications` for VS Code and Cursor.
   - Read-only `git` in the repos under your roots, to group sessions and find the repos each one worked in, and the directories under each root, for New session's list.

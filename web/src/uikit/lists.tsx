@@ -231,6 +231,22 @@ const RUNNING_ROWS = [
   session('agents-none', { lastActivityAt: ago(3) }),
 ];
 
+/** Sessions' context (W133): nothing at or below 200K or when unknown, a warning badge over it, danger over 400K. */
+const CONTEXT_ROWS = [
+  session('context-85k', { contextTokens: 85_000, lastActivityAt: ago(0.5) }),
+  session('context-unknown', { lastActivityAt: ago(1) }),
+  session('context-212k', { contextTokens: 212_000, lastActivityAt: ago(2) }),
+  session('context-760k', { contextTokens: 760_000, status: 'busy', lastActivityAt: ago(0.1) }),
+  session('context-916k-asked', {
+    contextTokens: 916_000,
+    title: 'A made-up long-running coordinator',
+    askedYou: { reason: 'question', excerpt: 'Shall I merge the made-up PR?' },
+    needsYou: { reason: 'asked' },
+    lastActivityAt: ago(4),
+  }),
+  session('context-ended', { contextTokens: 640_000, ended: true, finished: true, alive: false, pid: undefined, status: undefined, lastActivityAt: ago(60 * 24) }),
+];
+
 /** Long text and narrow lists, at the widths the session list has from 1,200 px. */
 const NARROW_ROWS = [statusRow('waiting'), statusRow('blocked'), statusRow('asked-you'), statusRow('stale'), ...AWKWARD_ROWS.slice(0, 4)];
 
@@ -307,6 +323,15 @@ export function SessionRows() {
       </Specimen>
       <Specimen title="Sub-agents running, in Needs you and All sessions, 360 px wide" note="After the group's label and what it was last asked, at the session list's width at 1,200 px." width={360}>
         <Rows rows={acrossGroups(RUNNING_ROWS)} showGroup />
+      </Specimen>
+      <Specimen
+        title="Context (W133)"
+        note="Over 200K tokens of context on its last call, a subtle warning badge first among the badges, 212K; over 400K, subtle danger. Nothing at or below 200K, when it can't be read, or on a finished row. Screen readers hear Context 212K, over 200K; the tooltip has the number in full and what to do."
+      >
+        <Rows rows={inGroup('pitwall-test-app', CONTEXT_ROWS)} />
+      </Specimen>
+      <Specimen title="Context, in Needs you and All sessions, 360 px wide" note="The badge stays whole; the title, then the name, give way first." width={360}>
+        <Rows rows={acrossGroups(CONTEXT_ROWS)} showGroup />
       </Specimen>
       <Specimen title="360 px wide" note="The session list's width at 1,200 px. Line 1 stays one line: the title gives way first, then the name." width={360}>
         <Rows rows={acrossGroups(NARROW_ROWS)} showGroup />

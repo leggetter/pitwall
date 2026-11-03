@@ -87,6 +87,7 @@ import { COPY_RESUME_COMMAND, EndedFooter, isDormant, RESUME_LABEL, useResume } 
 import { EmptyState } from './EmptyState.js';
 import { Icon } from './Icon.js';
 import { InfoTip } from './InfoTip.js';
+import { ContextMeta, ContextNote } from './ContextGauge.js';
 import { PrNeedNote, SessionPrLinks } from './PrBadges.js';
 import { SessionPrsPanel, sessionPrsCount, type LinkedPr } from './SessionPrs.js';
 import { MenuButton, type MenuEntry } from './Menu.js';
@@ -972,6 +973,8 @@ export function SessionView({
             {!background && !ended && <InfoTip text={BG_NOTE} className="session-view-info" />}
           </span>
           {session.lastActivityAt && <Timestamp className="session-view-activity" at={session.lastActivityAt} prefix="Active " />}
+          {/* Its context (W133): the number, flagged over 200K, or "unavailable". */}
+          <ContextMeta tokens={session.contextTokens} />
           <span className="session-view-cwd">
             {/* The whole path, home and all: on screen, home is ~ and the middle may be cut. */}
             <Tooltip content={cwd} relation="none" onlyIfCut={shortenHome(cwd) === cwd}>
@@ -992,6 +995,8 @@ export function SessionView({
           // Where to answer, under the status badge that says it's waiting (W47). Read once, in place.
           <p className="session-view-waiting-note">{waiting}</p>
         )}
+        {/* Over 200K, what to do about it (W133). Read once, in place, as the notes below are. */}
+        <ContextNote tokens={session.contextTokens} />
         {missingNote && (
           // Visible, not in a tooltip: why it's still listed, and what to do about it (W47). Read once, in place.
           <p className="session-view-cwd-note">

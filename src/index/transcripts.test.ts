@@ -8,6 +8,7 @@ import {
   applyLine,
   ASSISTANT_TEXT_KEEP,
   assistantTextOf,
+  contextTokensOf,
   AWAY_SUMMARY_MAX,
   createTranscriptReader,
   defaultConfigDir,
@@ -1177,5 +1178,98 @@ describe('turnSignalOf: what an entry says of the turn, for W69 and the working 
     expect(turnSignalOf(user('This session is being continued…', { isCompactSummary: true }))).toBeUndefined();
     expect(turnSignalOf({ type: 'system', subtype: 'away_summary', content: 'recap' })).toBeUndefined();
     expect(turnSignalOf({ type: 'attachment', attachment: { type: 'note' } })).toBeUndefined();
+  });
+});
+
+describe('context tokens (W133)', () => {
+  // Made-up usage records, shaped like Claude Code's: no real content.
+  function call(id: string, usage: Record<string, unknown> | undefined, extra: Record<string, unknown> = {}, model = 'test-model'): Record<string, unknown> {
+    const entry = assistant([text('done')], id, extra);
+    entry.message = { ...(entry.message as Record<string, unknown>), model, ...(usage === undefined ? {} : { usage }) };
+    return entry;
+  }
+  const usage = (input: number, read: number, write: number) => ({ input_tokens: input, cache_read_input_tokens: read, cache_creation_input_tokens: write, output_tokens: 50 });
+
+  it('adds input, cache reads and cache writes, and leaves out the output', () => {
+    expect(contextTokensOf(call('m1', usage(3, 180_000, 2_000)))).toEqual({ id: 'm1', tokens: 182_003 });
+  });
+
+  it('is undefined for a sidechain, a synthetic entry, no usage, no id, or a zero total', () => {
+    expect(contextTokensOf(call('m1', usage(3, 1000, 0), { isSidechain: true }))).toBeUndefined();
+    expect(contextTokensOf(call('m1', usage(3, 1000, 0), {}, '<synthetic>'))).toBeUndefined();
+    expect(contextTokensOf(call('m1', undefined))).toBeUndefined();
+    expect(contextTokensOf(call('', usage(3, 1000, 0)))).toBeUndefined();
+    expect(contextTokensOf(call('m1', usage(0, 0, 0)))).toBeUndefined();
+    expect(contextTokensOf(call('m1', { input_tokens: 'many', cache_read_input_tokens: -5, cache_creation_input_tokens: 10 }))).toEqual({ id: 'm1', tokens: 10 });
+    expect(contextTokensOf(user('a prompt'))).toBeUndefined();
+  });
+
+  it('keeps the newest main-chain call, not a sub-agent call after it', () => {
+    const fields = fieldsOf(call('m1', usage(1, 100_000, 0)), call('m2', usage(1, 250_000, 0)), call('s1', usage(1, 9_000, 0), { isSidechain: true }));
+    expect(fields.contextTokens).toBe(250_001);
+  });
+
+  it('counts a response written on several lines once, by its message.id', () => {
+    const fields = fieldsOf(call('m1', usage(1, 100_000, 0)), call('m2', usage(1, 300_000, 0)), call('m2', usage(1, 300_500, 0)));
+    expect(fields.contextTokens).toBe(300_001);
+    applyEntry(fields, call('m3', usage(1, 310_000, 0)));
+    expect(fields.contextTokens).toBe(310_001);
+  });
+
+  it('skips a malformed line and keeps the call before it', () => {
+    const fields: Fields = {};
+    applyLine(fields, JSON.stringify(call('m1', usage(1, 50_000, 0))));
+    applyLine(fields, '{"type":"assistant","message":{"id":"m2","usage":');
+    expect(fields.contextTokens).toBe(50_001);
+  });
+
+  describe('through the reader', () => {
+    const SID = '55555555-5555-4555-8555-555555555555';
+    const CWD = '/work/pitwall-test/context';
+    let configDir: string;
+    let file: string;
+
+    beforeEach(async () => {
+      configDir = await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-context-'));
+      const projectDir = path.join(configDir, 'projects', encodeProjectDir(CWD));
+      await mkdir(projectDir, { recursive: true });
+      file = path.join(projectDir, `${SID}.jsonl`);
+    });
+
+    afterEach(async () => {
+      await rm(configDir, { recursive: true, force: true });
+    });
+
+    it("reads the tail, and the newest call there, not one before the window", async () => {
+      await writeFile(file, jsonl(call('m0', usage(1, 900_000, 0)), filler(8000), user('go on'), call('m1', usage(2, 120_000, 3_000))));
+      const info = await createTranscriptReader({ configDir, initialWindowBytes: 1024, maxWindowBytes: 2048 }).read(SID, [CWD]);
+      expect(info.contextTokens).toBe(123_002);
+    });
+
+    it('widens the window once when the first has no call, and is absent when neither has one', async () => {
+      await writeFile(file, jsonl(call('m1', usage(1, 210_000, 0)), filler(1500), user('a prompt')));
+      const reader = createTranscriptReader({ configDir, initialWindowBytes: 1024, maxWindowBytes: 4096 });
+      expect((await reader.read(SID, [CWD])).contextTokens).toBe(210_001);
+      await writeFile(file, jsonl(call('m1', usage(1, 210_000, 0)), filler(9000), user('a prompt')));
+      const fresh = createTranscriptReader({ configDir, initialWindowBytes: 1024, maxWindowBytes: 4096 });
+      const info = await fresh.read(SID, [CWD]);
+      expect(info.transcript).toBe('ok');
+      expect(info.contextTokens).toBeUndefined();
+    });
+
+    it('follows appended calls, reading only what was added', async () => {
+      await writeFile(file, jsonl(user('start'), call('m1', usage(1, 100_000, 0))));
+      const reader = createTranscriptReader({ configDir });
+      expect((await reader.read(SID, [CWD])).contextTokens).toBe(100_001);
+      // Unchanged: the same answer, with nothing new read.
+      expect((await reader.read(SID, [CWD])).contextTokens).toBe(100_001);
+      await appendFile(file, jsonl(call('m2', usage(1, 420_000, 5_000)), call('s1', usage(1, 2_000, 0), { isSidechain: true })));
+      expect((await reader.read(SID, [CWD])).contextTokens).toBe(425_001);
+    });
+
+    it('is absent for a missing file, with the transcript missing', async () => {
+      const info = await createTranscriptReader({ configDir, missingRetryMs: 0 }).read(SID, [CWD]);
+      expect(info).toEqual({ transcript: 'missing' });
+    });
   });
 });

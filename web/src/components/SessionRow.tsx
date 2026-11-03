@@ -5,7 +5,8 @@
 // while any are (W77), then, while it needs you or is marked, its Not needed now toggle, under the star. A finished session's row
 // is muted, an ended interactive session's too (W67), with Ended as its status. The rest, such as its
 // replies, its relay exchange, its directory, the repos it worked in and the message box, is in the
-// session view, one click away.
+// session view, one click away. A session whose last call carried over 200K tokens of context has a
+// context badge first among its badges (W133, ContextGauge.tsx).
 //
 // A session is a piece of work (W106, work.ts): its row carries the open pull requests it owns, the
 // most urgent as a badge, "#128 CI failing", with "+2" for more. It needs you when the session does
@@ -30,7 +31,9 @@ import { prNeedText, sessionPrBadge } from '../prs.js';
 import { ENDED_RECAP_HINT, FINISHED_RECAP_HINT, finishedWaitingOnYou, quietWaitingOn, WAITING_ON_TEXT } from '../recap.js';
 import { groupLabel, isNotNeeded, needsAttention, needsText, recapNeedsText, rowStatusBadge } from '../sessions.js';
 import { runningText } from '../subagents.js';
+import { contextLevel } from '../context.js';
 import { Badge, StatusBadge } from './Badge.js';
+import { ContextBadge } from './ContextGauge.js';
 import { Highlight } from './Highlight.js';
 import { NotNeededButton } from './NotNeededButton.js';
 import { canResumeFromRow, RowResume } from './RowResume.js';
@@ -64,6 +67,11 @@ export function finishedRecapHint(session: SessionSummary): string {
 
 /** What a row marked not needed now says on line 2, quietly, after its group's label (W88). */
 export const NOT_NEEDED_TEXT = 'Not needed now';
+
+/** Whether a row shows its context badge: over 200K (W133). */
+function contextOver(tokens: number | undefined): boolean {
+  return tokens !== undefined && contextLevel(tokens) !== 'ok';
+}
 
 /** The id of the session view, which every row's name controls. */
 export const SESSION_VIEW_ID = 'session-view';
@@ -216,6 +224,8 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
     .filter(Boolean)
     .join(' ');
   const badges = [
+    // Its context, over 200K (W133), first, as the PR badge is, so the status badges still line up. Not on a muted row.
+    !finished && contextOver(session.contextTokens) && <ContextBadge key="context" tokens={session.contextTokens} />,
     // First, so the status badges still line up down the list against the time's slot (W95).
     pr && <SessionPrBadgeView key="pr" badge={pr} />,
     badge && <StatusBadge key="status" badge={badge} />,
