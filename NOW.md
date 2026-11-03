@@ -2,23 +2,23 @@
 
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
-Last updated: 2026-11-03, on `m5.1/recap-schedule`: W132 built, in review.
+Last updated: 2026-11-03, on `m5.1/recap-schedule`, handing off: W132 in review (#146), W133 planned.
 
 ## Current milestone
 
-**M5, the supervisor, is done:** merged into `main` in [#138](https://github.com/leggetter/pitwall/pull/138) on 2026-11-02, built on `m5/integration` as W109 to W129 ([#110](https://github.com/leggetter/pitwall/pull/110) to [#137](https://github.com/leggetter/pitwall/pull/137)). Phil tried it on port 4519 and gave the word; the full app check ran before the merge (1,976 steps; its two stale checks fixed in #137).
+**M5.1, efficiency, in progress** on `m5.1/integration` (branched from `main` 2026-11-02). Merged into it: the M5 archive, [#141](https://github.com/leggetter/pitwall/pull/141) (fixes #140, recaps of sessions you ended), W130 [#142](https://github.com/leggetter/pitwall/pull/142) (D27: New session in the selected session's directory; fixes #139), [#144](https://github.com/leggetter/pitwall/pull/144) (plan) and W131 [#145](https://github.com/leggetter/pitwall/pull/145) (`scripts/usage-report.ts`). M5 is in `main` ([#138](https://github.com/leggetter/pitwall/pull/138)); its detail is in `docs/plan-archive.md`.
 
-- **Security:** W116's review and W120's fixes ([#122](https://github.com/leggetter/pitwall/pull/122)); the re-review of W124 to W128 and W129's fixes ([#133](https://github.com/leggetter/pitwall/pull/133)), whose re-check approved M5 for `main`. Its unfixed Info notes: a look-alike name doesn't trigger the resume card's shared-name note; resume errors show a folder outside `untrusted`; the `claude` command list isn't checked against Claude Code 2.1.316's hidden commands.
-- **M5.1, efficiency, is next,** on `m5.1/integration`, branched from `main` on 2026-11-02, as M4 and M5 were built. M5's detail is in `docs/plan-archive.md` ("M5 - Supervisor" and "M5 work breakdown"), with a one-line pointer in `PLAN.md`.
+- **What the usage showed** (W131; 14 days to 11-02, every repo): 11.35B tokens, 97.7% of them cache reads, 87% of those at more than 200K of context; sub-agents 58%. On 11-02 the pitwall coordinator and its 44 sub-agent runs were about half the day. Phil: "The problem isn't the global rules. It's pitwall" (2026-11-03), so the global rules are set aside for W133.
+- **Effort:** Phil's `~/.claude/settings.json` sets Opus 5.5 to high since 10-30 (it was xhigh from about 10-08). The week from 11-02 is the test against 10-20 to 10-29.
+- **Security notes left from M5** (Info): a look-alike name doesn't trigger the resume card's shared-name note; resume errors show a folder outside `untrusted`; the `claude` command list isn't checked against Claude Code 2.1.316's hidden commands.
 
 ## Open work
 
 | Item | State |
 | --- | --- |
-| M5.1, efficiency | Not started |
-| [#140](https://github.com/leggetter/pitwall/issues/140) (Needs you: a recap keeps a session you said is done under Needs you) | Fixed in the recap prompt ([#141](https://github.com/leggetter/pitwall/pull/141)), merged into `m5.1/integration`. Checked live on Haiku: an ended session, old prompt 3 of 3 "you", new 2 of 2 "nothing"; one that asks you something, or that's done with only part of the work, still "you" (2 of 2 each). A "Not needed" action is in "Nice to have, later" |
-| W131, the usage report | Merged ([#145](https://github.com/leggetter/pitwall/pull/145)); its figures drive the global efficiency rules, which wait on Phil |
-| W132, recaps when they're worth it ("M5.1 work breakdown") | Built on `m5.1/recap-schedule`, [#146](https://github.com/leggetter/pitwall/pull/146) into `m5.1/integration`: recaps kept in `$PITWALL_HOME/recap-store/` (D26's "What's kept"), an update 15 minutes after a turn ends, the strip asking on open only with no recap or a stale one once the turn has ended, 500 a day. Needs a security review of the kept recaps before it merges |
+| W132, recaps when they're worth it | [#146](https://github.com/leggetter/pitwall/pull/146) on `m5.1/recap-schedule` (`.worktrees/recap-schedule`): recaps kept in `$PITWALL_HOME/recap-store/` (D26's "What's kept"), updates 15 minutes after a turn, the strip asking on open only when it's worth it, 500 a day. Needs a security review; the full `npm test` wasn't re-run after the last test fix, so check #146's CI |
+| W133, a context gauge and a hand-off hook ("M5.1 work breakdown") | Planned (Phil, 2026-11-03: A and B; C later) |
+| [#143](https://github.com/leggetter/pitwall/issues/143) (Session view: expand the conversation or terminal to the full page) | Later (Phil, 2026-11-03) |
 | W86, bump `vite` and `happy-dom` | Phil approved (2026-10-28); on or after 2026-11-04, when the fixes are 14 days old |
 | W89, the first paste into New session's prompt is lost | Parked (Phil, 2026-11-02): he'll say if it happens again; Grammarly, which injects itself into the box, is suspected but not confirmed |
 | A flaky `src/cli.test.ts` clean-up (`ENOTEMPTY`) | In "Nice to have, later" |
@@ -26,14 +26,17 @@ Last updated: 2026-11-03, on `m5.1/recap-schedule`: W132 built, in review.
 
 ## Next, in order
 
-1. **W132, recaps when they're worth it:** built; a security review of keeping recaps on disk (`src/recaps/store.ts`, PLAN.md's Security), then merge into `m5.1/integration`.
-2. **The rest of M5.1:** work profiles, the Usage view with a run rate, the supervisor applying them ("M5.1 - Efficiency" in `PLAN.md`), as W items from W133, shaped by W131's numbers.
+1. **W132's security review** of [#146](https://github.com/leggetter/pitwall/pull/146), at xhigh: `src/recaps/store.ts`, the engine's load and save, and PLAN.md's Security section. Fix, merge into `m5.1/integration`, check the branch's CI, remove `.worktrees/recap-schedule`.
+2. **W133** in a worktree (`.worktrees/<name>`), A and B. Then hand off; a coordinator hands off after each merged work item.
 3. **W86** on or after 2026-11-04: `npm install <pkg>@<version> --before=<date>`, the newest version at least 14 days old.
-4. **M6, triage,** on the coordination model: split work, shared state, graded oversight, and shared decisions first with a goal check at the end, with Peers part of it, show only (Phil, 2026-11-02): "M6 - Triage" and "Considering: Peers" in `PLAN.md`. Then the considerations: chatting with a session, a session asking the supervisor to spin off work.
+4. **On 2026-11-09:** `npx tsx scripts/usage-report.ts --days 7` against the 10-20 to 10-29 figures, for the high-effort week; then one blog-editing session on Sonnet for Phil to judge (agreed; not the evals post).
+5. **The rest of M5.1** from W134: work profiles, the Usage view with a run rate, the supervisor applying them ("M5.1 - Efficiency" in `PLAN.md`).
+6. **M6, triage,** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
 
 ## Open questions for Phil
 
-- None open. Decided on 2026-11-02: Peers is show only; W89 is parked; the IDE extension is used rarely, so no spike; the supervisor survives restarts, as built.
+- **Kept recaps last 30 days** (W132 chose `ENDED_LISTED_DAYS`, not the 14 the brief suggested), so ended sessions' recaps stay that long. Lean: fine.
+- **A session with no recap yet** still gets one asked for when you open it, even while it works; only a stale one waits for its turn to end (W132). Lean: fine, since it's one call per session.
 
 ## Standing context
 
