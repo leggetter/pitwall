@@ -3974,7 +3974,9 @@ ol.md-list {
   line-height: var(--pw-leading-s);
   font-variant-ligatures: none;
   tab-size: 4;
-  white-space: pre;
+  /* Long lines wrap, spaces and indents kept, so a block never needs scrolling sideways (W137). */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .md-code-scroll code {

@@ -1,7 +1,7 @@
 // The session view and its conversation (docs/design-system.md, 4: Session view, Conversation,
 // Markdown in messages): its header and tabs, and every kind of entry: You, Claude, From another
 // session, To pitwall-relay, a question Claude Code asked, a notice, one tool call, and two or more
-// folded into one toggle. Markdown shows as pitwall's own elements, and the view opens at the newest.
+// folded into one toggle. Markdown shows as pitwall's own elements, a code block's long lines wrap (W137), and the view opens at the newest.
 
 import { NAMES } from '../fixtures.js';
 import type { Part } from '../runner.js';
@@ -66,6 +66,26 @@ const part: Part = {
       t.expectEqual(markdown.code, ['src/routes.ts', 'GET /health'], 'inline code, as code');
       t.expect(markdown.html === 0, 'nothing but text and pitwall elements', markdown);
       t.expect(await page.evaluate(`${VIEW}.querySelector('li.entry-user .entry-text').textContent === 'Add a made-up health route to the API, with a test.' && !${VIEW}.querySelector('li.entry-user .entry-markdown')`), 'your prompt is plain text');
+    });
+
+    await t.step('a code block wraps its long lines, indents kept, and never scrolls sideways (W137)', async () => {
+      const block = await page.evaluate<{ wraps: boolean; sideways: boolean; indent: boolean } | null>(`(() => {
+        const pre = ${VIEW}.querySelector('li.entry-assistant pre.md-code-scroll');
+        if (!pre) return null;
+        pre.scrollIntoView({ block: 'center' });
+        const line = parseFloat(getComputedStyle(pre).lineHeight);
+        const code = pre.querySelector('code');
+        return {
+          wraps: code.getBoundingClientRect().height > 2.5 * line,
+          sideways: pre.scrollWidth > pre.clientWidth + 1,
+          indent: code.textContent.includes('\\n  # indented, kept as typed'),
+        };
+      })()`);
+      t.expect(block !== null, 'a code block in the conversation');
+      t.expect(block?.wraps === true, 'its long line wraps onto more lines', block);
+      t.expect(block?.sideways === false, 'it doesn’t scroll sideways', block);
+      t.expect(block?.indent === true, 'the indent is kept', block);
+      await t.shot('code-block');
     });
 
     await t.step('a question shows its options, with the answer marked', async () => {
