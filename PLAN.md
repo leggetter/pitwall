@@ -306,6 +306,11 @@ M5.1's own items start at W131, the evidence the rest of it needs; the others fo
   - Phil, 2026-11-04: "Instead of having to select the other directory and then type the text, can we make the select also an input so we can type to filter and search?" Directory was a select of the groups' directories plus "Another directory under a root…", which revealed W70's combobox. That was Phil's choice on 2026-10-27 (W70, `docs/plan-archive.md`); this replaces it, and keeps its point, since the directories you've worked in still come first.
   - Now one combobox: the groups' directories and the roots first, in their order, then the directories under the roots (`withChoices()` in `web/src/directories.ts`), the groups' winning a tie in the ranking. It opens showing the first choice (or the prefill's, W107 and #139), and focus selects its text, so typing replaces it (`selectOnFocus`); while it shows the chosen one, the list offers every directory, as a select would. A select's chevron at its end (`chevron`). The list is fetched as the dialog opens, once, not when "Another directory" was chosen.
   - A UI change: the app check's `new-session` and `new-session-selected` parts, the `#uikit` gallery's New session page, and `docs/design-system.md` (Combobox, Dialogs).
+  - Status: Merged ([#162](https://github.com/leggetter/pitwall/pull/162)).
+- **W141, The drafts band squeezed to its heading by a long conversation** (`m5.1/drafts-band-fix`, S).
+  - Phil, 2026-11-04, a bug: a spawn_session card couldn't be reached, its band showing only "Drafts for you (1)" above the message box, while the call waited.
+  - Cause: the supervisor's conversation, at its content's height, and the band shrank in proportion to their heights, so a long conversation left the band about 46px of 848. W136's app check had only a short conversation.
+  - Fix: the supervisor's conversation grows from no height (`flex-basis: 0`, `web/src/supervisor.css`), so it gives way first, as the design system says. The app check's `supervisor` part puts a 20,000px conversation behind the long drafts and checks the band keeps its height; it failed before the fix (46px against 490px).
   - Status: In review.
 
 ## Open questions
