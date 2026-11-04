@@ -69,7 +69,7 @@ const part: Part = {
     });
 
     await t.step('a code block wraps its long lines, indents kept, and never scrolls sideways (W137)', async () => {
-      const block = await page.evaluate<{ wraps: boolean; sideways: boolean; indent: boolean } | null>(`(() => {
+      const block = await page.evaluate<{ wraps: boolean; sideways: boolean; indent: false | { offset: number; ch: number; ok: boolean } } | null>(`(() => {
         const pre = ${VIEW}.querySelector('li.entry-assistant pre.md-code-scroll');
         if (!pre) return null;
         pre.scrollIntoView({ block: 'center' });
@@ -78,13 +78,29 @@ const part: Part = {
         return {
           wraps: code.getBoundingClientRect().height > 2.5 * line,
           sideways: pre.scrollWidth > pre.clientWidth + 1,
-          indent: code.textContent.includes('\\n  # indented, kept as typed'),
+          indent: (() => {
+            // Drawn indented, not only in the text: the '#' starts its own line two spaces in, between 1.5
+            // and 3ch past the box's content edge, which white-space: normal would collapse.
+            const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+            let node = walker.nextNode();
+            while (node && !node.textContent.includes('# indented, kept as typed')) node = walker.nextNode();
+            if (!node) return false;
+            const at = node.textContent.indexOf('# indented');
+            const range = document.createRange();
+            range.setStart(node, at);
+            range.setEnd(node, at + 1);
+            const style = getComputedStyle(pre);
+            const edge = pre.getBoundingClientRect().left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+            const ch = range.getBoundingClientRect().width;
+            const offset = range.getBoundingClientRect().left - edge;
+            return { offset, ch, ok: offset >= 1.5 * ch && offset <= 3 * ch };
+          })(),
         };
       })()`);
       t.expect(block !== null, 'a code block in the conversation');
       t.expect(block?.wraps === true, 'its long line wraps onto more lines', block);
       t.expect(block?.sideways === false, 'it doesn’t scroll sideways', block);
-      t.expect(block?.indent === true, 'the indent is kept', block);
+      t.expect(block?.indent !== false && block?.indent?.ok === true, 'the indent is drawn, two spaces in', block);
       await t.shot('code-block');
     });
 
