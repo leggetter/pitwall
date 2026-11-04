@@ -1,5 +1,5 @@
-// The directory list (W70): GET DIRECTORIES_PATH, for the New session dialog's "Another directory
-// under a root…" field, which narrows the list as you type, in the page. Typing makes no requests.
+// The directory list (W70, W140): GET DIRECTORIES_PATH, for New session's Directory combobox, which
+// the page loads as the dialog opens and narrows as you type. Typing makes no requests.
 //
 // A GET, so the /api/* middleware in server.ts has already checked Host, Origin and the token or the
 // apiKey. Then:
