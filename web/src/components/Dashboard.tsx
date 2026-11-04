@@ -157,6 +157,7 @@ import {
   finishedStateId,
   groupSelection,
   isPrsSelection,
+  keepsOpenSession,
   sameSelection,
   scopeFor,
   selectionHref,
@@ -1245,8 +1246,22 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     };
   }, [shortcuts]);
 
+  /**
+   * Choosing a selection in the repo list. A group keeps the open session only if it lists it, in the
+   * chosen grouping, whatever the filter, Finished or Show older hides (W139, Phil's option B): otherwise
+   * the view closes to "Select a session", in the same pushed history entry, so the back button returns
+   * to the session and the group it was under. A view keeps it, as before.
+   */
   const select = (next: Selection, from: 'list' | 'drawer' | 'elsewhere' = 'elsewhere') => {
-    choose(next);
+    if (snapshot && openId !== undefined && !keepsOpenSession(groupedAll.groups, next, openId)) {
+      const { pathname, search, hash } = navigation.location;
+      navigation.history.pushState(navigation.history.state, '', `${pathname}${withSession(withSelection(search, next), undefined)}${hash}`);
+      writeStoredSelection(next, storage);
+      followSelection();
+      opened.follow();
+    } else {
+      choose(next);
+    }
     if (from === 'drawer') {
       focusHeading.current = true;
       setDrawerOpen(false);

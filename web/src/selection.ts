@@ -104,6 +104,19 @@ export function findGroup<T extends SessionGroup>(groups: readonly T[], selectio
   return groups.find((group) => group.key === selection.repo && (selection.root === undefined || group.root === selection.root));
 }
 
+/**
+ * Whether choosing `selection` keeps `sessionId`, the open session, open (W139, Phil's option B,
+ * 2026-11-04). A view always does, as before. A group does only when it lists the session, in
+ * `groups` as the chosen grouping has them: so in Every repo it worked in, any group that lists it,
+ * not only its home group. Listing is what counts, whatever the filter, a collapsed Finished section
+ * or Show older hides, so `groups` should hold every session, the older ended ones too. A group that
+ * isn't in `groups` lists nothing, and closes it.
+ */
+export function keepsOpenSession(groups: readonly SessionGroup[], selection: Selection, sessionId: string): boolean {
+  if ('view' in selection) return true;
+  return findGroup(groups, selection)?.sessions.some((session) => session.sessionId === sessionId) ?? false;
+}
+
 /** Whether the selection is Pull requests (W95), whose list is your open PRs rather than sessions. */
 export function isPrsSelection(selection: Selection): boolean {
   return 'view' in selection && selection.view === 'prs';
