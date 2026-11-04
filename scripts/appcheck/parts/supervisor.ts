@@ -250,6 +250,12 @@ const part: Part = {
       );
       t.expect(band.band > 0.4 * band.view + 1 && band.band <= 0.7 * band.view + 1, 'the band past 40% of the view, and within 70%', band);
       t.expect(band.footBottom <= band.viewBottom + 0.5, 'the message box whole under it', band);
+      // A long conversation behind it doesn't squeeze the band (W141): before, the conversation and
+      // the band shrank in proportion to their content, so a long one left the band only its heading.
+      const tall = await page.evaluate<{ band: number; view: number }>(
+        `(() => { const body = ${SVIEW}.querySelector('.session-view-body'); const pad = document.createElement('div'); pad.className = 'appcheck-tall'; pad.style.height = '20000px'; body.append(pad); const v = ${SVIEW}.getBoundingClientRect(); const b = ${SVIEW}.querySelector('.supervisor-approvals').getBoundingClientRect(); const out = { band: b.height, view: v.height }; pad.remove(); return out; })()`,
+      );
+      t.expect(Math.abs(tall.band - band.band) <= 1, 'the band as tall with a long conversation behind it', { tall, band });
       await page.evaluate(`${SVIEW}.querySelector('.supervisor-approvals-scroll')?.scrollTo(0, 0)`);
       await t.shot('long-draft');
       // Its editor grows as far, then scrolls.

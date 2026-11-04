@@ -102,6 +102,13 @@
  * smaller one), then the list scrolls under its heading (a Tab stop while it does, ScrollBox). It gives
  * way before the message box does: the conversation goes first, then the band shrinks, never the box.
  */
+.supervisor-view > .session-view-body {
+  /* The conversation grows from nothing into the room the band and the box leave, so it gives way
+     first. At its content's height, as every session view's body is, it shrank only in proportion to
+     that height, and a long conversation squeezed the band to its heading (W141). */
+  flex-basis: 0;
+}
+
 .supervisor-approvals {
   flex: 0 1 auto;
   /* Below its content's height, or it couldn't shrink at all: a flex item's minimum is its content.
