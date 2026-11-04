@@ -17,7 +17,7 @@ Last updated: 2026-11-04, on `m5.1/integration`: W86 merged ([#151](https://gith
 | Item | State |
 | --- | --- |
 | W132, recaps when they're worth it | Merged ([#146](https://github.com/leggetter/pitwall/pull/146)). Its security review's Info notes, left: expiry only at start; `RECAP_STORE_MAX_FILES` isn't ordered by age; a planted file chooses its session's recap text (no wider than writing the transcript) |
-| W133, a context gauge and a hand-off hook | Merged on 2026-11-03. B ([#148](https://github.com/leggetter/pitwall/pull/148), [spike 012](docs/spikes/012-handoff-hook.md)): a Stop hook in `.claude/settings.json`, nudging at 200K and 400K; checked in `-p` mode only, so the first interactive session past 200K is its real try-out, and a session's first turn is never nudged (the transcript lags a call). A ([#149](https://github.com/leggetter/pitwall/pull/149)): "ctx 245K" on rows over 200K, red over 400K, and the number in the session view; forgotten at a compaction until the next call. C, "Hand off" in Needs you, later (Phil, 2026-11-03) |
+| W133, a context gauge and a hand-off hook | Merged on 2026-11-03. B ([#148](https://github.com/leggetter/pitwall/pull/148), [spike 012](docs/spikes/012-handoff-hook.md)): a Stop hook in `.claude/settings.json`, nudging at 200K and 400K; it fired in an interactive session too (the coordinator's, at 206K, 2026-11-04), and a session's first turn is never nudged (the transcript lags a call). A ([#149](https://github.com/leggetter/pitwall/pull/149)): "ctx 245K" on rows over 200K, red over 400K, and the number in the session view; forgotten at a compaction until the next call. C, "Hand off" in Needs you, later (Phil, 2026-11-03) |
 | [#143](https://github.com/leggetter/pitwall/issues/143) (Session view: expand the conversation or terminal to the full page) | Later (Phil, 2026-11-03) |
 | W89, the first paste into New session's prompt is lost | Parked (Phil, 2026-11-02): he'll say if it happens again; Grammarly, which injects itself into the box, is suspected but not confirmed |
 | A flaky `src/cli.test.ts` clean-up (`ENOTEMPTY`) | In "Nice to have, later" |
@@ -31,6 +31,7 @@ Last updated: 2026-11-04, on `m5.1/integration`: W86 merged ([#151](https://gith
 
 ## Open questions for Phil
 
+- **The supervisor's 20K-character cap and file reading** (Phil, 2026-11-04). The cap, `SUPERVISOR_MESSAGE_MAX`, came with W112a with no recorded reason; `SUPERVISOR_MAX_BODY_BYTES` (160 KiB) follows from it. It can't read files by design (D4: `--tools SendMessage` and the read-only MCP tools only, against prompt injection from transcripts). Options: A, raise the cap to about 100K and the body limit with it; B, "Attach file" in its message box, the browser's file picker inlining the file you choose, under the cap; C, a Read tool limited to some folders, which reopens D4 and needs a security review. Lean: A now, B as a W item in M5.1, not C.
 - **When to break W134 onward into work items** (work profiles, the Usage view with a run rate, the supervisor applying them): now, or after the 11-09 usage report? Lean: break down work profiles now, since they don't depend on the numbers, and the Usage view's weekly target after 11-09.
 
 ## Standing context
