@@ -103,3 +103,26 @@ describe('hand-offs (W124)', () => {
     expect(queue.handoffs()[0]!.name).not.toBe('changed');
   });
 });
+
+describe('forgetConversation() (W136)', () => {
+  it('drops the hand-offs, passes and notes of the conversation that’s left, tells its listeners, and leaves cards alone', () => {
+    const queue = createApprovalQueue({ now: () => Date.parse('2026-11-04T12:00:00.000Z') });
+    queue.handoff({ kind: 'spawn', name: 'pitwall-test-a', shortId: 'abc12345' });
+    queue.note('the user edited your message');
+    queue.grantPass('toolu_p', { directory: '/x', prompt: 'Go.' });
+    const added = queue.add(message('toolu_c'));
+    if (!added.ok) throw new Error('not added');
+    let told = 0;
+    queue.subscribe(() => told++);
+    queue.forgetConversation();
+    expect(queue.handoffs()).toEqual([]);
+    expect(queue.takeNotes()).toEqual([]);
+    expect(queue.takePass('toolu_p', { directory: '/x', prompt: 'Go.' })).toBeUndefined();
+    expect(queue.list()).toHaveLength(1);
+    expect(told).toBe(1);
+    // Nothing left to drop: nothing to tell.
+    queue.forgetConversation();
+    expect(told).toBe(1);
+    queue.cancelAll('made-up end of test');
+  });
+});

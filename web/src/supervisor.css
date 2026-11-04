@@ -25,11 +25,20 @@
   margin-block: calc(-1 * var(--pw-space-0-5));
 }
 
-/* Start, while it's off: at the end of the meta line, the line's own height. */
-.supervisor-start {
+/* New conversation (W136), then Start while it's off: at the end of the meta line, the line's own height, 8 px apart. */
+.supervisor-head-actions {
   display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--pw-space-2);
   margin-left: auto;
   margin-block: calc(-1 * var(--pw-space-0-5));
+}
+
+/* New conversation's confirmation, or its refusal, under the header, as the session view's (4: Inline confirmation). */
+.supervisor-view > .supervisor-new {
+  flex: none;
+  padding: var(--pw-space-2) var(--pw-space-4);
 }
 
 .supervisor-note {
@@ -314,9 +323,12 @@
   line-height: var(--pw-leading-s);
 }
 
-/* The model's text, as text: its line breaks kept, eight lines at most, then it scrolls. */
+/*
+ * The model's text, as text: its line breaks kept, up to half the window's height, never less than
+ * eight lines, then it scrolls (W136: a long proposal is read before it's sent, not in an 8-line slot).
+ */
 .approval-text {
-  max-height: calc(8 * var(--pw-leading-m) + 2 * var(--pw-space-2));
+  max-height: max(calc(8 * var(--pw-leading-m) + 2 * var(--pw-space-2)), 50vh);
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: var(--pw-space-2) var(--pw-space-3);
@@ -353,9 +365,16 @@
   line-height: var(--pw-leading-s);
 }
 
-/* The editor: three lines to eight, as the message box's text box grows. */
+/*
+ * The editor: from three lines, growing as the text does up to the card's text box's height, half the
+ * window and never less than eight lines (W136), then it scrolls. Over the message box's own 8 lines (relay.css).
+ */
 .approval-editor {
   min-height: calc(3 * var(--pw-leading-m) + 2 * var(--pw-space-1-5));
+}
+
+.relay-text.approval-editor {
+  max-height: max(calc(8 * var(--pw-leading-m) + 2 * var(--pw-space-1-5)), 50vh);
 }
 
 .approval-editing .relay-count {
@@ -372,6 +391,11 @@
 @media (max-height: 760px) {
   .approval-text {
     max-height: calc(4 * var(--pw-leading-m) + 2 * var(--pw-space-2));
+  }
+
+  /* The editor keeps the message box's 8 lines there, as before W136. */
+  .relay-text.approval-editor {
+    max-height: calc(8 * var(--pw-leading-m) + 2 * var(--pw-space-1-5));
   }
 }
 

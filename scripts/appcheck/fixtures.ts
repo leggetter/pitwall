@@ -278,6 +278,13 @@ export const SUPERVISOR_HELD_ERROR =
   "A background session is running the supervisor's conversation, so pitwall can't resume it. Run `claude stop pt114bg1` to hand it back, then press Start. pitwall won't stop it for you.";
 export const SUPERVISOR_FAILED_ERROR = 'The supervisor stopped as it started (exit code 1). Press Start to try again.';
 
+/** What its error adds while a message of yours waits for its next start (W114's review), and what New conversation's refusal then says (W136). */
+export const SUPERVISOR_QUEUED_NOTE = 'Your message waits to be sent when it starts.';
+export const SUPERVISOR_QUEUED_REFUSAL = 'Your message waits to be sent to this conversation. Press Start to send it first, then start a new conversation.';
+
+/** The made-up context of a conversation with history (W136): "Context 84K" in its header. */
+export const SUPERVISOR_CONTEXT = 84_010;
+
 /** The made-up reply each message gets, in markdown, naming made-up sessions and example/* repos. */
 export const SUPERVISOR_REPLY =
   'Two sessions need you:\n\n1. **pitwall-test-docs** waits on a permission prompt to run the made-up docs build.\n2. **pitwall-test-review** asked whether to retry the failed batch on `example/api-server` now or tonight.\n\nNothing else needs you.';
@@ -287,6 +294,7 @@ export const SUPERVISOR_APPROVALS = {
   message: 'pt114-approval-message',
   spawn: 'pt114-approval-spawn',
   resume: 'pt127-approval-resume',
+  longer: 'pt136-approval-longer',
 } as const;
 
 /** The cursor of SUBAGENTS.drafting's newest page, for its Load earlier. */
@@ -309,12 +317,15 @@ export interface ResetOptions {
   /** The supervisor (W114): 'none', as with --no-supervisor, by default. */
   supervisor?: SupervisorWorldState;
   /**
-   * Whether it has made-up drafts waiting on you, a message and a new session (W114), or 'long', one
-   * message of 14 lines with a no-break space, which the card draws as its code (W120).
+   * Whether it has made-up drafts waiting on you, a message and a new session (W114), or 'long', a
+   * message of 14 lines with a no-break space, which the card draws as its code (W120), then one of 60
+   * lines, longer than half the window (W136).
    */
   approvals?: boolean | 'long' | 'resume';
   /** Whether its conversation has made-up turns already, with a page behind Load earlier, or none, a new one. */
   supervisorHistory?: boolean;
+  /** Whether a message of yours waits for its next start, as after it failed mid-turn: New conversation is refused (W136). */
+  supervisorQueued?: boolean;
 }
 
 /** The made-up index: a snapshot, conversations, and what POSTs have changed since the last reset. */
@@ -361,6 +372,10 @@ export class World {
   #supervisorOlder: ConversationEntry[] = [];
   #supervisorCost = 0;
   #supervisorTurnAt: string | undefined;
+  /** Its newest call's context (W136), once a turn has said. */
+  #supervisorContext: number | undefined;
+  /** A message of yours waits for its next start (W136's refusal). */
+  #supervisorQueued = false;
   /** Each made-up turn's number: Stop and a reset end the one running, so its later steps do nothing. */
   #supervisorTurn = 0;
 
@@ -400,12 +415,14 @@ export class World {
     this.#supervisorTurn += 1;
     this.#supervisor = options.supervisor ?? 'none';
     this.#handoffs = [];
-    this.#approvals = options.approvals === 'long' ? [this.#longApproval()] : options.approvals === 'resume' ? [this.#resumeApproval()] : options.approvals ? this.#baseApprovals() : [];
+    this.#approvals = options.approvals === 'long' ? [this.#longApproval(), this.#longerApproval()] : options.approvals === 'resume' ? [this.#resumeApproval()] : options.approvals ? this.#baseApprovals() : [];
     const history = options.supervisorHistory ?? (this.#supervisor !== 'none' && this.#supervisor !== 'off');
     this.#supervisorEntries = history ? this.#supervisorTurns() : [];
     this.#supervisorOlder = history ? this.#supervisorOlderTurns() : [];
     this.#supervisorCost = history ? 0.0425 : 0;
     this.#supervisorTurnAt = history ? this.#ago(4) : undefined;
+    this.#supervisorContext = history ? SUPERVISOR_CONTEXT : undefined;
+    this.#supervisorQueued = options.supervisorQueued ?? false;
   }
 
   // --- The supervisor (W114) ---------------------------------------------------------------------
@@ -416,10 +433,11 @@ export class World {
     const state: SupervisorState = { status: this.#supervisor, approvals: [...this.#approvals] };
     if (this.#supervisorEntries.length > 0) state.sessionId = 'pt114-supervisor-session';
     if (this.#supervisor === 'held') state.error = SUPERVISOR_HELD_ERROR;
-    if (this.#supervisor === 'failed') state.error = SUPERVISOR_FAILED_ERROR;
+    if (this.#supervisor === 'failed') state.error = this.#supervisorQueued ? `${SUPERVISOR_FAILED_ERROR} ${SUPERVISOR_QUEUED_NOTE}` : SUPERVISOR_FAILED_ERROR;
     if (this.#supervisorTurnAt !== undefined) state.lastTurnAt = this.#supervisorTurnAt;
     if (this.#supervisorCost > 0) state.costUsd = this.#supervisorCost;
     if (this.#handoffs.length > 0) state.handoffs = [...this.#handoffs];
+    if (this.#supervisorContext !== undefined) state.contextTokens = this.#supervisorContext;
     return state;
   }
 
@@ -456,6 +474,8 @@ export class World {
       this.#supervisor = 'idle';
       this.#supervisorTurnAt = new Date().toISOString();
       this.#supervisorCost += 0.0099;
+      // Its newest call read the conversation again, a little longer each turn.
+      this.#supervisorContext = (this.#supervisorContext ?? 18_000) + 3_200;
     });
     return { result: 'taken', steps };
   }
@@ -473,6 +493,29 @@ export class World {
         },
       ],
     };
+  }
+
+  /**
+   * New conversation (SUPERVISOR_NEW_CONVERSATION_PATH, W136), as src/supervisor/supervisor.ts answers:
+   * refused, with its reason, while it's held, starting or working, while drafts or your messages wait;
+   * otherwise off, with the conversation, its last turn, its context and its hand-offs gone, and this
+   * run's cost kept.
+   */
+  supervisorNewConversation(): { result: 'refused'; error: string } | { result: 'done' } {
+    if (this.#supervisor === 'none') return { result: 'refused', error: 'The supervisor is off: pitwall was started with --no-supervisor.' };
+    if (this.#supervisor === 'held') return { result: 'refused', error: "Another session is running the supervisor's conversation, so pitwall leaves it alone. Free it as the alert says, then start a new conversation." };
+    if (this.#supervisor === 'starting') return { result: 'refused', error: 'The supervisor is starting. Start a new conversation once it has started.' };
+    if (this.#supervisor === 'working') return { result: 'refused', error: 'The supervisor is working on a turn of this conversation. Stop it, or wait for it to end, then start a new conversation.' };
+    if (this.#approvals.length > 0) return { result: 'refused', error: `${this.#approvals.length} drafts from this conversation wait for you. Send or don't send each one first, then start a new conversation.` };
+    if (this.#supervisorQueued) return { result: 'refused', error: SUPERVISOR_QUEUED_REFUSAL };
+    this.#supervisorTurn += 1;
+    this.#supervisor = 'off';
+    this.#supervisorEntries = [];
+    this.#supervisorOlder = [];
+    this.#supervisorTurnAt = undefined;
+    this.#supervisorContext = undefined;
+    this.#handoffs = [];
+    return { result: 'done' };
   }
 
   /** Stop (SUPERVISOR_INTERRUPT_PATH): its running turn stops, with Claude Code's notice. */
@@ -584,6 +627,19 @@ export class World {
       text: ['Please work through these before tonight\u00a0and tell me what failed:', ...steps, 'Thanks.'].join('\n'),
       at: this.#ago(3),
       expiresAt: this.#ago(-26),
+    };
+  }
+
+  /** A message longer than half the window shows (W136): 60 made-up lines, which scroll, with the length note. */
+  #longerApproval(): SupervisorApproval {
+    const steps = Array.from({ length: 58 }, (_, index) => `${index + 1}. Re-run the made-up check ${index + 1} and note what it says.`);
+    return {
+      id: SUPERVISOR_APPROVALS.longer,
+      kind: 'message',
+      to: NAMES.asked,
+      text: ['Here is the whole made-up checklist:', ...steps, 'Thanks.'].join('\n'),
+      at: this.#ago(2),
+      expiresAt: this.#ago(-27),
     };
   }
 

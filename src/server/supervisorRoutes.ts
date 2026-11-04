@@ -24,6 +24,13 @@
 //     200  the interrupt was sent: the turn ends, and the snapshot says so
 //     409  off, or no turn is running
 //
+//   POST SUPERVISOR_NEW_CONVERSATION_PATH no body                      answers: ActionResult
+//     200  the conversation on file is forgotten, and the supervisor stopped if it ran (W136): the
+//          next message or Start begins a new one. Nothing starts
+//     409  off; or, with why in pitwall's words, while it starts, a turn runs, drafts or your
+//          messages wait for this conversation, or it's held
+//     503  pitwall is closing
+//
 //   POST supervisorApprovalPath(id) body: SupervisorDecision as JSON  answers: ActionResult
 //     200  answered: Send or Edit allowed the call, Don't send denied it (supervisorActions.ts' decide())
 //     400  not JSON, not a SupervisorDecision, or an edit that isn't valid text: the card stays
@@ -35,7 +42,16 @@
 import type { Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { isRecord } from '../index/guards.js';
-import { SUPERVISOR_INTERRUPT_PATH, SUPERVISOR_MESSAGE_MAX, SUPERVISOR_MESSAGE_PATH, SUPERVISOR_PROPOSAL_MAX, SUPERVISOR_START_PATH, supervisorApprovalPath, type ActionResult } from '../shared/protocol.js';
+import {
+  SUPERVISOR_INTERRUPT_PATH,
+  SUPERVISOR_MESSAGE_MAX,
+  SUPERVISOR_MESSAGE_PATH,
+  SUPERVISOR_NEW_CONVERSATION_PATH,
+  SUPERVISOR_PROPOSAL_MAX,
+  SUPERVISOR_START_PATH,
+  supervisorApprovalPath,
+  type ActionResult,
+} from '../shared/protocol.js';
 import type { Supervisor, SupervisorOutcome } from '../supervisor/supervisor.js';
 import { decide, parseDecision, type SupervisorActionSources } from './supervisorActions.js';
 
@@ -121,6 +137,14 @@ export function registerSupervisor(app: Hono, supervisor: Supervisor | undefined
     if (supervisor === undefined) return off(c);
     const outcome = supervisor.interrupt();
     if (outcome.kind === 'idle') return answer(c, { ok: false, error: "The supervisor isn't working on anything." }, 409);
+    return answer(c, { ok: true }, 200);
+  });
+
+  app.post(SUPERVISOR_NEW_CONVERSATION_PATH, async (c) => {
+    if (supervisor === undefined) return off(c);
+    const outcome = await supervisor.newConversation();
+    if (outcome.kind === 'refused') return answer(c, { ok: false, error: outcome.error }, 409);
+    if (outcome.kind === 'closed') return answer(c, { ok: false, error: 'pitwall is shutting down.' }, 503);
     return answer(c, { ok: true }, 200);
   });
 

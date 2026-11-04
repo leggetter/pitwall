@@ -5,9 +5,11 @@
 // reply as markdown; its limit, 100,000 characters (W134); Load earlier; the draft cards, Edit and Send edit, Don't send, and where focus
 // goes; what it sent and started, with each session's state, Needs you's notice and Open (W124); a
 // resume draft for a finished session and its "Resumed" row (W127); the sessions and PRs its replies name, which open them (W125); Stop; held, with the stop command and the app strip's line; failed, with Start; a reload that
-// starts nothing; and none with --no-supervisor. Made-up example/* content only.
+// starts nothing; its context in the header, New conversation with its confirmation, cancelled,
+// confirmed and refused, and a draft's text up to half the window (W136); and none with
+// --no-supervisor. Made-up example/* content only.
 
-import { NAMES, SUPERVISOR_APPROVALS } from '../fixtures.js';
+import { NAMES, SUPERVISOR_APPROVALS, SUPERVISOR_QUEUED_REFUSAL } from '../fixtures.js';
 import type { Part } from '../runner.js';
 import { focused, listHeading, openFromRow, openRepoList, repoLabels, VIEW, viewClose } from './_dom.js';
 
@@ -19,6 +21,10 @@ const BOX = `${SVIEW}?.querySelector('.supervisor-box textarea')`;
 const SEND = `${SVIEW}?.querySelector('.supervisor-box button[type="submit"]')`;
 const STOP = `${SVIEW}?.querySelector('[data-supervisor-stop]')`;
 const START = `${SVIEW}?.querySelector('[data-supervisor-start]')`;
+const NEW = `${SVIEW}?.querySelector('[data-supervisor-new]')`;
+const CONFIRM_BOX = `${SVIEW}?.querySelector('[data-supervisor-new-confirm] .inline-confirm')`;
+const confirmButton = (label: string) => `[...(${CONFIRM_BOX}?.querySelectorAll('button') ?? [])].find((b) => b.textContent.trim() === ${q(label)})`;
+const CONTEXT = `(${SVIEW}?.querySelector('[data-supervisor-context]')?.textContent?.trim() ?? null)`;
 const CARDS = `[...(${SVIEW}?.querySelectorAll('li.approval-card') ?? [])]`;
 const HANDOFFS = `[...(${SVIEW}?.querySelectorAll('[data-supervisor-handoffs] li.supervisor-handoff') ?? [])]`;
 const cardButton = (index: number, label: string) => `[...(${CARDS}[${index}]?.querySelectorAll('button') ?? [])].find((b) => b.textContent.trim() === ${q(label)})`;
@@ -45,6 +51,9 @@ const part: Part = {
       },
       get decisions() {
         return server.records.decisions;
+      },
+      get newConversations() {
+        return server.records.supervisorNewConversations;
       },
     };
     // Needs you's count and the title's, with both drafts waiting, for the steps that answer them.
@@ -102,6 +111,8 @@ const part: Part = {
       await page.waitFor('it to be idle', `${STATUS} === 'idle' && !${SVIEW}.querySelector('.working-line')`, 8_000);
       t.expect(await page.evaluate<boolean>(`[...${SVIEW}.querySelectorAll('li.entry-user')].some((li) => li.textContent.includes('Which sessions need me, and why?'))`), 'your message in its conversation');
       t.expectEqual(await page.evaluate(`${BOX}.value`), '', 'the box cleared');
+      // W136: its first call of the run says how big its context is.
+      await page.waitFor('its context in the header', `${CONTEXT} === 'Context 21K'`);
       await t.shot('reply');
     });
 
@@ -205,15 +216,89 @@ const part: Part = {
       t.expectEqual(await page.evaluate(`document.querySelector('#session-view h2 .session-view-name')?.textContent ?? null`), 'pr-57', 'the session it started');
     });
 
-    await t.step('a long draft: the exact text, its length said, and a no-break space drawn as its code (W120)', async () => {
+    await t.step('long drafts (W120, W136): the exact text, up to half the window, its length said only when it scrolls, and a no-break space drawn as its code', async () => {
       await t.fresh({ search: '?view=all&supervisor', supervisor: 'idle', approvals: 'long' });
-      await page.waitFor('one card', `${CARDS}.length === 1`);
-      const card = `${CARDS}[0]`;
-      t.expect(await page.evaluate<boolean>(`(() => { const box = ${card}.querySelector('.approval-text'); return box.scrollHeight > box.clientHeight + 1; })()`), 'its text is taller than the box');
-      t.expectEqual(await page.evaluate(`${card}.querySelector('.approval-length')?.textContent ?? null`), "14 lines, 679 characters: scroll to read it all before you send it. Drawn as their codes, since they don't show as themselves: U+00A0 NO-BREAK SPACE.", 'its length and the code, said under it');
+      await page.waitFor('two cards', `${CARDS}.length === 2`);
+      const [card, longer] = [`${CARDS}[0]`, `${CARDS}[1]`];
+      /** A card's text box: its height, what it holds, eight lines' height, and half the window. */
+      const measure = (which: string) =>
+        page.evaluate<{ height: number; content: number; eight: number; half: number }>(
+          `(() => { const box = ${which}.querySelector('.approval-text'); const s = getComputedStyle(box); const eight = 8 * parseFloat(s.lineHeight) + parseFloat(s.paddingTop) + parseFloat(s.paddingBottom); return { height: box.clientHeight, content: box.scrollHeight, eight, half: innerHeight / 2 }; })()`,
+        );
+      // 14 lines: taller than the 8 lines a box had before W136. Where they fit, as at 1,200 px, no length
+      // note; where they wrap past half the window, as at 375 px, the note: exactly when it scrolls.
+      const first = await measure(card);
+      const scrolls = first.content > first.height + 1;
+      t.expect(first.height > first.eight + 1, 'the box taller than 8 lines', first);
+      if (!t.compact) t.expect(!scrolls, '14 lines shown whole on a wide, tall window', first);
+      const codeNote = "Drawn as their codes, since they don't show as themselves: U+00A0 NO-BREAK SPACE.";
+      t.expectEqual(
+        await page.evaluate(`${card}.querySelector('.approval-length')?.textContent ?? null`),
+        scrolls ? `14 lines, 679 characters: scroll to read it all before you send it. ${codeNote}` : codeNote,
+        'its length said exactly when it scrolls, and the code',
+      );
       t.expectEqual(await page.evaluate(`[...${card}.querySelectorAll('.approval-hidden')].map((each) => each.textContent)`), ['U+00A0'], 'the no-break space as its code');
-      t.expect(await page.evaluate<boolean>(`${card}.querySelector('.approval-text').getAttribute('role') === 'region'`), 'a Tab stop while it scrolls');
+      // 60 lines: the box at half the window, then it scrolls, saying how long it is.
+      const second = await measure(longer);
+      t.expect(Math.abs(second.height - second.half) <= 2 && second.content > second.height + 1, 'the box at half the window, the text scrolling in it', second);
+      t.expect(/^60 lines, [\d,]+ characters: scroll to read it all before you send it\.$/.test(await page.evaluate<string>(`${longer}.querySelector('.approval-length')?.textContent ?? ''`)), 'its length said under it');
+      t.expect(await page.evaluate<boolean>(`${longer}.querySelector('.approval-text').getAttribute('role') === 'region'`), 'a Tab stop while it scrolls');
+      await page.evaluate(`${SVIEW}.querySelector('.supervisor-approvals-scroll')?.scrollTo(0, 0)`);
       await t.shot('long-draft');
+      // Its editor grows as far, then scrolls.
+      await page.click('Edit', cardButton(1, 'Edit'));
+      await page.waitFor('the editor', `!!${longer}.querySelector('.approval-editor')`);
+      const editor = await page.evaluate<{ height: number; half: number }>(`(() => { const e = ${longer}.querySelector('.approval-editor'); return { height: e.getBoundingClientRect().height, half: innerHeight / 2 }; })()`);
+      t.expect(Math.abs(editor.height - editor.half) <= 2, 'the editor as tall as half the window', editor);
+      await page.click('Cancel', cardButton(1, 'Cancel'));
+      t.expectEqual(records.decisions, [], 'nothing decided');
+    });
+
+    await t.step('its context and New conversation (W136): the gauge, then the confirmation in the page, cancelled, then confirmed', async () => {
+      await t.fresh({ search: '?view=all&supervisor', supervisor: 'idle' });
+      await page.waitFor('its conversation', `[...${SVIEW}.querySelectorAll('li.entry-assistant')].length > 0`);
+      t.expectEqual(await page.evaluate(CONTEXT), 'Context 84K', 'its context, as the session view says one');
+      const line = await page.evaluate<{ fits: boolean; right: number }>(
+        `(() => { const meta = ${SVIEW}.querySelector('.session-view-meta').getBoundingClientRect(); const b = ${NEW}.getBoundingClientRect(); return { fits: b.right <= meta.right + 0.5 && b.left >= meta.left - 0.5, right: b.right }; })()`,
+      );
+      t.expect(line.fits, 'New conversation inside the header', line);
+      await t.shot('context');
+      await page.click('New conversation', NEW);
+      await page.waitFor('the confirmation, with focus on Cancel', `!!${CONFIRM_BOX} && document.activeElement === ${confirmButton('Cancel')}`);
+      t.expectEqual(await page.evaluate(`${CONFIRM_BOX}.querySelector('.inline-confirm-question').textContent`), 'Start a new conversation?', 'what it asks');
+      await t.shot('new-confirm');
+      await page.click('Cancel', confirmButton('Cancel'));
+      await page.waitFor('the confirmation gone, focus back on the button', `!${CONFIRM_BOX} && document.activeElement === ${NEW}`);
+      t.expectEqual(records.newConversations, [], 'nothing asked of the server');
+      await page.click('New conversation', NEW);
+      await page.waitFor('the confirmation', `!!${CONFIRM_BOX}`);
+      allowNew();
+      await page.click('Start new conversation', confirmButton('Start new conversation'));
+      await page.waitFor('the new conversation’s empty state', `!${CONFIRM_BOX} && !!${SVIEW}.querySelector('.supervisor-empty') && ${STATUS} === 'off'`);
+      t.expectEqual(records.newConversations, [200], 'asked once');
+      t.expectEqual(await page.evaluate(CONTEXT), null, 'no context until its next call');
+      t.expect(await page.evaluate<boolean>(`[...${SVIEW}.querySelectorAll('li.entry-assistant')].length === 0`), 'nothing of the old conversation');
+      t.expect(await page.evaluate<boolean>(`(document.querySelector('.toast-message')?.textContent ?? '').includes('New conversation.')`), 'a toast says so');
+      await page.waitFor('focus in the message box', `document.activeElement === ${BOX}`);
+      t.expectEqual([records.supervisorStarts.length, records.supervisorMessages.length], [0, 0], 'nothing started or sent');
+      await t.shot('new-done');
+    });
+
+    await t.step('New conversation refused (W136): off while drafts wait, and the server’s reason when your message waits for a start', async () => {
+      await t.fresh({ search: '?view=all&supervisor', supervisor: 'idle', approvals: true });
+      await page.waitFor('two cards', `${CARDS}.length === 2`);
+      t.expectEqual(await page.evaluate(`${NEW}.getAttribute('aria-disabled')`), 'true', 'off while drafts wait');
+      await t.fresh({ search: '?view=all&supervisor', supervisor: 'failed', supervisorQueued: true });
+      await page.waitFor('the failed alert', `!!${SVIEW}?.querySelector('.supervisor-alert')`);
+      await page.click('New conversation', NEW);
+      await page.waitFor('the confirmation', `!!${CONFIRM_BOX}`);
+      t.allow(/\/api\/supervisor\/new-conversation$/, 'the 409 New conversation gets while a message waits');
+      await page.click('Start new conversation', confirmButton('Start new conversation'));
+      await page.waitFor('its refusal', `!${CONFIRM_BOX} && !!${SVIEW}.querySelector('[data-supervisor-new-confirm] [role="alert"]')`);
+      t.expectEqual(records.newConversations, [409], 'asked once, and refused');
+      t.expectEqual(await page.evaluate(`${SVIEW}.querySelector('[data-supervisor-new-confirm] [role="alert"]').textContent`), `Couldn't start a new conversation. ${SUPERVISOR_QUEUED_REFUSAL}`, 'saying why, in pitwall’s words');
+      t.expect(await page.evaluate<boolean>(`document.activeElement === ${NEW}`), 'focus back on the button');
+      await t.shot('new-refused');
     });
 
     await t.step('a resume draft (W127, W129): the finished session by its own name, its folder and last activity, a shared name, its saved mode, the note, Send, then “Resumed” with Open', async () => {

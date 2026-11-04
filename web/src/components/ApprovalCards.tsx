@@ -8,8 +8,8 @@
 // - What the card shows is what goes (W120, W116's F1): the exact string, never through a filter that
 //   removes text, as plainText() would. The server refuses text with a character that wouldn't show
 //   as itself (src/shared/hiddenText.ts); anything unusual left, such as a no-break space, is drawn as
-//   its code, U+00A0, with a note naming it. Taller than the box shows (8 lines, 4 on a short
-//   window), the card says how many lines and characters it has, to scroll through before Send. A
+//   its code, U+00A0, with a note naming it. Taller than the box shows (half the window, at least 8
+//   lines, W136; 4 on a short window), the card says how many lines and characters it has, to scroll through before Send. A
 //   text that starts with `/` or has `@` before a path says it may run a slash command or attach a
 //   file (W129, the re-review's I2), since it reaches Claude Code as a typed prompt.
 // - A resume card (W129, M2, L1) shows, as text, the session's folder, home as ~, and its last
@@ -69,9 +69,6 @@ export function editLimit(kind: SupervisorApproval['kind']): number {
 
 /** What each kind's text is, as the card labels it. */
 const TEXT_LABELS = { message: 'Message', spawn: 'First prompt', resume: 'Message' } as const;
-
-/** The most lines the card's text box shows before it scrolls, on a tall window (supervisor.css). */
-export const APPROVAL_TEXT_LINES = 8;
 
 /** What the card says under text taller than its box. */
 export function lengthNote(text: string): string {
@@ -277,7 +274,8 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
   const directory = approval.kind === 'message' ? undefined : visibleString(approval.directory);
   const text = approvalText(approval);
   const parts = visibleParts(text);
-  const notes = [overflowing || text.split('\n').length > APPROVAL_TEXT_LINES ? lengthNote(text) : undefined, hiddenNote(parts), ...(approval.kind === 'message' ? [] : typedPromptNotes(text))].filter(
+  // Only when the text is taller than its box, as measured: the box grows to half the window (W136), so a line count can't say.
+  const notes = [overflowing ? lengthNote(text) : undefined, hiddenNote(parts), ...(approval.kind === 'message' ? [] : typedPromptNotes(text))].filter(
     (note) => note !== undefined,
   );
   return (
@@ -329,7 +327,7 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
           <p className="approval-label" id={ids.text}>
             {TEXT_LABELS[approval.kind]}
           </p>
-          {/* The model's text, exactly as it goes: three to eight lines, then it scrolls, a Tab stop while it does. */}
+          {/* The model's text, exactly as it goes: up to half the window, then it scrolls, a Tab stop while it does. */}
           <ScrollBox ref={setTextBox} as="p" className="approval-text" label={TEXT_LABELS[approval.kind]} aria-describedby={notes.length > 0 ? ids.notes : undefined}>
             <bdi>
               <ExactText parts={parts} />

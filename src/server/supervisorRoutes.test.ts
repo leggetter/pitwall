@@ -16,6 +16,7 @@ import {
   SUPERVISOR_INTERRUPT_PATH,
   SUPERVISOR_MESSAGE_MAX,
   SUPERVISOR_MESSAGE_PATH,
+  SUPERVISOR_NEW_CONVERSATION_PATH,
   SUPERVISOR_START_PATH,
   supervisorApprovalPath,
   supervisorConversationPath,
@@ -156,6 +157,7 @@ describe('the supervisor’s routes', () => {
     expect(SUPERVISOR_MESSAGE_PATH).toBe('/api/supervisor/message');
     expect(SUPERVISOR_START_PATH).toBe('/api/supervisor/start');
     expect(SUPERVISOR_INTERRUPT_PATH).toBe('/api/supervisor/interrupt');
+    expect(SUPERVISOR_NEW_CONVERSATION_PATH).toBe('/api/supervisor/new-conversation');
     expect(supervisorConversationPath()).toBe('/api/supervisor/conversation');
     expect(MCP_PATH).toBe('/mcp');
   });
@@ -164,7 +166,7 @@ describe('the supervisor’s routes', () => {
     const supervisor = fakeSupervisor();
     const server = await start(supervisor);
     const { apiKey, ws } = await authedClient(server.port);
-    for (const urlPath of [SUPERVISOR_MESSAGE_PATH, SUPERVISOR_START_PATH, SUPERVISOR_INTERRUPT_PATH]) {
+    for (const urlPath of [SUPERVISOR_MESSAGE_PATH, SUPERVISOR_START_PATH, SUPERVISOR_INTERRUPT_PATH, SUPERVISOR_NEW_CONVERSATION_PATH]) {
       const body = JSON.stringify({ text: 'hello' });
       const json = { 'content-type': 'application/json' };
       expect((await request(server.port, urlPath, 'POST', { ...json }, body)).status, urlPath).toBe(401);
@@ -176,6 +178,7 @@ describe('the supervisor’s routes', () => {
     expect(supervisor.sent).toEqual([]);
     expect(supervisor.starts).toBe(0);
     expect(supervisor.interrupts).toBe(0);
+    expect(supervisor.newConversations).toBe(0);
     ws.close();
   });
 
@@ -242,6 +245,26 @@ describe('the supervisor’s routes', () => {
     ws.close();
   });
 
+  it('new conversation (W136): 200 when done, 409 with pitwall’s reason when refused, 503 while closing', async () => {
+    const supervisor = fakeSupervisor();
+    const server = await start(supervisor);
+    const { apiKey, ws } = await authedClient(server.port);
+    const done = await post(server.port, SUPERVISOR_NEW_CONVERSATION_PATH, apiKey);
+    expect(done.status).toBe(200);
+    expect(done.headers['cache-control']).toBe('no-store');
+    expect(JSON.parse(done.body)).toEqual({ ok: true });
+    supervisor.newConversationOutcome = { kind: 'refused', error: "A draft from this conversation waits for you. Send or don't send it first, then start a new conversation." };
+    const refused = await post(server.port, SUPERVISOR_NEW_CONVERSATION_PATH, apiKey);
+    expect(refused.status).toBe(409);
+    expect(JSON.parse(refused.body)).toEqual({ ok: false, error: "A draft from this conversation waits for you. Send or don't send it first, then start a new conversation." });
+    supervisor.newConversationOutcome = { kind: 'closed' };
+    expect((await post(server.port, SUPERVISOR_NEW_CONVERSATION_PATH, apiKey)).status).toBe(503);
+    expect(supervisor.newConversations).toBe(3);
+    // It starts nothing.
+    expect(supervisor.starts).toBe(0);
+    ws.close();
+  });
+
   it('an approval that doesn’t exist answers 404 (W115; supervisorApprovals.test.ts has the rest)', async () => {
     const server = await start();
     const { apiKey, ws } = await authedClient(server.port);
@@ -294,7 +317,7 @@ describe('--no-supervisor', () => {
     const snapshot = JSON.parse((await request(server.port, SNAPSHOT_PATH, 'GET', { authorization: `Bearer ${TOKEN}` })).body) as IndexSnapshot;
     expect('supervisor' in snapshot).toBe(false);
     const { apiKey, ws } = await authedClient(server.port);
-    for (const urlPath of [SUPERVISOR_START_PATH, SUPERVISOR_INTERRUPT_PATH]) {
+    for (const urlPath of [SUPERVISOR_START_PATH, SUPERVISOR_INTERRUPT_PATH, SUPERVISOR_NEW_CONVERSATION_PATH]) {
       const res = await post(server.port, urlPath, apiKey);
       expect(res.status, urlPath).toBe(409);
       expect(JSON.parse(res.body)).toEqual({ ok: false, error: SUPERVISOR_OFF_ERROR });

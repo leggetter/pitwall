@@ -3,7 +3,7 @@
 // to a request means. Made-up sessions, ids and text only.
 
 import { describe, expect, it, vi } from 'vitest';
-import { SUPERVISOR_MESSAGE_PATH, supervisorApprovalPath, type ConversationEntry } from '../../src/shared/protocol.js';
+import { SUPERVISOR_MESSAGE_PATH, SUPERVISOR_NEW_CONVERSATION_PATH, supervisorApprovalPath, type ConversationEntry, type SupervisorApproval } from '../../src/shared/protocol.js';
 import { createApiClient, type FetchLike } from './api.js';
 import { supervisorStripText } from './components/AppStrip.js';
 import { withPr } from './openPr.js';
@@ -17,6 +17,8 @@ import {
   decideApproval,
   heldCommand,
   modelName,
+  newConversationBlocked,
+  newSupervisorConversation,
   RESUME_BYPASS_WARNING,
   resumeBypassed,
   resumePermissionText,
@@ -100,6 +102,36 @@ describe('the snapshot’s state, read defensively', () => {
 
   it('drops a cost that isn’t one, an empty error, and a time that isn’t one', () => {
     expect(asSupervisorState({ status: 'failed', approvals: 'none', costUsd: -1, error: ' ', lastTurnAt: 'today' })).toEqual({ status: 'failed', approvals: [] });
+  });
+
+  it('keeps its context as a whole, positive number of tokens, and drops anything else (W136)', () => {
+    expect(asSupervisorState({ status: 'idle', approvals: [], contextTokens: 84_010 })?.contextTokens).toBe(84_010);
+    for (const contextTokens of [0, -5, 1.5, '84000', Number.NaN, Number.POSITIVE_INFINITY, 2 ** 60, null]) {
+      expect(asSupervisorState({ status: 'idle', approvals: [], contextTokens }), String(contextTokens)).toEqual({ status: 'idle', approvals: [] });
+    }
+  });
+});
+
+describe('New conversation (W136)', () => {
+  it('is off, saying why, while the server would refuse it: held, starting, working, or drafts waiting', () => {
+    expect(newConversationBlocked({ status: 'idle', approvals: [] })).toBeUndefined();
+    expect(newConversationBlocked({ status: 'off', approvals: [] })).toBeUndefined();
+    expect(newConversationBlocked({ status: 'failed', approvals: [] })).toBeUndefined();
+    expect(newConversationBlocked({ status: 'held', approvals: [] })).toBe('Another session has its conversation. Free it first.');
+    expect(newConversationBlocked({ status: 'starting', approvals: [] })).toBe('It is starting. Wait until it has started.');
+    expect(newConversationBlocked({ status: 'working', approvals: [] })).toBe('It is working on a turn. Stop it, or wait for it to end.');
+    expect(newConversationBlocked({ status: 'idle', approvals: [message as SupervisorApproval] })).toBe('A draft waits for you from this conversation. Answer it first.');
+    expect(newConversationBlocked({ status: 'idle', approvals: [message, spawn] as SupervisorApproval[] })).toBe('2 drafts wait for you from this conversation. Answer them first.');
+  });
+
+  it('POSTs SUPERVISOR_NEW_CONVERSATION_PATH with no body of its own, and says why a refusal was, in pitwall’s words', async () => {
+    const fetch = vi.fn<FetchLike>(async () => new Response(JSON.stringify({ ok: false, error: 'A draft from this conversation waits for you.' }), { status: 409 }));
+    const api = createApiClient({ apiKey: 'k'.repeat(43), fetch });
+    expect(await newSupervisorConversation(api)).toEqual({ kind: 'failed', status: 409, error: "Couldn't start a new conversation. A draft from this conversation waits for you." });
+    expect(fetch.mock.calls[0]![0]).toBe(SUPERVISOR_NEW_CONVERSATION_PATH);
+    expect(fetch.mock.calls[0]![1].method).toBe('POST');
+    fetch.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    expect(await newSupervisorConversation(api)).toEqual({ kind: 'done' });
   });
 });
 

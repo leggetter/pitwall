@@ -13,6 +13,7 @@ import {
   SUPERVISOR_MESSAGE_MAX,
   SUPERVISOR_PROPOSAL_MAX,
   SUPERVISOR_MESSAGE_PATH,
+  SUPERVISOR_NEW_CONVERSATION_PATH,
   SUPERVISOR_START_PATH,
   supervisorApprovalPath,
   type ConversationEntry,
@@ -25,10 +26,10 @@ import type { ConnectionView } from '../connection.js';
 import { draftKey } from '../drafts.js';
 import type { StorageSource } from '../groupState.js';
 import type { NavigationEnv } from '../selection.js';
-import { SUPERVISOR_DRAFT_ID, needsReason } from '../supervisor.js';
+import { NEW_CONVERSATION_CONFIRM, NEW_CONVERSATION_DONE, SUPERVISOR_CONTEXT_INFO, SUPERVISOR_DRAFT_ID, needsReason } from '../supervisor.js';
 import { group, minutesAgo, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
-import { descriptionOf, hover } from '../test/tooltips.js';
+import { descriptionOf, hover, tooltipText } from '../test/tooltips.js';
 import { Dashboard } from './Dashboard.js';
 import { QUEUED_TEXT, SUPERVISOR_SEND_HELD } from './SupervisorBox.js';
 import { HELD_TITLE, NO_SUPERVISOR, SUGGESTIONS, SUPERVISOR_EMPTY } from './SupervisorView.js';
@@ -387,6 +388,131 @@ describe('its states', () => {
   });
 });
 
+describe('its context and New conversation (W136)', () => {
+  const page = { sessionId: 'sup-1', entries: [{ kind: 'user' as const, text: 'Which sessions need me?', at: minutesAgo(2) }] };
+  const newButton = () => viewOf().getByRole('button', { name: 'New conversation' });
+  const confirmation = () => view()!.querySelector<HTMLElement>('[data-supervisor-new-confirm] .inline-confirm');
+
+  it('shows its context in the header once its first call has said, as the session view does, flagged over 200K', async () => {
+    const { update } = renderDashboard(snap({ status: 'idle', approvals: [] }), { search: '?view=all&supervisor' });
+    await settle();
+    const meta = view()!.querySelector('.session-view-meta')!;
+    expect(meta.querySelector('[data-supervisor-context]')).toBeNull();
+    update(snap({ status: 'idle', approvals: [], contextTokens: 84_010 }));
+    await settle();
+    const gauge = meta.querySelector<HTMLElement>('[data-supervisor-context]')!;
+    expect(gauge.querySelector('.session-view-context-value')?.textContent).toBe('Context 84K');
+    expect(gauge.querySelector('.badge')).toBeNull();
+    expect(await tooltipText(gauge.querySelector('button')!)).toBe(SUPERVISOR_CONTEXT_INFO);
+    update(snap({ status: 'idle', approvals: [], contextTokens: 412_000 }));
+    await settle();
+    expect(meta.querySelector('[data-supervisor-context] .badge')?.textContent).toBe('Context 412K, over 400K');
+  });
+
+  it('asks in the page first: Cancel takes focus, and Cancel or Escape sends nothing, keeps the view and gives focus back', async () => {
+    const fetch = fakeServer({ page });
+    renderDashboard(snap({ status: 'idle', sessionId: 'sup-1', approvals: [], lastTurnAt: minutesAgo(2) }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    // Never a browser dialog.
+    const confirmSpy = vi.fn(() => true);
+    Object.defineProperty(window, 'confirm', { configurable: true, writable: true, value: confirmSpy });
+    fireEvent.click(newButton());
+    await settle();
+    expect(confirmation()?.querySelector('.inline-confirm-question')?.textContent).toBe(NEW_CONVERSATION_CONFIRM.question);
+    expect(document.activeElement?.textContent).toBe('Cancel');
+    expect(newButton().getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(within(confirmation()!).getByRole('button', { name: 'Cancel' }));
+    await settle();
+    expect(confirmation()).toBeNull();
+    expect(document.activeElement).toBe(newButton());
+    fireEvent.click(newButton());
+    await settle();
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    await settle();
+    expect(confirmation()).toBeNull();
+    expect(view()).toBeDefined();
+    expect(posts(fetch)).toEqual([]);
+    expect(confirmSpy).not.toHaveBeenCalled();
+    delete (window as { confirm?: unknown }).confirm;
+  });
+
+  it('confirmed: POSTs it, says so, draws the conversation afresh as a new one, and puts focus in the box', async () => {
+    let cleared = false;
+    const fetch = vi.fn<FetchLike>(async (url, init) => {
+      if (init.method === 'POST') {
+        cleared = url === SUPERVISOR_NEW_CONVERSATION_PATH;
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      if (url.startsWith('/api/supervisor/conversation') && !cleared) return new Response(JSON.stringify(page), { status: 200 });
+      return new Response('{}', { status: 404 });
+    });
+    renderDashboard(snap({ status: 'off', approvals: [] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    const conversation = () => viewOf().getByRole('region', { name: 'Conversation' });
+    expect(within(conversation()).getByText('Which sessions need me?')).toBeDefined();
+    fireEvent.click(newButton());
+    await settle();
+    fireEvent.click(within(confirmation()!).getByRole('button', { name: NEW_CONVERSATION_CONFIRM.confirm }));
+    await settle();
+    await settle();
+    expect(fetch.mock.calls.filter(([, init]) => init.method === 'POST').map(([url, init]) => [url, init.body])).toEqual([[SUPERVISOR_NEW_CONVERSATION_PATH, '{}']]);
+    expect(confirmation()).toBeNull();
+    expect(screen.getByText(NEW_CONVERSATION_DONE)).toBeDefined();
+    expect(within(conversation()).queryByText('Which sessions need me?')).toBeNull();
+    expect(viewOf().getByText(SUPERVISOR_EMPTY.title)).toBeDefined();
+    expect(view()!.textContent).not.toContain('no longer available');
+    expect(document.activeElement).toBe(box());
+  });
+
+  it('a refusal says why, in pitwall’s words, and focus goes back to the button', async () => {
+    const reason = 'Your message waits to be sent to this conversation. Press Start to send it first, then start a new conversation.';
+    const fetch = fakeServer({ page, post: () => ({ status: 409, body: { ok: false, error: reason } }) });
+    renderDashboard(snap({ status: 'failed', approvals: [], error: 'Made up: it exited.' }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.click(newButton());
+    await settle();
+    fireEvent.click(within(confirmation()!).getByRole('button', { name: NEW_CONVERSATION_CONFIRM.confirm }));
+    await settle();
+    expect(confirmation()).toBeNull();
+    expect(view()!.querySelector('[data-supervisor-new-confirm] [role="alert"]')?.textContent).toBe(`Couldn't start a new conversation. ${reason}`);
+    expect(document.activeElement).toBe(newButton());
+  });
+
+  it('is off, saying why, while it works or drafts wait, and opens nothing', async () => {
+    const { update } = renderDashboard(snap({ status: 'working', approvals: [] }), { search: '?view=all&supervisor' });
+    await settle();
+    expect(newButton().getAttribute('aria-disabled')).toBe('true');
+    await hover(newButton());
+    expect(descriptionOf(newButton())).toBe('It is working on a turn. Stop it, or wait for it to end.');
+    fireEvent.click(newButton());
+    await settle();
+    expect(confirmation()).toBeNull();
+    update(snap({ status: 'idle', approvals: [message('m1', 2)] }));
+    await settle();
+    expect(newButton().getAttribute('aria-disabled')).toBe('true');
+    update(snap({ status: 'idle', approvals: [] }));
+    await settle();
+    expect(newButton().getAttribute('aria-disabled')).toBeNull();
+  });
+
+  it('draws the conversation afresh when another tab started a new one: the snapshot’s session id goes', async () => {
+    let cleared = false;
+    const fetch = vi.fn<FetchLike>(async (url) => {
+      if (url.startsWith('/api/supervisor/conversation') && !cleared) return new Response(JSON.stringify(page), { status: 200 });
+      return new Response('{}', { status: 404 });
+    });
+    const { update } = renderDashboard(snap({ status: 'idle', sessionId: 'sup-1', approvals: [], lastTurnAt: minutesAgo(2) }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    expect(viewOf().getByText('Which sessions need me?')).toBeDefined();
+    cleared = true;
+    update(snap({ status: 'off', approvals: [] }));
+    await settle();
+    await settle();
+    expect(viewOf().queryByText('Which sessions need me?')).toBeNull();
+    expect(viewOf().getByText(SUPERVISOR_EMPTY.title)).toBeDefined();
+  });
+});
+
 describe('its message box', () => {
   it('sends what you type, as you, and clears it; the draft is kept in the tab until then', async () => {
     const fetch = fakeServer();
@@ -528,14 +654,29 @@ describe('its draft cards', () => {
     expect(document.getElementById(box.getAttribute('aria-describedby')!)).toBe(second!.querySelector('.approval-length'));
   });
 
-  it('say how long a text taller than the card shows is, and nothing for a short one (W120)', async () => {
+  it('say how long a text taller than its box is, as measured, and nothing for one that fits, however many lines (W120, W136)', async () => {
     const long = Array.from({ length: 12 }, (_, line) => `Line ${line + 1}.`).join('\n');
-    renderDashboard(snap({ status: 'idle', approvals: [message('m1', 3, long), message('m2', 2)] }), { search: '?view=all&supervisor' });
-    await settle();
-    const [first, second] = cards();
-    expect(first!.querySelector('.approval-text bdi')!.textContent).toBe(long);
-    expect(first!.querySelector('.approval-length')?.textContent).toBe(`12 lines, ${long.length} characters: scroll to read it all before you send it.`);
-    expect(second!.querySelector('.approval-length')).toBeNull();
+    // happy-dom lays nothing out: the first card's text box is taller than it shows, the second's 12 lines fit (W136's taller box).
+    const scroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight');
+    const client = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight');
+    const overflows = (element: HTMLElement) => element.classList.contains('approval-text') && element.closest('[data-approval="m1"]') !== null;
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get(this: HTMLElement) { return overflows(this) ? 600 : 300; } });
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get() { return 300; } });
+    try {
+      renderDashboard(snap({ status: 'idle', approvals: [message('m1', 3, long), message('m2', 2, long), message('m3', 1)] }), { search: '?view=all&supervisor' });
+      await settle();
+      const [first, second, third] = cards();
+      expect(first!.querySelector('.approval-text bdi')!.textContent).toBe(long);
+      expect(first!.querySelector('.approval-length')?.textContent).toBe(`12 lines, ${long.length} characters: scroll to read it all before you send it.`);
+      expect(second!.querySelector('.approval-length')).toBeNull();
+      expect(third!.querySelector('.approval-length')).toBeNull();
+    } finally {
+      // happy-dom has them on Element.prototype: put back what HTMLElement.prototype had, which is nothing.
+      if (scroll) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', scroll);
+      else delete (HTMLElement.prototype as { scrollHeight?: number }).scrollHeight;
+      if (client) Object.defineProperty(HTMLElement.prototype, 'clientHeight', client);
+      else delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight;
+    }
   });
 
   it('Send: the decision, busy until the snapshot drops the card, then focus on the next card’s heading', async () => {

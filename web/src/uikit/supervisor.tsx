@@ -21,7 +21,7 @@ import { Stubbed } from './views.js';
 const noop = () => {};
 const ALL: Selection = { view: 'all' };
 
-const IDLE: SupervisorState = { status: 'idle', sessionId: 'pitwall-test-supervisor', approvals: [], lastTurnAt: ago(3), costUsd: 0.042 };
+const IDLE: SupervisorState = { status: 'idle', sessionId: 'pitwall-test-supervisor', approvals: [], lastTurnAt: ago(3), costUsd: 0.042, contextTokens: 84_010 };
 const HELD_ERROR =
   'A background session, 1a2b3c4d, is running the supervisor’s conversation, so pitwall can’t resume it. Stop it with `claude stop 1a2b3c4d`, then start the supervisor here.';
 const FAILED_ERROR = 'Made up: claude exited with code 1 as it started. pitwall keeps the conversation; Start runs it again.';
