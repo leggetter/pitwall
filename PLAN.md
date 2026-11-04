@@ -244,7 +244,6 @@ Small improvements that aren't needed now, gathered from reviews and try-outs so
 The finished ones are in [`docs/plan-archive.md`](docs/plan-archive.md), under "Suggested actions, finished".
 
 - [ ] The first paste into New session's prompt lost (W89, parked: Phil, 2026-11-02, "Don't worry about it"; he'll say if it happens again; Grammarly, which injects itself into the box, is suspected but not confirmed)
-- [ ] Vite and happy-dom's fixes, once 14 days old (W86, on or after 2026-11-04)
 - [ ] A config file beside the CLI's flags ([#101](https://github.com/leggetter/pitwall/issues/101)): the minimal one, the roots and each root's GitHub owners, is W103, in review in [#106](https://github.com/leggetter/pitwall/pull/106) (D24); the rest of #101 later (Phil, 2026-10-29)
 - [ ] M5: supervisor
 - [ ] M6: triage

@@ -2,7 +2,7 @@
 
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
-Last updated: 2026-11-03, on `m5.1/integration`: W133 merged, B, the hand-off hook ([#148](https://github.com/leggetter/pitwall/pull/148)), and A, the context gauge ([#149](https://github.com/leggetter/pitwall/pull/149)), each after a fresh review. W86 next, on or after 11-04.
+Last updated: 2026-11-03, on `m5.1/integration`: W133 merged, B, the hand-off hook ([#148](https://github.com/leggetter/pitwall/pull/148)), and A, the context gauge ([#149](https://github.com/leggetter/pitwall/pull/149)), each after a fresh review. W86 in review on `m5.1/w86-deps`.
 
 ## Current milestone
 
@@ -19,14 +19,14 @@ Last updated: 2026-11-03, on `m5.1/integration`: W133 merged, B, the hand-off ho
 | W132, recaps when they're worth it | Merged ([#146](https://github.com/leggetter/pitwall/pull/146)). Its security review's Info notes, left: expiry only at start; `RECAP_STORE_MAX_FILES` isn't ordered by age; a planted file chooses its session's recap text (no wider than writing the transcript) |
 | W133, a context gauge and a hand-off hook | Merged on 2026-11-03. B ([#148](https://github.com/leggetter/pitwall/pull/148), [spike 012](docs/spikes/012-handoff-hook.md)): a Stop hook in `.claude/settings.json`, nudging at 200K and 400K; checked in `-p` mode only, so the first interactive session past 200K is its real try-out, and a session's first turn is never nudged (the transcript lags a call). A ([#149](https://github.com/leggetter/pitwall/pull/149)): "ctx 245K" on rows over 200K, red over 400K, and the number in the session view; forgotten at a compaction until the next call. C, "Hand off" in Needs you, later (Phil, 2026-11-03) |
 | [#143](https://github.com/leggetter/pitwall/issues/143) (Session view: expand the conversation or terminal to the full page) | Later (Phil, 2026-11-03) |
-| W86, bump `vite` and `happy-dom` | Phil approved (2026-10-28); on or after 2026-11-04, when the fixes are 14 days old |
+| W86, bump `vite` and `happy-dom` | In review (2026-11-04): `vite` 8.3.5 and `happy-dom` 21.0.4, typecheck, tests, build and a sample of the app check pass; no test changes |
 | W89, the first paste into New session's prompt is lost | Parked (Phil, 2026-11-02): he'll say if it happens again; Grammarly, which injects itself into the box, is suspected but not confirmed |
 | A flaky `src/cli.test.ts` clean-up (`ENOTEMPTY`) | In "Nice to have, later" |
 | M6, triage | After M5.1; not started |
 
 ## Next, in order
 
-1. **W86** on or after 2026-11-04: `npm install <pkg>@<version> --before=<date>`, the newest version at least 14 days old.
+1. **W86:** review and merge its PR into `m5.1/integration`.
 2. **On 2026-11-09:** `npx tsx scripts/usage-report.ts --days 7` against the 10-20 to 10-29 figures, for the high-effort week; then one blog-editing session on Sonnet for Phil to judge (agreed; not the evals post).
 3. **The rest of M5.1** from W134: work profiles, the Usage view with a run rate, the supervisor applying them ("M5.1 - Efficiency" in `PLAN.md`). Not yet broken into work items; see the open question.
 4. **M6, triage,** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
