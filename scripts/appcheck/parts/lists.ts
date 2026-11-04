@@ -1,12 +1,12 @@
 // The lists (docs/design-system.md, 3: Repo list, Root tabs, Session list; 4: Session rows): the repo
 // list's Needs you, All sessions and Starred, then its groups; two-line rows; the session list's
 // filter, chips and sort, and a filter bar that turning a filter on or off never moves (W75), with
-// Clear filters as an icon button and the bar's lines at each window (W91); and, with two roots, a
-// tab per root.
+// Clear filters as an icon button and the bar's lines at each window (W91); a group that keeps the
+// open session only if it lists it (W139); and, with two roots, a tab per root.
 
 import { API_SERVER, CODE, DEMO_APP, NAMES, OSS } from '../fixtures.js';
 import type { Part } from '../runner.js';
-import { chooseInRepoList, focused, listHeading, openRepoList, repoItem, repoLabels, row, rowNames, selectedRepo } from './_dom.js';
+import { chooseInRepoList, focused, listHeading, openFromRow, openRepoList, repoItem, repoLabels, row, rowNames, selectedRepo, viewName, VIEW } from './_dom.js';
 
 const q = JSON.stringify;
 const FIELD = `document.querySelector('.session-list input.filter-input')`;
@@ -357,6 +357,26 @@ const part: Part = {
         'its sessions, the one started in the root that worked in it most included (Main repo), and the ended one that owns an open PR (W106)',
       );
       t.expect(await page.evaluate(`!!document.querySelector('.session-list button[aria-label="Hide from repo list"]')`), 'a group has Hide from repo list');
+    });
+
+    // W139 (selecting a repo or directory keeps the open session only if it's in that group).
+    await t.step("a group keeps the open session only if it lists it: another group's closes the view to Select a session, and Back brings it back", async () => {
+      await openFromRow(t, NAMES.inApi);
+      const sessionId = await page.evaluate<string>(`new URLSearchParams(location.search).get('session')`);
+      await chooseInRepoList(t, 'api-server');
+      t.expectEqual(await page.evaluate(viewName), NAMES.inApi, 'its own group keeps it open');
+      t.expectEqual(await page.evaluate('location.search'), `?repo=${API_SERVER}&session=${sessionId}`, 'the URL keeps it');
+      await chooseInRepoList(t, 'demo-app');
+      await page.waitFor('the view to close', `!${VIEW}`);
+      t.expectEqual(await page.evaluate('location.search'), `?repo=${DEMO_APP}`, 'the URL has the group and no session');
+      t.expectEqual(await page.evaluate(listHeading), 'demo-app', 'demo-app is selected');
+      const empty = await page.evaluate<string | null>(`document.querySelector('.session-view-empty')?.textContent ?? null`);
+      t.expect(t.layout === 'three-columns' ? (empty ?? '').startsWith('Select a session') : empty === null, 'the third column says "Select a session" from 1,200 px', empty);
+      await t.shot('group-closes-session');
+      await page.evaluate('history.back()');
+      await page.waitFor(`the ${NAMES.inApi} view again`, `${viewName} === ${q(NAMES.inApi)}`);
+      t.expectEqual(await page.evaluate('location.search'), `?repo=${API_SERVER}&session=${sessionId}`, 'Back returns to the session and its group');
+      t.expectEqual(await page.evaluate(listHeading), 'api-server', 'under api-server');
     });
 
     await t.step('two roots: a tab per root, and a badge on the one that needs you', async () => {

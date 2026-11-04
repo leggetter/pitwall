@@ -297,7 +297,8 @@ M5.1's own items start at W131, the evidence the rest of it needs; the others fo
   - Agreed by Phil on 2026-11-04, option B: a repo or directory selected keeps the open session only if it's in that group's list, otherwise closes it to "Select a session". Today `?session=` is kept across a repo click, which showed a session under the wrong repo. D, remembering one session per group, only if Phil misses it.
   - In the selection code (`web/src/selection.ts`, `web/src/openSession.ts`), and the design system's Session view.
   - A UI change: the app check's part for the list and selection.
-  - Status: Not started.
+  - Built: `keepsOpenSession()` in `web/src/selection.ts`, used by the Dashboard's repo-list `select`: a group keeps the open session only if it lists it in the chosen grouping (every session, so the filter, Finished and Show older don't count), otherwise one pushed entry with the group and no `?session=`. Views keep it as before. Links, reloads, Back and Forward, root tabs and a session leaving the list on its own are untouched. Tests: `web/src/components/SelectionSession.test.tsx`, `selection.test.tsx`; the app check's `lists` part; `docs/design-system.md`'s Repo list and Session view.
+  - Status: In review.
 - **W135, Attach a file in the supervisor's message box** (`m5.1/supervisor-attach`, S).
   - Attach a file in the supervisor's message box (Phil, 2026-11-04, option B): a button that opens the browser's file picker, reads the file you choose in the page (`File.text()`), and puts its contents in the box, with its name above, for you to add to, edit and send; never a path to the server, which opens nothing. Text only (refuse a file that isn't valid UTF-8 or has NUL bytes), and only what fits W134's cap, with a clear error otherwise.
   - The supervisor still can't read files (D4); option C, a Read tool limited to some folders, was declined. A UI change: the app check's `supervisor` part, and `docs/design-system.md`

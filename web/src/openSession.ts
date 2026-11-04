@@ -2,6 +2,8 @@
 // alongside the repo list's ?view= or ?repo= (selection.ts), so a reload, a shared link or the back
 // button shows the same session. Opening pushes a history entry, moving between sessions with ↑/↓
 // replaces it, closing pushes one without the parameter, and popstate makes the view follow the URL.
+// Choosing a group in the repo list that doesn't list the open session closes it, in the entry the
+// choice pushes (W139, keepsOpenSession() in selection.ts, used by the Dashboard).
 //
 // Only the session's id goes in the query string, never the token. The token is in the fragment,
 // and token.ts has taken it out of the address bar before the dashboard, and so this, first reads it.

@@ -10,6 +10,7 @@ import {
   findGroup,
   finishedStateId,
   groupSelection,
+  keepsOpenSession,
   NEEDS_YOU,
   parseSelection,
   readStoredSelection,
@@ -107,6 +108,19 @@ describe('groups and selections', () => {
     const ids = new Set([app.sessions[0]!.sessionId]);
     expect(scopeFor([app], { view: 'starred' }, ids)).toEqual({ kind: 'starred', ids });
     expect(scopeFor([app], { view: 'starred' })).toEqual({ kind: 'starred', ids: new Set() });
+  });
+
+  it('keeps the open session for a view, and for a group only when that group lists it (W139)', () => {
+    const one = app.sessions[0]!.sessionId;
+    const two = appElsewhere.sessions[0]!.sessionId;
+    for (const view of ['needs-you', 'all', 'starred', 'prs'] as const) expect(keepsOpenSession([app], { view }, two)).toBe(true);
+    expect(keepsOpenSession([app, appElsewhere], { repo: `${ROOT}/app` }, one)).toBe(true);
+    expect(keepsOpenSession([app, appElsewhere], { repo: `${ROOT}/app` }, two)).toBe(false);
+    // Two groups with one key, told apart by root.
+    expect(keepsOpenSession([app, appElsewhere], { repo: `${ROOT}/app`, root: WORK }, two)).toBe(true);
+    expect(keepsOpenSession([app, appElsewhere], { repo: `${ROOT}/app`, root: WORK }, one)).toBe(false);
+    // A group that has left the snapshot lists nothing.
+    expect(keepsOpenSession([app], { repo: `${ROOT}/gone` }, one)).toBe(false);
   });
 
   it('names a selection on screen, and a group that has gone by its key', () => {
