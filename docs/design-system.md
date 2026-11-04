@@ -949,7 +949,7 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 
 ### Combobox
 
-A text field with a list of suggestions that narrows as you type (W70; Phil, 2026-10-27: "Having to enter from /Users is difficult UX."). The WAI-ARIA APG's [editable combobox with list autocomplete](https://www.w3.org/WAI/ARIA/apg/patterns/combobox/examples/combobox-autocomplete-list/): what's typed stays as typed, and the list only offers. The [New session dialog](#dialogs)'s "Another directory under a root…" uses it; anything that later needs one builds on it.
+A text field with a list of suggestions that narrows as you type (W70; Phil, 2026-10-27: "Having to enter from /Users is difficult UX."). The WAI-ARIA APG's [editable combobox with list autocomplete](https://www.w3.org/WAI/ARIA/apg/patterns/combobox/examples/combobox-autocomplete-list/): what's typed stays as typed, and the list only offers. The [New session dialog](#dialogs)'s Directory is one (W140); anything that later needs one builds on it.
 
 - **Component:** `Combobox` (`web/src/components/Combobox.tsx`), with the value, the options to show (already narrowed, best first), `onInput`, `onAccept`, status lines and an announcement. The caller narrows; the component draws the field and the list and handles the keys. The directory list's narrowing is `web/src/directories.ts`.
 - **Anatomy:**
@@ -958,7 +958,8 @@ A text field with a list of suggestions that narrows as you type (W70; Phil, 202
   - **The listbox:** its options, scrolling past about seven (`7.5 × --pw-control-lg`). Each option is 32 px tall at least, padding 6 px 8 px, `--pw-radius-sm`, in the field's type (mono s 13/20, ligatures off, for paths), cut in the middle when there isn't room (`MiddleEllipsis`, 5: Labels). A quiet marker at its end, xs 12/20 in `--pw-text-subtle`, such as "repo".
   - **Status lines:** after the options, divided from them by 1 px `--pw-border`, in meta type and `--pw-text-muted`, padding 4 px 8 px: loading, how many there are, none match, not every one listed. With no options, they're all the popup shows.
 - **States:**
-  - **Closed:** the field alone. It opens as a choice reveals the field and focus moves into it, on a click in the field, on typing, and on ↓ or ↑.
+  - **Closed:** the field alone. It opens on a click in the field, on typing, and on ↓ or ↑, and, with `openOnMount`, the first time the field takes focus.
+  - **Standing in for a select** (W140): `chevron` puts a select's chevron at the field's end, 8 px in, as a [select](#inputs-textareas-and-selects) has it, with the field's end padding to match, so it reads as a list to choose from as well as a field to type in. It's decoration (`aria-hidden`), and a click on it goes through to the field. `selectOnFocus` selects the field's text as it takes focus, by Tab, a click or the dialog opening, so typing replaces a choice already made; the click's own mouseup is kept from putting the caret back.
   - **Open:** the options and the status lines. With neither, the popup stays shut and `aria-expanded` is false.
   - **Highlighted option:** the menu items' keyboard highlight, a `--pw-surface-hover` fill with `--pw-ring-focus-inset`, since focus stays in the field and a fill alone is under 3:1. Hover gives the fill alone. Forced colours: a 2 px `Highlight` outline, and the popup a 1 px `CanvasText` outline, as a menu has.
   - **Loading:** a status line with a spinner, "Loading directories…".
@@ -975,23 +976,22 @@ A text field with a list of suggestions that narrows as you type (W70; Phil, 202
 - **ARIA:** the field is `role="combobox"`, `aria-autocomplete="list"`, `aria-expanded`, `aria-controls` its listbox, and, while one is highlighted, `aria-activedescendant` that option. The listbox is `role="listbox"`, named ("Directories"); each option `role="option"`, `aria-selected` on the highlighted one, its marker after a visually hidden comma, so it's heard as "~/code/outpost, repo".
 - **The count is announced** in a visually hidden `role="status"` (`aria-live="polite"`) region, 500 ms after the list last changed (`ANNOUNCE_DELAY_MS`), so typing isn't talked over at every key: "12 directories.", "50 of 312 directories. Keep typing to narrow them.", "No directories match.", and " Not every directory is listed." after it when that's so. It's emptied as the list closes.
 - **Text:** option labels are text, through `plainText()`, never markup.
-- **Moving focus on a choice:** choosing "Another directory under a root…" moves focus into the field it reveals. That's a change of focus on a select's change, which WCAG 3.2.2 asks to be expected: the option is the select's last, and ends in "…", which says it opens more choices (5: Casing and style).
+**The directory combobox** (New session's Directory, W70, W140):
 
-**The directory combobox** (New session's "Another directory under a root…"):
-
-- **The list:** `GET /api/directories` (`DIRECTORIES_PATH`), once per opening of the dialog, the first time the choice is made. The server walks each root three levels down, directories only: no symlinks, nothing hidden, no `node_modules`, no names with control or bidi characters or with whitespace at either end, which can't be told apart on screen, nothing it can't read, and no folder swapped for a symlink while it walks. At most two file calls run at once, for all the roots, and no new walk starts while one that hung is still out, so a hung network folder can't take the threads the index reads with. A folder with a `.git` entry is a repo. Typing makes no requests.
-- **Options:** the open [root tab](#root-tabs)'s directories, or every root's without tabs, each as the root shortened to `~` and the path under it, such as `~/code/outpost`, with "repo" on repos. A directory under an inner root is that root's tab's, not the outer one's (W38).
+- **The list:** `GET /api/directories` (`DIRECTORIES_PATH`), once per opening of the dialog, as it opens. The server walks each root three levels down, directories only: no symlinks, nothing hidden, no `node_modules`, no names with control or bidi characters or with whitespace at either end, which can't be told apart on screen, nothing it can't read, and no folder swapped for a symlink while it walks. At most two file calls run at once, for all the roots, and no new walk starts while one that hung is still out, so a hung network folder can't take the threads the index reads with. A folder with a `.git` entry is a repo. Typing makes no requests.
+- **Options:** first the groups' directories and the roots, in their order (`directoryChoices()`, `withChoices()`), which need no list, so they're there while it loads and when it fails; then the open [root tab](#root-tabs)'s directories, or every root's without tabs, those first ones left out. Each reads as the root shortened to `~` and the path under it, such as `~/code/outpost`, with "repo" on repos. A directory under an inner root is that root's tab's, not the outer one's (W38).
+- **As it opens:** it shows its first choice, or the prefill's (W107, #139), with its text selected, and the list shut, so it doesn't cover the fields under it. While the field shows the chosen directory, the list offers every one, as a select would; edited at all, it narrows.
 - **Matching:** case-insensitive, and on NFC, so a name stored decomposed matches the same text typed composed. Every whitespace-separated term must be in the path under the root, or in the whole shortened path when the text starts with `~` or `/`. Text starting with `/` also matches the absolute path, so a pasted path finds its option.
-- **Ranking,** on the last term, from its last `/`: the last segment equal to it, then the last segment starting with it, then any segment starting with it, then the rest; ties go to the shallower, then alphabetically, ignoring case. At most 50 show.
+- **Ranking,** on the last term, from its last `/`: the last segment equal to it, then the last segment starting with it, then any segment starting with it, then the rest; ties go to the groups' directories and the roots, in their order, then the shallower, then alphabetically, ignoring case. A root matches on its own name. At most 50 show.
 - **The value:** a chosen option shows as its shortened path, and the request sends its absolute path, the root, `/`, then the path, for as long as the field shows exactly that label; edited at all, even by a space, it's typed text. Typed text works as before: an absolute path as it is, and a `~/` path whose start is a root's shortened form under that root, so a directory deeper than three levels, or one the list stopped short of, can still be typed. The dialog's checks and the server's still apply.
 - **Placeholder:** the first offered root shortened, then `/…`: "~/code/…".
 - **Wording:**
   - Loading: "Loading directories…"
   - Many: "50 of 312. Keep typing to narrow them."
   - None match: "No directories match. A typed path still works."
-  - None to list: "No directories to list. You can type a path."
+  - None to list, with no roots either: "No directories to list. You can type a path."
   - Cut short (`truncated`, at 5,000 directories or 2 seconds): "Not every directory is listed. You can type a path."
-  - Couldn't list them: a field hint under "Under *roots*.", linked to the field: "Couldn't list the directories. Type a path." The list stays shut and the field takes a typed path.
+  - Couldn't list them: a field hint under "Under *roots*.", linked to the field: "Couldn't list the directories. Type a path." The list offers the groups' directories and the roots alone, and the field takes a typed path.
   - A `~` path under no root: "Use a directory under ~/code."; a relative path: "Use an absolute path, or one that starts with ~/."
 
 ### Filter chips
@@ -2027,7 +2027,7 @@ For a destructive or surprising action in the session view, without a dialog.
 **New session dialog:**
 
 - **Fields:**
-  - Directory: a select of the groups' directories, plus "Another directory under a root…", which reveals the [directory combobox](#combobox), with focus in it and its list open, narrowing the directories under the roots as you type (W70). Help text: "Under *roots*.", linked to both.
+  - Directory: the [directory combobox](#combobox), with a select's chevron: the groups' directories and the roots first, then the directories under the roots, narrowing as you type (W70, W140). It opens showing the first choice, its text selected so typing replaces it. Help text: "Under *roots*.", linked to it.
     - **Chosen as it opens:** with a session open, from the header's New session or `n`, that session's own working directory, where Claude Code started it (#139, [D27](decisions.md#d27---new-session-starts-in-the-selected-sessions-directory-with-nothing-from-its-conversation)), added to the choices first when no group has it, as a worktree's or a subdirectory's (`newSessionDirectory()` in `web/src/spawn.ts`, through `prefill`). Otherwise the first choice, the first group's directory: with no session open, a PR view or the supervisor open, when its directory has gone, when it's outside the roots or the open root tab, or when the session is no longer listed, since pitwall can't then tell whether its directory is still there. It's taken as the dialog opens, so a snapshot while it's open doesn't move it. Only the directory: nothing from the session's conversation goes in.
     - With [root tabs](#root-tabs), the open tab's root alone: its groups' directories, then its root, and "Under *root*.". A typed directory must be in that tab, under its root and under no other root inside it, where the index would list the session: "Use a directory under ~/work. ~/personal has its own tab." (W38).
   - Name: optional, placeholder "Claude Code names it from the prompt".
@@ -2388,7 +2388,7 @@ The Terminal tab's panel, for background sessions: xterm.js over `claude attach`
 - **Commands and literal values** are in code style, exactly as typed: `claude --bg`, `/bg`, `claude agents --json --all`.
 - **No capitals for emphasis** and no letter-spaced labels.
 - **No em dashes in UI copy:** use a full stop, a colon or a semicolon.
-- **The ellipsis character (…)** for progress ("Starting…") and for menu items that open more choices ("Another directory under a root…").
+- **The ellipsis character (…)** for progress ("Starting…") and for menu items that open more choices ("Other…").
 - **Contractions** are fine and preferred: "Couldn't", "isn't", "can't".
 
 ### Labels
