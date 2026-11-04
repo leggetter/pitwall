@@ -928,7 +928,7 @@ export function Conversations() {
       </Specimen>
       <Specimen
         title="Markdown, 600 px and narrower"
-        note="The code block's long line and the wide table each scroll sideways in their own box, a Tab stop while they do; the page doesn't. Scrolled to the code block."
+        note="The code block's long line wraps, and the wide table scrolls sideways in its own box, a Tab stop while it does; the page doesn't. Scrolled to the code block."
         frame="view"
         width={375}
       >
@@ -951,7 +951,7 @@ export function Conversations() {
       </Specimen>
       <Specimen
         title="Links in code, 600 px and narrower"
-        note="The code block with links still scrolls sideways in its own box, and the page doesn't. Scrolled to the code block."
+        note="The code block with links wraps its long lines, and the page doesn't scroll sideways. Scrolled to the code block."
         frame="view"
         width={375}
       >
@@ -1008,7 +1008,7 @@ export function Conversations() {
       </Specimen>
       <Specimen
         title="Messages to pitwall, 600 px and narrower"
-        note="The long message wraps, and the code block scrolls sideways in its own box; the page doesn't. Scrolled to the first message to pitwall."
+        note="The long message wraps, and so does the code block; the page doesn't scroll sideways. Scrolled to the first message to pitwall."
         frame="view"
         width={375}
       >

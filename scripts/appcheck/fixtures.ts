@@ -1381,7 +1381,13 @@ export class World {
       { kind: 'user', at: this.#ago(40), text: 'Add a made-up health route to the API, with a test.' },
       { kind: 'assistant', at: this.#ago(39), markdown: true, text: "I'll start with the routes file.\n\n- read `src/routes.ts`\n- add `GET /health`\n- add a test" },
       { kind: 'tool', at: this.#ago(38), toolName: 'Read', text: 'Read: src/routes.ts' },
-      { kind: 'assistant', at: this.#ago(37), markdown: true, text: 'The route is in. Running the tests now.' },
+      {
+        kind: 'assistant',
+        at: this.#ago(37),
+        markdown: true,
+        // A code block with a line longer than any window, which wraps rather than scrolling sideways (W137).
+        text: "The route is in. Running the tests now:\n\n```sh\nnpx vitest run src/routes.test.ts --reporter=verbose --testNamePattern='GET /health answers 200 with a small JSON body, and 405 for any other method'\n  # indented, kept as typed\n```",
+      },
       { kind: 'tool', at: this.#ago(36), toolName: 'Bash', text: 'Bash: npm test', toolError: true },
       { kind: 'tool', at: this.#ago(35), toolName: 'Edit', text: 'Edit: src/routes.test.ts' },
       { kind: 'tool', at: this.#ago(34), toolName: 'Bash', text: 'Bash: npm test' },

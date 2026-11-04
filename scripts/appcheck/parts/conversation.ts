@@ -1,7 +1,7 @@
 // The session view and its conversation (docs/design-system.md, 4: Session view, Conversation,
 // Markdown in messages): its header and tabs, and every kind of entry: You, Claude, From another
 // session, To pitwall-relay, a question Claude Code asked, a notice, one tool call, and two or more
-// folded into one toggle. Markdown shows as pitwall's own elements, and the view opens at the newest.
+// folded into one toggle. Markdown shows as pitwall's own elements, a code block's long lines wrap (W137), and the view opens at the newest.
 
 import { NAMES } from '../fixtures.js';
 import type { Part } from '../runner.js';
@@ -66,6 +66,42 @@ const part: Part = {
       t.expectEqual(markdown.code, ['src/routes.ts', 'GET /health'], 'inline code, as code');
       t.expect(markdown.html === 0, 'nothing but text and pitwall elements', markdown);
       t.expect(await page.evaluate(`${VIEW}.querySelector('li.entry-user .entry-text').textContent === 'Add a made-up health route to the API, with a test.' && !${VIEW}.querySelector('li.entry-user .entry-markdown')`), 'your prompt is plain text');
+    });
+
+    await t.step('a code block wraps its long lines, indents kept, and never scrolls sideways (W137)', async () => {
+      const block = await page.evaluate<{ wraps: boolean; sideways: boolean; indent: false | { offset: number; ch: number; ok: boolean } } | null>(`(() => {
+        const pre = ${VIEW}.querySelector('li.entry-assistant pre.md-code-scroll');
+        if (!pre) return null;
+        pre.scrollIntoView({ block: 'center' });
+        const line = parseFloat(getComputedStyle(pre).lineHeight);
+        const code = pre.querySelector('code');
+        return {
+          wraps: code.getBoundingClientRect().height > 2.5 * line,
+          sideways: pre.scrollWidth > pre.clientWidth + 1,
+          indent: (() => {
+            // Drawn indented, not only in the text: the '#' starts its own line two spaces in, between 1.5
+            // and 3ch past the box's content edge, which white-space: normal would collapse.
+            const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+            let node = walker.nextNode();
+            while (node && !node.textContent.includes('# indented, kept as typed')) node = walker.nextNode();
+            if (!node) return false;
+            const at = node.textContent.indexOf('# indented');
+            const range = document.createRange();
+            range.setStart(node, at);
+            range.setEnd(node, at + 1);
+            const style = getComputedStyle(pre);
+            const edge = pre.getBoundingClientRect().left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+            const ch = range.getBoundingClientRect().width;
+            const offset = range.getBoundingClientRect().left - edge;
+            return { offset, ch, ok: offset >= 1.5 * ch && offset <= 3 * ch };
+          })(),
+        };
+      })()`);
+      t.expect(block !== null, 'a code block in the conversation');
+      t.expect(block?.wraps === true, 'its long line wraps onto more lines', block);
+      t.expect(block?.sideways === false, 'it doesn’t scroll sideways', block);
+      t.expect(block?.indent !== false && block?.indent?.ok === true, 'the indent is drawn, two spaces in', block);
+      await t.shot('code-block');
     });
 
     await t.step('a question shows its options, with the answer marked', async () => {

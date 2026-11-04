@@ -3791,8 +3791,8 @@ mark.match {
 
 /*
  * Markdown in messages (section 4: Markdown in messages): Claude's messages, its messages to pitwall
- * and other sessions' as pitwall's own elements. Text wraps as the message's text does; only a code block and a table
- * scroll sideways, each in its own box. The spacing between blocks is at the end of this part, after
+ * and other sessions' as pitwall's own elements. Text wraps as the message's text does, and so does a
+ * code block's (W137); only a table scrolls sideways, in its own box. The spacing between blocks is at the end of this part, after
  * the elements' own margins.
  */
 .entry-markdown {
@@ -3974,7 +3974,9 @@ ol.md-list {
   line-height: var(--pw-leading-s);
   font-variant-ligatures: none;
   tab-size: 4;
-  white-space: pre;
+  /* Long lines wrap, spaces and indents kept, so a block never needs scrolling sideways (W137). */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .md-code-scroll code {
