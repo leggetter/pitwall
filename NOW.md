@@ -25,7 +25,7 @@ Last updated: 2026-11-04, on `m5.1/integration`: W134 (the supervisor takes long
 
 ## Next, in order
 
-1. **W136 (the supervisor's context, visible and clearable, and taller cards)**, in review on `m5.1/supervisor-context`: New conversation (a confirmation in the page; stops it, forgets `state.json`, keeps the transcript and hides its id), "Context 84K" in its header, the box's note, cards' text and editor to half the window. Next: a fresh review, merge. Open for Phil: the drafts band still caps at 40% of the view, so a tall card scrolls inside it.
+1. **W136 (the supervisor's context, visible and clearable, and taller cards)**, in review on `m5.1/supervisor-context`: New conversation (a confirmation in the page; stops it, forgets `state.json`, keeps the transcript and hides its id), "Context 84K" in its header, the box's note, cards' text and editor to half the window. Next: a fresh review, merge. The drafts band now grows to 70% of the view, and What it sent and started to 15% while there are drafts (Phil, 2026-11-04).
 2. **W135 (attach a file in the supervisor's message box)** in a worktree, then a fresh review, merge, hand off. The row in `PLAN.md`'s "M5.1 work breakdown". The app check's fake server takes a message body up to 800 KiB now (W134), for a real send of a big file.
 3. **Phil runs the latest version and uses it:** `npm ci && npm run build` in the main checkout, restart 4518.
 4. **Then break the rest of M5.1 into work items** (work profiles, the Usage view with a run rate, the supervisor applying them; "M5.1 - Efficiency" in `PLAN.md`), with Phil.

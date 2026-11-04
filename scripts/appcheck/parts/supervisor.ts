@@ -243,6 +243,13 @@ const part: Part = {
       t.expect(Math.abs(second.height - second.half) <= 2 && second.content > second.height + 1, 'the box at half the window, the text scrolling in it', second);
       t.expect(/^60 lines, [\d,]+ characters: scroll to read it all before you send it\.$/.test(await page.evaluate<string>(`${longer}.querySelector('.approval-length')?.textContent ?? ''`)), 'its length said under it');
       t.expect(await page.evaluate<boolean>(`${longer}.querySelector('.approval-text').getAttribute('role') === 'region'`), 'a Tab stop while it scrolls');
+      // The band grows past the 40% it was, up to 70% of the view, so the long card is read in it; and
+      // the message box stays whole under it.
+      const band = await page.evaluate<{ band: number; view: number; footBottom: number; viewBottom: number }>(
+        `(() => { const v = ${SVIEW}.getBoundingClientRect(); const b = ${SVIEW}.querySelector('.supervisor-approvals').getBoundingClientRect(); const f = ${SVIEW}.querySelector('.supervisor-foot').getBoundingClientRect(); return { band: b.height, view: v.height, footBottom: f.bottom, viewBottom: v.bottom }; })()`,
+      );
+      t.expect(band.band > 0.4 * band.view + 1 && band.band <= 0.7 * band.view + 1, 'the band past 40% of the view, and within 70%', band);
+      t.expect(band.footBottom <= band.viewBottom + 0.5, 'the message box whole under it', band);
       await page.evaluate(`${SVIEW}.querySelector('.supervisor-approvals-scroll')?.scrollTo(0, 0)`);
       await t.shot('long-draft');
       // Its editor grows as far, then scrolls.

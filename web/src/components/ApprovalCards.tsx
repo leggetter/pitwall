@@ -146,7 +146,7 @@ export function ApprovalCards({ approvals, onEmpty }: ApprovalCardsProps) {
       <h3 className="supervisor-approvals-title" id={headingId}>
         Drafts for you <span className="supervisor-approvals-count">({approvals.length})</span>
       </h3>
-      {/* At most 40% of the view, then it scrolls: a Tab stop while it does, so the message box keeps its room. */}
+      {/* At most 70% of the view, then it scrolls: a Tab stop while it does, so the message box keeps its room. */}
       <ScrollBox className="supervisor-approvals-scroll" label="Drafts for you">
       <ul
         ref={list}
