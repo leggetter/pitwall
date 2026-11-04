@@ -2,7 +2,7 @@
 
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
-Last updated: 2026-11-04, on `m5.1/integration`: W86 merged ([#151](https://github.com/leggetter/pitwall/pull/151)), `vite` 8.3.5 and `happy-dom` 21.0.4, after a fresh review that checked every changed lockfile entry against the 14-day rule. W133 merged on 11-03 ([#148](https://github.com/leggetter/pitwall/pull/148), [#149](https://github.com/leggetter/pitwall/pull/149)).
+Last updated: 2026-11-04, on `m5.1/integration`: W86 (vite and happy-dom bump) merged ([#151](https://github.com/leggetter/pitwall/pull/151)); Phil chose the supervisor's options A and B, now W134 (longer messages) and W135 (attach a file). W134 next.
 
 ## Current milestone
 
@@ -25,14 +25,16 @@ Last updated: 2026-11-04, on `m5.1/integration`: W86 merged ([#151](https://gith
 
 ## Next, in order
 
-1. **On 2026-11-09:** `npx tsx scripts/usage-report.ts --days 7` against the 10-20 to 10-29 figures, for the high-effort week; then one blog-editing session on Sonnet for Phil to judge (agreed; not the evals post).
-2. **The rest of M5.1** from W134: work profiles, the Usage view with a run rate, the supervisor applying them ("M5.1 - Efficiency" in `PLAN.md`). Not yet broken into work items; see the open question.
-3. **M6, triage,** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
+1. **W134 (the supervisor takes longer messages, 100K)** in a worktree, then a fresh review, merge, hand off. The row in `PLAN.md`'s "M5.1 work breakdown".
+2. **W135 (attach a file in the supervisor's message box)**, the same way, after W134.
+3. **Phil runs the latest version and uses it:** `npm ci && npm run build` in the main checkout, restart 4518.
+4. **Then break the rest of M5.1 into work items** (work profiles, the Usage view with a run rate, the supervisor applying them; "M5.1 - Efficiency" in `PLAN.md`), with Phil.
+5. **On 2026-11-09:** `npx tsx scripts/usage-report.ts --days 7` against the 10-20 to 10-29 figures, for the high-effort week; then one blog-editing session on Sonnet for Phil to judge (agreed; not the evals post).
+6. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
 
 ## Open questions for Phil
 
-- **The supervisor's 20K-character cap and file reading** (Phil, 2026-11-04). The cap, `SUPERVISOR_MESSAGE_MAX`, came with W112a with no recorded reason; `SUPERVISOR_MAX_BODY_BYTES` (160 KiB) follows from it. It can't read files by design (D4: `--tools SendMessage` and the read-only MCP tools only, against prompt injection from transcripts). Options: A, raise the cap to about 100K and the body limit with it; B, "Attach file" in its message box, the browser's file picker inlining the file you choose, under the cap; C, a Read tool limited to some folders, which reopens D4 and needs a security review. Lean: A now, B as a W item in M5.1, not C.
-- **When to break W134 onward into work items** (work profiles, the Usage view with a run rate, the supervisor applying them): now, or after the 11-09 usage report? Lean: break down work profiles now, since they don't depend on the numbers, and the Usage view's weekly target after 11-09.
+None. Answered (Phil, 2026-11-04): the supervisor gets options A and B, W134 and W135, not C; the rest of M5.1 is broken into work items after those, once Phil runs the latest version and uses it.
 
 ## Standing context
 
