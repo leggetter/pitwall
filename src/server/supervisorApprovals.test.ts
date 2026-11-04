@@ -273,7 +273,7 @@ describe('a message to a session, behind your click', () => {
     expect(queue.list()).toHaveLength(1);
     expect((await decide(server.port, apiKey, id, { decision: 'edit', text: 'your own words' })).status).toBe(200);
     expect(await answer).toEqual({ behavior: 'allow', updatedInput: { to: TARGET, message: withSupervisorFooter('your own words') } });
-    expect(queue.takeNotes()).toEqual([`the user edited your message to "${TARGET}" before it was sent. What was sent: "your own words"`]);
+    expect(queue.takeNotes()).toEqual([`the user edited your message to "${TARGET}" before it was sent. What was sent, before pitwall's line: "your own words"`]);
     ws.close();
   });
 
@@ -303,7 +303,7 @@ describe('a message to a session, behind your click', () => {
     expect((await decide(server.port, apiKey, id, { decision: 'edit', text: 'Only this.' })).status).toBe(200);
     expect(await edited).toEqual({ behavior: 'allow', updatedInput: { to: TARGET, message: withSupervisorFooter('Only this.') } });
     // What the supervisor is told was sent is your text, as the card showed it.
-    expect(queue.takeNotes()).toEqual([`the user edited your message to "${TARGET}" before it was sent. What was sent: "Only this."`]);
+    expect(queue.takeNotes()).toEqual([`the user edited your message to "${TARGET}" before it was sent. What was sent, before pitwall's line: "Only this."`]);
     ws.close();
   });
 

@@ -557,7 +557,7 @@ export type DecisionAnswer = { status: 200 } | { status: 400 | 404 | 409; error:
 
 /** The note the supervisor reads before your next message, after you edited what it proposed. */
 export function editNote(draft: ApprovalDraft, sent: string): string {
-  if (draft.kind === 'message') return `the user edited your message to ${JSON.stringify(draft.to)} before it was sent. What was sent: ${JSON.stringify(sent)}`;
+  if (draft.kind === 'message') return `the user edited your message to ${JSON.stringify(draft.to)} before it was sent. What was sent, before pitwall's line: ${JSON.stringify(sent)}`;
   // By its id, not its name, which is untrusted (W129, L3).
   if (draft.kind === 'resume') return `the user edited your message to the session ${draft.sessionId}, which pitwall resumed with it, before it was sent. What was sent: ${JSON.stringify(sent)}`;
   return `the user edited the first prompt of your new session in ${JSON.stringify(draft.directory)} before it started. What was sent: ${JSON.stringify(sent)}`;

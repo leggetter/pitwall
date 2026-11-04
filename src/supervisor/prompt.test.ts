@@ -129,7 +129,7 @@ describe('the system prompt, version 3', () => {
 
   it('never relays a reply or asks for "go", and points at the panel instead (W124)', () => {
     const prompt = SUPERVISOR_SYSTEM_PROMPT;
-    expect(prompt).toContain("You never see a session's reply, and you don't relay one");
+    expect(prompt).toContain("A session's reply to you is refused, and you don't relay one");
     expect(prompt).toContain('Never ask the user to reply "go"');
     expect(prompt).toContain('open that session from the panel');
   });

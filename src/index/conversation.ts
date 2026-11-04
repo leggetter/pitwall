@@ -122,7 +122,7 @@ const REFUSED_NOTICE = /^\[Cross-session delivery notice\] Your message to anoth
 export const REFUSED_TO_SUPERVISOR_NOTICE =
   "Claude Code refused this message to pitwall's supervisor, which takes no messages from sessions, so the supervisor never read it. The message is above, here in this session, for you to read.";
 /** pitwall's words for any other message of this session's that Claude Code refused (W138). */
-export const REFUSED_NOTICE_TEXT = "Claude Code refused this message to another session, which takes no messages from other sessions, so it wasn't delivered.";
+export const REFUSED_NOTICE_TEXT = "The session this message went to refused it, so Claude Code didn't deliver it.";
 
 /** The tool Claude Code asks its question dialog with (W49). */
 const ASK_USER_QUESTION = 'AskUserQuestion';
@@ -1405,7 +1405,9 @@ function userItems(entry: Record<string, unknown>, at: string | undefined): Item
     return [item];
   }
   // Claude Code's notice that it refused one of this session's messages (W138): pitwall's words, never its own.
-  if (text.startsWith(DELIVERY_NOTICE_PREFIX)) return refusalItems(text, at);
+  // Only Claude Code's own meta entry: a prompt you, a spawn or a resume typed with the same prefix stays
+  // a prompt, so no text can pass as pitwall's notice, or hide itself (W138's review).
+  if (entry.isMeta === true && text.startsWith(DELIVERY_NOTICE_PREFIX)) return refusalItems(text, at);
   if (entry.isMeta === true) return [];
   if (origin === 'task-notification' || text.startsWith('<task-notification>')) return [taskNotice(text, at)];
   const local = localCommandNotice(text, at);
