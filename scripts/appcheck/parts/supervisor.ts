@@ -105,7 +105,7 @@ const part: Part = {
       await t.shot('reply');
     });
 
-    await t.step('its limit (W134): 100,000 characters can be sent, one more can’t, saying so; nothing sent', async () => {
+    await t.step('its limit (W134): Send is on at 100,000 characters and off at one more, saying so; nothing sent', async () => {
       const fill = (length: number) =>
         page.evaluate(`(() => {
           const box = ${BOX};

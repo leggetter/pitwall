@@ -33,7 +33,7 @@ export const RECIPIENTS_VERSION = 1;
 /** A gate id: 32 lowercase hex characters, new for each supervisor process. */
 export const GATE_ID_PATTERN = /^[0-9a-f]{32}$/;
 
-/** The most hook input read. A message is at most 20,000 characters. */
+/** The most hook input read. The gate sees only messages the supervisor proposes, at most SUPERVISOR_PROPOSAL_MAX (20,000) characters. */
 const MAX_INPUT_BYTES = 1024 * 1024;
 
 /** The largest recipients file read. */

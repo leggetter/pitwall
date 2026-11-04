@@ -257,6 +257,8 @@ export interface FakeServer {
 }
 
 const MAX_BODY_BYTES = 64 * 1024;
+/** A message to the supervisor's body limit, as the real server's SUPERVISOR_MAX_BODY_BYTES (W134), so the fake takes a 100,000-character message. */
+const SUPERVISOR_MESSAGE_BODY_BYTES = 800 * 1024;
 /** The real server's handshake limit (DEFAULT_AUTH_TIMEOUT_MS). */
 const AUTH_TIMEOUT_MS = 5000;
 
@@ -580,7 +582,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (method !== 'POST') return end(res, 405);
     if (url.pathname === protocol.SUPERVISOR_MESSAGE_PATH) {
       if (!/^application\/json\s*(;|$)/i.test(req.headers['content-type'] ?? '')) return json(res, 415, { ok: false, error: 'Send the request as application/json.' } satisfies ActionResult);
-      const body = await readJson(req);
+      const body = await readJson(req, SUPERVISOR_MESSAGE_BODY_BYTES);
       const text = isRecord(body) && typeof body.text === 'string' ? body.text : undefined;
       const answer = (status: number, result: ActionResult) => {
         records.supervisorMessages.push({ length: text?.length ?? 0, status });
@@ -1031,17 +1033,17 @@ function json(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(text) }).end(text);
 }
 
-function readJson(req: IncomingMessage): Promise<unknown> {
+function readJson(req: IncomingMessage, maxBytes = MAX_BODY_BYTES): Promise<unknown> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     let size = 0;
     req.on('data', (chunk: Buffer) => {
       size += chunk.length;
-      if (size <= MAX_BODY_BYTES) chunks.push(chunk);
+      if (size <= maxBytes) chunks.push(chunk);
     });
     req.on('end', () => {
       try {
-        resolve(size > MAX_BODY_BYTES ? undefined : JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        resolve(size > maxBytes ? undefined : JSON.parse(Buffer.concat(chunks).toString('utf8')));
       } catch {
         resolve(undefined);
       }

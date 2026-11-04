@@ -2,11 +2,11 @@
 
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
-Last updated: 2026-11-04, on `m5.1/supervisor-cap`: W134 (the supervisor takes longer messages, 100K) built and in review; W135 (attach a file in the supervisor's message box) next.
+Last updated: 2026-11-04, on `m5.1/integration`: W134 (the supervisor takes longer messages, 100K) merged ([#155](https://github.com/leggetter/pitwall/pull/155)) after a fresh review; W135 (attach a file in the supervisor's message box) next.
 
 ## Current milestone
 
-**M5.1, efficiency, in progress** on `m5.1/integration` (branched from `main` 2026-11-02). Merged into it: the M5 archive, [#141](https://github.com/leggetter/pitwall/pull/141) (fixes #140, recaps of sessions you ended), W130 [#142](https://github.com/leggetter/pitwall/pull/142) (D27: New session in the selected session's directory; fixes #139), [#144](https://github.com/leggetter/pitwall/pull/144) (plan) W131 [#145](https://github.com/leggetter/pitwall/pull/145) (`scripts/usage-report.ts`), W132 [#146](https://github.com/leggetter/pitwall/pull/146) (recaps kept across restarts) and W133 [#148](https://github.com/leggetter/pitwall/pull/148), [#149](https://github.com/leggetter/pitwall/pull/149) (the hand-off hook and the context gauge). M5 is in `main` ([#138](https://github.com/leggetter/pitwall/pull/138)); its detail is in `docs/plan-archive.md`.
+**M5.1, efficiency, in progress** on `m5.1/integration` (branched from `main` 2026-11-02). Merged into it: W134 [#155](https://github.com/leggetter/pitwall/pull/155) (the supervisor takes 100K-character messages), the M5 archive, [#141](https://github.com/leggetter/pitwall/pull/141) (fixes #140, recaps of sessions you ended), W130 [#142](https://github.com/leggetter/pitwall/pull/142) (D27: New session in the selected session's directory; fixes #139), [#144](https://github.com/leggetter/pitwall/pull/144) (plan) W131 [#145](https://github.com/leggetter/pitwall/pull/145) (`scripts/usage-report.ts`), W132 [#146](https://github.com/leggetter/pitwall/pull/146) (recaps kept across restarts) and W133 [#148](https://github.com/leggetter/pitwall/pull/148), [#149](https://github.com/leggetter/pitwall/pull/149) (the hand-off hook and the context gauge). M5 is in `main` ([#138](https://github.com/leggetter/pitwall/pull/138)); its detail is in `docs/plan-archive.md`.
 
 - **What the usage showed** (W131; 14 days to 11-02, every repo): 11.35B tokens, 97.7% of them cache reads, 87% of those at more than 200K of context; sub-agents 58%. On 11-02 the pitwall coordinator and its 44 sub-agent runs were about half the day. Phil: "The problem isn't the global rules. It's pitwall" (2026-11-03), so the global rules are set aside for W133.
 - **Effort:** Phil's `~/.claude/settings.json` sets Opus 5.5 to high since 10-30 (it was xhigh from about 10-08). The week from 11-02 is the test against 10-20 to 10-29.
@@ -25,8 +25,8 @@ Last updated: 2026-11-04, on `m5.1/supervisor-cap`: W134 (the supervisor takes l
 
 ## Next, in order
 
-1. **W134 (the supervisor takes longer messages, 100K):** in review on `m5.1/supervisor-cap`; a fresh review, then merge into `m5.1/integration`. The row in `PLAN.md`'s "M5.1 work breakdown".
-2. **W135 (attach a file in the supervisor's message box)**, the same way, after W134.
+1. **W135 (attach a file in the supervisor's message box)** in a worktree, then a fresh review, merge, hand off. The row in `PLAN.md`'s "M5.1 work breakdown". The app check's fake server takes a message body up to 800 KiB now (W134), for a real send of a big file.
+2. **Phil decides whether the supervisor box's note says a long paste stays in its context** (#155's review, Info): `docs/design-system.md` says so; the note in the page doesn't yet.
 3. **Phil runs the latest version and uses it:** `npm ci && npm run build` in the main checkout, restart 4518.
 4. **Then break the rest of M5.1 into work items** (work profiles, the Usage view with a run rate, the supervisor applying them; "M5.1 - Efficiency" in `PLAN.md`), with Phil.
 5. **On 2026-11-09:** `npx tsx scripts/usage-report.ts --days 7` against the 10-20 to 10-29 figures, for the high-effort week; then one blog-editing session on Sonnet for Phil to judge (agreed; not the evals post).
