@@ -22,7 +22,9 @@
 //   notes      after an Edit, what was actually sent, for pitwall to put before your next message to
 //              the supervisor, so it isn't left believing its own text went (note(), takeNotes())
 //
-// Nothing here is written to disk: approvals, passes and notes go when pitwall does.
+// Nothing here is written to disk: approvals, passes and notes go when pitwall does. New
+// conversation (W136) drops the hand-offs, passes and notes with the conversation they came from
+// (forgetConversation()); it's refused while a card waits, so there are none of those to drop.
 import { randomBytes } from 'node:crypto';
 import { SUPERVISOR_APPROVAL_TIMEOUT_MS, SUPERVISOR_HANDOFFS_MAX, type SavedPermission, type SupervisorApproval, type SupervisorHandoff } from '../shared/protocol.js';
 
@@ -94,6 +96,12 @@ export interface ApprovalQueue {
   note(text: string): void;
   /** The notes kept, oldest first, and forgets them. */
   takeNotes(): string[];
+  /**
+   * New conversation (W136): forgets what belongs to the conversation that's left, its hand-offs,
+   * spawn passes and notes. Cards are left alone: the supervisor refuses a new conversation while
+   * any wait, and denies any that come after, as its process stops.
+   */
+  forgetConversation(): void;
   /** Changes whenever list() or handoffs() could answer differently. */
   version(): number;
   /** Called when list() may have changed. Returns an unsubscribe function. */
@@ -256,6 +264,13 @@ export function createApprovalQueue(options: ApprovalQueueOptions = {}): Approva
     },
     takeNotes() {
       return notes.splice(0);
+    },
+    forgetConversation() {
+      notes.length = 0;
+      passes.length = 0;
+      if (done.length === 0) return;
+      done.length = 0;
+      changed();
     },
     version: () => changes,
     subscribe(listener) {

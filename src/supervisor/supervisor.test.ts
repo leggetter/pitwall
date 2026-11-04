@@ -14,7 +14,7 @@ import { createApprovalQueue } from './approvals.js';
 import { SUPERVISOR_ALLOWED_TOOLS, SUPERVISOR_ASK_TOOLS, SUPERVISOR_MAX_TURNS, SUPERVISOR_NAME } from './prompt.js';
 import { markReady, readRecipients } from './supervisorGateHook.mjs';
 import { memoryState, type SupervisorRecord } from './state.js';
-import { createSupervisor, heldBy, heldError, sweepMcpConfigs, turnCost, withNotes, type Supervisor, type SupervisorOptions } from './supervisor.js';
+import { createSupervisor, heldBy, heldError, streamContextTokens, sweepMcpConfigs, turnCost, withNotes, type Supervisor, type SupervisorOptions } from './supervisor.js';
 
 const SESSION = 'aaaaaaaa-0000-4000-8000-000000000001';
 const OTHER_SESSION = 'bbbbbbbb-0000-4000-8000-000000000002';
@@ -419,14 +419,14 @@ describe('when it stops', () => {
     expect(children).toHaveLength(2);
   });
 
-  it('says how to start afresh when a resume fails for another reason', async () => {
-    const { supervisor, children, dir } = harness({ record: { sessionId: SESSION, promptVersion: 1 }, behaviour: () => undefined, readyMs: 50 });
+  it('says how to start afresh, with New conversation, when a resume fails for another reason', async () => {
+    const { supervisor, children } = harness({ record: { sessionId: SESSION, promptVersion: 1 }, behaviour: () => undefined, readyMs: 50 });
     const started = supervisor.start();
     await until(() => children.length === 1);
     children[0]!.exit(1, null);
     expect(await started).toEqual({
       kind: 'failed',
-      error: `pitwall couldn't resume the supervisor's conversation: claude stopped as it started (exit code 1). Press Start to try again. To start a new conversation instead, delete ${path.join(path.resolve(dir), 'state.json')}.`,
+      error: `pitwall couldn't resume the supervisor's conversation: claude stopped as it started (exit code 1). Press Start to try again, or New conversation to start a new one instead.`,
     });
   });
 
@@ -656,6 +656,169 @@ describe('its conversation', () => {
       ['user', 'Which of my sessions need me?'],
       ['assistant', 'Two of them do.'],
     ]);
+  });
+});
+
+describe('New conversation (W136)', () => {
+  /** An assistant message on the stream, with its call's usage. */
+  const assistant = (id: string, usage: Record<string, number>, extra: Record<string, unknown> = {}) => ({
+    type: 'assistant',
+    message: { id, role: 'assistant', model: SUPERVISOR_MODEL, content: [{ type: 'text', text: 'Made-up answer.' }], usage },
+    parent_tool_use_id: null,
+    ...extra,
+  });
+
+  it('stops it, forgets the conversation on file, and the next start begins a new one, never resuming the old id', async () => {
+    const approvals = createApprovalQueue({ now: () => Date.parse('2026-11-04T12:00:00.000Z') });
+    const { supervisor, children, store } = harness({ record: { sessionId: SESSION, promptVersion: 1 }, approvals, now: () => Date.parse('2026-11-04T12:00:00.000Z') });
+    await supervisor.send('first');
+    const child = children[0]!;
+    expect(flag(child.args, '--resume')).toBe(SESSION);
+    child.init();
+    child.emit(assistant('msg_1', { input_tokens: 10, cache_read_input_tokens: 80_000, cache_creation_input_tokens: 4_000, output_tokens: 50 }));
+    child.result({ model_usage_since_last_result: { [SUPERVISOR_MODEL]: { costUSD: 0.5 } } });
+    approvals.handoff({ kind: 'spawn', name: 'pitwall-test-new', shortId: 'abc12345' });
+    approvals.note('the user edited your message');
+    expect(supervisor.state()).toMatchObject({ status: 'idle', sessionId: SESSION, contextTokens: 84_010, costUsd: 0.5, lastTurnAt: '2026-11-04T12:00:00.000Z' });
+
+    expect(await supervisor.newConversation()).toEqual({ kind: 'ok' });
+    expect(child.exited).toBe(true);
+    expect(store.current()).toBeUndefined();
+    // What belonged to that conversation goes; this run's cost stays.
+    expect(supervisor.state()).toEqual({ status: 'off', approvals: [], costUsd: 0.5 });
+    expect(await supervisor.conversation()).toBeUndefined();
+    // It started nothing by itself.
+    expect(children).toHaveLength(1);
+
+    await supervisor.send('second');
+    const next = children[1]!;
+    expect(next.args).not.toContain('--resume');
+    // The note about the old conversation isn't put before the new one's first message.
+    expect(next.messages()).toEqual(['second']);
+    next.init(OTHER_SESSION);
+    expect(store.current()).toEqual({ sessionId: OTHER_SESSION, promptVersion: 1 });
+    expect(supervisor.state().sessionId).toBe(OTHER_SESSION);
+  });
+
+  it('keeps the old conversation’s id its own, so it’s never listed, and its transcript on disk', async () => {
+    const { supervisor, children, configDir, sessionDir } = harness({ record: { sessionId: SESSION, promptVersion: 1 } });
+    await supervisor.start();
+    expect(await supervisor.newConversation()).toEqual({ kind: 'ok' });
+    await supervisor.start();
+    children[1]!.init(OTHER_SESSION);
+    expect(supervisor.ownSessionIds()).toEqual(new Set([SESSION, OTHER_SESSION]));
+    const ended = { sessionId: SESSION, name: SUPERVISOR_NAME, kind: 'interactive' as const, cwd: '/made-up/work/repo' };
+    expect(supervisor.isOwn(ended)).toBe(true);
+    expect(statSync(path.join(configDir, 'projects', encodeProjectDir(realpathSync(sessionDir)), `${SESSION}.jsonl`)).isFile()).toBe(true);
+  });
+
+  it('never resumes the conversation it left in this run, even when its state file couldn’t be removed', async () => {
+    const record = { sessionId: SESSION, promptVersion: 1 };
+    const stuck = { read: () => ({ ...record }), write: () => true, clear: () => false };
+    const { supervisor, children, logs } = harness({ record, store: stuck });
+    await supervisor.start();
+    expect(flag(children[0]!.args, '--resume')).toBe(SESSION);
+    expect(await supervisor.newConversation()).toEqual({ kind: 'ok' });
+    expect(await supervisor.conversation()).toBeUndefined();
+    await supervisor.start();
+    expect(children[1]!.args).not.toContain('--resume');
+    expect(logs).toContain('its state file still names the conversation you left, so pitwall starts a new conversation.');
+  });
+
+  it('is refused, in pitwall’s words, while a turn runs, drafts wait or it starts, and does nothing then', async () => {
+    const approvals = createApprovalQueue();
+    const { supervisor, children, store } = harness({ record: { sessionId: SESSION, promptVersion: 1 }, approvals, readyMs: 5_000, behaviour: () => undefined });
+    const starting = supervisor.start();
+    expect(await supervisor.newConversation()).toEqual({ kind: 'refused', error: 'The supervisor is starting. Start a new conversation once it has started.' });
+    await until(() => children.length === 1);
+    const child = children[0]!;
+    child.events.line(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: child.lines()[0]!.request_id, response: { current_permission_mode: 'default' } } }));
+    await starting;
+    await supervisor.send('a long question');
+    expect(await supervisor.newConversation()).toEqual({
+      kind: 'refused',
+      error: 'The supervisor is working on a turn of this conversation. Stop it, or wait for it to end, then start a new conversation.',
+    });
+    child.init();
+    child.result();
+    const added = approvals.add({ draft: { kind: 'message', to: 'pitwall-test-target', text: 'hello' }, toolName: 'SendMessage', toolUseId: 'toolu_1', input: {} });
+    if (!added.ok) throw new Error('not added');
+    expect(await supervisor.newConversation()).toEqual({ kind: 'refused', error: "A draft from this conversation waits for you. Send or don't send it first, then start a new conversation." });
+    expect(child.exited).toBe(false);
+    expect(store.current()).toEqual({ sessionId: SESSION, promptVersion: 1 });
+    expect(supervisor.state().sessionId).toBe(SESSION);
+  });
+
+  it('is refused while it’s held', async () => {
+    const held = harness({ record: { sessionId: SESSION, promptVersion: 1 } });
+    held.rows.push({ sessionId: SESSION, shortId: 'pt136bg1', name: 'pitwall-test-holder', kind: 'background', cwd: '/made-up/work/repo', pid: 4242 } as AgentRow);
+    expect((await held.supervisor.start()).kind).toBe('held');
+    expect(await held.supervisor.newConversation()).toMatchObject({ kind: 'refused', error: expect.stringContaining("Another session is running the supervisor's conversation") });
+    expect(held.store.current()).toEqual({ sessionId: SESSION, promptVersion: 1 });
+
+  });
+
+  it('drops your messages waiting when a resume keeps failing, so New conversation is a way out (W136’s review)', async () => {
+    // The resume (the second process) never answers its initialize request, so it fails as it starts.
+    const silentResume: Behaviour = (line, child) => (child === children[1] ? undefined : answersInitialize(line, child));
+    const { supervisor, children, store } = harness({ record: { sessionId: SESSION, promptVersion: 1 }, behaviour: silentResume });
+    await supervisor.send('first');
+    await supervisor.send('second');
+    children[0]!.exit(1, null);
+    await until(() => supervisor.state().status === 'failed');
+    expect(supervisor.state().error).toContain('Your message waits');
+    // Start resumes, and the resume fails as it starts again.
+    void supervisor.start();
+    await until(() => children.length === 2);
+    expect(children[1]!.args).toContain('--resume');
+    children[1]!.exit(1, null);
+    await until(() => supervisor.state().status === 'failed');
+    expect(children[1]!.messages()).toEqual([]);
+    expect(supervisor.state().error).toMatch(/couldn't resume .* Your message waits to be sent when it starts\.$/);
+    expect(await supervisor.newConversation()).toEqual({ kind: 'ok' });
+    expect(store.current()).toBeUndefined();
+    expect(supervisor.state().error).toBeUndefined();
+    // The next Start begins a new conversation, and sends neither message to it.
+    void supervisor.start();
+    await until(() => children.length === 3);
+    expect(children[2]!.args).not.toContain('--resume');
+    await until(() => supervisor.state().status === 'idle');
+    expect(children[2]!.messages()).toEqual([]);
+  });
+
+  it('is done at once while it’s off, with nothing to stop, and is closed once pitwall closes', async () => {
+    const { supervisor, children, store } = harness({ record: { sessionId: SESSION, promptVersion: 1 } });
+    expect(await supervisor.newConversation()).toEqual({ kind: 'ok' });
+    expect(children).toHaveLength(0);
+    expect(store.current()).toBeUndefined();
+    await supervisor.close();
+    expect(await supervisor.newConversation()).toEqual({ kind: 'closed' });
+  });
+
+  it('reads its context from its newest call, never a sub-agent’s, unknown until the first call of a run', async () => {
+    const { supervisor, children } = harness();
+    await supervisor.send('first');
+    const child = children[0]!;
+    child.init();
+    expect(supervisor.state().contextTokens).toBeUndefined();
+    child.emit(assistant('msg_1', { input_tokens: 3, cache_read_input_tokens: 20_000, cache_creation_input_tokens: 1_000, output_tokens: 9 }));
+    expect(supervisor.state().contextTokens).toBe(21_003);
+    child.emit(assistant('msg_2', { input_tokens: 999_999 }, { parent_tool_use_id: 'toolu_agent' }));
+    expect(supervisor.state().contextTokens).toBe(21_003);
+    child.emit(assistant('msg_3', { input_tokens: 5, cache_read_input_tokens: 22_000 }));
+    expect(supervisor.state().contextTokens).toBe(22_005);
+  });
+});
+
+describe('streamContextTokens()', () => {
+  it('adds input, cache read and cache creation tokens, and has none for a sub-agent’s, a synthetic one, or bad usage', () => {
+    const event = (message: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ type: 'assistant', message: { id: 'msg_1', model: 'test-model', ...message }, ...extra });
+    expect(streamContextTokens(event({ usage: { input_tokens: 1, cache_read_input_tokens: 2, cache_creation_input_tokens: 3, output_tokens: 100 } }))).toBe(6);
+    expect(streamContextTokens(event({ usage: { input_tokens: 1 } }, { parent_tool_use_id: 'toolu_1' }))).toBeUndefined();
+    expect(streamContextTokens(event({ model: '<synthetic>', usage: { input_tokens: 1 } }))).toBeUndefined();
+    expect(streamContextTokens(event({ usage: { input_tokens: '12', cache_read_input_tokens: -4 } }))).toBeUndefined();
+    expect(streamContextTokens(event({}))).toBeUndefined();
+    expect(streamContextTokens({ type: 'assistant', message: { usage: { input_tokens: 5 } } })).toBeUndefined();
   });
 });
 

@@ -22,6 +22,11 @@
 //               SupervisorState 'held', with `claude stop <id>` in `error`. pitwall never stops it
 //   failed      it exited, or couldn't start: 'failed', with why in pitwall's words, never
 //               claude's output
+//   new         New conversation (W136): stops it if it runs and forgets the conversation on file
+//               (state.ts' clear()), so the next start begins a new one. Refused while it starts,
+//               a turn runs, cards or your messages wait for that conversation, or it's held. The
+//               old transcript stays on disk, and its session id stays in sessionIds, so it's never
+//               listed; in later runs its folder hides it, as it hides every supervisor conversation
 //   stop        with pitwall: stdin closed, then SIGTERM after a second, then SIGKILL
 //
 // Where:
@@ -65,7 +70,7 @@ import { createAgentsSource, type AgentRow, type AgentsSource } from '../index/a
 import { ConversationCursorError, readConversationPage } from '../index/conversation.js';
 import { runFile } from '../index/exec.js';
 import { isRecord } from '../index/guards.js';
-import { defaultConfigDir, encodeProjectDir, isSessionUuid } from '../index/transcripts.js';
+import { contextTokensOf, defaultConfigDir, encodeProjectDir, isSessionUuid } from '../index/transcripts.js';
 import { MCP_SERVER_NAME, type ConversationPage, type SupervisorState, type WorkChoice } from '../shared/protocol.js';
 import { createApprovalQueue, type ApprovalQueue } from './approvals.js';
 import { createSupervisorGate, SUPERVISOR_GATE_DIR_NAME, type SupervisorGate } from './gate.js';
@@ -88,7 +93,7 @@ import {
   supervisorEnvironment,
   supervisorSettings,
 } from './prompt.js';
-import { supervisorStateFile, SUPERVISOR_STATE_FILE, type SupervisorStateStore } from './state.js';
+import { supervisorStateFile, type SupervisorStateStore } from './state.js';
 
 /**
  * The MCP config file's name in the supervisor's folder: one per pitwall process, by its pid, so two
@@ -153,6 +158,9 @@ export type SupervisorOutcome =
 /** interrupt()'s answer. */
 export type InterruptOutcome = { kind: 'ok' } | { kind: 'idle' };
 
+/** newConversation()'s answer (W136): done, refused with why in pitwall's words, or pitwall is closing. */
+export type NewConversationOutcome = { kind: 'ok' } | { kind: 'refused'; error: string } | { kind: 'closed' };
+
 /** What the stream showed in this run, for the live check and tests: counts and names, never text. */
 export interface SupervisorStats {
   /** Processes started. */
@@ -174,6 +182,13 @@ export interface Supervisor {
   send(text: string): Promise<SupervisorOutcome>;
   /** Stops the running turn with the stream's interrupt control request. */
   interrupt(): InterruptOutcome;
+  /**
+   * New conversation (W136): stops it if it runs, forgets the conversation on file and what belongs
+   * to it in the snapshot, and resolves once the process has gone. The next message or Start begins
+   * a new conversation; this starts nothing. Refused while it starts, a turn runs, cards or your
+   * messages wait for this conversation, or it's held. Never rejects.
+   */
+  newConversation(): Promise<NewConversationOutcome>;
   /** The running process's bearer token for the MCP server, or undefined while none runs. */
   mcpToken(): string | undefined;
   /** The supervisor's session ids, this run's and the state file's: its own conversations, which no tool lists. */
@@ -325,6 +340,10 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
   let sessionId: string | undefined;
   let lastTurnAt: string | undefined;
   let costUsd: number | undefined;
+  /** The tokens of context its newest call carried, in this run (W136). */
+  let contextTokens: number | undefined;
+  /** Conversations New conversation left in this run (W136): never resumed again, even if the state file couldn't be removed. */
+  const left = new Set<string>();
   let versionOk = false;
   const queue: Queued[] = [];
   const pids = new Set<number>();
@@ -377,6 +396,7 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     if (costUsd !== undefined) result.costUsd = Math.round(costUsd * 1e6) / 1e6;
     const handoffs = approvals.handoffs();
     if (handoffs.length > 0) result.handoffs = handoffs;
+    if (contextTokens !== undefined) result.contextTokens = contextTokens;
     return result;
   }
 
@@ -430,7 +450,9 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     let resume: string | undefined;
     if (record !== undefined) {
       sessionIds.add(record.sessionId);
-      if (record.promptVersion !== promptVersion) {
+      if (left.has(record.sessionId)) {
+        log("its state file still names the conversation you left, so pitwall starts a new conversation.");
+      } else if (record.promptVersion !== promptVersion) {
         log(`its system prompt is version ${promptVersion} now, and its conversation started on version ${record.promptVersion}, so pitwall starts a new conversation.`);
       } else if (findTranscript(record.sessionId, cwd) === undefined) {
         log("its conversation's transcript is gone, so pitwall starts a new conversation.");
@@ -439,6 +461,11 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
       }
     }
     sessionId = resume;
+    // A new conversation: the last one's size and newest turn aren't this one's (W136's review).
+    if (resume === undefined) {
+      contextTokens = undefined;
+      lastTurnAt = undefined;
+    }
     if (resume !== undefined) {
       const holder = await holderOf(resume);
       if (closed) return { kind: 'closed' };
@@ -570,6 +597,23 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     return heldError(row.kind === 'background' ? row.shortId : undefined, row.kind, row.name);
   }
 
+  /** Why New conversation can't run now, in pitwall's words, or undefined when it can (W136). */
+  function newConversationRefusal(): string | undefined {
+    if (problem?.status === 'held') {
+      return "Another session is running the supervisor's conversation, so pitwall leaves it alone. Free it as the alert says, then start a new conversation.";
+    }
+    const p = proc;
+    if (launching !== undefined || (p !== undefined && !p.stopping && !p.ready)) return 'The supervisor is starting. Start a new conversation once it has started.';
+    if (p !== undefined && !p.stopping && p.busy) return 'The supervisor is working on a turn of this conversation. Stop it, or wait for it to end, then start a new conversation.';
+    const cards = approvals.list().length;
+    if (cards > 0) {
+      return `${cards === 1 ? 'A draft from this conversation waits' : `${cards} drafts from this conversation wait`} for you. Send or don't send ${cards === 1 ? 'it' : 'each one'} first, then start a new conversation.`;
+    }
+    // Your messages waiting don't refuse it (W136's review): a queue is only left while it's failed or
+    // off, where Start may fail again, so a refusal would leave no way out. The reset drops them.
+    return undefined;
+  }
+
   // ---------------------------------------------------------------- the process
 
   function onExit(p: Proc, code: number | null, signal: NodeJS.Signals | null): void {
@@ -595,7 +639,7 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
       if (background !== undefined) outcome = hold(heldError(background.id, 'background'));
       else if (p.resumed) {
         outcome = fail(
-          `pitwall couldn't resume the supervisor's conversation: claude stopped as it started (${why}). Press Start to try again. To start a new conversation instead, delete ${path.join(dir, SUPERVISOR_STATE_FILE)}.`,
+          `pitwall couldn't resume the supervisor's conversation: claude stopped as it started (${why}). Press Start to try again, or New conversation to start a new one instead.`,
         );
       } else outcome = fail(`The supervisor stopped as it started (${why}). Press Start to try again.`);
     } else {
@@ -703,9 +747,15 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
       case 'system':
         if (event.subtype === 'init') onTurnStart(p, event);
         return;
-      case 'assistant':
+      case 'assistant': {
         if (!p.busy) {
           p.busy = true;
+          changed();
+        }
+        // Its context (W136), as W133 reads a session's: the newest call's, never a sub-agent's.
+        const tokens = p.stopping ? undefined : streamContextTokens(event);
+        if (tokens !== undefined && tokens !== contextTokens) {
+          contextTokens = tokens;
           changed();
         }
         for (const block of blocksOf(event)) {
@@ -716,6 +766,7 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
           if (!SUPERVISOR_INIT_TOOLS.has(name)) log(`it tried a tool pitwall doesn't give it (${name}); pitwall's approve tool denies it.`);
         }
         return;
+      }
       case 'result':
         return onTurnEnd(p, event);
       default:
@@ -779,7 +830,8 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
       if (status !== 'connected') log(`pitwall's MCP server is ${oneLine(String(status), 40)} for the supervisor.`);
     }
     const id = event.session_id;
-    if (typeof id === 'string' && isSessionUuid(id) && id !== sessionId) {
+    // Not from a process New conversation is stopping (W136): that conversation was left.
+    if (typeof id === 'string' && isSessionUuid(id) && id !== sessionId && !p.stopping && !left.has(id)) {
       sessionId = id;
       sessionIds.add(id);
       store.write({ sessionId: id, promptVersion });
@@ -871,6 +923,51 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
       p.child.write(controlRequestLine(`pitwall-interrupt-${randomId()}`, { subtype: 'interrupt' }));
       return { kind: 'ok' };
     },
+    async newConversation() {
+      if (closed) return { kind: 'closed' };
+      const refusal = newConversationRefusal();
+      if (refusal !== undefined) return { kind: 'refused', error: refusal };
+      // Forgotten first, all at once, so a message or Start that comes while the process goes
+      // starts a new conversation rather than resuming this one.
+      const leaving = sessionId ?? store.read()?.sessionId;
+      if (leaving !== undefined) {
+        left.add(leaving);
+        // Kept, so the old conversation is never listed as a session in this run (isOwn()).
+        sessionIds.add(leaving);
+      }
+      store.clear();
+      // What the snapshot carries of the conversation that's left, field by field:
+      //   sessionId      that conversation's: gone, until the new one's first turn names its own
+      //   lastTurnAt     that conversation's newest turn, "Last turn 4m ago": gone with it
+      //   contextTokens  that conversation's size: unknown until the new one's first call
+      //   handoffs       what you approved from its drafts: its "Sent and started" list goes, since
+      //                  the new conversation proposed none of it; the sessions stay in the list
+      //   notes          what pitwall would tell it before your next message, such as what an Edit
+      //                  sent, or that a turn reached its limit: about that conversation, so dropped
+      //   problem        a failure, such as a resume that couldn't start: about that conversation,
+      //                  or a start the next one tries again anyway. 'held' was refused above
+      //   costUsd        "$x this run" is this pitwall run's, every conversation in it: kept
+      sessionId = undefined;
+      lastTurnAt = undefined;
+      contextTokens = undefined;
+      approvals.forgetConversation();
+      problem = undefined;
+      //   queue          your messages waiting, written to that conversation: dropped, as the
+      //                  confirmation says, rather than sent to a new one without what they answer
+      if (queue.length > 0) log(`${queue.length} queued ${queue.length === 1 ? 'message was' : 'messages were'} dropped with the conversation.`);
+      queue.length = 0;
+      changed();
+      const p = proc;
+      if (p !== undefined && !p.exited) {
+        stopProcess(p);
+        if (!(await exitedWithin(p, 2000))) {
+          p.child.kill('SIGKILL');
+          await exitedWithin(p, 1000);
+        }
+      }
+      log('you started a new conversation: the next message or Start begins it. The one you left stays on disk.');
+      return closed ? { kind: 'closed' } : { kind: 'ok' };
+    },
     mcpToken() {
       const p = proc;
       // Taken back as soon as pitwall stops it, before it has gone.
@@ -890,7 +987,8 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     },
     async conversation(before) {
       const id = sessionId ?? store.read()?.sessionId;
-      if (id === undefined) return undefined;
+      // A conversation New conversation left shows as none: the view's empty state (W136).
+      if (id === undefined || left.has(id)) return undefined;
       const file = findTranscript(id);
       if (file === undefined) return undefined;
       for (let attempt = 0; attempt < 2; attempt++) {
@@ -963,6 +1061,17 @@ export const TOLERATED_TOOLS: ReadonlySet<string> = new Set<string>();
 export function withNotes(notes: readonly string[], text: string): string {
   if (notes.length === 0) return text;
   return `${notes.map((note) => `[pitwall: ${note}]`).join('\n')}\n\n${text}`;
+}
+
+/**
+ * The tokens of context an `assistant` event's call carried (W136): as contextTokensOf() reads a
+ * transcript's entry (W133), the message's `input_tokens + cache_read_input_tokens +
+ * cache_creation_input_tokens`. Undefined for a sub-agent's message (`parent_tool_use_id` set), a
+ * `<synthetic>` one, and one with no id or usage.
+ */
+export function streamContextTokens(event: Record<string, unknown>): number | undefined {
+  if (typeof event.parent_tool_use_id === 'string') return undefined;
+  return contextTokensOf(event)?.tokens;
 }
 
 /** One stream-json control request line. */

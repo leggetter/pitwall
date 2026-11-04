@@ -129,6 +129,8 @@ export interface Records {
   /** Each Start and Stop of the supervisor, and each decision for one of its drafts, with the status each got (W114). */
   supervisorStarts: number[];
   supervisorStops: number[];
+  /** Each New conversation (W136), with the status it got. */
+  supervisorNewConversations: number[];
   decisions: Array<{ id: string; decision: string; length?: number; status: number }>;
   /** Every HTTP request and upgrade, as `METHOD /path status`. */
   requests: string[];
@@ -154,6 +156,7 @@ const emptyRecords = (): Records => ({
   supervisorMessages: [],
   supervisorStarts: [],
   supervisorStops: [],
+  supervisorNewConversations: [],
   decisions: [],
   uploads: [],
   deletes: [],
@@ -564,7 +567,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
    * The supervisor's routes (W114), as the contract answers them, in made-up words, running no claude:
    * its conversation, 404 while it has none; a message, `{ text }` as JSON, 409 with none or while it's
    * held, 413 over SUPERVISOR_MESSAGE_MAX, then the made-up turn's steps a moment apart; Start, 409 the
-   * same; Stop; and a decision for a draft, 404 for one it doesn't have, then the draft gone a moment later.
+   * same; Stop; New conversation (W136), 409 with the world's reason; and a decision for a draft, 404 for one it doesn't have, then the draft gone a moment later.
    */
   async function supervisor(req: IncomingMessage, res: ServerResponse, method: string, url: URL) {
     // A step, then a longer one, so a part sees each state: working lasts twice as long as starting.
@@ -619,6 +622,16 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       later(SUPERVISOR_STEP_MS, () => {
         if (world.supervisorInterrupt()) broadcast();
       });
+      return;
+    }
+    if (url.pathname === protocol.SUPERVISOR_NEW_CONVERSATION_PATH) {
+      await readJson(req);
+      // As the real route (W136): 409 with pitwall's reason when refused, else done, starting nothing.
+      const taken = world.supervisorNewConversation();
+      records.supervisorNewConversations.push(taken.result === 'refused' ? 409 : 200);
+      if (taken.result === 'refused') return json(res, 409, { ok: false, error: taken.error } satisfies ActionResult);
+      json(res, 200, { ok: true } satisfies ActionResult);
+      broadcast();
       return;
     }
     const approval = /^\/api\/supervisor\/approvals\/([^/]+)$/.exec(url.pathname);
