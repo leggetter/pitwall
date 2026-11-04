@@ -11,6 +11,7 @@ import {
   SPAWN_PROMPT_MAX,
   SUPERVISOR_INTERRUPT_PATH,
   SUPERVISOR_MESSAGE_MAX,
+  SUPERVISOR_PROPOSAL_MAX,
   SUPERVISOR_MESSAGE_PATH,
   SUPERVISOR_START_PATH,
   supervisorApprovalPath,
@@ -431,7 +432,7 @@ describe('its message box', () => {
     renderDashboard(snap({ status: 'idle', approvals: [] }), { search: '?view=all&supervisor' });
     await settle();
     fireEvent.change(box(), { target: { value: 'x'.repeat(SUPERVISOR_MESSAGE_MAX + 1) } });
-    expect(view()!.querySelector('.relay-count.over')?.textContent).toBe('1 character over the 20,000 limit');
+    expect(view()!.querySelector('.relay-count.over')?.textContent).toBe('1 character over the 100,000 limit');
     expect(sendButton().getAttribute('aria-disabled')).toBe('true');
   });
 
@@ -615,7 +616,7 @@ describe('its draft cards', () => {
     const editor = within(cards()[0]!).getByRole('textbox', { name: 'Edit the message' });
     fireEvent.change(editor, { target: { value: '  ' } });
     expect(within(cards()[0]!).getByRole('button', { name: 'Send edit' }).getAttribute('aria-disabled')).toBe('true');
-    fireEvent.change(editor, { target: { value: 'x'.repeat(SUPERVISOR_MESSAGE_MAX + 2) } });
+    fireEvent.change(editor, { target: { value: 'x'.repeat(SUPERVISOR_PROPOSAL_MAX + 2) } });
     expect(cards()[0]!.querySelector('.relay-count.over')?.textContent).toBe('2 characters over the 20,000 limit');
   });
 

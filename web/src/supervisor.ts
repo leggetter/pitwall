@@ -17,6 +17,7 @@ import {
   PERMISSION_MODES,
   SUPERVISOR_INTERRUPT_PATH,
   SUPERVISOR_MESSAGE_MAX,
+  SUPERVISOR_PROPOSAL_MAX,
   SUPERVISOR_MESSAGE_PATH,
   SUPERVISOR_START_PATH,
   supervisorApprovalPath,
@@ -589,5 +590,8 @@ export async function decideApproval(api: ApiClient, id: string, decision: Super
   return { kind: 'failed', error: reason === undefined ? couldNot(verb, result.status) : `${couldNot(verb, undefined)} ${reason}` };
 }
 
-/** The longest message, and the longest edit, again here so the box and the editor can say so before sending. */
+/** The longest message you send it (W134), again here so the box can say so before sending. */
 export const SUPERVISOR_TEXT_MAX = SUPERVISOR_MESSAGE_MAX;
+
+/** The longest edit of a message it proposes, a resume's included, again here so the card's editor can say so. */
+export const SUPERVISOR_EDIT_MAX = SUPERVISOR_PROPOSAL_MAX;

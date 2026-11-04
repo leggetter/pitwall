@@ -20,6 +20,7 @@ import type { RunningServer } from './index.js';
 import { startServerWithInternals } from './server.js';
 import { checkMessage, recipientNames, sameNameCount } from './supervisorActions.js';
 import { validateSpawnRequest } from './actions.js';
+import { SUPERVISOR_APPROVAL_MAX_BODY_BYTES } from './supervisorRoutes.js';
 
 const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
 const MCP_TOKEN = 'made-up-mcp-token-0123456789abcdefghijklmnopq';
@@ -933,6 +934,10 @@ describe('the decision route’s checks', () => {
     expect((await decide(server.port, apiKey, id, { decision: 'send', text: 'extra' })).status).toBe(400);
     expect((await decide(server.port, apiKey, id, { decision: 'edit' })).status).toBe(400);
     expect((await decide(server.port, apiKey, id, { decision: 'edit', text: 'x'.repeat(20_001) })).status).toBe(413);
+    // An answer's body stays within 160 KiB when a message's grew (W134), since an edit is at most 20,000 characters.
+    const huge = await decide(server.port, apiKey, id, { decision: 'edit', text: 'x'.repeat(SUPERVISOR_APPROVAL_MAX_BODY_BYTES) });
+    expect(huge.status).toBe(413);
+    expect(JSON.parse(huge.body)).toEqual({ ok: false, error: 'The answer is too large.' });
     expect((await decide(server.port, apiKey, 'ffffffff', { decision: 'send' })).status).toBe(404);
     // None of those answered it.
     expect(queue.list()).toHaveLength(1);

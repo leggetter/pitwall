@@ -30,17 +30,23 @@
 //     404  no approval has that id: answered, withdrawn or out of time, or the supervisor is off
 //     409  being answered already; or checked again, the call was no longer valid, such as to a
 //          session that has ended since, so it was denied and its card went, with why
-//     413  the body is over SUPERVISOR_MAX_BODY_BYTES
+//     413  the body is over SUPERVISOR_APPROVAL_MAX_BODY_BYTES, or an edit is over SUPERVISOR_PROPOSAL_MAX characters
 //     415  not `Content-Type: application/json`
 import type { Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { isRecord } from '../index/guards.js';
-import { SUPERVISOR_INTERRUPT_PATH, SUPERVISOR_MESSAGE_MAX, SUPERVISOR_MESSAGE_PATH, SUPERVISOR_START_PATH, supervisorApprovalPath, type ActionResult } from '../shared/protocol.js';
+import { SUPERVISOR_INTERRUPT_PATH, SUPERVISOR_MESSAGE_MAX, SUPERVISOR_MESSAGE_PATH, SUPERVISOR_PROPOSAL_MAX, SUPERVISOR_START_PATH, supervisorApprovalPath, type ActionResult } from '../shared/protocol.js';
 import type { Supervisor, SupervisorOutcome } from '../supervisor/supervisor.js';
 import { decide, parseDecision, type SupervisorActionSources } from './supervisorActions.js';
 
-/** SUPERVISOR_MESSAGE_MAX characters are at most about 120 KiB of JSON, every one escaped. */
-export const SUPERVISOR_MAX_BODY_BYTES = 160 * 1024;
+/**
+ * A message's body: SUPERVISOR_MESSAGE_MAX characters are at most about 590 KiB of JSON, every one
+ * escaped as \uXXXX (6 bytes), with room to spare, as before W134 (8 bytes a character).
+ */
+export const SUPERVISOR_MAX_BODY_BYTES = 800 * 1024;
+
+/** An answer to an approval: an edit is at most SUPERVISOR_PROPOSAL_MAX characters, so this stays as it was before W134. */
+export const SUPERVISOR_APPROVAL_MAX_BODY_BYTES = 160 * 1024;
 
 /** What every route says with `--no-supervisor`. */
 export const SUPERVISOR_OFF_ERROR = 'The supervisor is off: pitwall was started with --no-supervisor.';
@@ -120,7 +126,7 @@ export function registerSupervisor(app: Hono, supervisor: Supervisor | undefined
 
   app.post(
     APPROVAL_ROUTE,
-    bodyLimit({ maxSize: SUPERVISOR_MAX_BODY_BYTES, onError: (c) => answer(c, { ok: false, error: 'The answer is too large.' }, 413) }),
+    bodyLimit({ maxSize: SUPERVISOR_APPROVAL_MAX_BODY_BYTES, onError: (c) => answer(c, { ok: false, error: 'The answer is too large.' }, 413) }),
     async (c) => {
       if (supervisor === undefined || actions === undefined) return answer(c, { ok: false, error: 'There is no such approval.' }, 404);
       if (!/^application\/json\s*(;|$)/i.test(c.req.header('content-type') ?? '')) return answer(c, { ok: false, error: 'Send the request as application/json.' }, 415);
@@ -132,8 +138,8 @@ export function registerSupervisor(app: Hono, supervisor: Supervisor | undefined
       }
       const decision = parseDecision(body);
       if (decision === undefined) return answer(c, { ok: false, error: 'The body must be a decision: send, edit with its text, or decline.' }, 400);
-      if (decision.decision === 'edit' && decision.text.length > SUPERVISOR_MESSAGE_MAX) {
-        return answer(c, { ok: false, error: `An edit can be at most ${SUPERVISOR_MESSAGE_MAX.toLocaleString('en-US')} characters.` }, 413);
+      if (decision.decision === 'edit' && decision.text.length > SUPERVISOR_PROPOSAL_MAX) {
+        return answer(c, { ok: false, error: `An edit can be at most ${SUPERVISOR_PROPOSAL_MAX.toLocaleString('en-US')} characters.` }, 413);
       }
       const id = c.req.param('id');
       if (typeof id !== 'string' || !/^[0-9a-f]{1,64}$/.test(id)) return answer(c, { ok: false, error: 'There is no such approval.' }, 404);
