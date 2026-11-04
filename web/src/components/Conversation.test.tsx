@@ -11,6 +11,7 @@ import { AttachContext } from '../attach.js';
 import { absoluteTime, clockTime } from '../format.js';
 import { NOW, fakeSockets, minutesAgo, session, withoutSubagents } from '../test/fixtures.js';
 import { hover, pass, shownTooltip, tooltipText, unhover } from '../test/tooltips.js';
+import { TO_SUPERVISOR_SPEAKER } from './Conversation.js';
 import { SessionView } from './SessionView.js';
 
 // The Terminal tab's xterm.js, for the tests that open it: it only needs to exist.
@@ -289,6 +290,20 @@ describe('Conversation: messages to pitwall (W46)', () => {
     expect(entry.querySelector('.entry-speaker')?.textContent).toBe(`To pitwall-relay · ${clockTime(at(4))}`);
     expect(entry.querySelector('time')?.getAttribute('datetime')).toBe(at(4));
     expect(entry.querySelector('.entry-markdown')?.textContent).toBe('Both flows.');
+  });
+
+  it("names pitwall's supervisor for a message to it, and shows the refusal's notice after it as plain text (W138)", async () => {
+    const refusal = "Claude Code refused this message to pitwall's supervisor, which takes no messages from sessions, so the supervisor never read it. The message is above, here in this session, for you to read.";
+    const { body } = await renderView(
+      fakeServer(page([{ ...toPitwall(1, '**Done.**'), recipient: 'supervisor' }, { kind: 'notice', at: at(2), text: refusal }])),
+    );
+    const [entry, notice] = rows(body);
+    expect(entry!.className).toBe('entry entry-to-pitwall');
+    expect(entry!.querySelector('.entry-speaker')?.textContent).toBe(`${TO_SUPERVISOR_SPEAKER} · ${clockTime(at(1))}`);
+    expect(TO_SUPERVISOR_SPEAKER).toBe('To pitwall-supervisor');
+    expect(entry!.querySelector('.entry-markdown strong')?.textContent).toBe('Done.');
+    expect(notice!.className).toBe('entry entry-notice');
+    expect(notice!.textContent).toBe(refusal);
   });
 
   it("renders its markdown as pitwall's own elements, with Copy code, and links only to http and https", async () => {

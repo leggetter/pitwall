@@ -387,6 +387,22 @@ describe('asConversationPage', () => {
     ]);
   });
 
+  it("keeps a message to pitwall's supervisor's recipient on a to-pitwall entry only (W138)", () => {
+    const body = {
+      sessionId: SID,
+      entries: [
+        { kind: 'to-pitwall', text: 'a', recipient: 'supervisor' },
+        { kind: 'to-pitwall', text: 'b', recipient: 'relay' },
+        { kind: 'assistant', text: 'c', recipient: 'supervisor' },
+      ],
+    };
+    expect(asConversationPage(body, SID)?.entries).toEqual([
+      { kind: 'to-pitwall', text: 'a', recipient: 'supervisor' },
+      { kind: 'to-pitwall', text: 'b' },
+      { kind: 'assistant', text: 'c' },
+    ]);
+  });
+
   it('keeps the mid-turn mark only when it is true, and the turn’s end only as a boolean (W102)', () => {
     const body = {
       sessionId: SID,

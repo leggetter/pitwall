@@ -574,7 +574,9 @@ export type ConversationEntryKind =
    * (W46). A call is to pitwall when its `to` is the relay's name, or a `uds:`
    * address that a cross-session message from the relay's name came from
    * earlier in the same transcript, on any page. A call whose result was an
-   * error, or that has no `message` text, stays a 'tool' entry.
+   * error, or that has no `message` text, stays a 'tool' entry. A call to
+   * pitwall's supervisor, by the same rule with its name, is one too, with
+   * `recipient: 'supervisor'` (W138).
    */
   | 'to-pitwall'
   /**
@@ -586,7 +588,10 @@ export type ConversationEntryKind =
    * `toolError`. A call whose input isn't the shape below stays a 'tool' entry.
    */
   | 'question'
-  /** Anything else worth showing: a compaction summary, a task notification, a command's output. */
+  /**
+   * Anything else worth showing: a compaction summary, a task notification, a command's output, and
+   * Claude Code's notice that it refused one of this session's messages, in pitwall's words (W138).
+   */
   | 'notice';
 
 /** One question in a 'question' entry (W49). Every string is plain text, never markdown or HTML. */
@@ -637,6 +642,12 @@ export interface ConversationEntry {
   toolError?: boolean;
   /** For 'cross-session': the sender's name, as the receiving session saw it. */
   from?: string;
+  /**
+   * For 'to-pitwall': 'supervisor' when the call addressed pitwall's supervisor (W138), by its name
+   * or an address its messages came from, rather than the relay. The supervisor takes no messages
+   * from sessions, so Claude Code refuses each one; the web UI says it went to the supervisor's name.
+   */
+  recipient?: 'supervisor';
   /**
    * For 'cross-session': the message's id, as Claude Code records it (`origin.msg_id`, W99), when
    * it has one. The same id SendMessage's result gave its sender, so pitwall's recaps can tell a
@@ -2027,6 +2038,26 @@ export const SUPERVISOR_MESSAGE_MAX = 100_000;
  * is text you read before Send.
  */
 export const SUPERVISOR_PROPOSAL_MAX = 20_000;
+
+/**
+ * The line pitwall adds to every message the supervisor sends a session through SendMessage (W138;
+ * Phil, 2026-11-04), after a blank line, once you Send or Edit: fixed text of pitwall's, never the
+ * model's, so a session knows who the message is from and doesn't spend a turn on a reply Claude Code
+ * will refuse (the supervisor takes no messages from sessions, D4). Its card shows it apart from the
+ * text you can edit, which can't remove it. It doesn't count toward SUPERVISOR_PROPOSAL_MAX, which is
+ * the text you read and edit, so what goes is at most that plus SUPERVISOR_MESSAGE_FOOTER_SEPARATOR
+ * and this line. Plain ASCII, so it passes the hidden-character checks the text gets.
+ */
+export const SUPERVISOR_MESSAGE_FOOTER =
+  "Sent by pitwall's supervisor after the user approved it. The supervisor takes no messages from sessions, so a reply to it will be refused: answer here, in this session, where the user reads it.";
+
+/** What goes between the message and SUPERVISOR_MESSAGE_FOOTER: a blank line. */
+export const SUPERVISOR_MESSAGE_FOOTER_SEPARATOR = '\n\n';
+
+/** A message the supervisor sends a session, as it goes (W138): the text you approved, then pitwall's line. */
+export function withSupervisorFooter(text: string): string {
+  return `${text}${SUPERVISOR_MESSAGE_FOOTER_SEPARATOR}${SUPERVISOR_MESSAGE_FOOTER}`;
+}
 
 /**
  * The longest first prompt a new session takes (SpawnRequest's prompt, New session's dialog), and so

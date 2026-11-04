@@ -161,7 +161,7 @@ export function asConversationPage(body: unknown, sessionId: string): Conversati
 
 function asEntry(value: unknown): ConversationEntry | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
-  const { kind, at, text, markdown, toolName, toolError, from, subagent, questions, truncated, midTurn } = value as Record<string, unknown>;
+  const { kind, at, text, markdown, toolName, toolError, from, recipient, subagent, questions, truncated, midTurn } = value as Record<string, unknown>;
   if (typeof kind !== 'string' || !KINDS.has(kind as ConversationEntryKind) || typeof text !== 'string') return undefined;
   const entry: ConversationEntry = { kind: kind as ConversationEntryKind, text };
   if (typeof at === 'string') entry.at = at;
@@ -169,6 +169,8 @@ function asEntry(value: unknown): ConversationEntry | undefined {
   if (typeof toolName === 'string') entry.toolName = toolName;
   if (typeof toolError === 'boolean') entry.toolError = toolError;
   if (typeof from === 'string') entry.from = from;
+  // A message to pitwall's supervisor rather than its relay (W138).
+  if (kind === 'to-pitwall' && recipient === 'supervisor') entry.recipient = 'supervisor';
   // The sub-agent a report, an Agent call or a SendMessage call is about (W76, W77), on the kinds that have one.
   if ((kind === 'cross-session' || kind === 'tool') && typeof subagent === 'object' && subagent !== null) {
     const { agentId, description } = subagent as Record<string, unknown>;

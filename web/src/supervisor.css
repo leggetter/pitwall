@@ -380,6 +380,26 @@
   white-space: nowrap;
 }
 
+/*
+ * The line pitwall adds at the end of a message (W138): its own, apart from the model's text, so a
+ * thin rule in place of the text's tint, in the muted text colour, and never scrolled.
+ */
+.approval-footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+  margin-top: var(--pw-space-1);
+}
+
+.approval-footer-text {
+  padding: var(--pw-space-1) var(--pw-space-3);
+  border-left: 2px solid var(--pw-border-strong);
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  overflow-wrap: anywhere;
+}
+
 /* Under text taller than its box, or with codes in it: how long it is, and what they are. */
 .approval-length {
   color: var(--pw-text-muted);

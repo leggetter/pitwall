@@ -99,7 +99,7 @@ function speakerOf(entry: ConversationEntry, relay: RelayMessages | undefined): 
     case 'assistant':
       return { speaker: 'Claude', text: entry.text };
     case 'to-pitwall':
-      // The session's reply to a message you sent through pitwall's relay.
+      // The session's reply to a message you sent through pitwall's relay, or to the supervisor (W138).
       return { speaker: 'Claude', text: entry.text };
     case 'notice':
       return { speaker: 'Notice', text: entry.text };

@@ -81,6 +81,10 @@ describe('replyInConversation', () => {
     });
     const after = '2026-03-02T11:51:00.000Z';
 
+    it("is false for one to pitwall's supervisor (W138), whose text is never the relay's reply", () => {
+      expect(replyInConversation(exchange(LONG), [{ ...toPitwall(after), recipient: 'supervisor' }])).toBe(false);
+    });
+
     it('is true for one at or after the send whose text is the reply the relay received, whitespace aside', () => {
       expect(replyInConversation(exchange(LONG), [toPitwall(after)])).toBe(true);
       expect(replyInConversation(exchange(LONG), [toPitwall(sentAt)])).toBe(true);

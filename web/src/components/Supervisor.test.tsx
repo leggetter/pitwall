@@ -11,6 +11,7 @@ import {
   SPAWN_PROMPT_MAX,
   SUPERVISOR_INTERRUPT_PATH,
   SUPERVISOR_MESSAGE_MAX,
+  SUPERVISOR_MESSAGE_FOOTER,
   SUPERVISOR_PROPOSAL_MAX,
   SUPERVISOR_MESSAGE_PATH,
   SUPERVISOR_NEW_CONVERSATION_PATH,
@@ -632,6 +633,28 @@ describe('its draft cards', () => {
     expect(cards()[0]!.textContent).toContain('Not sent unless you answer by');
     // Above the message box.
     expect(region.compareDocumentPosition(box()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("show pitwall's line under a message, apart from its text, in the editor's place too, and never on a new session or a resume (W138)", async () => {
+    const fetch = fakeServer();
+    renderDashboard(snap({ status: 'idle', approvals: [message('m1', 6), spawn] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    const [card, spawnCard] = cards();
+    const footer = within(card!).getByRole('group', { name: 'Then pitwall adds, after a blank line' });
+    expect(footer.querySelector('.approval-footer-text')?.textContent).toBe(SUPERVISOR_MESSAGE_FOOTER);
+    // Not part of the model's text, which is what Edit opens.
+    expect(card!.querySelector('.approval-text')?.textContent).toBe('Please rerun the made-up tests, then tell me what failed.');
+    expect(spawnCard!.querySelector('.approval-footer')).toBeNull();
+    fireEvent.click(within(card!).getByRole('button', { name: 'Edit' }));
+    await settle();
+    const editor = within(cards()[0]!).getByRole('textbox', { name: 'Edit the message' }) as HTMLTextAreaElement;
+    expect(editor.value).not.toContain(SUPERVISOR_MESSAGE_FOOTER);
+    expect(within(cards()[0]!).getByRole('group', { name: 'Then pitwall adds, after a blank line' }).textContent).toContain(SUPERVISOR_MESSAGE_FOOTER);
+    fireEvent.change(editor, { target: { value: 'Only this.' } });
+    fireEvent.click(within(cards()[0]!).getByRole('button', { name: 'Send edit' }));
+    await settle();
+    // The edit alone goes to pitwall, which adds its line.
+    expect(posts(fetch)).toEqual([{ url: supervisorApprovalPath('m1'), body: { decision: 'edit', text: 'Only this.' } }]);
   });
 
   it('show the exact text that goes, never filtered: what wouldn’t show as itself drawn as its code, named in a note (W120)', async () => {
