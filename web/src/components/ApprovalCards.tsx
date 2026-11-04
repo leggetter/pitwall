@@ -15,7 +15,7 @@
 // - A resume card (W129, M2, L1) shows, as text, the session's folder, home as ~, and its last
 //   activity; how many listed sessions share its name when others do, since names aren't unique; and
 //   that it resumes with its own saved settings, its permission mode included, with a warning when
-//   that mode is bypassPermissions. Edit opens the text in place, up to SUPERVISOR_MESSAGE_MAX for a message and
+//   that mode is bypassPermissions. Edit opens the text in place, up to SUPERVISOR_PROPOSAL_MAX for a message and
 // SPAWN_PROMPT_MAX for a new session's first prompt (editLimit()), with Send edit and Cancel.
 //
 // - Each decision POSTs a SupervisorDecision to supervisorApprovalPath(). The card stays busy until the
@@ -42,7 +42,7 @@ import {
   resumeBypassed,
   resumePermissionText,
   resumeWhereLead,
-  SUPERVISOR_TEXT_MAX,
+  SUPERVISOR_EDIT_MAX,
   typedPromptNotes,
 } from '../supervisor.js';
 import { Alert } from './Alert.js';
@@ -59,12 +59,12 @@ export const STUCK_TEXT = "pitwall took your answer, but this card is still wait
 
 /** The editor's Send edit while it can't send, for its tooltip. */
 export const EDIT_EMPTY = 'Type the text to send, or Cancel to keep the draft.';
-export const editTooLong = (over: number, limit: number = SUPERVISOR_TEXT_MAX) =>
+export const editTooLong = (over: number, limit: number = SUPERVISOR_EDIT_MAX) =>
   `Shorten it by ${over.toLocaleString('en')} ${over === 1 ? 'character' : 'characters'} to send it: the limit is ${limit.toLocaleString('en')}.`;
 
-/** The longest edit of each kind: a message's, a resumed session's included (W127), SUPERVISOR_MESSAGE_MAX; a new session's first prompt, SPAWN_PROMPT_MAX (W115). */
+/** The longest edit of each kind: a message's, a resumed session's included (W127), SUPERVISOR_PROPOSAL_MAX, which stayed at 20,000 when what you send the supervisor grew (W134); a new session's first prompt, SPAWN_PROMPT_MAX (W115). */
 export function editLimit(kind: SupervisorApproval['kind']): number {
-  return kind === 'spawn' ? SPAWN_PROMPT_MAX : SUPERVISOR_TEXT_MAX;
+  return kind === 'spawn' ? SPAWN_PROMPT_MAX : SUPERVISOR_EDIT_MAX;
 }
 
 /** What each kind's text is, as the card labels it. */

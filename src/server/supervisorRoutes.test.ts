@@ -30,7 +30,7 @@ import { pitwallOrigin, proofFor } from '../test/proof.js';
 import { fakeSupervisor, type FakeSupervisor } from '../test/supervisor.js';
 import type { RunningServer } from './index.js';
 import { startServerWithInternals } from './server.js';
-import { SUPERVISOR_OFF_ERROR } from './supervisorRoutes.js';
+import { SUPERVISOR_MAX_BODY_BYTES, SUPERVISOR_OFF_ERROR } from './supervisorRoutes.js';
 
 const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
 const NOW = Date.parse('2026-10-29T12:00:00.000Z');
@@ -194,10 +194,16 @@ describe('the supervisor’s routes', () => {
     expect((await post(server.port, SUPERVISOR_MESSAGE_PATH, apiKey, { text: 'a\u0000b' })).status).toBe(400);
     const long = await post(server.port, SUPERVISOR_MESSAGE_PATH, apiKey, { text: 'x'.repeat(SUPERVISOR_MESSAGE_MAX + 1) });
     expect(long.status).toBe(413);
-    expect(JSON.parse(long.body)).toEqual({ ok: false, error: 'A message to the supervisor can be at most 20,000 characters.' });
+    expect(JSON.parse(long.body)).toEqual({ ok: false, error: 'A message to the supervisor can be at most 100,000 characters.' });
     expect((await post(server.port, SUPERVISOR_MESSAGE_PATH, apiKey, { text: '"'.repeat(SUPERVISOR_MESSAGE_MAX) })).status).toBe(200);
-    expect((await post(server.port, SUPERVISOR_MESSAGE_PATH, apiKey, JSON.stringify({ text: 'x'.repeat(200 * 1024) }))).status).toBe(413);
-    expect(supervisor.sent).toHaveLength(2);
+    // W134: the longest message, every character escaped as \uXXXX in its JSON, fits the body limit.
+    const escaped = '\u0001'.repeat(SUPERVISOR_MESSAGE_MAX);
+    expect(JSON.stringify({ text: escaped }).length).toBeGreaterThan(6 * SUPERVISOR_MESSAGE_MAX);
+    expect((await post(server.port, SUPERVISOR_MESSAGE_PATH, apiKey, { text: escaped })).status).toBe(200);
+    const huge = await post(server.port, SUPERVISOR_MESSAGE_PATH, apiKey, JSON.stringify({ text: 'x'.repeat(SUPERVISOR_MAX_BODY_BYTES) }));
+    expect(huge.status).toBe(413);
+    expect(JSON.parse(huge.body)).toEqual({ ok: false, error: 'The message is too large.' });
+    expect(supervisor.sent).toHaveLength(3);
     ws.close();
   });
 

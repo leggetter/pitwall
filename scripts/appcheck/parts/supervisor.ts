@@ -2,7 +2,7 @@
 // Needs you, with its status and its drafts' count, which Needs you and the page title count too; its
 // view in the third column as ?supervisor, one history entry, in a session's place and back; a new
 // conversation's questions, which fill the box; a message that starts it, the working line, and its
-// reply as markdown; Load earlier; the draft cards, Edit and Send edit, Don't send, and where focus
+// reply as markdown; its limit, 100,000 characters (W134); Load earlier; the draft cards, Edit and Send edit, Don't send, and where focus
 // goes; what it sent and started, with each session's state, Needs you's notice and Open (W124); a
 // resume draft for a finished session and its "Resumed" row (W127); the sessions and PRs its replies name, which open them (W125); Stop; held, with the stop command and the app strip's line; failed, with Start; a reload that
 // starts nothing; and none with --no-supervisor. Made-up example/* content only.
@@ -103,6 +103,28 @@ const part: Part = {
       t.expect(await page.evaluate<boolean>(`[...${SVIEW}.querySelectorAll('li.entry-user')].some((li) => li.textContent.includes('Which sessions need me, and why?'))`), 'your message in its conversation');
       t.expectEqual(await page.evaluate(`${BOX}.value`), '', 'the box cleared');
       await t.shot('reply');
+    });
+
+    await t.step('its limit (W134): 100,000 characters can be sent, one more can’t, saying so; nothing sent', async () => {
+      const fill = (length: number) =>
+        page.evaluate(`(() => {
+          const box = ${BOX};
+          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(box, 'x'.repeat(${length}));
+          box.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        })()`);
+      const COUNT = `(${SVIEW}.querySelector('.supervisor-box .relay-count')?.textContent ?? null)`;
+      const SEND_OFF = `${SEND}.getAttribute('aria-disabled') === 'true'`;
+      await fill(100_000);
+      await page.waitFor('the count at the limit', `${COUNT} === '100,000 / 100,000'`);
+      t.expect(!(await page.evaluate<boolean>(SEND_OFF)), 'Send is on at the limit');
+      await fill(100_001);
+      await page.waitFor('the count over the limit', `${COUNT} === '1 character over the 100,000 limit'`);
+      t.expect(await page.evaluate<boolean>(SEND_OFF), 'Send is off over it');
+      await t.shot('over-limit');
+      await fill(0);
+      await page.waitFor('the box empty', `${BOX}.value === '' && ${COUNT} === null`);
+      t.expectEqual(records.supervisorMessages.length, 1, 'nothing more sent');
     });
 
     await t.step('Close gives focus back to the item, or the list’s heading where the repo list is a shut drawer', async () => {

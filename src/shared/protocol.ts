@@ -2008,8 +2008,18 @@ export const SUPERVISOR_MODEL = 'claude-opus-5-5';
 /** An approval you don't answer is declined after this, inside the 30 minutes pitwall gives the supervisor's MCP calls (W115). */
 export const SUPERVISOR_APPROVAL_TIMEOUT_MS = 29 * 60 * 1000;
 
-/** The longest message you can send the supervisor, and the longest message or edit it proposes, resume_session's included (W127). */
-export const SUPERVISOR_MESSAGE_MAX = 20_000;
+/**
+ * The longest message you can send the supervisor (W134): long enough to paste a brief, such as a
+ * journal file, for it to read, since it can't read files itself (D4).
+ */
+export const SUPERVISOR_MESSAGE_MAX = 100_000;
+
+/**
+ * The longest message the supervisor proposes, resume_session's included (W127), and so the longest
+ * edit you make of one on its card. It stays at 20,000 when what you send it grew (W134): a card
+ * is text you read before Send.
+ */
+export const SUPERVISOR_PROPOSAL_MAX = 20_000;
 
 /**
  * The longest first prompt a new session takes (SpawnRequest's prompt, New session's dialog), and so

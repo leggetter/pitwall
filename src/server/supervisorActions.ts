@@ -34,7 +34,7 @@
 //                   F2), the one live session of that name, ignoring case, wherever it runs, so a
 //                   name shared with a session outside the roots is refused; only the fields pitwall
 //                   knows; a plain message, no idle notices; a `content` preview that is the message
-//                   or its start, never other text; text not blank, at most SUPERVISOR_MESSAGE_MAX
+//                   or its start, never other text; text not blank, at most SUPERVISOR_PROPOSAL_MAX
 //   a new session   directory: an existing directory under a root, by its real path, as New session
 //                   requires (checkDirectory()); name: NAME_PATTERN, never one of pitwall's own
 //                   (OWN_NAMES); prompt: not blank, at most MAX_PROMPT_LENGTH, not just a claude
@@ -65,7 +65,7 @@
 import type { AgentRow, AgentsSource } from '../index/agents.js';
 import { isRecord } from '../index/guards.js';
 import { hiddenTextProblem } from '../shared/hiddenText.js';
-import { MCP_TOOLS, SUPERVISOR_MESSAGE_MAX, type IndexSnapshot, type SavedPermission, type SessionSummary, type SupervisorDecision } from '../shared/protocol.js';
+import { MCP_TOOLS, SUPERVISOR_PROPOSAL_MAX, type IndexSnapshot, type SavedPermission, type SessionSummary, type SupervisorDecision } from '../shared/protocol.js';
 import { DECLINED_MESSAGE, type ApprovalDraft, type ApprovalQueue, type PermissionAnswer } from '../supervisor/approvals.js';
 import { isPreviewOf, KNOWN_INPUT_FIELDS, OWN_NAMES } from '../supervisor/supervisorGateHook.mjs';
 import { mcpToolName } from '../supervisor/prompt.js';
@@ -164,7 +164,7 @@ function checkText(text: unknown, max: number, what: string): Checked<string> {
  * a new session's prompt could (claudeCommands.ts, validateSpawnRequest()).
  */
 export function checkResumeText(text: unknown): Checked<string> {
-  const checked = checkText(text, SUPERVISOR_MESSAGE_MAX, 'message');
+  const checked = checkText(text, SUPERVISOR_PROPOSAL_MAX, 'message');
   if (!checked.ok) return checked;
   if (isClaudeCommand(checked.value)) {
     return {
@@ -197,7 +197,7 @@ export function checkMessage(input: unknown, snapshot: IndexSnapshot | undefined
   if (OWN_NAMES.has(nameKey(to.trim()))) return { ok: false, error: 'pitwall’s own sessions can’t be messaged.' };
   const addressable = checkTo(to);
   if (!addressable.ok) return addressable;
-  const text = checkText(input.message, SUPERVISOR_MESSAGE_MAX, 'message');
+  const text = checkText(input.message, SUPERVISOR_PROPOSAL_MAX, 'message');
   if (!text.ok) return text;
   // Claude Code's preview of the message: anything but the message or its start could carry text
   // the card never shows (W115's review).
@@ -474,7 +474,7 @@ export function createResumeSessionTool(sources: SupervisorActionSources): McpTo
       type: 'object',
       properties: {
         id: { type: 'string', description: 'The session’s id, as list_sessions gives it.' },
-        message: { type: 'string', description: `The whole message, at most ${SUPERVISOR_MESSAGE_MAX.toLocaleString('en-US')} characters.` },
+        message: { type: 'string', description: `The whole message, at most ${SUPERVISOR_PROPOSAL_MAX.toLocaleString('en-US')} characters.` },
       },
       required: ['id', 'message'],
       additionalProperties: false,
@@ -581,7 +581,7 @@ export async function decide(sources: SupervisorActionSources, id: string, decis
       // Rebuilt from what the card showed, or your edit: never a field the card didn't show.
       const next = messageInput(approval.to, decision.decision === 'edit' ? decision.text : approval.text);
       if (decision.decision === 'edit') {
-        const text = checkText(decision.text, SUPERVISOR_MESSAGE_MAX, 'message');
+        const text = checkText(decision.text, SUPERVISOR_PROPOSAL_MAX, 'message');
         if (!text.ok) return { status: 400, error: text.error };
       }
       const message = checkMessage(next, sources.snapshots.latest(), own);

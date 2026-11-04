@@ -2,7 +2,7 @@
 
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
-Last updated: 2026-11-04, on `m5.1/integration`: W86 (vite and happy-dom bump) merged ([#151](https://github.com/leggetter/pitwall/pull/151)); Phil chose the supervisor's options A and B, now W134 (longer messages) and W135 (attach a file). W134 next.
+Last updated: 2026-11-04, on `m5.1/supervisor-cap`: W134 (the supervisor takes longer messages, 100K) built and in review; W135 (attach a file in the supervisor's message box) next.
 
 ## Current milestone
 
@@ -25,7 +25,7 @@ Last updated: 2026-11-04, on `m5.1/integration`: W86 (vite and happy-dom bump) m
 
 ## Next, in order
 
-1. **W134 (the supervisor takes longer messages, 100K)** in a worktree, then a fresh review, merge, hand off. The row in `PLAN.md`'s "M5.1 work breakdown".
+1. **W134 (the supervisor takes longer messages, 100K):** in review on `m5.1/supervisor-cap`; a fresh review, then merge into `m5.1/integration`. The row in `PLAN.md`'s "M5.1 work breakdown".
 2. **W135 (attach a file in the supervisor's message box)**, the same way, after W134.
 3. **Phil runs the latest version and uses it:** `npm ci && npm run build` in the main checkout, restart 4518.
 4. **Then break the rest of M5.1 into work items** (work profiles, the Usage view with a run rate, the supervisor applying them; "M5.1 - Efficiency" in `PLAN.md`), with Phil.
