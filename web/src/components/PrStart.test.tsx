@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CLONE_PATH, resumePath, SPAWN_PATH, type IndexSnapshot, type PullRequestList, type PullRequestPlace, type PullRequestSummary, type SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import { AttachContext, type AttachEnv } from '../attach.js';
+import { shortenHome } from '../format.js';
 import type { StorageSource } from '../groupState.js';
 import { prKey } from '../prs.js';
 import { memoryNavigation } from '../selection.js';
@@ -137,7 +138,8 @@ const prRow = (each: PullRequestSummary) => main().querySelector<HTMLElement>(`l
 const startButton = (each: PullRequestSummary) => prRow(each)?.querySelector<HTMLButtonElement>('[data-start-pr]');
 const dialog = (name: string) => screen.getByRole('dialog', { name });
 const field = (name: 'Name' | 'First prompt') => within(dialog('New session')).getByRole('textbox', { name: name === 'Name' ? /^Name/ : name }) as HTMLInputElement | HTMLTextAreaElement;
-const directory = () => within(dialog('New session')).getByRole('combobox', { name: 'Directory' }) as HTMLSelectElement;
+/** Directory's field, which shows the chosen directory shortened, as its option reads. */
+const directory = () => within(dialog('New session')).getByRole('combobox', { name: 'Directory' }) as HTMLInputElement;
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -160,7 +162,7 @@ describe('New session for a PR row in a cloned repo', () => {
     expect(button.getAttribute('aria-haspopup')).toBe('dialog');
     expect(document.getElementById(button.getAttribute('aria-labelledby') ?? '')?.textContent ?? button.getAttribute('aria-label')).toBe('New session for #57');
     fireEvent.click(button);
-    expect(directory().value).toBe(DEMO);
+    expect(directory().value).toBe(shortenHome(DEMO));
     expect(field('Name').value).toBe('pr-57');
     expect(field('First prompt').value).toBe(`Review ${review.url}. Tell me what it changes and what you'd ask its author for, before you post anything on GitHub. It isn't my pull request: don't check out its branch or run any of its code without asking me first.`);
     // It didn't open the PR's view: the action is the row's control.
@@ -255,7 +257,7 @@ describe('Clone and start for a PR row in a repo that isn’t cloned', () => {
     // What trusting it lets the repo do, said plainly (W108).
     expect(notice.textContent).toContain("Trusting it lets the repo's own Claude Code settings, hooks and MCP servers run, so only trust a repo whose code you'd run.");
     expect(notice.querySelector('.command-chip')?.textContent).toBe(`cd ${DOCS} && claude`);
-    expect(directory().value).toBe(DOCS);
+    expect(directory().value).toBe(shortenHome(DOCS));
     expect(field('Name').value).toBe('pr-5');
     expect(field('First prompt').value).toBe(`Fix the failing checks on ${docs.url}.`);
     fireEvent.click(within(dialog('New session')).getByRole('button', { name: 'Start session' }));

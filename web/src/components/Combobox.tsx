@@ -1,7 +1,7 @@
 // An editable combobox with list autocomplete (docs/design-system.md, 4: Combobox; W70), after the
 // WAI-ARIA APG's "Editable Combobox With List Autocomplete": a text field whose list of suggestions
 // narrows as you type. The caller narrows them; this draws the field and the list, and handles the
-// keys. New session's "Another directory under a root…" field is built on it.
+// keys. New session's Directory field is built on it.
 //
 // - The field: role="combobox", aria-autocomplete="list", aria-expanded, aria-controls the listbox,
 //   and aria-activedescendant the highlighted option. Focus stays in the field throughout.
@@ -19,8 +19,14 @@
 //   when a submit puts focus on a field with a problem. Focus leaving the page, as when you switch
 //   windows, leaves it as it was, as a menu does; so does focus going to another form, which only the
 //   #uikit gallery's many dialogs do.
+// - selectOnFocus: focus, by Tab, a click or the dialog opening, selects the field's text, so typing
+//   replaces it, as for a field that shows a choice already made. The click's own mouseup is kept
+//   from putting the caret back.
+// - chevron: a select's chevron at the field's end, so it reads as a list to choose from as well as
+//   a field to type in. It's decoration: a click on it goes through to the field, which opens the list.
 
 import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type ReactNode, type Ref } from 'react';
+import { Icon } from './Icon.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
 import { isComposing } from '../composing.js';
 import { plainText } from '../format.js';
@@ -51,6 +57,10 @@ export interface ComboboxProps<T extends ComboboxOption> {
   announcement?: string | undefined;
   /** Open the list the first time the field takes focus, as when a choice reveals it and moves focus into it. */
   openOnMount?: boolean;
+  /** Select the text as the field takes focus, so typing replaces it: for a field that shows a choice already made. */
+  selectOnFocus?: boolean;
+  /** A select's chevron at the field's end, for a combobox that stands in for a select. */
+  chevron?: boolean;
   placeholder?: string | undefined;
   className?: string | undefined;
   /** While the dialog's action runs: aria-disabled and read-only, with the list shut. */
@@ -74,6 +84,8 @@ export function Combobox<T extends ComboboxOption>({
   status,
   announcement,
   openOnMount = false,
+  selectOnFocus = false,
+  chevron = false,
   placeholder,
   className,
   busy = false,
@@ -94,6 +106,9 @@ export function Combobox<T extends ComboboxOption>({
   const { open, active } = state;
   // openOnMount, until the field first takes focus.
   const openOnFocus = useRef(openOnMount);
+  // Set by a press on the field while it hasn't focus, so that click's mouseup doesn't put the caret
+  // back over the text focus selected.
+  const pressedToFocus = useRef(false);
   const box = useRef<HTMLDivElement>(null);
   const [announced, setAnnounced] = useState('');
   const list = useRef<HTMLUListElement>(null);
@@ -195,44 +210,56 @@ export function Combobox<T extends ComboboxOption>({
   };
 
   return (
-    <div ref={box} className={['combobox', className].filter(Boolean).join(' ')}>
-      <input
-        id={id}
-        ref={inputRef}
-        type="text"
-        className="field-input mono combobox-input"
-        role="combobox"
-        aria-label={label}
-        aria-autocomplete="list"
-        aria-expanded={shown}
-        aria-controls={listId}
-        aria-activedescendant={shown && highlighted >= 0 ? optionId(highlighted) : undefined}
-        autoComplete="off"
-        autoCapitalize="off"
-        spellCheck={false}
-        placeholder={placeholder}
-        value={value}
-        onChange={onChange}
-        onKeyDown={onKeyDown}
-        onClick={() => {
-          if (!busy && !latest.current.open) update({ open: true, active: -1 });
-        }}
-        onFocus={() => {
-          if (!openOnFocus.current) return;
-          openOnFocus.current = false;
-          update({ open: true, active: -1 });
-        }}
-        onBlur={(event) => {
-          const to = event.relatedTarget;
-          if (!(to instanceof Element) || box.current?.contains(to)) return;
-          const scope = box.current?.closest('form') ?? document.body;
-          if (scope.contains(to)) close();
-        }}
-        readOnly={busy}
-        aria-disabled={busy || undefined}
-        aria-invalid={invalid || undefined}
-        aria-describedby={describedBy}
-      />
+    <div ref={box} className={['combobox', chevron && 'combobox-chevroned', className].filter(Boolean).join(' ')}>
+      <span className="combobox-field">
+        <input
+          id={id}
+          ref={inputRef}
+          type="text"
+          className="field-input mono combobox-input"
+          role="combobox"
+          aria-label={label}
+          aria-autocomplete="list"
+          aria-expanded={shown}
+          aria-controls={listId}
+          aria-activedescendant={shown && highlighted >= 0 ? optionId(highlighted) : undefined}
+          autoComplete="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          placeholder={placeholder}
+          value={value}
+          onChange={onChange}
+          onKeyDown={onKeyDown}
+          onClick={() => {
+            if (!busy && !latest.current.open) update({ open: true, active: -1 });
+          }}
+          onMouseDown={(event) => {
+            pressedToFocus.current = selectOnFocus && document.activeElement !== event.currentTarget;
+          }}
+          onMouseUp={(event) => {
+            if (!pressedToFocus.current) return;
+            pressedToFocus.current = false;
+            event.preventDefault();
+          }}
+          onFocus={(event) => {
+            if (selectOnFocus) event.currentTarget.select();
+            if (!openOnFocus.current) return;
+            openOnFocus.current = false;
+            update({ open: true, active: -1 });
+          }}
+          onBlur={(event) => {
+            const to = event.relatedTarget;
+            if (!(to instanceof Element) || box.current?.contains(to)) return;
+            const scope = box.current?.closest('form') ?? document.body;
+            if (scope.contains(to)) close();
+          }}
+          readOnly={busy}
+          aria-disabled={busy || undefined}
+          aria-invalid={invalid || undefined}
+          aria-describedby={describedBy}
+        />
+        {chevron && <Icon name="select" className="select-icon" />}
+      </span>
       <div
         className="combobox-popup"
         hidden={!shown}

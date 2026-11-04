@@ -160,6 +160,7 @@ The work after M3, on its own integration branch, `m3.1/integration`, which merg
   - **Built as** W69, merged in [#74](https://github.com/leggetter/pitwall/pull/74).
 - **Directory autocomplete in New session** (Phil, 2026-10-27: "Having to enter from /Users is difficult UX."). Until W70, "Another directory under a root…" revealed a text field that took an absolute path.
   - **Phil's choice:** keep the select of the directories that have sessions, and make "Another directory under a root…" reveal an autocomplete that narrows as you type: "It allow a new session in a previously worked directory or you to choose another dir via autocomplete."
+  - **Replaced by W140** (New session's Directory is one typable combobox, Phil, 2026-11-04): the select and its "Another directory under a root…" are gone; see W140 in `PLAN.md`'s M5.1 work breakdown.
   - **Coordinator's calls:**
     - The server lists every directory to 3 levels below each root (`DIRECTORIES_PATH`), and the page narrows them itself, so typing makes no requests. On 2026-10-27 that was 1,601 under one of Phil's roots and 1,340 under the other, with hidden folders and `node_modules` left out.
     - The list skips symlinks and anything hidden, so it never leads outside a root. A spawn checks its directory as before.

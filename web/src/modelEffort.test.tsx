@@ -364,11 +364,12 @@ describe("New session's Model and Effort (W119)", () => {
     );
     await settle();
     const model = screen.getByLabelText(/^Model/) as HTMLSelectElement;
-    const directory = screen.getByLabelText('Directory') as HTMLSelectElement;
+    const directory = screen.getByRole('combobox', { name: 'Directory' }) as HTMLInputElement;
     const first = directory.value;
     expect(optionTexts(model)[0]).toBe('Default: Opus 5.5 (your Claude Code settings)');
-    const other = [...directory.options].map((option) => option.value).find((value) => value !== first && value.startsWith('/'))!;
-    fireEvent.change(directory, { target: { value: other } });
+    fireEvent.click(directory);
+    const other = within(screen.getByRole('listbox', { name: 'Directories' })).getAllByRole('option').find((option) => option.textContent !== first)!;
+    fireEvent.click(other);
     expect(optionTexts(model)[0]).toBe('Default');
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 300));

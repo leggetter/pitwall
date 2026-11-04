@@ -3471,6 +3471,22 @@ mark.match {
   flex-direction: column;
 }
 
+.combobox-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.combobox-field .combobox-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* A combobox that stands in for a select (W140): the select's chevron, and room for it. */
+.combobox-chevroned .combobox-input {
+  padding-right: var(--pw-space-8);
+}
+
 .combobox-popup {
   position: absolute;
   top: calc(100% + var(--pw-space-1));

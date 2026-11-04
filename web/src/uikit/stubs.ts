@@ -86,7 +86,7 @@ export interface StubOptions {
   /** What starting a session gets. `trust` is Claude Code refusing an untrusted directory. */
   spawn?: 'started' | 'trust' | 'failed' | 'starting';
   /**
-   * The directory list for New session's "Another directory under a root…" (W70). `loading` never
+   * The directory list for New session's Directory combobox (W70). `loading` never
    * answers; `empty` has none under the root; `many` has 312; `truncated` says the walk stopped early;
    * `failed` is a 500.
    */

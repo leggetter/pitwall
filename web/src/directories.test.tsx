@@ -10,6 +10,7 @@ import {
   parseDirectoryList,
   resolveTypedDirectory,
   typedDirectoryProblem,
+  withChoices,
 } from './directories.js';
 
 const CODE = '/Users/example/code';
@@ -189,6 +190,40 @@ describe('matching', () => {
   it('counts directories', () => {
     expect(directoryCount(1)).toBe('1 directory');
     expect(directoryCount(1340)).toBe('1,340 directories');
+  });
+});
+
+describe("the groups' directories and the roots, first (W140)", () => {
+  const roots = [CODE, OSS];
+  const listed = directoryOptions(LIST, roots).options;
+  const choices = [
+    { path: `${CODE}/pitwall`, label: '~/code/pitwall' },
+    { path: `${CODE}/pitwall/.worktrees/pitwall-test-wt`, label: '~/code/pitwall/.worktrees/pitwall-test-wt' },
+    { path: CODE, label: '~/code' },
+  ];
+  const merged = withChoices(choices, listed, roots);
+
+  it('come first, in their order, then the listed ones without them, taking "repo" from the list', () => {
+    expect(merged.slice(0, 3).map((option) => [option.label, option.repo, option.choice])).toEqual([
+      ['~/code/pitwall', true, 0],
+      ['~/code/pitwall/.worktrees/pitwall-test-wt', false, 1],
+      ['~/code', false, 2],
+    ]);
+    expect(merged).toHaveLength(listed.length + 2);
+    expect(merged.filter((option) => option.path === `${CODE}/pitwall`)).toHaveLength(1);
+    expect(matchDirectories(merged, '').shown.slice(0, 4).map((option) => option.label)).toEqual(['~/code/pitwall', '~/code/pitwall/.worktrees/pitwall-test-wt', '~/code', '~/code/outpost']);
+  });
+
+  it('win a tie but not a better match, and a root matches on its own name', () => {
+    const shown = (text: string) => matchDirectories(merged, text).shown.map((option) => option.label);
+    expect(shown('pitwall').slice(0, 2)).toEqual(['~/code/pitwall', '~/code/pitwall/.worktrees/pitwall-test-wt']);
+    expect(shown('pitwall-test')).toEqual(['~/code/pitwall/.worktrees/pitwall-test-wt']);
+    expect(shown('web')).toEqual(['~/code/pitwall/web']);
+    expect(shown('code')).toEqual(['~/code']);
+  });
+
+  it('leave out a choice under no root', () => {
+    expect(withChoices([{ path: '/elsewhere', label: '/elsewhere' }], [], roots)).toEqual([]);
   });
 });
 
