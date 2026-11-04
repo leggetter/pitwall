@@ -7,3 +7,6 @@ dist/
 .DS_Store
 scratch/
 .worktrees/
+
+# Claude Code settings for one person, not the repo
+.claude/settings.local.json
