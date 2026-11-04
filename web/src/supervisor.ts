@@ -379,7 +379,7 @@ export const NEW_CONVERSATION_LABEL = 'New conversation';
 export const NEW_CONVERSATION_CONFIRM = {
   question: 'Start a new conversation?',
   consequence:
-    "The supervisor stops, if it's running, and forgets this conversation: your next message or Start begins a new one, without what was said here. Its transcript stays on disk.",
+    "The supervisor stops, if it's running, and forgets this conversation, with any message of yours still waiting to be sent to it: your next message or Start begins a new one, without what was said here. Its transcript stays on disk.",
   confirm: 'Start new conversation',
   busy: 'Clearing…',
 } as const;

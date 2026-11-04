@@ -461,6 +461,11 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
       }
     }
     sessionId = resume;
+    // A new conversation: the last one's size and newest turn aren't this one's (W136's review).
+    if (resume === undefined) {
+      contextTokens = undefined;
+      lastTurnAt = undefined;
+    }
     if (resume !== undefined) {
       const holder = await holderOf(resume);
       if (closed) return { kind: 'closed' };
@@ -604,9 +609,8 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     if (cards > 0) {
       return `${cards === 1 ? 'A draft from this conversation waits' : `${cards} drafts from this conversation wait`} for you. Send or don't send ${cards === 1 ? 'it' : 'each one'} first, then start a new conversation.`;
     }
-    if (queue.length > 0) {
-      return `${queue.length === 1 ? 'Your message waits' : `Your ${queue.length} messages wait`} to be sent to this conversation. Press Start to send ${queue.length === 1 ? 'it' : 'them'} first, then start a new conversation.`;
-    }
+    // Your messages waiting don't refuse it (W136's review): a queue is only left while it's failed or
+    // off, where Start may fail again, so a refusal would leave no way out. The reset drops them.
     return undefined;
   }
 
@@ -948,6 +952,10 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
       contextTokens = undefined;
       approvals.forgetConversation();
       problem = undefined;
+      //   queue          your messages waiting, written to that conversation: dropped, as the
+      //                  confirmation says, rather than sent to a new one without what they answer
+      if (queue.length > 0) log(`${queue.length} queued ${queue.length === 1 ? 'message was' : 'messages were'} dropped with the conversation.`);
+      queue.length = 0;
       changed();
       const p = proc;
       if (p !== undefined && !p.exited) {

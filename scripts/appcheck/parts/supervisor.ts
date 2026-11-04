@@ -9,7 +9,7 @@
 // confirmed and refused, and a draft's text up to half the window (W136); and none with
 // --no-supervisor. Made-up example/* content only.
 
-import { NAMES, SUPERVISOR_APPROVALS, SUPERVISOR_QUEUED_REFUSAL } from '../fixtures.js';
+import { NAMES, SUPERVISOR_APPROVALS, SUPERVISOR_RACE_REFUSAL } from '../fixtures.js';
 import type { Part } from '../runner.js';
 import { focused, listHeading, openFromRow, openRepoList, repoLabels, VIEW, viewClose } from './_dom.js';
 
@@ -291,19 +291,19 @@ const part: Part = {
       await t.shot('new-done');
     });
 
-    await t.step('New conversation refused (W136): off while drafts wait, and the server’s reason when your message waits for a start', async () => {
+    await t.step('New conversation refused (W136): off while drafts wait, and the server’s reason when another tab started it', async () => {
       await t.fresh({ search: '?view=all&supervisor', supervisor: 'idle', approvals: true });
       await page.waitFor('two cards', `${CARDS}.length === 2`);
       t.expectEqual(await page.evaluate(`${NEW}.getAttribute('aria-disabled')`), 'true', 'off while drafts wait');
-      await t.fresh({ search: '?view=all&supervisor', supervisor: 'failed', supervisorQueued: true });
+      await t.fresh({ search: '?view=all&supervisor', supervisor: 'failed', supervisorRaced: true });
       await page.waitFor('the failed alert', `!!${SVIEW}?.querySelector('.supervisor-alert')`);
       await page.click('New conversation', NEW);
       await page.waitFor('the confirmation', `!!${CONFIRM_BOX}`);
-      t.allow(/\/api\/supervisor\/new-conversation$/, 'the 409 New conversation gets while a message waits');
+      t.allow(/\/api\/supervisor\/new-conversation$/, 'the 409 New conversation gets once another tab started it');
       await page.click('Start new conversation', confirmButton('Start new conversation'));
       await page.waitFor('its refusal', `!${CONFIRM_BOX} && !!${SVIEW}.querySelector('[data-supervisor-new-confirm] [role="alert"]')`);
       t.expectEqual(records.newConversations, [409], 'asked once, and refused');
-      t.expectEqual(await page.evaluate(`${SVIEW}.querySelector('[data-supervisor-new-confirm] [role="alert"]').textContent`), `Couldn't start a new conversation. ${SUPERVISOR_QUEUED_REFUSAL}`, 'saying why, in pitwall’s words');
+      t.expectEqual(await page.evaluate(`${SVIEW}.querySelector('[data-supervisor-new-confirm] [role="alert"]').textContent`), `Couldn't start a new conversation. ${SUPERVISOR_RACE_REFUSAL}`, 'saying why, in pitwall’s words');
       t.expect(await page.evaluate<boolean>(`document.activeElement === ${NEW}`), 'focus back on the button');
       await t.shot('new-refused');
     });

@@ -160,11 +160,13 @@ export function SupervisorView({ state, onClose, layout = 'overlay', compact = f
   const [sent, setSent] = useState(0);
   const active = status === 'working' || status === 'starting';
   // Which conversation is shown (W136): a new one after New conversation here, or when the snapshot's
-  // session id goes away, as another tab's New conversation does, so the one left is never shown again.
+  // session id goes away or changes, as another tab's New conversation does (a tab that missed the
+  // snapshot without one, after a sleep, sees it change straight to the new id), so the one left is
+  // never shown again.
   const [generation, setGeneration] = useState(0);
   const shownSession = useRef(state.sessionId);
   useEffect(() => {
-    if (shownSession.current !== undefined && state.sessionId === undefined) setGeneration((count) => count + 1);
+    if (shownSession.current !== undefined && state.sessionId !== shownSession.current) setGeneration((count) => count + 1);
     shownSession.current = state.sessionId;
   }, [state.sessionId]);
 

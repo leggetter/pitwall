@@ -749,22 +749,41 @@ describe('New conversation (W136)', () => {
     expect(supervisor.state().sessionId).toBe(SESSION);
   });
 
-  it('is refused while it’s held, and while your messages wait for this conversation', async () => {
+  it('is refused while it’s held', async () => {
     const held = harness({ record: { sessionId: SESSION, promptVersion: 1 } });
     held.rows.push({ sessionId: SESSION, shortId: 'pt136bg1', name: 'pitwall-test-holder', kind: 'background', cwd: '/made-up/work/repo', pid: 4242 } as AgentRow);
     expect((await held.supervisor.start()).kind).toBe('held');
     expect(await held.supervisor.newConversation()).toMatchObject({ kind: 'refused', error: expect.stringContaining("Another session is running the supervisor's conversation") });
     expect(held.store.current()).toEqual({ sessionId: SESSION, promptVersion: 1 });
 
-    const { supervisor, children } = harness();
+  });
+
+  it('drops your messages waiting when a resume keeps failing, so New conversation is a way out (W136’s review)', async () => {
+    // The resume (the second process) never answers its initialize request, so it fails as it starts.
+    const silentResume: Behaviour = (line, child) => (child === children[1] ? undefined : answersInitialize(line, child));
+    const { supervisor, children, store } = harness({ record: { sessionId: SESSION, promptVersion: 1 }, behaviour: silentResume });
     await supervisor.send('first');
     await supervisor.send('second');
     children[0]!.exit(1, null);
     await until(() => supervisor.state().status === 'failed');
-    expect(await supervisor.newConversation()).toEqual({
-      kind: 'refused',
-      error: 'Your message waits to be sent to this conversation. Press Start to send it first, then start a new conversation.',
-    });
+    expect(supervisor.state().error).toContain('Your message waits');
+    // Start resumes, and the resume fails as it starts again.
+    void supervisor.start();
+    await until(() => children.length === 2);
+    expect(children[1]!.args).toContain('--resume');
+    children[1]!.exit(1, null);
+    await until(() => supervisor.state().status === 'failed');
+    expect(children[1]!.messages()).toEqual([]);
+    expect(supervisor.state().error).toMatch(/couldn't resume .* Your message waits to be sent when it starts\.$/);
+    expect(await supervisor.newConversation()).toEqual({ kind: 'ok' });
+    expect(store.current()).toBeUndefined();
+    expect(supervisor.state().error).toBeUndefined();
+    // The next Start begins a new conversation, and sends neither message to it.
+    void supervisor.start();
+    await until(() => children.length === 3);
+    expect(children[2]!.args).not.toContain('--resume');
+    await until(() => supervisor.state().status === 'idle');
+    expect(children[2]!.messages()).toEqual([]);
   });
 
   it('is done at once while it’s off, with nothing to stop, and is closed once pitwall closes', async () => {

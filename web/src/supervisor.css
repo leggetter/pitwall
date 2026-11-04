@@ -104,8 +104,11 @@
  */
 .supervisor-approvals {
   flex: 0 1 auto;
-  /* Below its content's height, or it couldn't shrink at all: a flex item's minimum is its content. */
+  /* Below its content's height, or it couldn't shrink at all: a flex item's minimum is its content.
+     Hidden overflow, so squeezed below its heading on a very short window it never paints over the
+     box; its list scrolls inside it, so nothing else is cut. */
   min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: var(--pw-space-2);
@@ -122,6 +125,7 @@
 .supervisor-handoffs {
   flex: 0 1 auto;
   min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: var(--pw-space-1);

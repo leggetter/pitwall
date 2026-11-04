@@ -465,7 +465,8 @@ describe('its context and New conversation (W136)', () => {
   });
 
   it('a refusal says why, in pitwall’s words, and focus goes back to the button', async () => {
-    const reason = 'Your message waits to be sent to this conversation. Press Start to send it first, then start a new conversation.';
+    // Another tab pressed Start in between: a refusal this tab's snapshot didn't show.
+    const reason = 'The supervisor is starting. Start a new conversation once it has started.';
     const fetch = fakeServer({ page, post: () => ({ status: 409, body: { ok: false, error: reason } }) });
     renderDashboard(snap({ status: 'failed', approvals: [], error: 'Made up: it exited.' }), { fetch, search: '?view=all&supervisor' });
     await settle();

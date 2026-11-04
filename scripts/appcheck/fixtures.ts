@@ -280,7 +280,8 @@ export const SUPERVISOR_FAILED_ERROR = 'The supervisor stopped as it started (ex
 
 /** What its error adds while a message of yours waits for its next start (W114's review), and what New conversation's refusal then says (W136). */
 export const SUPERVISOR_QUEUED_NOTE = 'Your message waits to be sent when it starts.';
-export const SUPERVISOR_QUEUED_REFUSAL = 'Your message waits to be sent to this conversation. Press Start to send it first, then start a new conversation.';
+/** New conversation's refusal when the snapshot didn't predict it: another tab pressed Start in between (W136). */
+export const SUPERVISOR_RACE_REFUSAL = 'The supervisor is starting. Start a new conversation once it has started.';
 
 /** The made-up context of a conversation with history (W136): "Context 84K" in its header. */
 export const SUPERVISOR_CONTEXT = 84_010;
@@ -324,8 +325,10 @@ export interface ResetOptions {
   approvals?: boolean | 'long' | 'resume';
   /** Whether its conversation has made-up turns already, with a page behind Load earlier, or none, a new one. */
   supervisorHistory?: boolean;
-  /** Whether a message of yours waits for its next start, as after it failed mid-turn: New conversation is refused (W136). */
+  /** Whether a message of yours waits for its next start, as after it failed mid-turn: New conversation drops it (W136's review). */
   supervisorQueued?: boolean;
+  /** Whether New conversation is refused as if another tab had pressed Start in between: a refusal the snapshot didn't show (W136). */
+  supervisorRaced?: boolean;
 }
 
 /** The made-up index: a snapshot, conversations, and what POSTs have changed since the last reset. */
@@ -376,6 +379,7 @@ export class World {
   #supervisorContext: number | undefined;
   /** A message of yours waits for its next start (W136's refusal). */
   #supervisorQueued = false;
+  #supervisorRaced = false;
   /** Each made-up turn's number: Stop and a reset end the one running, so its later steps do nothing. */
   #supervisorTurn = 0;
 
@@ -423,6 +427,7 @@ export class World {
     this.#supervisorTurnAt = history ? this.#ago(4) : undefined;
     this.#supervisorContext = history ? SUPERVISOR_CONTEXT : undefined;
     this.#supervisorQueued = options.supervisorQueued ?? false;
+    this.#supervisorRaced = options.supervisorRaced ?? false;
   }
 
   // --- The supervisor (W114) ---------------------------------------------------------------------
@@ -497,7 +502,7 @@ export class World {
 
   /**
    * New conversation (SUPERVISOR_NEW_CONVERSATION_PATH, W136), as src/supervisor/supervisor.ts answers:
-   * refused, with its reason, while it's held, starting or working, while drafts or your messages wait;
+   * refused, with its reason, while it's held, starting or working, while drafts wait, your messages waiting dropped;
    * otherwise off, with the conversation, its last turn, its context and its hand-offs gone, and this
    * run's cost kept.
    */
@@ -507,7 +512,8 @@ export class World {
     if (this.#supervisor === 'starting') return { result: 'refused', error: 'The supervisor is starting. Start a new conversation once it has started.' };
     if (this.#supervisor === 'working') return { result: 'refused', error: 'The supervisor is working on a turn of this conversation. Stop it, or wait for it to end, then start a new conversation.' };
     if (this.#approvals.length > 0) return { result: 'refused', error: `${this.#approvals.length} drafts from this conversation wait for you. Send or don't send each one first, then start a new conversation.` };
-    if (this.#supervisorQueued) return { result: 'refused', error: SUPERVISOR_QUEUED_REFUSAL };
+    if (this.#supervisorRaced) return { result: 'refused', error: SUPERVISOR_RACE_REFUSAL };
+    this.#supervisorQueued = false;
     this.#supervisorTurn += 1;
     this.#supervisor = 'off';
     this.#supervisorEntries = [];
