@@ -307,13 +307,13 @@ describe('what a tab narrows to its root', () => {
     switchTo('~/personal');
     fireEvent.click(screen.getByRole('button', { name: 'New session' }));
     const dialog = screen.getByRole('dialog', { name: 'New session' });
-    const directory = within(dialog).getByRole('combobox', { name: 'Directory' }) as HTMLSelectElement;
-    expect([...directory.options].map((option) => option.textContent)).toEqual(['~/personal/blog', '~/personal', 'Another directory under a root…']);
+    const directory = within(dialog).getByRole('combobox', { name: 'Directory' }) as HTMLInputElement;
+    expect(directory.value).toBe('~/personal/blog');
+    fireEvent.click(directory);
+    expect(within(within(dialog).getByRole('listbox', { name: 'Directories' })).getAllByRole('option').map((option) => option.textContent)).toEqual(['~/personal/blog', '~/personal']);
     expect(within(dialog).getByText('Under ~/personal.')).toBeTruthy();
 
-    fireEvent.change(directory, { target: { value: directory.options[2]!.value } });
-    const path = within(dialog).getByRole('combobox', { name: 'Directory path' });
-    fireEvent.change(path, { target: { value: at(WORK, 'api') } });
+    fireEvent.change(directory, { target: { value: at(WORK, 'api') } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
     expect(within(dialog).getByText('Use a directory under ~/personal. ~/work has its own tab.')).toBeTruthy();
   });
@@ -679,10 +679,10 @@ describe('one root inside another', () => {
     renderDashboard(nested());
     fireEvent.click(screen.getByRole('button', { name: 'New session' }));
     const dialog = screen.getByRole('dialog', { name: 'New session' });
-    const directory = within(dialog).getByRole('combobox', { name: 'Directory' }) as HTMLSelectElement;
-    expect([...directory.options].map((option) => option.textContent)).toEqual(['~/code/app', '~/code', 'Another directory under a root…']);
-    fireEvent.change(directory, { target: { value: directory.options[2]!.value } });
-    fireEvent.change(within(dialog).getByRole('combobox', { name: 'Directory path' }), { target: { value: at(INNER, 'new') } });
+    const directory = within(dialog).getByRole('combobox', { name: 'Directory' }) as HTMLInputElement;
+    fireEvent.click(directory);
+    expect(within(within(dialog).getByRole('listbox', { name: 'Directories' })).getAllByRole('option').map((option) => option.textContent)).toEqual(['~/code/app', '~/code']);
+    fireEvent.change(directory, { target: { value: at(INNER, 'new') } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
     expect(within(dialog).getByText('Use a directory under ~/code. ~/code/personal has its own tab.')).toBeTruthy();
   });

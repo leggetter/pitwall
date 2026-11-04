@@ -878,7 +878,7 @@ export const TERMINAL_OUTPUT =
 export const DIALOG_SNAPSHOT: Pick<IndexSnapshot, 'roots' | 'groups'> = { roots: [ROOT], groups: [APP_GROUP, JOBS_GROUP, NOTES_GROUP] };
 
 /**
- * The directories under the dialog's root, for "Another directory under a root…" (W70): the groups'
+ * The directories under the dialog's root, for New session's Directory combobox (W70): the groups'
  * repos and some folders around them, three levels deep at most, as the server lists them.
  */
 export const DIALOG_DIRECTORIES: DirectoryList = {

@@ -83,6 +83,16 @@ function fill(dialog: HTMLElement, fields: { prompt?: string; name?: string }) {
   if (fields.name !== undefined) fireEvent.change(within(dialog).getByLabelText(/^Name/), { target: { value: fields.name } });
 }
 
+const directory = (dialog: HTMLElement) => within(dialog).getByRole('combobox', { name: 'Directory' }) as HTMLInputElement;
+
+/** Types `text` in Directory, then accepts the first option it offers, as ↓ and Enter do. */
+function chooseDirectory(dialog: HTMLElement, text: string) {
+  const input = directory(dialog);
+  fireEvent.change(input, { target: { value: text } });
+  fireEvent.keyDown(input, { key: 'ArrowDown' });
+  fireEvent.keyDown(input, { key: 'Enter' });
+}
+
 async function submit(dialog: HTMLElement) {
   fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
   await settle();
@@ -101,15 +111,16 @@ describe('New session: the dialog', () => {
     const dialog = openDialog();
 
     expect(dialog.getAttribute('aria-modal')).toBe('true');
-    const picker = within(dialog).getByLabelText('Directory') as HTMLSelectElement;
+    const picker = directory(dialog);
     expect(document.activeElement).toBe(picker);
-    expect([...picker.options].map((option) => [option.value, option.textContent])).toEqual([
-      [REPO, '~/code/demo-app'],
-      [OTHER_REPO, '~/code/demo-api'],
-      [ROOT, '~/code'],
-      ['\u0000other', 'Another directory under a root…'],
+    expect(picker.value).toBe('~/code/demo-app');
+    fireEvent.click(picker);
+    // This fake server has no directory list: the groups' directories and the root alone.
+    expect(within(within(dialog).getByRole('listbox', { name: 'Directories' })).getAllByRole('option').map((option) => option.textContent)).toEqual([
+      '~/code/demo-app',
+      '~/code/demo-api',
+      '~/code',
     ]);
-    expect(picker.value).toBe(REPO);
     expect(within(dialog).getByText('Under ~/code.')).toBeTruthy();
   });
 
@@ -267,7 +278,8 @@ describe('New session: starting one', () => {
     const server = fakeServer(started);
     const { update } = renderDashboard(server);
     const dialog = openDialog();
-    fireEvent.change(within(dialog).getByLabelText('Directory'), { target: { value: OTHER_REPO } });
+    chooseDirectory(dialog, 'api');
+    expect(directory(dialog).value).toBe('~/code/demo-api');
     fill(dialog, { prompt: 'Reply with: ready', name: 'pitwall-test-spawn' });
     fireEvent.change(within(dialog).getByLabelText(/^Model/), { target: { value: 'haiku' } });
     await submit(dialog);
@@ -332,8 +344,7 @@ describe('New session: starting one', () => {
     await submit(dialog);
 
     dialog = openDialog();
-    fireEvent.change(within(dialog).getByLabelText('Directory'), { target: { value: '\u0000other' } });
-    fireEvent.change(within(dialog).getByLabelText('Directory path'), { target: { value: `  ${ROOT}/new-thing  ` } });
+    fireEvent.change(directory(dialog), { target: { value: `  ${ROOT}/new-thing  ` } });
     fireEvent.change(within(dialog).getByLabelText(/^Model/), { target: { value: '\u0000other' } });
     fireEvent.change(within(dialog).getByLabelText('Model alias or full name'), { target: { value: 'claude-haiku-4-5' } });
     fill(dialog, { prompt: 'second' });
@@ -359,7 +370,7 @@ describe('New session: starting one', () => {
     expect(within(dialog).getByText(/Letters, digits, spaces/)).toBeTruthy();
 
     fill(dialog, { name: '' });
-    fireEvent.change(within(dialog).getByLabelText('Directory'), { target: { value: '\u0000other' } });
+    fireEvent.change(directory(dialog), { target: { value: '' } });
     await submit(dialog);
     expect(within(dialog).getByText('Choose a directory.')).toBeTruthy();
     for (const [path, problem] of [
@@ -368,10 +379,10 @@ describe('New session: starting one', () => {
       ['/Users/example/codex', 'Use a directory under ~/code.'],
       ['/etc', 'Use a directory under ~/code.'],
     ]) {
-      fireEvent.change(within(dialog).getByLabelText('Directory path'), { target: { value: path } });
+      fireEvent.change(directory(dialog), { target: { value: path } });
       expect(within(dialog).getByText(problem as string)).toBeTruthy();
     }
-    fireEvent.change(within(dialog).getByLabelText('Directory path'), { target: { value: `${REPO}/sub` } });
+    fireEvent.change(directory(dialog), { target: { value: `${REPO}/sub` } });
 
     fireEvent.change(within(dialog).getByLabelText(/^Model/), { target: { value: '\u0000other' } });
     await submit(dialog);

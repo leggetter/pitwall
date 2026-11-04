@@ -72,24 +72,24 @@ function field<T extends HTMLElement>(root: HTMLElement, label: string): Promise
   });
 }
 
+/** `directory` is typed in Directory, then its first option chosen; `path` is typed and left as typed. */
 async function fill(root: HTMLElement, values: { directory?: string; path?: string; name?: string; model?: string; alias?: string; prompt?: string }) {
-  if (values.directory) choose(await field<HTMLSelectElement>(root, 'Directory'), values.directory);
-  if (values.path !== undefined) type(await element<HTMLInputElement>(root, 'input[aria-label="Directory path"]'), values.path);
+  if (values.directory) await directoryList(root, values.directory, values.directory, ['ArrowDown', 'Enter']);
+  if (values.path !== undefined) type(await field<HTMLInputElement>(root, 'Directory'), values.path);
   if (values.name !== undefined) type(await field<HTMLInputElement>(root, 'Name'), values.name);
   if (values.model) choose(await field<HTMLSelectElement>(root, 'Model'), values.model);
   if (values.alias !== undefined) type(await element<HTMLInputElement>(root, 'input[aria-label="Model alias or full name"]'), values.alias);
   if (values.prompt !== undefined) type(await field<HTMLTextAreaElement>(root, 'First prompt'), values.prompt);
 }
 
-const OTHER_DIRECTORY = 'Another directory under a root…';
-
 /**
- * Chooses "Another directory under a root…", which reveals the combobox with focus in it, waits for
- * `ready` inside the dialog, then types `typed` and presses `keys` there, as a person would (W70).
+ * Clicks in Directory, which opens its list, waits for `ready` inside the dialog, then types `typed`
+ * and presses `keys` there, as a person would (W70, W140).
  */
-async function another(root: HTMLElement, ready: string, typed?: string, keys: string[] = []): Promise<HTMLInputElement> {
-  choose(await field<HTMLSelectElement>(root, 'Directory'), OTHER_DIRECTORY);
-  const input = await element<HTMLInputElement>(root, 'input[role="combobox"]');
+async function directoryList(root: HTMLElement, ready: string, typed?: string, keys: string[] = []): Promise<HTMLInputElement> {
+  const input = await field<HTMLInputElement>(root, 'Directory');
+  input.focus();
+  input.click();
   await text(root, ready);
   // A moment between each, as between a person's keys, so each sees what the last one did.
   const next = () => new Promise((resolve) => setTimeout(resolve, 16));
@@ -186,48 +186,49 @@ const DIALOG_CASES: DialogCase[] = [
   },
   {
     title: 'A typed directory and model',
-    note: 'The two choices that reveal a field.',
-    run: (root) => fill(root, { directory: OTHER_DIRECTORY, path: `${ROOT}/pitwall-test-new-dir`, model: 'Other…', alias: 'sonnet', prompt: PROMPT }),
+    note: 'A directory typed in Directory, not chosen from its list, and the Model choice that reveals a field.',
+    run: (root) => fill(root, { path: `${ROOT}/pitwall-test-new-dir`, model: 'Other…', alias: 'sonnet', prompt: PROMPT }),
   },
   {
-    title: 'Another directory: the list',
-    note: 'Choosing "Another directory under a root…" reveals the combobox, with focus in it and its list open: the directories under the root, three levels down, repos marked, shallower first. ↓ ↑ move, Enter or a click chooses, Escape closes the list and a second closes the dialog, Tab leaves without choosing. A long path is cut in the middle.',
-    run: (root) => another(root, '~/code/pitwall-test-api'),
+    title: 'Directory: the list',
+    note: "A click in the field, or ↓, opens its list. While the field shows the chosen directory, the list offers every one, as a select would: the groups' directories and the root first, then the directories under the root, three levels down, repos marked, shallower first. ↓ ↑ move, Enter or a click chooses, Escape closes the list and a second closes the dialog, Tab leaves without choosing. A long path is cut in the middle.",
+    run: (root) => directoryList(root, '~/code/pitwall-test-api'),
   },
   {
-    title: 'Another directory: narrowed, one highlighted',
-    note: 'Every typed term must be in the path under the root, or in the whole path when it starts with ~ or /. A last segment that is the text comes first, then one that starts with it. ↓ highlights an option; the field keeps focus. Enter or a click puts it in the field as the shortened path, and the request sends the absolute one. With nothing matching, a typed path still works, as before.',
-    run: (root) => another(root, '~/code/pitwall-test-api', 'app', ['ArrowDown', 'ArrowDown']),
+    title: 'Directory: narrowed, one highlighted',
+    note: "Focus selects the chosen directory's text, so typing replaces it. Every typed term must be in the path under the root, or in the whole path when it starts with ~ or /. A last segment that is the text comes first, then one that starts with it, the groups' directories first on a tie. ↓ highlights an option; the field keeps focus. Enter or a click puts it in the field as the shortened path, and the request sends the absolute one. With nothing matching, a typed path still works, as before.",
+    run: (root) => directoryList(root, '~/code/pitwall-test-api', 'app', ['ArrowDown', 'ArrowDown']),
   },
   {
-    title: 'Another directory: loading',
-    note: 'The list is fetched once per opening of the dialog, the first time this is chosen. Typing narrows it in the page, with no requests.',
+    title: 'Directory: loading',
+    note: "The list is fetched once per opening of the dialog, as it opens. The groups' directories and the root are there meanwhile. Typing narrows it in the page, with no requests.",
     options: { directories: 'loading' },
     waited: 'shown',
-    run: (root) => another(root, DIRECTORY_TEXT.loading),
+    run: (root) => directoryList(root, DIRECTORY_TEXT.loading),
   },
   {
-    title: 'Another directory: many',
+    title: 'Directory: many',
     note: 'The best 50, then how many there are. A screen reader hears the count a moment after the typing stops.',
     options: { directories: 'many' },
-    run: (root) => another(root, DIRECTORY_TEXT.narrow),
+    run: (root) => directoryList(root, DIRECTORY_TEXT.narrow),
   },
   {
-    title: 'Another directory: none to list',
+    title: 'Directory: none under the root',
+    note: "The groups' directories and the root are still offered.",
     options: { directories: 'empty' },
-    run: (root) => another(root, DIRECTORY_TEXT.empty),
+    run: (root) => directoryList(root, '~/code'),
   },
   {
-    title: 'Another directory: not every one listed',
+    title: 'Directory: not every one listed',
     note: 'The server stops a root at 5,000 directories or after 2 seconds.',
     options: { directories: 'truncated' },
-    run: (root) => another(root, DIRECTORY_TEXT.truncated),
+    run: (root) => directoryList(root, DIRECTORY_TEXT.truncated),
   },
   {
-    title: "Another directory: couldn't list them",
-    note: 'The field still takes a typed path, with the hint linked to it.',
+    title: "Directory: couldn't list them",
+    note: "The groups' directories and the root are still offered, and the field takes a typed path, with the hint linked to it.",
     options: { directories: 'failed' },
-    run: (root) => another(root, DIRECTORY_TEXT.failed, '~/code/pitwall-test-new-dir'),
+    run: (root) => directoryList(root, DIRECTORY_TEXT.failed, '~/code/pitwall-test-new-dir'),
   },
   {
     title: 'Submitted empty',
@@ -240,7 +241,7 @@ const DIALOG_CASES: DialogCase[] = [
   {
     title: 'Every field wrong',
     run: async (root) => {
-      await fill(root, { directory: OTHER_DIRECTORY, path: 'pitwall-test-relative', name: '-pitwall test ', model: 'Other…', alias: 'not a model!' });
+      await fill(root, { path: 'pitwall-test-relative', name: '-pitwall test ', model: 'Other…', alias: 'not a model!' });
       await press(root, 'Start session');
       await until('four problems', () => root.querySelectorAll('.field-problem').length === 4);
     },

@@ -8,7 +8,8 @@ import { API_SERVER, CODE, DEMO_APP, NAMES } from '../fixtures.js';
 import type { Case, Part } from '../runner.js';
 import {
   attachStatus,
-  chooseOption,
+  chooseDirectory,
+  shortPath,
   DIALOG,
   dialogButton,
   dialogName,
@@ -61,7 +62,7 @@ async function start(t: Case, name: string, dir: string): Promise<void> {
   const { page } = t;
   await page.click('New session', headerButton('New session'));
   await page.waitFor('the New session dialog', `${dialogName} === 'New session'`);
-  t.expectEqual(await page.evaluate(chooseOption(field('Directory'), dir)), dir, 'the directory chosen');
+  t.expectEqual(await chooseDirectory(t, field('Directory'), dir), shortPath(dir), 'the directory chosen');
   await page.click('Name', field('Name'));
   await page.type(name);
   await page.click('First prompt', field('First prompt'));

@@ -1,6 +1,6 @@
-// New session's directory autocomplete (W70): "Another directory under a root…" reveals a combobox
-// of the directories under the roots, fetched once per opening, and narrowed as you type. The WAI-ARIA
-// APG editable combobox with list autocomplete, through the real dialog. Made-up directories only.
+// New session's Directory combobox (W70, W140): the groups' directories and the roots first, then the
+// directories under the roots, fetched once per opening, and narrowed as you type. The WAI-ARIA APG
+// editable combobox with list autocomplete, through the real dialog. Made-up directories only.
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { DIRECTORIES_PATH, SPAWN_PATH, type DirectoryList, type IndexSnapshot } from '../../../src/shared/protocol.js';
@@ -12,7 +12,6 @@ import { DIRECTORY_TEXT, NewSessionDialog } from './NewSessionDialog.js';
 const API_KEY = 'k'.repeat(43);
 const CODE = '/Users/example/code';
 const OSS = '/Users/example/oss';
-const OTHER = '\u0000other';
 
 const SNAPSHOT: Pick<IndexSnapshot, 'roots' | 'groups'> = {
   roots: [CODE],
@@ -73,11 +72,18 @@ function renderDialog(fetch: FetchLike, props: { snapshot?: Pick<IndexSnapshot, 
   return { ...result, onClose, onStarted, dialog: screen.getByRole('dialog', { name: 'New session' }) };
 }
 
+const directory = (dialog: HTMLElement) => within(dialog).getByRole('combobox', { name: 'Directory' }) as HTMLInputElement;
+
+/** The field, emptied, as when you select its text and delete it: the list opens with every option. */
 async function reveal(dialog: HTMLElement): Promise<HTMLInputElement> {
-  fireEvent.change(within(dialog).getByLabelText('Directory'), { target: { value: OTHER } });
   await settle();
-  return within(dialog).getByRole('combobox', { name: 'Directory path' }) as HTMLInputElement;
+  const input = directory(dialog);
+  fireEvent.change(input, { target: { value: '' } });
+  return input;
 }
+
+/** SNAPSHOT's group and root first, then the rest of LIST, shallower first. */
+const ALL = ['~/code/demo-app, repo', '~/code', '~/code/demo-api, repo', '~/code/notes', '~/code/demo-app/web', '~/code/notes/<img src=x>'];
 
 const listbox = (dialog: HTMLElement) => within(dialog).getByRole('listbox', { hidden: true });
 const optionLabels = (dialog: HTMLElement) => within(listbox(dialog)).queryAllByRole('option', { hidden: true }).map((option) => option.textContent);
@@ -89,8 +95,59 @@ const activeOption = (input: HTMLInputElement) => {
 };
 const key = (input: HTMLInputElement, name: string, options: Partial<KeyboardEventInit> = {}) => fireEvent.keyDown(input, { key: name, ...options });
 
-describe('Another directory under a root…', () => {
-  it('reveals an editable combobox, moves focus into it, and opens its list of the directories', async () => {
+describe('Directory', () => {
+  it('opens showing its first choice, focused with its text selected, so typing replaces it', async () => {
+    const server = fakeServer();
+    const { dialog } = renderDialog(server.fetch);
+    await settle();
+    const input = directory(dialog);
+    expect(input.value).toBe('~/code/demo-app');
+    expect(document.activeElement).toBe(input);
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, input.value.length]);
+    // Shut until asked, so it doesn't cover the fields under it as the dialog opens.
+    expect(isOpen(input)).toBe(false);
+    // A select's chevron says it's a list too; it's decoration, so a screen reader hears the combobox alone.
+    expect(input.closest('.combobox')?.querySelector('svg.select-icon')?.getAttribute('aria-hidden')).toBe('true');
+    // Untouched, it sends the first choice.
+    fireEvent.change(within(dialog).getByLabelText('First prompt'), { target: { value: 'go' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
+    await settle();
+    expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/demo-app`, prompt: 'go' }]);
+  });
+
+  it('offers every directory while it shows the chosen one, as a select would, and narrows once you type', async () => {
+    const server = fakeServer();
+    const { dialog } = renderDialog(server.fetch);
+    await settle();
+    const input = directory(dialog);
+    fireEvent.click(input);
+    expect(isOpen(input)).toBe(true);
+    expect(optionLabels(dialog)).toEqual(ALL);
+    fireEvent.change(input, { target: { value: 'notes' } });
+    expect(optionLabels(dialog)).toEqual(['~/code/notes', '~/code/notes/<img src=x>']);
+    // Chosen again, it shows every one again.
+    key(input, 'ArrowDown');
+    key(input, 'Enter');
+    expect(input.value).toBe('~/code/notes');
+    fireEvent.click(input);
+    expect(optionLabels(dialog)).toEqual(ALL);
+  });
+
+  it("puts the groups' directories first on a tie, and a better match first otherwise", async () => {
+    const server = fakeServer();
+    const { dialog } = renderDialog(server.fetch);
+    const input = await reveal(dialog);
+    // demo-app, a group's, and demo-api both start with it: the group's first.
+    fireEvent.change(input, { target: { value: 'demo' } });
+    expect(optionLabels(dialog)).toEqual(['~/code/demo-app, repo', '~/code/demo-api, repo', '~/code/demo-app/web']);
+    fireEvent.change(input, { target: { value: 'demo-api' } });
+    expect(optionLabels(dialog)).toEqual(['~/code/demo-api, repo']);
+    // A root matches on its own name.
+    fireEvent.change(input, { target: { value: 'code' } });
+    expect(optionLabels(dialog)).toEqual(['~/code']);
+  });
+
+  it("is an editable combobox whose list holds the groups' directories, the roots, then the directories under them", async () => {
     const server = fakeServer();
     const { dialog } = renderDialog(server.fetch);
     const input = await reveal(dialog);
@@ -101,13 +158,7 @@ describe('Another directory under a root…', () => {
     expect(listbox(dialog).getAttribute('aria-label')).toBe('Directories');
     expect(isOpen(input)).toBe(true);
     expect(popup(dialog).hidden).toBe(false);
-    expect(optionLabels(dialog)).toEqual([
-      '~/code/demo-api, repo',
-      '~/code/demo-app, repo',
-      '~/code/notes',
-      '~/code/demo-app/web',
-      '~/code/notes/<img src=x>',
-    ]);
+    expect(optionLabels(dialog)).toEqual(ALL);
     // Every name is text, never markup.
     expect(listbox(dialog).querySelector('img')).toBeNull();
     // Nothing highlighted until the arrows move.
@@ -123,11 +174,12 @@ describe('Another directory under a root…', () => {
     const input = await reveal(dialog);
     expect(isOpen(input)).toBe(true);
     expect(within(popup(dialog)).getByText(DIRECTORY_TEXT.loading)).toBeTruthy();
-    expect(listbox(dialog).hidden).toBe(true);
+    // The groups' directories and the root, which need no list, meanwhile.
+    expect(optionLabels(dialog)).toEqual(['~/code/demo-app', '~/code']);
     server.release();
     await settle();
     expect(within(popup(dialog)).queryByText(DIRECTORY_TEXT.loading)).toBeNull();
-    expect(optionLabels(dialog)).toHaveLength(5);
+    expect(optionLabels(dialog)).toEqual(ALL);
   });
 
   it('stops the request when the dialog closes before the list comes', async () => {
@@ -140,13 +192,16 @@ describe('Another directory under a root…', () => {
     expect(signal?.aborted).toBe(true);
   });
 
-  it('fetches the list once per opening of the dialog, when it is first chosen', async () => {
+  it('fetches the list once per opening of the dialog, as it opens', async () => {
     const server = fakeServer();
     const first = renderDialog(server.fetch);
-    expect(listGets(server.fetch)).toHaveLength(0);
-    await reveal(first.dialog);
-    fireEvent.change(within(first.dialog).getByLabelText('Directory'), { target: { value: `${CODE}/demo-app` } });
-    await reveal(first.dialog);
+    await settle();
+    expect(listGets(server.fetch)).toHaveLength(1);
+    const input = await reveal(first.dialog);
+    fireEvent.change(input, { target: { value: 'demo' } });
+    key(input, 'ArrowDown');
+    key(input, 'Enter');
+    fireEvent.change(input, { target: { value: 'notes' } });
     expect(listGets(server.fetch)).toHaveLength(1);
     first.unmount();
 
@@ -172,26 +227,26 @@ describe('Another directory under a root…', () => {
     const { dialog } = renderDialog(server.fetch);
     const input = await reveal(dialog);
     fireEvent.change(input, { target: { value: 'demo' } });
-    expect(optionLabels(dialog)).toEqual(['~/code/demo-api, repo', '~/code/demo-app, repo', '~/code/demo-app/web']);
+    expect(optionLabels(dialog)).toEqual(['~/code/demo-app, repo', '~/code/demo-api, repo', '~/code/demo-app/web']);
 
     key(input, 'ArrowDown');
-    expect(activeOption(input)?.textContent).toBe('~/code/demo-api, repo');
+    expect(activeOption(input)?.textContent).toBe('~/code/demo-app, repo');
     expect(activeOption(input)?.getAttribute('aria-selected')).toBe('true');
     key(input, 'ArrowDown');
     key(input, 'ArrowDown');
     expect(activeOption(input)?.textContent).toBe('~/code/demo-app/web');
     key(input, 'ArrowDown');
-    expect(activeOption(input)?.textContent).toBe('~/code/demo-api, repo');
+    expect(activeOption(input)?.textContent).toBe('~/code/demo-app, repo');
     key(input, 'ArrowUp');
     expect(activeOption(input)?.textContent).toBe('~/code/demo-app/web');
     key(input, 'ArrowUp');
-    expect(activeOption(input)?.textContent).toBe('~/code/demo-app, repo');
+    expect(activeOption(input)?.textContent).toBe('~/code/demo-api, repo');
     // Only one is selected at a time.
     expect(within(listbox(dialog)).getAllByRole('option', { hidden: true }).filter((option) => option.getAttribute('aria-selected') === 'true')).toHaveLength(1);
 
     const enter = fireEvent.keyDown(input, { key: 'Enter' });
     expect(enter).toBe(false);
-    expect(input.value).toBe('~/code/demo-app');
+    expect(input.value).toBe('~/code/demo-api');
     expect(isOpen(input)).toBe(false);
     expect(document.activeElement).toBe(input);
     await settle();
@@ -201,7 +256,7 @@ describe('Another directory under a root…', () => {
     fireEvent.change(within(dialog).getByLabelText('First prompt'), { target: { value: 'go' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
     await settle();
-    expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/demo-app`, prompt: 'go' }]);
+    expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/demo-api`, prompt: 'go' }]);
   });
 
   it('never submits on Enter, with or without a highlighted option; ⌘ and Ctrl + Enter still do', async () => {
@@ -231,7 +286,7 @@ describe('Another directory under a root…', () => {
     expect(activeOption(input)).toBeNull();
     key(input, 'Escape');
     key(input, 'ArrowDown');
-    expect(activeOption(input)?.textContent).toBe('~/code/demo-api, repo');
+    expect(activeOption(input)?.textContent).toBe('~/code/demo-app, repo');
     key(input, 'Escape');
     key(input, 'ArrowUp');
     expect(activeOption(input)?.textContent).toBe('~/code/notes/<img src=x>');
@@ -276,9 +331,9 @@ describe('Another directory under a root…', () => {
     expect(fireEvent.keyDown(input, { key: 'ArrowDown', isComposing: true })).toBe(true);
     expect(activeOption(input)).toBeNull();
     key(input, 'ArrowDown');
-    expect(activeOption(input)?.textContent).toBe('~/code/demo-api, repo');
+    expect(activeOption(input)?.textContent).toBe('~/code/demo-app, repo');
     expect(fireEvent.keyDown(input, { key: 'ArrowDown', isComposing: true })).toBe(true);
-    expect(activeOption(input)?.textContent).toBe('~/code/demo-api, repo');
+    expect(activeOption(input)?.textContent).toBe('~/code/demo-app, repo');
     expect(fireEvent.keyDown(input, { key: 'Enter', isComposing: true })).toBe(true);
     expect(fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 })).toBe(true);
     expect(input.value).toBe('demo');
@@ -292,7 +347,7 @@ describe('Another directory under a root…', () => {
     expect(screen.getByRole('dialog', { name: 'New session' })).toBe(dialog);
     // Composition over, the keys are the list's again.
     key(input, 'Enter');
-    expect(input.value).toBe('~/code/demo-api');
+    expect(input.value).toBe('~/code/demo-app');
     expect(onClose).not.toHaveBeenCalled();
     expect(spawns(server.fetch)).toEqual([]);
   });
@@ -303,7 +358,8 @@ describe('Another directory under a root…', () => {
       const server = fakeServer({ status: 200, body: { roots: [{ root: CODE, dirs: [{ path: `notes${space}` }], truncated: false }] } });
       const { dialog, unmount } = renderDialog(server.fetch);
       const input = await reveal(dialog);
-      key(input, 'ArrowDown');
+      // The last, after the group's directory and the root.
+      key(input, 'ArrowUp');
       key(input, 'Enter');
       expect(input.value).toBe(`~/code/notes${space}`);
       fireEvent.change(within(dialog).getByLabelText('First prompt'), { target: { value: 'go' } });
@@ -356,7 +412,7 @@ describe('Another directory under a root…', () => {
     const server = fakeServer();
     const { dialog } = renderDialog(server.fetch);
     const input = await reveal(dialog);
-    const option = within(listbox(dialog)).getAllByRole('option', { hidden: true })[3] as HTMLElement;
+    const option = within(listbox(dialog)).getAllByRole('option', { hidden: true })[4] as HTMLElement;
     // The press doesn't take focus out of the field.
     expect(fireEvent.mouseDown(option)).toBe(false);
     fireEvent.click(option);
@@ -372,14 +428,15 @@ describe('Another directory under a root…', () => {
     const server = fakeServer();
     const { dialog } = renderDialog(server.fetch);
     const input = await reveal(dialog);
-    key(input, 'ArrowDown');
+    key(input, 'ArrowUp');
+    key(input, 'ArrowUp');
     key(input, 'Enter');
-    expect(input.value).toBe('~/code/demo-api');
-    fireEvent.change(input, { target: { value: '~/code/demo-api/deep/er/than/three' } });
+    expect(input.value).toBe('~/code/demo-app/web');
+    fireEvent.change(input, { target: { value: '~/code/demo-app/web/deep/er/than/three' } });
     fireEvent.change(within(dialog).getByLabelText('First prompt'), { target: { value: 'go' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
     await settle();
-    expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/demo-api/deep/er/than/three`, prompt: 'go' }]);
+    expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/demo-app/web/deep/er/than/three`, prompt: 'go' }]);
   });
 
   it("with a root tab open, offers that root's directories alone (W38)", async () => {
@@ -391,8 +448,10 @@ describe('Another directory under a root…', () => {
     };
     const server = fakeServer({ status: 200, body: list });
     const { dialog } = renderDialog(server.fetch, { snapshot: { roots: [CODE, OSS], groups: [] }, tab: OSS });
+    await settle();
+    expect(directory(dialog).value).toBe('~/oss');
     const input = await reveal(dialog);
-    expect(optionLabels(dialog)).toEqual(['~/oss/blog, repo']);
+    expect(optionLabels(dialog)).toEqual(['~/oss', '~/oss/blog, repo']);
     expect(input.placeholder).toBe('~/oss/…');
   });
 
@@ -403,10 +462,23 @@ describe('Another directory under a root…', () => {
     expect(within(popup(dialog)).getByText(DIRECTORY_TEXT.truncated)).toBeTruthy();
   });
 
-  it('says when a root has no directories to list', async () => {
+  it("still offers the groups' directories and the root when the root has none to list", async () => {
     const server = fakeServer({ status: 200, body: { roots: [{ root: CODE, dirs: [], truncated: false }] } });
     const { dialog } = renderDialog(server.fetch);
     const input = await reveal(dialog);
+    expect(isOpen(input)).toBe(true);
+    expect(optionLabels(dialog)).toEqual(['~/code/demo-app', '~/code']);
+    expect(within(popup(dialog)).queryByText(DIRECTORY_TEXT.empty)).toBeNull();
+  });
+
+  it('says when there are no directories to list at all', async () => {
+    const server = fakeServer({ status: 200, body: { roots: [] } });
+    const { dialog } = renderDialog(server.fetch, { snapshot: { roots: [], groups: [] } });
+    await settle();
+    const input = directory(dialog);
+    // Nothing to choose, so it opens empty.
+    expect(input.value).toBe('');
+    fireEvent.click(input);
     expect(isOpen(input)).toBe(true);
     expect(within(popup(dialog)).getByText(DIRECTORY_TEXT.empty)).toBeTruthy();
   });
@@ -420,14 +492,14 @@ describe('Another directory under a root…', () => {
     const { dialog } = renderDialog(server.fetch);
     const input = await reveal(dialog);
     expect(optionLabels(dialog)).toHaveLength(50);
-    expect(within(popup(dialog)).getByText(`50 of 312. ${DIRECTORY_TEXT.narrow}`)).toBeTruthy();
+    expect(within(popup(dialog)).getByText(`50 of 314. ${DIRECTORY_TEXT.narrow}`)).toBeTruthy();
     // The combobox's own, not the files' status in the first prompt's field (W82).
     const status = within(input.closest<HTMLElement>('.combobox')!).getByRole('status');
     expect(status.getAttribute('aria-live')).toBe('polite');
     act(() => {
       vi.advanceTimersByTime(ANNOUNCE_DELAY_MS);
     });
-    expect(status.textContent).toBe(`50 of 312 directories. ${DIRECTORY_TEXT.narrow}`);
+    expect(status.textContent).toBe(`50 of 314 directories. ${DIRECTORY_TEXT.narrow}`);
 
     // Not on every key: only once the typing stops.
     fireEvent.change(input, { target: { value: 'project-0' } });
@@ -438,7 +510,7 @@ describe('Another directory under a root…', () => {
     act(() => {
       vi.advanceTimersByTime(ANNOUNCE_DELAY_MS - 100);
     });
-    expect(status.textContent).toBe(`50 of 312 directories. ${DIRECTORY_TEXT.narrow}`);
+    expect(status.textContent).toBe(`50 of 314 directories. ${DIRECTORY_TEXT.narrow}`);
     act(() => {
       vi.advanceTimersByTime(100);
     });
@@ -451,7 +523,8 @@ describe('Another directory under a root…', () => {
       const server = fakeServer(answer);
       const { dialog, unmount } = renderDialog(server.fetch);
       const input = await reveal(dialog);
-      expect(isOpen(input)).toBe(false);
+      // The groups' directories and the root, which need no list, are still offered.
+      expect(optionLabels(dialog)).toEqual(['~/code/demo-app', '~/code']);
       const hint = within(dialog).getByText(DIRECTORY_TEXT.failed);
       expect(input.getAttribute('aria-describedby')?.split(' ')).toContain(hint.id);
       fireEvent.change(input, { target: { value: '~/code/typed' } });

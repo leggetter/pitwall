@@ -8,6 +8,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SPAWN_PATH, type ConversationPage, type IndexSnapshot, type SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
+import { shortenHome as short } from '../format.js';
 import { newSessionDirectory } from '../spawn.js';
 import { group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
@@ -55,9 +56,14 @@ function renderAt(search: string, first: IndexSnapshot = snap()) {
 
 const settle = () => act(async () => {});
 const dialog = () => screen.getByRole('dialog', { name: 'New session' });
-const directory = () => within(dialog()).getByLabelText('Directory') as HTMLSelectElement;
+/** Directory's field, which shows the chosen directory shortened, as its option reads. */
+const directory = () => within(dialog()).getByRole('combobox', { name: 'Directory' }) as HTMLInputElement;
 const prompt = () => within(dialog()).getByLabelText('First prompt') as HTMLTextAreaElement;
-const values = () => [...directory().options].map((option) => option.value);
+/** The options Directory offers, opening its list. */
+const values = () => {
+  fireEvent.click(directory());
+  return within(within(dialog()).getByRole('listbox', { name: 'Directories' })).getAllByRole('option').map((option) => option.textContent);
+};
 
 async function openFromHeader() {
   fireEvent.click(screen.getByRole('button', { name: 'New session' }));
@@ -99,9 +105,9 @@ describe('+ New session with a session open (#139)', () => {
     renderAt(`?view=all&session=${id(1)}`);
     await settle();
     await openFromHeader();
-    expect(directory().value).toBe(API);
-    expect(values()[0]).not.toBe(API);
-    expect(values().filter((value) => value === API)).toHaveLength(1);
+    expect(directory().value).toBe(short(API));
+    expect(values()[0]).not.toBe(short(API));
+    expect(values().filter((value) => value === short(API))).toHaveLength(1);
     expect(prompt().value).toBe('');
     expect((within(dialog()).getByLabelText(/^Name/) as HTMLInputElement).value).toBe('');
   });
@@ -114,9 +120,9 @@ describe('+ New session with a session open (#139)', () => {
       fireEvent.keyDown(document.body, { key: 'n' });
     });
     await settle();
-    expect(directory().value).toBe(WORKTREE);
-    expect(values()[0]).toBe(WORKTREE);
-    expect(directory().options[0]?.textContent).toContain('.claude/worktrees/pitwall-test-wt');
+    expect(directory().value).toBe(short(WORKTREE));
+    expect(values()[0]).toBe(short(WORKTREE));
+    expect(values()[0]).toContain('.claude/worktrees/pitwall-test-wt');
     fireEvent.change(prompt(), { target: { value: 'A made-up first prompt.' } });
     fireEvent.click(within(dialog()).getByRole('button', { name: 'Start session' }));
     await settle();
@@ -130,7 +136,7 @@ describe('+ New session with a session open (#139)', () => {
     await settle();
     await openFromHeader();
     expect(directory().value).toBe(values()[0]);
-    expect(values()).not.toContain(WORKTREE);
+    expect(values()).not.toContain(short(WORKTREE));
   });
 
   it("starts where it did before when the session's directory has gone", async () => {
@@ -138,7 +144,7 @@ describe('+ New session with a session open (#139)', () => {
     await settle();
     await openFromHeader();
     expect(directory().value).toBe(values()[0]);
-    expect(values()).not.toContain(gone().cwd);
+    expect(values()).not.toContain(short(gone().cwd));
   });
 
   it('starts where it did before once the session is no longer listed, since pitwall cannot tell whether its directory is there', async () => {
@@ -149,7 +155,7 @@ describe('+ New session with a session open (#139)', () => {
     expect(document.getElementById('session-view')).toBeTruthy();
     await openFromHeader();
     expect(directory().value).toBe(values()[0]);
-    expect(values()).not.toContain(WORKTREE);
+    expect(values()).not.toContain(short(WORKTREE));
   });
 
   it('keeps the directory it opened with when the snapshot changes while it is open', async () => {
@@ -158,6 +164,6 @@ describe('+ New session with a session open (#139)', () => {
     await openFromHeader();
     update(snap([live(), inWorktree()]));
     await settle();
-    expect(directory().value).toBe(API);
+    expect(directory().value).toBe(short(API));
   });
 });
