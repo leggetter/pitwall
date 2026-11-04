@@ -6,6 +6,8 @@
 // - In the session view's line 2, always: "Context 85K" as meta text, or the badge, "Context 412K",
 //   over 200K, or "Context unavailable", each with an info button; and, over 200K, a note under line 2
 //   on what to do (ContextNote).
+// - In the supervisor's header (W136), the same item, with the supervisor's own info text, once its
+//   first call of the run has said how big it is.
 //
 // Colour is never the only signal: the number says how big, and the level is in the badge's hidden
 // text, its tooltip and the note.
@@ -29,8 +31,8 @@ export function ContextBadge({ tokens }: { tokens: number | undefined }) {
   );
 }
 
-/** The session view's line 2 item: the number, the badge over 200K, or "unavailable", with its info button. */
-export function ContextMeta({ tokens }: { tokens: number | undefined }) {
+/** The session view's line 2 item: the number, the badge over 200K, or "unavailable", with its info button, saying `info` (CONTEXT_INFO by default). */
+export function ContextMeta({ tokens, info = CONTEXT_INFO }: { tokens: number | undefined; info?: string }) {
   if (tokens === undefined) {
     return (
       <span className="session-view-context">
@@ -50,7 +52,7 @@ export function ContextMeta({ tokens }: { tokens: number | undefined }) {
           <span className="visually-hidden">{levelText(level)}</span>
         </Badge>
       )}
-      <InfoTip text={CONTEXT_INFO} className="session-view-info" />
+      <InfoTip text={info} className="session-view-info" />
     </span>
   );
 }

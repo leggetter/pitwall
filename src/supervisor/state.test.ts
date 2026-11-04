@@ -1,5 +1,5 @@
 // The supervisor's state file (M5, W113): the session id and the prompt's version, 0600, read strictly.
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -65,6 +65,25 @@ describe('supervisorStateFile()', () => {
     const folder = fresh();
     mkdirSync(path.join(folder, 'state.json'));
     expect(supervisorStateFile(folder).read()).toBeUndefined();
+  });
+
+  it('clear() removes the file, so none is read afterwards; with none there, it’s done too (W136)', () => {
+    const dir = fresh();
+    const store = supervisorStateFile(dir);
+    store.write({ sessionId: SESSION, promptVersion: 1 });
+    expect(store.clear()).toBe(true);
+    expect(store.read()).toBeUndefined();
+    expect(readdirSync(dir)).toEqual([]);
+    expect(store.clear()).toBe(true);
+  });
+
+  it('clear() fails soft when it can’t remove the file, and says so in pitwall’s words (W136)', () => {
+    const logs: string[] = [];
+    const dir = fresh();
+    // A folder in its place can't be unlinked.
+    mkdirSync(path.join(dir, 'state.json'));
+    expect(supervisorStateFile(dir, (message) => logs.push(message)).clear()).toBe(false);
+    expect(logs[0]).toContain('so the next run of pitwall may resume the conversation you left');
   });
 
   it('fails soft when it can’t write, and says so in pitwall’s words', () => {

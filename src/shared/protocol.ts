@@ -1928,6 +1928,13 @@ export interface SupervisorState {
    * one needs you. At most SUPERVISOR_HANDOFFS_MAX; absent when there are none.
    */
   handoffs?: SupervisorHandoff[];
+  /**
+   * How many tokens of context its newest call carried (W136), as SessionSummary.contextTokens counts
+   * a session's (W133): `input_tokens + cache_read_input_tokens + cache_creation_input_tokens` of the
+   * newest assistant message on its stream. Absent until its first call in this run, and after New
+   * conversation. The web UI flags it over CONTEXT_WARN_TOKENS and CONTEXT_HIGH_TOKENS.
+   */
+  contextTokens?: number;
 }
 
 /**
@@ -2039,6 +2046,15 @@ export const SUPERVISOR_START_PATH = '/api/supervisor/start';
 
 /** POST, no body: stop its running turn, with an `interrupt` control request. The same checks. */
 export const SUPERVISOR_INTERRUPT_PATH = '/api/supervisor/interrupt';
+
+/**
+ * POST, no body: New conversation (W136). Stops the supervisor if it runs and forgets the
+ * conversation on file, so the next message or Start begins a new one; it starts nothing itself. The
+ * old transcript stays on disk, and its session id stays pitwall's own. The same checks. 409 with
+ * `--no-supervisor`, and, with the reason, while it starts or a turn runs, while drafts or your
+ * messages wait for that conversation, or while it's 'held'.
+ */
+export const SUPERVISOR_NEW_CONVERSATION_PATH = '/api/supervisor/new-conversation';
 
 /** GET: the supervisor's conversation, a ConversationPage, paged with `before` as conversationPath() pages a session's. */
 export function supervisorConversationPath(before?: string): string {

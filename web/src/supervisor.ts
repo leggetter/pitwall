@@ -14,11 +14,14 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  CONTEXT_HIGH_TOKENS,
+  CONTEXT_WARN_TOKENS,
   PERMISSION_MODES,
   SUPERVISOR_INTERRUPT_PATH,
   SUPERVISOR_MESSAGE_MAX,
   SUPERVISOR_PROPOSAL_MAX,
   SUPERVISOR_MESSAGE_PATH,
+  SUPERVISOR_NEW_CONVERSATION_PATH,
   SUPERVISOR_START_PATH,
   supervisorApprovalPath,
   type ConversationEntry,
@@ -31,6 +34,7 @@ import {
   type SupervisorStatus,
 } from '../../src/shared/protocol.js';
 import type { ApiClient, ApiResult } from './api.js';
+import { formatTokens } from './context.js';
 import { couldNot, plainText, shortenHome } from './format.js';
 import { visibleString } from '../../src/shared/hiddenText.js';
 import { PR_PARAM, SESSION_PARAM, SUPERVISOR_PARAM, withoutParams, type HistoryMode } from './openSession.js';
@@ -225,7 +229,7 @@ function asHandoff(value: unknown): SupervisorHandoff | undefined {
  */
 export function asSupervisorState(value: unknown): SupervisorState | undefined {
   if (!isRecord(value)) return undefined;
-  const { status, sessionId, error, approvals, lastTurnAt, costUsd, handoffs } = value;
+  const { status, sessionId, error, approvals, lastTurnAt, costUsd, handoffs, contextTokens } = value;
   if (typeof status !== 'string' || !(STATUSES as readonly string[]).includes(status)) return undefined;
   const seen = new Set<string>();
   const kept = (Array.isArray(approvals) ? approvals : []).flatMap((each) => {
@@ -241,6 +245,8 @@ export function asSupervisorState(value: unknown): SupervisorState | undefined {
   if (typeof costUsd === 'number' && Number.isFinite(costUsd) && costUsd >= 0) state.costUsd = costUsd;
   const done = (Array.isArray(handoffs) ? handoffs.slice(-HANDOFFS_READ_MAX) : []).flatMap((each) => asHandoff(each) ?? []);
   if (done.length > 0) state.handoffs = done;
+  // Its context (W136): a whole number of tokens, or not shown.
+  if (typeof contextTokens === 'number' && Number.isSafeInteger(contextTokens) && contextTokens > 0) state.contextTokens = contextTokens;
   return state;
 }
 
@@ -363,6 +369,40 @@ export const STATUS_NOTES: Readonly<Record<SupervisorStatus, string>> = {
   held: "Another session has its conversation, so pitwall can't run it.",
   failed: "It stopped, or couldn't start.",
 };
+
+// --- New conversation (W136) ------------------------------------------------------------------------
+
+/** The header's button. */
+export const NEW_CONVERSATION_LABEL = 'New conversation';
+
+/** Its confirmation, in the page (4: Inline confirmation). */
+export const NEW_CONVERSATION_CONFIRM = {
+  question: 'Start a new conversation?',
+  consequence:
+    "The supervisor stops, if it's running, and forgets this conversation, with any message of yours still waiting to be sent to it: your next message or Start begins a new one, without what was said here. Its transcript stays on disk.",
+  confirm: 'Start new conversation',
+  busy: 'Clearing…',
+} as const;
+
+/** What a toast says once it's done: the view's empty state says the rest. */
+export const NEW_CONVERSATION_DONE = 'New conversation. Your next message, or Start, begins it.';
+
+/**
+ * Why New conversation is off, from the snapshot, for its tooltip, as the server would refuse it
+ * (src/supervisor/supervisor.ts); undefined while it can be pressed. The server checks again, and
+ * says why when the page couldn't know, as for your messages waiting for a start.
+ */
+export function newConversationBlocked(state: SupervisorState): string | undefined {
+  if (state.status === 'held') return 'Another session has its conversation. Free it first.';
+  if (state.status === 'starting') return 'It is starting. Wait until it has started.';
+  if (state.status === 'working') return 'It is working on a turn. Stop it, or wait for it to end.';
+  const cards = state.approvals.length;
+  if (cards > 0) return `${cards === 1 ? 'A draft waits' : `${cards} drafts wait`} for you from this conversation. Answer ${cards === 1 ? 'it' : 'them'} first.`;
+  return undefined;
+}
+
+/** The context gauge's info button (W136): what the number is, and what to do about it. */
+export const SUPERVISOR_CONTEXT_INFO = `The tokens of context its last call carried in this run, from what Claude Code reported: everything the model read again, cached or not. Every message sends all of it again. Flagged over ${formatTokens(CONTEXT_WARN_TOKENS)}, and in red over ${formatTokens(CONTEXT_HIGH_TOKENS)}: start a new conversation when you're done with this one.`;
 
 /** The repo list's item's status, visually hidden after its name: nothing for idle and off, which show nothing. */
 export function itemStatusText(status: SupervisorStatus): string | undefined {
@@ -555,6 +595,14 @@ export async function interruptSupervisor(api: ApiClient, signal?: AbortSignal):
   const result = await api.post(SUPERVISOR_INTERRUPT_PATH, {}, signal ? { signal } : {});
   if (result.kind === 'failed' && result.status === 409) return { kind: 'done' };
   return actionOutcome(result, 'stop its turn');
+}
+
+/**
+ * New conversation (W136): POST SUPERVISOR_NEW_CONVERSATION_PATH. The server stops it if it runs and
+ * forgets the conversation on file; a 409 says why not, in pitwall's words. Never rejects.
+ */
+export async function newSupervisorConversation(api: ApiClient, signal?: AbortSignal): Promise<SupervisorAction> {
+  return actionOutcome(await api.post(SUPERVISOR_NEW_CONVERSATION_PATH, {}, signal ? { signal } : {}), 'start a new conversation');
 }
 
 /** What each decision is, in the sentence a failure says. */

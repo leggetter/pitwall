@@ -2,7 +2,7 @@
 // answers as the test sets it. Test-only: tsconfig.build.json leaves src/test/ out of the build.
 import type { ConversationPage, SupervisorState } from '../shared/protocol.js';
 import { createApprovalQueue, type ApprovalQueue } from '../supervisor/approvals.js';
-import type { InterruptOutcome, Supervisor, SupervisorOutcome } from '../supervisor/supervisor.js';
+import type { InterruptOutcome, NewConversationOutcome, Supervisor, SupervisorOutcome } from '../supervisor/supervisor.js';
 
 export interface FakeSupervisor extends Supervisor {
   /** What send() was given, in order. */
@@ -15,6 +15,9 @@ export interface FakeSupervisor extends Supervisor {
   outcome: SupervisorOutcome;
   interruptOutcome: InterruptOutcome;
   interrupts: number;
+  /** What newConversation() answers (W136), and how many times it was called. */
+  newConversationOutcome: NewConversationOutcome;
+  newConversations: number;
   /** What mcpToken() answers: undefined as while no process runs. */
   token: string | undefined;
   /** What conversation() answers, by `before`. */
@@ -38,6 +41,8 @@ export function fakeSupervisor(token?: string, queue: ApprovalQueue = createAppr
     outcome: { kind: 'ok' },
     interruptOutcome: { kind: 'ok' },
     interrupts: 0,
+    newConversationOutcome: { kind: 'ok' },
+    newConversations: 0,
     token,
     pages: new Map(),
     closed: false,
@@ -61,6 +66,10 @@ export function fakeSupervisor(token?: string, queue: ApprovalQueue = createAppr
     interrupt() {
       fake.interrupts++;
       return fake.interruptOutcome;
+    },
+    async newConversation() {
+      fake.newConversations++;
+      return fake.newConversationOutcome;
     },
     mcpToken: () => fake.token,
     ownSessionIds: () => new Set(),

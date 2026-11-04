@@ -30,8 +30,8 @@ import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
 import '../relay.css';
 
-/** The note behind the info button: what a message does, in two sentences. */
-export const SUPERVISOR_BOX_NOTE = `Starts a turn on the supervisor's model, ${modelName(SUPERVISOR_MODEL)}, which counts against your plan's usage. It reads your sessions' recaps, and a session's conversation when you ask about it, and sends or starts nothing without your click.`;
+/** The note behind the info button: what a message does, and what it keeps (W136), in three sentences. */
+export const SUPERVISOR_BOX_NOTE = `Starts a turn on the supervisor's model, ${modelName(SUPERVISOR_MODEL)}, which counts against your plan's usage. It reads your sessions' recaps, and a session's conversation when you ask about it, and sends or starts nothing without your click. It keeps this conversation, long pastes included, until you start a new one.`;
 
 /** Why Send is aria-disabled, for its tooltip. */
 export const SUPERVISOR_SEND_EMPTY = 'Type a message to send it.';
