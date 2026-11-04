@@ -2,7 +2,7 @@
 
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
-Last updated: 2026-11-04, on `m5.1/integration`: W134 (the supervisor takes longer messages, 100K) merged ([#155](https://github.com/leggetter/pitwall/pull/155)) after a fresh review; W135 (attach a file in the supervisor's message box) next.
+Last updated: 2026-11-04, on `m5.1/integration`: W134 (the supervisor takes longer messages, 100K) merged ([#155](https://github.com/leggetter/pitwall/pull/155)) after a fresh review. Phil agreed W136 (the supervisor's context, visible and clearable, and taller cards), next, before W135 (attach a file in the supervisor's message box).
 
 ## Current milestone
 
@@ -25,8 +25,8 @@ Last updated: 2026-11-04, on `m5.1/integration`: W134 (the supervisor takes long
 
 ## Next, in order
 
-1. **W135 (attach a file in the supervisor's message box)** in a worktree, then a fresh review, merge, hand off. The row in `PLAN.md`'s "M5.1 work breakdown". The app check's fake server takes a message body up to 800 KiB now (W134), for a real send of a big file.
-2. **Phil decides whether the supervisor box's note says a long paste stays in its context** (#155's review, Info): `docs/design-system.md` says so; the note in the page doesn't yet.
+1. **W136 (the supervisor's context, visible and clearable, and taller cards)** on `m5.1/supervisor-context`: New conversation, a context gauge, the box's note, cards' text to half the window. Then a fresh review, merge. Phil agreed, 2026-11-04.
+2. **W135 (attach a file in the supervisor's message box)** in a worktree, then a fresh review, merge, hand off. The row in `PLAN.md`'s "M5.1 work breakdown". The app check's fake server takes a message body up to 800 KiB now (W134), for a real send of a big file.
 3. **Phil runs the latest version and uses it:** `npm ci && npm run build` in the main checkout, restart 4518.
 4. **Then break the rest of M5.1 into work items** (work profiles, the Usage view with a run rate, the supervisor applying them; "M5.1 - Efficiency" in `PLAN.md`), with Phil.
 5. **On 2026-11-09:** `npx tsx scripts/usage-report.ts --days 7` against the 10-20 to 10-29 figures, for the high-effort week; then one blog-editing session on Sonnet for Phil to judge (agreed; not the evals post).
