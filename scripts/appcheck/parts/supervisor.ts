@@ -6,9 +6,13 @@
 // goes; what it sent and started, with each session's state, Needs you's notice and Open (W124); a
 // resume draft for a finished session and its "Resumed" row (W127); the sessions and PRs its replies name, which open them (W125); Stop; held, with the stop command and the app strip's line; failed, with Start; a reload that
 // starts nothing; its context in the header, New conversation with its confirmation, cancelled,
-// confirmed and refused, and a draft's text up to half the window (W136); and none with
-// --no-supervisor. Made-up example/* content only.
+// confirmed and refused, and a draft's text up to half the window (W136); pitwall's line under a
+// message draft and its editor, and a session's reply to the supervisor, To pitwall-supervisor, with
+// Claude Code's refusal in pitwall's words (W138); and none with --no-supervisor. Made-up example/*
+// content only.
 
+import { REFUSED_TO_SUPERVISOR_NOTICE } from '../../../src/index/conversation.js';
+import { SUPERVISOR_MESSAGE_FOOTER } from '../../../src/shared/protocol.js';
 import { NAMES, SUPERVISOR_APPROVALS, SUPERVISOR_RACE_REFUSAL } from '../fixtures.js';
 import type { Part } from '../runner.js';
 import { focused, listHeading, openFromRow, openRepoList, repoLabels, VIEW, viewClose } from './_dom.js';
@@ -27,6 +31,10 @@ const confirmButton = (label: string) => `[...(${CONFIRM_BOX}?.querySelectorAll(
 const CONTEXT = `(${SVIEW}?.querySelector('[data-supervisor-context]')?.textContent?.trim() ?? null)`;
 const CARDS = `[...(${SVIEW}?.querySelectorAll('li.approval-card') ?? [])]`;
 const HANDOFFS = `[...(${SVIEW}?.querySelectorAll('[data-supervisor-handoffs] li.supervisor-handoff') ?? [])]`;
+/** A card's line pitwall adds (W138): its label, its text, and whether it's inside the card and the window. */
+const footerOf = (index: number) =>
+  `(() => { const c = ${CARDS}[${index}]; const f = c?.querySelector('.approval-footer'); if (!f) return null; const r = f.getBoundingClientRect(); const cr = c.getBoundingClientRect(); return { label: f.querySelector('.approval-label').textContent, text: f.querySelector('.approval-footer-text').textContent, named: f.getAttribute('role') === 'group' && document.getElementById(f.getAttribute('aria-labelledby'))?.textContent === f.querySelector('.approval-label').textContent, inside: r.left >= cr.left - 0.5 && r.right <= cr.right + 0.5 && r.right <= innerWidth + 0.5 }; })()`;
+const FOOTER = { label: 'Then pitwall adds, after a blank line', text: SUPERVISOR_MESSAGE_FOOTER, named: true, inside: true };
 const cardButton = (index: number, label: string) => `[...(${CARDS}[${index}]?.querySelectorAll('button') ?? [])].find((b) => b.textContent.trim() === ${q(label)})`;
 const NEEDS_YOU = `Number([...document.querySelectorAll('nav[aria-label="Repos"] a[data-repo-item]')].find((a) => a.querySelector('.repo-item-label')?.textContent === 'Needs you')?.querySelector('.badge')?.firstChild?.textContent ?? 0)`;
 const TITLE_COUNT = `Number(/^\\((\\d+)\\)/.exec(document.title)?.[1] ?? 0)`;
@@ -159,6 +167,10 @@ const part: Part = {
       const headings = await page.evaluate<string[]>(`${CARDS}.map((li) => li.querySelector('h4').textContent)`);
       t.expectEqual(headings, ['Message to pitwall-test-review', 'New session in ~/code/demo-app, named pr-57'], 'what each would do, oldest first');
       t.expectEqual(await page.evaluate(`${SVIEW}.querySelector('.supervisor-approvals h3')?.textContent`), 'Drafts for you (2)', 'under their heading');
+      // pitwall's line under the message, apart from its text, and none under a new session's prompt (W138).
+      t.expectEqual(await page.evaluate(footerOf(0)), FOOTER, "pitwall's line under the message, inside the card");
+      t.expect(!(await page.evaluate<string>(`${CARDS}[0].querySelector('.approval-text').textContent`)).includes(SUPERVISOR_MESSAGE_FOOTER), 'not in the text');
+      t.expectEqual(await page.evaluate(footerOf(1)), null, 'none under the new session');
       await t.shot('cards');
     });
 
@@ -166,6 +178,9 @@ const part: Part = {
       await page.click('Edit', cardButton(0, 'Edit'));
       await page.waitFor('the editor, with focus', `document.activeElement?.matches('.approval-editor') === true`);
       const before = await page.evaluate<number>(`document.activeElement.value.length`);
+      // The line stays under the editor, never in it, so an edit can't remove it (W138).
+      t.expectEqual(await page.evaluate(footerOf(0)), FOOTER, "pitwall's line under the editor");
+      t.expect(!(await page.evaluate<string>(`document.activeElement.value`)).includes(SUPERVISOR_MESSAGE_FOOTER), 'not in the editor');
       await page.type(' Thanks.');
       await t.shot('editing');
       await page.click('Send edit', cardButton(0, 'Send edit'));
@@ -214,6 +229,36 @@ const part: Part = {
       await page.waitFor('its session view, in the supervisor’s place', `!${SVIEW} && !!document.querySelector('#session-view')`);
       t.expect((await page.evaluate<string>('location.search')).includes('session='), 'the session in the URL', await page.evaluate('location.search'));
       t.expectEqual(await page.evaluate(`document.querySelector('#session-view h2 .session-view-name')?.textContent ?? null`), 'pr-57', 'the session it started');
+    });
+
+    await t.step('a reply to the supervisor (W138): To pitwall-supervisor in its session, and the refusal in pitwall’s words', async () => {
+      await t.fresh({ search: '?view=all' });
+      await openFromRow(t, NAMES.asked);
+      const ENTRIES = `[...document.querySelectorAll('#session-view ol.conversation > li.entry')]`;
+      await page.waitFor('its conversation', `${ENTRIES}.some((li) => li.classList.contains('entry-to-pitwall'))`);
+      const shown = await page.evaluate<Array<{ kind: string | undefined; speaker: string | null; text: string }>>(
+        `${ENTRIES}.slice(-4).map((li) => ({ kind: [...li.classList].find((c) => c.startsWith('entry-')), speaker: li.querySelector(':scope > .entry-speaker')?.childNodes[0]?.textContent ?? null, text: li.querySelector('.entry-text')?.textContent ?? '' }))`,
+      );
+      t.expectEqual(
+        shown.map((each) => [each.kind, each.speaker]),
+        [
+          ['entry-cross-session', 'From pitwall-supervisor'],
+          ['entry-to-pitwall', 'To pitwall-supervisor'],
+          ['entry-notice', null],
+          ['entry-assistant', 'Claude'],
+        ],
+        'the message, the reply, the refusal and the question, in order',
+      );
+      t.expect(shown[0]!.text.endsWith(SUPERVISOR_MESSAGE_FOOTER), "the supervisor's message ends with pitwall's line", shown[0]?.text);
+      t.expectEqual(shown[1]!.text, 'Checked: the made-up CI run is green.', 'the reply in full, as markdown');
+      t.expectEqual(shown[2]!.text, REFUSED_TO_SUPERVISOR_NOTICE, "the refusal in pitwall's words");
+      t.expect(!shown.some((each) => each.text.includes('Cross-session')), "never Claude Code's own words");
+      const inside = await page.evaluate<{ right: number; width: number }>(
+        `(() => { const r = ${ENTRIES}.find((li) => li.classList.contains('entry-notice') && li.textContent.includes('supervisor')).getBoundingClientRect(); return { right: r.right, width: innerWidth }; })()`,
+      );
+      t.expect(inside.right <= inside.width + 0.5, 'the notice inside the window', inside);
+      await page.evaluate(`${ENTRIES}.find((li) => li.classList.contains('entry-to-pitwall')).scrollIntoView({ block: 'center' })`);
+      await t.shot('reply-refused');
     });
 
     await t.step('long drafts (W120, W136): the exact text, up to half the window, its length said only when it scrolls, and a no-break space drawn as its code', async () => {

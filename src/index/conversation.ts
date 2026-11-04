@@ -18,6 +18,16 @@
 // transcript forward up to the page, once per transcript, and remembers where
 // the relay's messages came from.
 //
+// A call to pitwall's supervisor (W138) is one too, by the same rule with the
+// supervisor's name and its own address book, with `recipient: 'supervisor'`.
+// The supervisor takes no messages from sessions (crossSessionInbound: 'refuse',
+// D4), so Claude Code refuses each one, and says so in the sender's transcript
+// with a `[Cross-session delivery notice]`, which names the recipient's address
+// and the message's id. That notice, which pitwall otherwise left out, is a
+// 'notice' entry in pitwall's words: for an address a message from the supervisor
+// came from, that the supervisor never read it and the message is above; for any
+// other, that the session it went to takes no messages. Never Claude Code's text.
+//
 // A question Claude Code asked in its dialog, an AskUserQuestion call, is a
 // 'question' entry in place of the call, with its questions, options and
 // answers (W49). The answers are in the result's line, as its `toolUseResult`,
@@ -100,6 +110,20 @@ const ADDRESS_LINE_MAX = PAGE_READ_BUDGET;
 /** How much the relay's address book reads at a time. */
 const ADDRESS_CHUNK_BYTES = MIB;
 
+/** How Claude Code's notice of a held or refused message starts (spike 003). */
+const DELIVERY_NOTICE_PREFIX = '[Cross-session delivery notice]';
+/**
+ * A refused message's notice, as Claude Code writes it (spike 003; seen again on 2026-11-04 for a
+ * session's reply to the supervisor): `... was refused (recipient: <address>; msg_id: <uuid>): ...`.
+ * Read only from the notice's first 1 KiB, with bounded classes, so a long line costs nothing.
+ */
+const REFUSED_NOTICE = /^\[Cross-session delivery notice\] Your message to another session was refused \(recipient: ([^;()\s]{1,512}); msg_id: ([^;()\s]{1,128})\)/;
+/** pitwall's words for a session's message to its supervisor that Claude Code refused (W138). */
+export const REFUSED_TO_SUPERVISOR_NOTICE =
+  "Claude Code refused this message to pitwall's supervisor, which takes no messages from sessions, so the supervisor never read it. The message is above, here in this session, for you to read.";
+/** pitwall's words for any other message of this session's that Claude Code refused (W138). */
+export const REFUSED_NOTICE_TEXT = "The session this message went to refused it, so Claude Code didn't deliver it.";
+
 /** The tool Claude Code asks its question dialog with (W49). */
 const ASK_USER_QUESTION = 'AskUserQuestion';
 /** The contract's caps on a 'question' entry (AskedQuestion), in UTF-16 code units. */
@@ -134,6 +158,12 @@ export interface ConversationReadOptions {
    */
   relay?: RelayAddressBook;
   /**
+   * pitwall's supervisor (D4), by its name, SUPERVISOR_NAME, with what's known of where its messages
+   * came from (W138): a SendMessage call to it becomes a 'to-pitwall' entry with `recipient:
+   * 'supervisor'`, and Claude Code's notice that it refused one says so in pitwall's words.
+   */
+  supervisor?: RelayAddressBook;
+  /**
    * Reads sidechain entries, which are otherwise left out as a sub-agent's: for a sub-agent's own
    * transcript, every entry of which is one (W76).
    */
@@ -153,9 +183,9 @@ const NO_FOLLOW_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (cons
 export interface ConversationReadStats {
   bytesRead: number;
   /**
-   * What the relay's address book read forward for this page: nothing unless a call to a socket
-   * address had no message from the relay before it on its own page, and then only what no earlier
-   * page had read.
+   * What the relay's and the supervisor's address books read forward for this page: nothing unless a
+   * call to a socket address, or a refusal's notice (W138), had no message from that one before it on
+   * its own page, and then only what no earlier page had read.
    */
   addressBytesRead: number;
   /**
@@ -227,19 +257,19 @@ export async function readConversationPage(
     try {
       const result = await readBackwards(handle, end, midLine, pending, options);
       // A call to a socket address whose request isn't on this page: what came before the page says.
-      let earlier: ((address: string, offset: number) => boolean) | undefined;
       let addressBytesRead = 0;
-      const relay = options.relay;
-      if (relay !== undefined && result.stop !== undefined && result.builder.unresolved()) {
-        const known = await relay.addressesBefore(sessionId, file, handle, identity, result.stop.offset);
-        if (known !== undefined) {
-          addressBytesRead = known.bytesRead;
-          earlier = (address, offset) => (known.addresses.get(address) ?? Number.POSITIVE_INFINITY) < offset;
-        }
-      }
+      const before = async (book: RelayAddressBook | undefined, who: Recipient): Promise<Earlier | undefined> => {
+        if (book === undefined || result.stop === undefined || !result.builder.unresolved(who)) return undefined;
+        const known = await book.addressesBefore(sessionId, file, handle, identity, result.stop.offset);
+        if (known === undefined) return undefined;
+        addressBytesRead += known.bytesRead;
+        return (address, offset) => (known.addresses.get(address) ?? Number.POSITIVE_INFINITY) < offset;
+      };
+      const earlier = await before(options.relay, 'relay');
+      const earlierSupervisor = await before(options.supervisor, 'supervisor');
       // A question dialog's call on this page whose result was on a newer one: that result's line again.
       const answerBytesRead = await result.builder.readAnswers(handle, size);
-      const page: ConversationPage = { sessionId, entries: result.builder.finish(earlier) };
+      const page: ConversationPage = { sessionId, entries: result.builder.finish(earlier, earlierSupervisor) };
       // Only the newest page runs to the end of the transcript, so only it can say whether the turn has ended (W102).
       if (cursor === undefined && result.builder.turnEnded !== undefined) page.turnEnded = result.builder.turnEnded;
       if (result.stop !== undefined) {
@@ -282,7 +312,7 @@ async function readBackwards(
 ): Promise<{ builder: PageBuilder; stop?: Stop; bytesRead: number }> {
   const chunkBytes = Math.max(1, options.chunkBytes ?? CHUNK_BYTES);
   const budget = Math.max(chunkBytes, options.readBudget ?? PAGE_READ_BUDGET);
-  const builder = new PageBuilder(pending, options.pageEntries ?? PAGE_ENTRIES, options.relay?.name, options.sidechain === true, options.subagents);
+  const builder = new PageBuilder(pending, options.pageEntries ?? PAGE_ENTRIES, options.relay?.name, options.sidechain === true, options.subagents, options.supervisor?.name);
   let lo = end;
   let hi = end;
   let buf: Buffer = EMPTY;
@@ -696,8 +726,9 @@ type Item =
   /**
    * `peer`: who a message from a peer came from, as its `origin.from` says: a sub-agent's id for its report (W76).
    * `msgId`: its `origin.msg_id`, the same in the user entry and the mid-turn attachment that can stand for it (W99).
+   * `refusedTo`: on Claude Code's notice that it refused one of this session's messages, the address it went to (W138).
    */
-  | { kind: 'entry'; entry: ConversationEntry; sender?: Sender; peer?: string; msgId?: string }
+  | { kind: 'entry'; entry: ConversationEntry; sender?: Sender; peer?: string; msgId?: string; refusedTo?: string }
   /** What the line says of the turn (turnSignalOf(), W102): it ended, one runs, or something arrived that starts one. */
   | { kind: 'turn'; signal: TurnSignal };
 
@@ -710,12 +741,19 @@ interface SendDraft extends SendCall {
 type Draft =
   | { kind: 'assistant'; messageId: string | undefined; at: string | undefined; parts: string[] }
   | { kind: 'tool'; id: string | undefined; entry: ConversationEntry; send?: SendDraft }
-  | { kind: 'entry'; entry: ConversationEntry }
+  /** `refusedTo`: a refusal's notice (W138), with the address the message went to and where the notice's line starts. */
+  | { kind: 'entry'; entry: ConversationEntry; refusedTo?: { address: string; offset: number } }
   /**
    * A question dialog (W49). `entry.questions` gets its answers once they're found: from the result
    * on this page, or, for a result on a newer page, from its line, read again (`reread`).
    */
   | { kind: 'question'; entry: ConversationEntry; keys: string[]; reread?: { id: string; offset: number; length: number } };
+
+/** Which of pitwall's own sessions a call or a refusal is about: its relay (D8) or its supervisor (D4, W138). */
+type Recipient = 'relay' | 'supervisor';
+
+/** Whether a message from that one came from an address before an offset, earlier in the transcript than the page. */
+type Earlier = (address: string, offset: number) => boolean;
 
 /** The socket address a message from pitwall's relay came from, or undefined for any other message. */
 function relayAddress(sender: Sender | undefined, relayName: string): string | undefined {
@@ -744,6 +782,8 @@ class PageBuilder {
   private readonly drafts: Draft[] = [];
   /** The addresses the relay's messages on this page came from, each with the offset of the earliest such line. */
   private readonly relayFrom = new Map<string, number>();
+  /** The same for the supervisor's messages (W138). */
+  private readonly supervisorFrom = new Map<string, number>();
   /** The `msg_id`s of the messages from peers on this page, so one written twice shows once (W99). At most a page's entries. */
   private readonly msgIds = new Set<string>();
   /** Whether the newest turn on the page has ended (noteTurn()), once a line has said; undefined until then (W102). */
@@ -755,6 +795,7 @@ class PageBuilder {
     private readonly relayName?: string,
     private readonly sidechain = false,
     private readonly subagents?: SubagentLabels,
+    private readonly supervisorName?: string,
   ) {}
 
   /**
@@ -857,14 +898,16 @@ class PageBuilder {
         if (subagent !== undefined) entry.subagent = subagent;
         const draft: Draft = { kind: 'tool', id: item.id, entry };
         // A call whose result was an error, or said it didn't send, stays a tool call. One with no result yet doesn't.
-        if (item.send !== undefined && this.relayName !== undefined && state !== 'error' && state !== 'failed') draft.send = { ...item.send, offset };
+        if (item.send !== undefined && (this.relayName !== undefined || this.supervisorName !== undefined) && state !== 'error' && state !== 'failed') draft.send = { ...item.send, offset };
         this.drafts.push(draft);
         return;
       }
       case 'entry': {
-        // Noted for every line the page takes, so a call after it on the page knows where the relay's messages came from.
-        const address = this.relayName === undefined ? undefined : relayAddress(item.sender, this.relayName);
-        if (address !== undefined) this.relayFrom.set(address, Math.min(offset, this.relayFrom.get(address) ?? offset));
+        // Noted for every line the page takes, so a call after it on the page knows where the relay's, or the supervisor's, messages came from.
+        for (const [name, from] of [[this.relayName, this.relayFrom], [this.supervisorName, this.supervisorFrom]] as const) {
+          const address = name === undefined ? undefined : relayAddress(item.sender, name);
+          if (address !== undefined) from.set(address, Math.min(offset, from.get(address) ?? offset));
+        }
         if (this.full()) return;
         // Already on the page, from the newer of its two forms.
         if (item.msgId !== undefined) {
@@ -872,7 +915,9 @@ class PageBuilder {
           this.msgIds.add(item.msgId);
         }
         const subagent = item.entry.kind === 'cross-session' ? this.subagentOf(item.peer) ?? this.subagentOf(item.entry.from) : undefined;
-        this.drafts.push({ kind: 'entry', entry: subagent === undefined ? item.entry : { ...item.entry, subagent } });
+        const draft: Draft = { kind: 'entry', entry: subagent === undefined ? item.entry : { ...item.entry, subagent } };
+        if (item.refusedTo !== undefined) draft.refusedTo = { address: item.refusedTo, offset };
+        this.drafts.push(draft);
         return;
       }
     }
@@ -918,24 +963,42 @@ class PageBuilder {
     return bytesRead;
   }
 
-  /** True when a call on the page is to a socket address that no message from the relay on the page came from before it. */
-  unresolved(): boolean {
-    return this.drafts.some((draft) => draft.kind === 'tool' && draft.send !== undefined && !this.byName(draft.send) && this.bySocket(draft.send) === undefined);
+  /**
+   * True when a call on the page is to a socket address that no message from `who` on the page came
+   * from before it, or, for the supervisor, a refusal's notice is for one (W138).
+   */
+  unresolved(who: Recipient = 'relay'): boolean {
+    if (this.nameOf(who) === undefined) return false;
+    return this.drafts.some((draft) => {
+      if (draft.kind === 'tool' && draft.send !== undefined) return !this.byName(draft.send, who) && this.bySocket(draft.send, who) === undefined;
+      return who === 'supervisor' && draft.kind === 'entry' && draft.refusedTo !== undefined && this.fromOnPage(draft.refusedTo.address, draft.refusedTo.offset, who) === undefined;
+    });
+  }
+
+  private nameOf(who: Recipient): string | undefined {
+    return who === 'relay' ? this.relayName : this.supervisorName;
   }
 
   /**
-   * The `to` (trimmed) is the relay's name exactly. Not ignoring case: the web UI names the recipient
-   * as the call addressed it, "To pitwall-relay", and claims no more than that (W48).
+   * The `to` (trimmed) is the relay's, or the supervisor's, name exactly. Not ignoring case: the web
+   * UI names the recipient as the call addressed it, "To pitwall-relay", and claims no more than
+   * that (W48).
    */
-  private byName(send: SendDraft): boolean {
-    return this.relayName !== undefined && send.to === this.relayName;
+  private byName(send: SendDraft, who: Recipient): boolean {
+    const name = this.nameOf(who);
+    return name !== undefined && send.to === name;
   }
 
-  /** True when a message from the relay on this page came from the call's address before it; false when none did; undefined when the call isn't to a socket. */
-  private bySocket(send: SendDraft): boolean | undefined {
+  /** True when a message from `who` on this page came from the call's address before it; false when none did; undefined when the call isn't to a socket. */
+  private bySocket(send: SendDraft, who: Recipient): boolean | undefined {
     if (!send.to.startsWith(SOCKET_PREFIX)) return false;
-    const first = this.relayFrom.get(send.to);
-    return first !== undefined && first < send.offset ? true : undefined;
+    return this.fromOnPage(send.to, send.offset, who);
+  }
+
+  /** True when a message from `who` on this page came from `address` before `offset`; undefined when none did. */
+  private fromOnPage(address: string, offset: number, who: Recipient): true | undefined {
+    const first = (who === 'relay' ? this.relayFrom : this.supervisorFrom).get(address);
+    return first !== undefined && first < offset ? true : undefined;
   }
 
   /**
@@ -943,14 +1006,22 @@ class PageBuilder {
    * keep theirs in full while the page's 256 KiB budget lasts; once an entry
    * doesn't fit what's left, it keeps only its first 512 characters.
    * `earlier` says whether a message from the relay came from an address
-   * before the page, and before the call's offset.
+   * before the page, and before the call's offset; `earlierSupervisor` the
+   * same for the supervisor's (W138).
    */
-  finish(earlier?: (address: string, offset: number) => boolean): ConversationEntry[] {
-    const toRelay = (send: SendDraft) =>
-      this.byName(send) || (send.to.startsWith(SOCKET_PREFIX) && (this.bySocket(send) === true || earlier?.(send.to, send.offset) === true));
+  finish(earlier?: Earlier, earlierSupervisor?: Earlier): ConversationEntry[] {
+    const fromBefore = (address: string, offset: number, who: Recipient): boolean =>
+      this.nameOf(who) !== undefined && (this.fromOnPage(address, offset, who) === true || (who === 'relay' ? earlier : earlierSupervisor)?.(address, offset) === true);
+    const recipientOf = (send: SendDraft): Recipient | undefined => {
+      for (const who of ['relay', 'supervisor'] as const) {
+        if (this.byName(send, who) || (send.to.startsWith(SOCKET_PREFIX) && fromBefore(send.to, send.offset, who))) return who;
+      }
+      return undefined;
+    };
+    const supervisorAt = (address: string, offset: number) => fromBefore(address, offset, 'supervisor');
     const entries: ConversationEntry[] = [];
     const budget = { chars: PAGE_TEXT_BUDGET };
-    for (const draft of this.drafts) entries.push(withinBudget(finishDraft(draft, toRelay), budget));
+    for (const draft of this.drafts) entries.push(withinBudget(finishDraft(draft, recipientOf, supervisorAt), budget));
     return entries.reverse();
   }
 }
@@ -959,13 +1030,20 @@ function joins(oldest: { assistant: boolean; messageId: string | undefined } | u
   return oldest !== undefined && oldest.assistant && messageId !== undefined && oldest.messageId === messageId;
 }
 
-function finishDraft(draft: Draft, toRelay: (send: SendDraft) => boolean): ConversationEntry {
+function finishDraft(draft: Draft, recipientOf: (send: SendDraft) => Recipient | undefined, supervisorAt: (address: string, offset: number) => boolean): ConversationEntry {
   switch (draft.kind) {
-    case 'tool':
-      // The message as the session wrote it, at the call's time, in the call's place (W46).
-      if (draft.send !== undefined && toRelay(draft.send)) return withAt({ kind: 'to-pitwall', text: draft.send.message, markdown: true }, draft.entry.at);
-      return draft.entry;
+    case 'tool': {
+      // The message as the session wrote it, at the call's time, in the call's place (W46), to the relay or the supervisor (W138).
+      const to = draft.send === undefined ? undefined : recipientOf(draft.send);
+      if (draft.send === undefined || to === undefined) return draft.entry;
+      const entry = withAt({ kind: 'to-pitwall', text: draft.send.message, markdown: true }, draft.entry.at);
+      if (to === 'supervisor') entry.recipient = 'supervisor';
+      return entry;
+    }
     case 'entry':
+      // Claude Code refused a message to the supervisor's address: said in pitwall's words (W138).
+      if (draft.refusedTo !== undefined && supervisorAt(draft.refusedTo.address, draft.refusedTo.offset)) return { ...draft.entry, text: REFUSED_TO_SUPERVISOR_NOTICE };
+      return draft.entry;
     case 'question':
       return draft.entry;
     case 'assistant':
@@ -1326,6 +1404,10 @@ function userItems(entry: Record<string, unknown>, at: string | undefined): Item
     }
     return [item];
   }
+  // Claude Code's notice that it refused one of this session's messages (W138): pitwall's words, never its own.
+  // Only Claude Code's own meta entry: a prompt you, a spawn or a resume typed with the same prefix stays
+  // a prompt, so no text can pass as pitwall's notice, or hide itself (W138's review).
+  if (entry.isMeta === true && text.startsWith(DELIVERY_NOTICE_PREFIX)) return refusalItems(text, at);
   if (entry.isMeta === true) return [];
   if (origin === 'task-notification' || text.startsWith('<task-notification>')) return [taskNotice(text, at)];
   const local = localCommandNotice(text, at);
@@ -1336,6 +1418,19 @@ function userItems(entry: Record<string, unknown>, at: string | undefined): Item
   const typed = asTyped(unreminded);
   const prompt = typed === '' ? imageNote : imageNote === '' ? typed : `${typed}\n\n${imageNote}`;
   return [{ kind: 'entry', entry: withAt({ kind: 'user', text: cap(prompt, ENTRY_TEXT_MAX + 1) }, at) }];
+}
+
+/**
+ * Claude Code's `[Cross-session delivery notice]` (spike 003): a refusal is a notice in pitwall's
+ * words, with the address the message went to, so the page can tell one to the supervisor (W138),
+ * and its message's id, so its two forms, the entry and a mid-turn attachment, show once. A held or
+ * released message's notice, and anything else, stays out, as before.
+ */
+function refusalItems(text: string, at: string | undefined): Item[] {
+  const refused = REFUSED_NOTICE.exec(text.slice(0, KIB));
+  if (refused === null) return [];
+  const [, address, msgId] = refused as unknown as [string, string, string];
+  return [{ kind: 'entry', entry: withAt({ kind: 'notice', text: REFUSED_NOTICE_TEXT }, at), refusedTo: address, msgId: `refused:${msgId}` }];
 }
 
 /**

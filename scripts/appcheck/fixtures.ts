@@ -33,6 +33,8 @@ import type {
   SupervisorState,
   SupervisorStatus,
 } from '../../src/shared/protocol.js';
+import { withSupervisorFooter } from '../../src/shared/protocol.js';
+import { REFUSED_TO_SUPERVISOR_NOTICE } from '../../src/index/conversation.js';
 
 export const CODE = '/Users/example/code';
 export const OSS = '/Users/example/oss';
@@ -1007,7 +1009,14 @@ export class World {
     const session = this.#sessions.get(sessionId);
     if (!session) return undefined;
     if (session.name === NAMES.running) return { sessionId, ...this.#working(sessionId) };
-    const entries = session.name === NAMES.conversation ? this.#everyKind() : session.name === NAMES.inApi ? this.#namingSubagents() : this.#short(session);
+    const entries =
+      session.name === NAMES.conversation
+        ? this.#everyKind()
+        : session.name === NAMES.inApi
+          ? this.#namingSubagents()
+          : session.name === NAMES.asked
+            ? [...this.#short(session), ...this.#repliedToSupervisor()]
+            : this.#short(session);
     return { sessionId, entries };
   }
 
@@ -1366,6 +1375,20 @@ export class World {
     if (!this.#turnsEnded.has(sessionId)) return { entries, turnEnded: false };
     const done = { ...entries[entries.length - 1], toolError: false } as ConversationEntry;
     return { entries: [...entries.slice(0, -1), done, { kind: 'assistant', at: new Date().toISOString(), markdown: true, text: 'The made-up export tests pass now.' }], turnEnded: true };
+  }
+
+  /**
+   * NAMES.asked's exchange with the supervisor (W138), as the server reads it from a transcript: its
+   * message, ending with pitwall's line; the session's reply to it, To pitwall-supervisor; Claude
+   * Code's refusal, in pitwall's words; and the question the session ended its turn with.
+   */
+  #repliedToSupervisor(): ConversationEntry[] {
+    return [
+      { kind: 'cross-session', at: this.#ago(10), from: 'pitwall-supervisor', markdown: true, text: withSupervisorFooter('The user asked me to pass this on: please check the made-up CI run.') },
+      { kind: 'to-pitwall', recipient: 'supervisor', at: this.#ago(9), markdown: true, text: 'Checked: the made-up CI run is **green**.' },
+      { kind: 'notice', at: this.#ago(9), text: REFUSED_TO_SUPERVISOR_NOTICE },
+      { kind: 'assistant', at: this.#ago(8), markdown: true, text: 'The made-up CI run is green. Shall I merge it?' },
+    ];
   }
 
   #short(session: SessionSummary): ConversationEntry[] {

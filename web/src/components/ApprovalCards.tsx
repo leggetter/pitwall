@@ -17,6 +17,9 @@
 //   that it resumes with its own saved settings, its permission mode included, with a warning when
 //   that mode is bypassPermissions. Edit opens the text in place, up to SUPERVISOR_PROPOSAL_MAX for a message and
 // SPAWN_PROMPT_MAX for a new session's first prompt (editLimit()), with Send edit and Cancel.
+// - A message card (W138) shows, under the text and under the editor alike, the line pitwall adds at
+//   the end of what goes, SUPERVISOR_MESSAGE_FOOTER, labelled as pitwall's, apart from the text: it's
+//   pitwall's fixed text, not the model's, so it isn't in the editor and an edit can't remove it.
 //
 // - Each decision POSTs a SupervisorDecision to supervisorApprovalPath(). The card stays busy until the
 //   snapshot drops it, since that's when pitwall has acted, or STUCK_MS passes. A failure is an inline
@@ -28,7 +31,7 @@
 //   in the editor, and Cancel or Escape back on Edit.
 
 import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { SPAWN_PROMPT_MAX, type SupervisorApproval, type SupervisorDecision } from '../../../src/shared/protocol.js';
+import { SPAWN_PROMPT_MAX, SUPERVISOR_MESSAGE_FOOTER, type SupervisorApproval, type SupervisorDecision } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { useAutoGrow } from '../autoGrow.js';
 import { visibleParts, visibleString, type VisiblePart } from '../../../src/shared/hiddenText.js';
@@ -98,6 +101,21 @@ function ExactText({ parts }: { parts: readonly VisiblePart[] }) {
         ),
       )}
     </>
+  );
+}
+
+/** The label of the line pitwall adds to a message (W138), on its card. */
+export const FOOTER_LABEL = 'Then pitwall adds, after a blank line';
+
+/** The line pitwall adds at the end of a message to a session (W138): fixed, pitwall's own, shown apart from the text you can edit. */
+function MessageFooter({ id }: { id: string }) {
+  return (
+    <div className="approval-footer" role="group" aria-labelledby={id}>
+      <p className="approval-label" id={id}>
+        {FOOTER_LABEL}
+      </p>
+      <p className="approval-footer-text">{SUPERVISOR_MESSAGE_FOOTER}</p>
+    </div>
   );
 }
 
@@ -173,7 +191,7 @@ type Phase = { kind: 'idle' } | { kind: 'deciding'; decision: SupervisorDecision
 
 function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
   const api = useContext(ApiContext);
-  const ids = { heading: useId(), text: useId(), editor: useId(), count: useId(), notes: useId() };
+  const ids = { heading: useId(), text: useId(), editor: useId(), count: useId(), notes: useId(), footer: useId() };
   const [textBox, setTextBox] = useState<HTMLElement | null>(null);
   const overflowing = useOverflowing(textBox);
   const alive = useRef(true);
@@ -338,6 +356,7 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
               {notes.join(' ')}
             </p>
           )}
+          {approval.kind === 'message' && <MessageFooter id={ids.footer} />}
         </div>
       ) : (
         <div className="approval-body approval-editing">
@@ -362,6 +381,8 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
               {count.text}
             </p>
           )}
+          {/* Not in the editor: pitwall's line goes whatever the edit says (W138). */}
+          {approval.kind === 'message' && <MessageFooter id={ids.footer} />}
         </div>
       )}
       {error !== undefined && (

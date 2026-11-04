@@ -71,7 +71,7 @@ import { Alert, Detail } from './Alert.js';
 import { Badge } from './Badge.js';
 import { Button } from './Button.js';
 import { Icon } from './Icon.js';
-import { RELAY_SESSION_NAME } from '../relayName.js';
+import { RELAY_SESSION_NAME, SUPERVISOR_SESSION_NAME } from '../relayName.js';
 import { Markdown } from './Markdown.js';
 import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
@@ -715,6 +715,12 @@ function Fold({ calls, open, onToggle }: FoldProps) {
  */
 export const TO_PITWALL_SPEAKER = `To ${RELAY_SESSION_NAME}`;
 
+/**
+ * The same for a message the session sent pitwall's supervisor (W138), which takes no messages from
+ * sessions: Claude Code refuses each one, and the notice after it says so in pitwall's words.
+ */
+export const TO_SUPERVISOR_SPEAKER = `To ${SUPERVISOR_SESSION_NAME}`;
+
 /** The speaker lines that are fixed words. Another session's message names its sender. */
 const SPEAKERS: Partial<Record<ConversationEntry['kind'], string>> = { user: 'You', assistant: 'Claude', 'to-pitwall': TO_PITWALL_SPEAKER };
 
@@ -864,6 +870,8 @@ function Entry({ entry, userSpeaker }: { entry: ConversationEntry; userSpeaker: 
     ) : entry.kind === 'user' && userSpeaker !== undefined ? (
       // In a sub-agent's transcript, what started or messaged it: never the user's own prompt (W77).
       userSpeaker
+    ) : entry.kind === 'to-pitwall' && entry.recipient === 'supervisor' ? (
+      TO_SUPERVISOR_SPEAKER
     ) : (
       SPEAKERS[entry.kind]
     );

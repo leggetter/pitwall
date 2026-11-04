@@ -34,6 +34,7 @@ import { createClaudeDefaultsReader } from './server/claudeDefaults.js';
 import { createWorkStore } from './server/work.js';
 import { type DirCheckContext, LaunchDirError, pitwallHome, prepareLaunchDir, removeWhenUsed, writeLaunchFile } from './server/launch.js';
 import { RELAY_NAME } from './server/relayPrompt.js';
+import { SUPERVISOR_NAME } from './supervisor/prompt.js';
 import { DEFAULT_POLL_INTERVAL_MS, PRS_POLL_INTERVAL_MS, RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, RECAP_MODEL, RECAP_UPDATE_DEBOUNCE_MS, SUPERVISOR_MODEL } from './shared/protocol.js';
 
 /** The shortest and longest poll interval `--interval` accepts, in seconds. */
@@ -609,6 +610,9 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
     relayOff: () => relay.off(),
     // Its messages to the relay show in each session's conversation (W46).
     relayName: RELAY_NAME,
+    // Its messages to the supervisor, and Claude Code's refusal of them, too (W138), with or without
+    // --no-supervisor, since a session can still hold a message from an earlier run's.
+    supervisorName: SUPERVISOR_NAME,
   });
   // Set once the launch file is written, for a per-run token only. The first
   // page to authenticate has read it, so it's deleted then, rather than left
