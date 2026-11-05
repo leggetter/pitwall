@@ -356,7 +356,7 @@ M5.1's own items start at W131, the evidence the rest of it needs; the others fo
   - Phil, 2026-11-04: typing part of a directory, such as "outp", then Enter only closed the list, since nothing was highlighted until ↓; the field kept "outp", and Start said it needs an absolute path. Agreed: typing then Enter takes the first match, the WAI-ARIA APG's "List autocomplete with automatic selection".
   - Built: `Combobox`'s opt-in `autoSelect` (`web/src/components/Combobox.tsx`), on for Directory in `NewSessionDialog.tsx` except while the text is the chosen directory's. Typing highlights the first option, which `aria-activedescendant` points at and Enter accepts; it stays on the first as the listing arrives. None with no match, or the text emptied or only spaces, since the list then offers every directory. Opening by a click, ↓, Alt + ↓ or focus, ← → Home End, Tab, Escape and an input method are unchanged.
   - Also: a highlight the arrows moved to follows its option, by label, as the options change, and goes when its option does, where it had stayed on the index. Tests: `Combobox.test.tsx` (new), `DirectoryCombobox.test.tsx`; the app check's `new-session` part and `chooseDirectory()`; `docs/design-system.md`'s Combobox; the `#uikit` New session page.
-  - Status: In review.
+  - Status: In review ([#172](https://github.com/leggetter/pitwall/pull/172)).
 
 ## Open questions
 
