@@ -48,6 +48,12 @@ describe('the row', () => {
     expect(inGroup?.textContent?.endsWith('also in skills')).toBe(true);
   });
 
+  it('shows "+2" and reads it out as "and 2 more repos"', () => {
+    const el = line2(session({ cwd: WORK, workedIn: [repo(PERSONAL, 'skills', 6), repo(PERSONAL, 'blog', 2), repo(PERSONAL, 'notes', 1)] }))?.querySelector('.session-elsewhere');
+    expect(el?.querySelector('[aria-hidden="true"]:not(.session-what-sep)')?.textContent).toBe(' +2');
+    expect(el?.querySelector('.visually-hidden')?.textContent).toBe(' and 2 more repos');
+  });
+
   it('has none for a session that worked only under its own root', () => {
     expect(line2(session({ cwd: WORK, workedIn: [repo(WORK, 'api', 6)] }), true)?.querySelector('.session-elsewhere')).toBeNull();
   });

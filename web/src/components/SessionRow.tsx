@@ -208,7 +208,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
   // How many of its sub-agents are running, at the end of line 2, while any are (W77).
   const running = session.subagentsRunning !== undefined && session.subagentsRunning > 0 ? runningText(session.subagentsRunning) : undefined;
   // The repos it worked in under another root (W149): Main repo keeps it in its own root's tab, so the row says where else it worked.
-  const elsewhere = elsewhereText(session, group);
+  const elsewhere = elsewhereParts(session, group);
 
   const openFromRow = (event: MouseEvent<HTMLLIElement>) => {
     if (!onOpen) return;
@@ -311,7 +311,13 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
                 {' · '}
               </span>
             )}
-            <Highlight text={elsewhere} />
+            <Highlight text={elsewhere.text} />
+            {elsewhere.more > 0 && (
+              <>
+                <span aria-hidden="true">{` +${elsewhere.more}`}</span>
+                <span className="visually-hidden">{` and ${elsewhere.more} more ${elsewhere.more === 1 ? 'repo' : 'repos'}`}</span>
+              </>
+            )}
           </span>
         )}
       </p>
@@ -381,9 +387,14 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
  * root other than its group's (W149, elsewhereRepos()), the most changed named. Undefined when none.
  */
 export function elsewhereText(session: Pick<SessionSummary, 'workedIn'>, group: Pick<SessionGroup, 'root'>): string | undefined {
+  const parts = elsewhereParts(session, group);
+  return parts === undefined ? undefined : `${parts.text}${parts.more > 0 ? ` +${parts.more}` : ''}`;
+}
+
+/** The same in two parts, so the row can read "+2" out as "and 2 more repos": "also in phil-skills", and how many more. */
+export function elsewhereParts(session: Pick<SessionSummary, 'workedIn'>, group: Pick<SessionGroup, 'root'>): { text: string; more: number } | undefined {
   const repos = elsewhereRepos(session, group);
   const first = repos[0];
   if (first === undefined) return undefined;
-  const more = repos.length > 1 ? ` +${repos.length - 1}` : '';
-  return `also in ${plainText(groupLabel(first))}${more}`;
+  return { text: `also in ${plainText(groupLabel(first))}`, more: repos.length - 1 };
 }

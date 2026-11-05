@@ -2145,7 +2145,7 @@ The header's dialog of settings, a section for each area they affect (W59; Phil,
   - **Settings:** each a [radio group](#inputs-textareas-and-selects), its legend the setting's name, each option with one line saying what it does.
   - **No pointer** to where the single-key shortcuts and the theme are set: their controls, the theme switch and the keyboard shortcuts button, sit either side of Preferences in the header.
 - **Group sessions by** (W42), three:
-  - **Main repo,** the default: "A session started in a root goes under the repo in that root it changed most; one started in another folder, under the only repo it worked in there."
+  - **Main repo,** the default: "A session started in a root goes under the repo in that root it changed most; one started in another folder, under the only repo in that root it worked in."
   - **Where it started:** "Each session stays under the repo or directory it started in."
   - **Every repo it worked in:** "A session shows under every repo it worked in, so counts can overlap."
   - What each mode lists where is in [Repo list](#repo-list), and its counts in [Repo list items](#repo-list-items).

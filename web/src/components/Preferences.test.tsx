@@ -195,7 +195,7 @@ describe('the Preferences dialog', () => {
     }
     const options = (setting: string) => preferenceOptions(setting).map((radio) => [labelOf(radio), describedBy(radio), radio.checked]);
     expect(options(GROUP_BY)).toEqual([
-      ['Main repo', 'A session started in a root goes under the repo in that root it changed most; one started in another folder, under the only repo it worked in there.', true],
+      ['Main repo', 'A session started in a root goes under the repo in that root it changed most; one started in another folder, under the only repo in that root it worked in.', true],
       ['Where it started', 'Each session stays under the repo or directory it started in.', false],
       ['Every repo it worked in', 'A session shows under every repo it worked in, so counts can overlap.', false],
     ]);

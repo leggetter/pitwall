@@ -431,13 +431,16 @@ const part: Part = {
       if (t.layout === 'drawer') await page.key('Escape');
     });
 
-    await t.step("two roots: a session started in ~/code that changed blog, under ~/oss, most stays in ~/code's tab, under api-server, its row also in blog (W149)", async () => {
+    await t.step("two roots: a session started in ~/code that changed two repos under ~/oss most stays in ~/code's tab, under api-server, its row also in them (W149)", async () => {
       await t.fresh({ search: `?repo=${API_SERVER}&root=${CODE}`, roots: 2 });
       t.expect((await page.evaluate<string[]>(rowNames)).includes(NAMES.fromRoot), 'api-server lists it', await page.evaluate(rowNames));
       const also = await page.evaluate<string | null>(`${row(NAMES.fromRoot)}?.closest('li.session')?.querySelector('.session-elsewhere')?.textContent ?? null`);
-      t.expectEqual(also?.replace(/^ · /, '') ?? null, 'also in blog', 'its line 2 ends "also in blog"');
-      const fits = await page.evaluate<boolean>(`(() => { const li = ${row(NAMES.fromRoot)}?.closest('li.session'); const what = li?.querySelector('.session-what'); return !!what && what.scrollWidth <= what.clientWidth + 1 && li.scrollWidth <= li.clientWidth + 1; })()`);
-      t.expect(fits, 'line 2 fits its row');
+      t.expectEqual(also?.replace(/^ · /, '') ?? null, 'also in pitwall-test-a-made-up-repository-with-a-long-name +1 and 1 more repo', 'its line 2 ends "also in" the most changed, "+1", read out as "and 1 more repo"');
+      // With "· 12 sub-agents running" before it: it gives way with an ellipsis, inside its row, never past it.
+      const box = await page.evaluate<{ fits: boolean; inside: boolean }>(
+        `(() => { const li = ${row(NAMES.fromRoot)}?.closest('li.session'); const what = li?.querySelector('.session-what'); const el = li?.querySelector('.session-elsewhere'); if (!what || !el) return { fits: false, inside: false }; const w = what.getBoundingClientRect(), e = el.getBoundingClientRect(); return { fits: li.scrollWidth <= li.clientWidth + 1, inside: e.right <= w.right + 1 }; })()`,
+      );
+      t.expect(box.fits && box.inside, 'line 2 fits its row, "also in" inside it', box);
       await t.shot('also-in-other-root');
     });
 
