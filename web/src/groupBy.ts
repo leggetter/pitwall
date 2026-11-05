@@ -5,19 +5,26 @@
 // - Main repo, the default (Phil, 2026-10-21): a session started in a root itself that worked in
 //   repos is listed under one of them, its main repo: the one with the most changes, ties broken by
 //   tool calls, then the newest touch, then the path. The repo may be under another root, and so in
-//   that root's tab. A root-started session that worked in no repo stays in the root's own group,
-//   and every other session stays where it started. Each session is in one group, so counts add up,
-//   as in W39.
+//   that root's tab. A root-started session that worked in no repo stays in the root's own group.
+//   A session started in a directory below a root that's in no repo, which worked in exactly one
+//   repo, such as one it cloned there, is listed under that repo (W145, Phil, 2026-11-05); with two
+//   or more, or none, it stays in its directory. Every other session stays where it started. Each
+//   session is in one group, so counts add up, as in W39.
 // - Where it started: the snapshot's groups as they are (W39).
 // - Every repo it worked in: W34's listing. Each session is under the group it started in and under
 //   every repo it worked in, except that the root's own group holds only the root-started sessions
-//   that worked in no repo. A group counts its distinct sessions, so the groups' counts can add up to
-//   more than All sessions'.
+//   that worked in no repo. A directory a session moved from in Main repo still lists it here, since
+//   it started there. A group counts its distinct sessions, so the groups' counts can add up to more
+//   than All sessions'.
 //
 // Whatever the mode, each session has one home group: the one its row names in Needs you and All
 // sessions, and the one a ?session= link selects. That's the group it's listed under in Main repo
-// and Where it started; in Every repo it worked in, the group it started in, or, for a root-started
-// session that worked in repos, its main repo.
+// and Where it started; in Every repo it worked in, the group it started in, or, for a session Main
+// repo moves, the repo it moves it to.
+//
+// A session's workedIn arrives once the index's scanner has read its transcript (workedIn.ts), so a
+// session Main repo moves is listed where it started until then, and moves when its scan lands. An
+// open session view stays open as it moves: only a choice in the list closes one (W139).
 //
 // A worked-in repo without a key or root, as a server from before W42 would send while `npm run dev`
 // restarts it, is left out of the grouping, so its session stays where it started, and the page never
@@ -130,6 +137,18 @@ export function isRootStart(group: Pick<SessionGroup, 'root' | 'key' | 'kind'>):
   return group.kind === 'directory' && isRootGroup(group);
 }
 
+/**
+ * The repo Main repo lists a session under instead of the group it started in, or undefined to leave
+ * it there. A root's own directory: its main repo, of any number. Another directory in no repo (W145):
+ * the one repo it worked in, and only when there's one. A repo, a root that is itself one included:
+ * none. `worked` holds only placeable repos.
+ */
+export function movedTo(start: Pick<SessionGroup, 'root' | 'key' | 'kind'>, worked: readonly WorkedIn[]): WorkedIn | undefined {
+  if (start.kind !== 'directory') return undefined;
+  if (isRootGroup(start)) return mainRepo(worked);
+  return worked.length === 1 ? worked[0] : undefined;
+}
+
 export interface Grouped {
   /**
    * The groups for the mode, each listing its sessions once, in the index's order (compareSessions).
@@ -175,15 +194,16 @@ export function groupSessions(startGroups: SessionGroup[], mode: GroupBy): Group
     for (const session of start.sessions) {
       if (home.has(session.sessionId)) continue;
       const worked = (session.workedIn ?? []).filter(placeable);
-      const main = isRootStart(start) ? mainRepo(worked) : undefined;
-      const homeGroup = main === undefined ? listed : repoGroup(main);
+      const moved = movedTo(start, worked);
+      const homeGroup = moved === undefined ? listed : repoGroup(moved);
       home.set(session.sessionId, homeGroup);
       if (mode === 'main-repo') {
         add(homeGroup, session);
         continue;
       }
-      // Every repo it worked in: the root's own group keeps only the sessions that worked in no repo.
-      if (main === undefined) add(listed, session);
+      // Every repo it worked in: the root's own group keeps only the sessions that worked in no repo;
+      // any other directory keeps every session that started in it.
+      if (moved === undefined || !isRootStart(start)) add(listed, session);
       for (const repo of worked) add(repoGroup(repo), session);
     }
   }

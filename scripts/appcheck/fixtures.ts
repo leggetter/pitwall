@@ -105,7 +105,16 @@ export const NAMES = {
    * isn't finished, so it's listed with the rest, not in Finished.
    */
   endedPr: 'pitwall-test-ended-pr',
+  /**
+   * With `cloned` only (W145): started in docs-site, a directory below the root in no repo, then
+   * cloned sdk-cli there and worked in it alone, so Main repo lists it under sdk-cli, which nothing
+   * started in.
+   */
+  cloned: 'pitwall-test-cloned',
 } as const;
+
+/** The repo NAMES.cloned cloned and worked in (W145): it has no group in the snapshot. */
+export const SDK_CLI = `${CODE}/sdk-cli`;
 
 /** The short id the copy Claude Code starts in place of NAMES.endedCopy has. */
 export const COPY_SHORT_ID = 'pt67copy';
@@ -331,6 +340,8 @@ export interface ResetOptions {
   supervisorQueued?: boolean;
   /** Whether New conversation is refused as if another tab had pressed Start in between: a refusal the snapshot didn't show (W136). */
   supervisorRaced?: boolean;
+  /** Whether NAMES.cloned is listed too (W145), a session that started in docs-site and worked in sdk-cli alone. */
+  cloned?: boolean;
 }
 
 /** The made-up index: a snapshot, conversations, and what POSTs have changed since the last reset. */
@@ -410,7 +421,7 @@ export class World {
     this.#cloned = new Map();
     this.#cloneFails = false;
     this.#relations = new Map();
-    this.#sessions = new Map(this.#baseSessions().map((each) => [each.sessionId, each]));
+    this.#sessions = new Map(this.#baseSessions(options.cloned ?? false).map((each) => [each.sessionId, each]));
     this.#recapsState = options.recaps ?? 'off';
     this.#recapCalls = this.#recapsState === 'spent' ? this.#recapBudget : 37;
     this.#recapping = new Set();
@@ -1200,7 +1211,7 @@ export class World {
     return new Date(this.#now - minutes * MINUTE).toISOString();
   }
 
-  #baseSessions(): SessionSummary[] {
+  #baseSessions(cloned: boolean): SessionSummary[] {
     let n = 0;
     const session = (name: string, extra: Partial<SessionSummary> = {}): SessionSummary => {
       n += 1;
@@ -1267,6 +1278,8 @@ export class World {
       ended(NAMES.endedOldOnly, 20, { cwd: DOCS_SITE }),
       ended(NAMES.endedPr, 3, { cwd: API_SERVER, title: 'Add a made-up retry header', prLinks: [this.#link('opened', PRS.endedWork, 3 * 24 * 60)] }),
     ];
+    // Last, so every other session keeps its id.
+    if (cloned) all.push(session(NAMES.cloned, { cwd: DOCS_SITE, title: 'Try the made-up CLI', lastUserPrompt: 'Clone the made-up CLI here and run its tests.', workedIn: [worked('sdk-cli', 2, 40)] }));
     return all;
   }
 
