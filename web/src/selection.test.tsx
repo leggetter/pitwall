@@ -19,6 +19,7 @@ import {
   scopeFor,
   selectionHref,
   selectionName,
+  selectionShowing,
   useSelection,
   VIEW_STATE_KEY,
   viewIn,
@@ -121,6 +122,57 @@ describe('groups and selections', () => {
     expect(keepsOpenSession([app, appElsewhere], { repo: `${ROOT}/app`, root: WORK }, one)).toBe(false);
     // A group that has left the snapshot lists nothing.
     expect(keepsOpenSession([app], { repo: `${ROOT}/gone` }, one)).toBe(false);
+  });
+
+  describe('selectionShowing: the selection for a session opened from outside the list (W144)', () => {
+    const PERSONAL = '/Users/example/personal';
+    const api = group({ key: `${WORK}/api`, label: 'api', root: WORK, sessions: [session({ sessionId: 'w-api' })] });
+    const web = group({ key: `${WORK}/web`, label: 'web', root: WORK, sessions: [session({ sessionId: 'w-web' }), session({ sessionId: 'both' })] });
+    const blog = group({ key: `${PERSONAL}/blog`, label: 'blog', root: PERSONAL, sessions: [session({ sessionId: 'p-blog' }), session({ sessionId: 'both' })] });
+    const tabs = { roots: [WORK, PERSONAL], groups: [api, web, blog] };
+    const notes = group({ key: `${ROOT}/notes`, label: 'notes', kind: 'directory', sessions: [session({ sessionId: 'n' })] });
+    const single = { roots: [ROOT], groups: [app, notes] };
+    const one = app.sessions[0]!.sessionId;
+
+    it('with one root: keeps a view, and a group that lists it; otherwise its group, with no root', () => {
+      for (const view of ['needs-you', 'all', 'starred', 'prs'] as const) expect(selectionShowing(single, { view }, undefined, one)).toBeUndefined();
+      expect(selectionShowing(single, { repo: `${ROOT}/app` }, undefined, one)).toBeUndefined();
+      expect(selectionShowing(single, { repo: `${ROOT}/notes` }, undefined, one)).toEqual({ repo: `${ROOT}/app` });
+      expect(selectionShowing(single, { repo: `${ROOT}/gone` }, undefined, 'n')).toEqual({ repo: `${ROOT}/notes` });
+    });
+
+    it('with root tabs: a session in the other tab selects its group there, whatever the view', () => {
+      expect(selectionShowing(tabs, { view: 'all', root: PERSONAL }, PERSONAL, 'w-api')).toEqual({ repo: `${WORK}/api`, root: WORK });
+      expect(selectionShowing(tabs, { repo: `${PERSONAL}/blog`, root: PERSONAL }, PERSONAL, 'w-web')).toEqual({ repo: `${WORK}/web`, root: WORK });
+      // In its own tab, a view keeps it, and a group that doesn't list it gives way to one that does.
+      expect(selectionShowing(tabs, { view: 'needs-you', root: WORK }, WORK, 'w-api')).toBeUndefined();
+      expect(selectionShowing(tabs, { repo: `${WORK}/web`, root: WORK }, WORK, 'w-api')).toEqual({ repo: `${WORK}/api`, root: WORK });
+    });
+
+    it('a session listed in both tabs stays in the open one, under a group there that lists it', () => {
+      expect(selectionShowing(tabs, { repo: `${PERSONAL}/blog`, root: PERSONAL }, PERSONAL, 'both')).toBeUndefined();
+      expect(selectionShowing(tabs, { repo: `${WORK}/api`, root: WORK }, WORK, 'both')).toEqual({ repo: `${WORK}/web`, root: WORK });
+      // Its home group wins when it's in the open tab, or when the open tab doesn't list it.
+      const home = new Map([['both', blog]]);
+      expect(selectionShowing(tabs, { repo: `${WORK}/api`, root: WORK }, WORK, 'both', home)).toEqual({ repo: `${WORK}/web`, root: WORK });
+      expect(selectionShowing({ ...tabs, groups: [api, blog] }, { repo: `${WORK}/api`, root: WORK }, WORK, 'both', home)).toEqual({ repo: `${PERSONAL}/blog`, root: PERSONAL });
+      expect(selectionShowing(tabs, { view: 'all', root: PERSONAL }, PERSONAL, 'p-blog', new Map([['p-blog', blog]]))).toBeUndefined();
+    });
+
+    it('prefers its home group over the first that lists it', () => {
+      const second = group({ key: `${WORK}/docs`, label: 'docs', root: WORK, sessions: [session({ sessionId: 'w-web' })] });
+      const groups = { roots: [WORK, PERSONAL], groups: [web, second, blog] };
+      expect(selectionShowing(groups, { view: 'all', root: PERSONAL }, PERSONAL, 'w-web', new Map([['w-web', second]]))).toEqual({ repo: `${WORK}/docs`, root: WORK });
+      // With one root there's no tab, and its home group still wins (#169's review): "Every repo it worked in" lists it under two.
+      const api = group({ key: `${ROOT}/api`, label: 'api', root: ROOT, sessions: [session({ sessionId: 'both' })] });
+      const site = group({ key: `${ROOT}/site`, label: 'site', root: ROOT, sessions: [session({ sessionId: 'both' })] });
+      expect(selectionShowing({ roots: [ROOT], groups: [api, site, notes] }, { repo: `${ROOT}/notes` }, undefined, 'both', new Map([['both', site]]))).toEqual({ repo: `${ROOT}/site` });
+    });
+
+    it('keeps the selection for a session no group lists yet', () => {
+      expect(selectionShowing(tabs, { view: 'all', root: PERSONAL }, PERSONAL, 'not-yet')).toBeUndefined();
+      expect(selectionShowing(single, { repo: `${ROOT}/notes` }, undefined, 'not-yet')).toBeUndefined();
+    });
   });
 
   it('names a selection on screen, and a group that has gone by its key', () => {
