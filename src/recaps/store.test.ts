@@ -105,6 +105,15 @@ describe('the file', () => {
     expect(parseStoredRecap(text, A, NOW)).toBeUndefined();
   });
 
+  it("ignores a recap stored before W146 that its rule would change, so it isn't loaded", () => {
+    // [someone else, you] with 'you': W146 reads it as waiting on someone else, so it isn't what pitwall now writes.
+    const old = edited((file) => {
+      file.recap.todos = [{ text: 'Merge #42', owner: 'someone else' }, { text: 'Release once #42 ships', owner: 'you' }];
+      file.recap.waitingOn = 'you';
+    });
+    expect(parseStoredRecap(old, A, NOW)).toBeUndefined();
+  });
+
   it(`says a recap is expired once both its times are older than ${RECAP_KEEP_MS / 86_400_000} days`, () => {
     const old = new Date(NOW - RECAP_KEEP_MS - 1000).toISOString();
     expect(parseStoredRecap(storedText(A, recap({ at: old, throughAt: old })), A, NOW)).toBe('expired');

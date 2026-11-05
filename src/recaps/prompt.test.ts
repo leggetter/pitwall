@@ -96,7 +96,7 @@ describe('RECAP_SYSTEM_PROMPT', () => {
     expect(RECAP_SYSTEM_PROMPT).toContain('Each question the user still has to answer is its own to-do.');
     expect(RECAP_SYSTEM_PROMPT).toContain('Always "nothing" when todos is empty.');
     // #123's review: an answered question is a finished to-do.
-    expect(RECAP_SYSTEM_PROMPT).toContain('A question the newer turns show you answered is finished');
+    expect(RECAP_SYSTEM_PROMPT).toContain('A question the newer turns show you answered or explicitly dismissed is finished');
     // An update revises, keeping the summary steady.
     expect(RECAP_SYSTEM_PROMPT).toContain('When updating, revise the previous recap rather than writing a new one. Keep the summary steady');
     expect(RECAP_SYSTEM_PROMPT).not.toMatch(/"why"|"now"|"next"/);
@@ -147,8 +147,8 @@ describe('parseRecapAnswer', () => {
       title: 'Fix nightly export failing on large files',
     });
     for (const waitingOn of ['you', 'another session', 'CI', 'someone else', 'nothing']) {
-      // 'nothing' only without a to-do for you (#123's review).
-      const todos = waitingOn === 'nothing' ? [{ text: 'Run the checks', owner: 'session' }] : undefined;
+      // Anything but 'you' only when no to-do of yours comes first (#123's review, W146).
+      const todos = waitingOn === 'you' ? undefined : [{ text: 'Run the checks', owner: 'session' }];
       expect(parseRecapAnswer(answer({ waitingOn, ...(todos ? { todos } : {}) }))?.waitingOn).toBe(waitingOn);
     }
     for (const owner of RECAP_TODO_OWNERS) {
@@ -210,6 +210,40 @@ describe('parseRecapAnswer', () => {
     expect(repaired({ todos: [{ text: 'Run the checks', owner: 'session' }], waitingOn: 'nothing' })).toEqual({ waitingOn: 'nothing', repaired: [] });
     expect(repaired({ todos: [{ text: 'a', owner: 'session' }, { text: 'b', owner: 'you' }], waitingOn: 'CI' })).toEqual({ waitingOn: 'CI', repaired: [] });
     expect(repaired({})).toEqual({ waitingOn: 'you', repaired: [] });
+  });
+
+  it('waits on you exactly when your to-do is the first one the session does not own (W146)', () => {
+    const waiting = (todos: { text: string; owner: string }[], waitingOn: string) => {
+      const reading = readRecapAnswer(answer({ todos, waitingOn }));
+      return reading.ok ? reading.answer.waitingOn : reading;
+    };
+    const later = { text: 'Release the CLI once #42 ships', owner: 'you' };
+    const theirs = { text: 'Merge #42', owner: 'someone else' };
+    const question = { text: 'Say whether to run the end-to-end check', owner: 'you' };
+    // A to-do of yours behind someone else's isn't due: it waits on them, not you.
+    expect(waiting([theirs, later], 'you')).toBe('someone else');
+    expect(waiting([{ text: 'Rerun the export', owner: 'session' }, theirs, later], 'you')).toBe('someone else');
+    expect(waiting([{ text: 'Finish the checks on #42', owner: 'CI' }, later], 'you')).toBe('CI');
+    expect(waiting([theirs, later], 'nothing')).toBe('nothing');
+    // Yours first of all, such as a question you haven't answered: you, whatever the model said.
+    for (const waitingOn of ['nothing', 'CI', 'someone else', 'another session']) {
+      expect(waiting([question, theirs, later], waitingOn), waitingOn).toBe('you');
+    }
+    // Behind the session's own step, only 'nothing' becomes you; CI or another session stays (#168's review).
+    const watch = { text: 'Watch CI on #42 and fix failures', owner: 'session' };
+    const merge = { text: 'Merge #42', owner: 'you' };
+    expect(waiting([watch, merge], 'CI')).toBe('CI');
+    expect(waiting([{ text: "Act on the other session's reply", owner: 'session' }, merge], 'another session')).toBe('another session');
+    expect(waiting([watch, merge], 'nothing')).toBe('you');
+    expect(waiting([watch, merge], 'you')).toBe('you');
+  });
+
+  it('tells the model questions stay until answered or dismissed, and a later to-do comes after what it waits on (W146)', () => {
+    expect(RECAP_SYSTEM_PROMPT).toContain('until the user answers it or explicitly dismisses it');
+    expect(RECAP_SYSTEM_PROMPT).toContain("doesn't end it");
+    expect(RECAP_SYSTEM_PROMPT).toContain("comes after that thing's to-do");
+    expect(RECAP_SYSTEM_PROMPT).toContain('Then the first to-do that isn\'t the session\'s is the user\'s.');
+    expect(RECAP_SYSTEM_PROMPT).toContain('Keep every other question for you, even when the newer turns don\'t mention it.');
   });
 
   it('strips one surrounding code fence around exactly one object, and says so (W126)', () => {
