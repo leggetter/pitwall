@@ -326,7 +326,17 @@ M5.1's own items start at W131, the evidence the rest of it needs; the others fo
   - Phil, 2026-11-05: "The new session should be driven from the selected repo or directory in the left-hand nav, not from the selected session... There can be nothing selected in the middle pane, but you always have something in the left-hand pane." Since W139 (selecting a repo or directory keeps the open session only if it's in that group), moving around the repo list closes the session view, so #139's default, the open session's directory, came and went. With a view selected (Needs you, All sessions, Starred, Pull requests): "maybe there isn't a default." A view in a root tab gets none either, not the tab's root (Phil, 2026-11-05: "go with your call", the building session's lean).
   - Built: `newSessionDirectory()` (`web/src/spawn.ts`) takes the repo list's selection: a group's directory when it's under a root, in the open root tab; nothing for a view or a not-cloned repo. The dialog's `noDirectory` opens Directory empty, its placeholder the root, and Start session says "Choose a directory." D27 revised in place. A worktree session's own directory is no longer the default; it's one typed path away in the combobox (W140).
   - A UI change: the app check's `new-session` part (a repo selected, a repo with a worktree's session open, a view with a session open), the `#uikit` gallery's New session cases, and `docs/design-system.md` (Combobox, Dialogs).
-  - Status: In review ([#167](https://github.com/leggetter/pitwall/pull/167))
+  - Status: Merged ([#167](https://github.com/leggetter/pitwall/pull/167)).
+- **W144, Opening a session from the supervisor's links or a PR view selects its root tab and group** (`m5.1/open-selects-group`, S).
+  - Phil, 2026-11-05: a session the supervisor started in `~/work` opened from "Sent and started" while the sidebar stayed on another root's tab, so the view showed a session the list didn't. W139's review named these routes: "Sent and started" and a PR view's Sessions both call `openSessionFromPr` in `web/src/components/Dashboard.tsx`, which sets `?session=` and leaves the selection alone.
+  - Agreed (Phil, 2026-11-05): opening a session from either selects its root's tab and a group that lists it (its repo or directory), as one pushed history entry, so Back returns to where you were. A selection that already lists the session is kept, as W139 keeps it. A session not in the snapshot yet opens as today, and is selected once it's listed, or stays as it is.
+  - In `web/src/selection.ts` (a helper beside `keepsOpenSession()`) and `Dashboard.tsx`; rows in the list are untouched. Tests beside `SelectionSession.test.tsx`.
+  - A UI change: the app check's `lists` or `supervisor` part, and `docs/design-system.md`'s Session view.
+  - Status: Not started.
+- **W145, A session started in a root's own folder that works in one repo it cloned is listed under that repo** (`m5.1/cloned-repo-group`, M).
+  - Phil, 2026-11-05, option B: a session whose folder is a root (or a plain directory under one) that then clones a repo and works in it is listed under that repo, not the root folder. Not option A, the supervisor cloning first.
+  - In the index: D6 groups by `git rev-parse --git-common-dir` of the session's folder. The repo it works in comes from the transcript's tool calls (their `cwd` or paths), read through the adapter, failing soft to today's grouping; only one repo, under a root, counts. Related: "Move a session to another group" in Nice to have.
+  - Status: Not started; after W144.
 
 ## Open questions
 
