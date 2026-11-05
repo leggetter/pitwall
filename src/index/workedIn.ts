@@ -143,6 +143,11 @@ export interface WorkedInScannerOptions {
   now?: () => number;
   /** How long a directory's repo, a repo's remotes and the roots' repos are reused. Default 5 minutes. */
   ttlMs?: number;
+  /**
+   * How long a path found in no repo, or a `.git` not there, is reused: a directory a session is about to
+   * clone into is in no repo until the clone lands, and each call is counted once (W145). Default 5 seconds.
+   */
+  missTtlMs?: number;
   /** Expands `~` and `$HOME` in commands. Default os.homedir(). */
   home?: string;
   /** Default 2. */
@@ -259,9 +264,11 @@ interface RawCall {
 /** A cache of promises that expire, emptied when it grows past MAX_CACHE_ENTRIES. */
 class Expiring<T> {
   private readonly entries = new Map<string, { expiresAt: number; value: Promise<T> }>();
+  /** `missTtlMs`, when given, is how long a null is kept instead: a path that isn't a repo yet may be one soon. */
   constructor(
     private readonly now: () => number,
     private readonly ttlMs: number,
+    private readonly missTtlMs?: number,
   ) {}
 
   get(key: string, make: () => Promise<T>): Promise<T> {
@@ -270,7 +277,16 @@ class Expiring<T> {
     if (hit && hit.expiresAt > at) return hit.value;
     if (this.entries.size >= MAX_CACHE_ENTRIES) this.entries.clear();
     const value = make();
-    this.entries.set(key, { expiresAt: at + this.ttlMs, value });
+    const entry = { expiresAt: at + this.ttlMs, value };
+    this.entries.set(key, entry);
+    const missTtlMs = this.missTtlMs;
+    if (missTtlMs !== undefined && missTtlMs < this.ttlMs)
+      void value.then(
+        (got) => {
+          if (got === null) entry.expiresAt = Math.min(entry.expiresAt, at + missTtlMs);
+        },
+        () => undefined,
+      );
     return value;
   }
 
@@ -339,6 +355,7 @@ export function createWorkedInScanner(options: WorkedInScannerOptions = {}): Wor
   const fs: ScannerFs = { ...nodeFs, ...options.fs };
   const now = options.now ?? Date.now;
   const ttlMs = options.ttlMs ?? 5 * 60_000;
+  const missTtlMs = options.missTtlMs ?? 5_000;
   const home = options.home ?? os.homedir();
   const chunkBytes = options.chunkBytes ?? 1 << 20;
   const maxLineBytes = options.maxLineBytes ?? 16 << 20;
@@ -365,9 +382,9 @@ export function createWorkedInScanner(options: WorkedInScannerOptions = {}): Wor
   const resolver = createGroupResolver({ run, now, ttlMs, gitBin, timeoutMs, realpath: fs.realpath });
   const env = gitEnvironment();
 
-  const kinds = new Expiring<'dir' | 'file' | null>(now, ttlMs);
+  const kinds = new Expiring<'dir' | 'file' | null>(now, ttlMs, missTtlMs);
   const reals = new Expiring<string>(now, ttlMs);
-  const places = new Expiring<Placement | null>(now, ttlMs);
+  const places = new Expiring<Placement | null>(now, ttlMs, missTtlMs);
   const gitdirs = new Expiring<string | undefined>(now, ttlMs);
   const remotes = new Expiring<string[]>(now, ttlMs);
   const slugPlaces = new Expiring<Placement | null>(now, ttlMs);

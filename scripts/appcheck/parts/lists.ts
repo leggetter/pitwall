@@ -2,9 +2,10 @@
 // list's Needs you, All sessions and Starred, then its groups; two-line rows; the session list's
 // filter, chips and sort, and a filter bar that turning a filter on or off never moves (W75), with
 // Clear filters as an icon button and the bar's lines at each window (W91); a group that keeps the
-// open session only if it lists it (W139); and, with two roots, a tab per root.
+// open session only if it lists it (W139); a session started in a directory in no repo that worked
+// in one repo, listed under that repo (W145); and, with two roots, a tab per root.
 
-import { API_SERVER, CODE, DEMO_APP, NAMES, OSS } from '../fixtures.js';
+import { API_SERVER, CODE, DEMO_APP, DOCS_SITE, NAMES, OSS, SDK_CLI } from '../fixtures.js';
 import type { Part } from '../runner.js';
 import { chooseInRepoList, focused, listHeading, openFromRow, openRepoList, repoItem, repoLabels, row, rowNames, selectedRepo, viewName, VIEW } from './_dom.js';
 
@@ -377,6 +378,34 @@ const part: Part = {
       await page.waitFor(`the ${NAMES.inApi} view again`, `${viewName} === ${q(NAMES.inApi)}`);
       t.expectEqual(await page.evaluate('location.search'), `?repo=${API_SERVER}&session=${sessionId}`, 'Back returns to the session and its group');
       t.expectEqual(await page.evaluate(listHeading), 'api-server', 'under api-server');
+    });
+
+    // W145 (a session started in a root's folder, or a directory in no repo, that works in one repo it cloned is listed under that repo).
+    await t.step('a session started in a directory in no repo that worked in one repo it cloned is listed under that repo, and its view says where it started', async () => {
+      await t.fresh({ search: '?view=all', cloned: true });
+      await openRepoList(t);
+      const labels = await page.evaluate<string[]>(repoLabels);
+      t.expect(labels.includes('sdk-cli'), 'sdk-cli, which nothing started in, has a group', labels);
+      // docs-site's only other session ended 20 days ago, so with this one moved it's listed only with Show older on.
+      t.expect(!labels.includes('docs-site'), 'docs-site has no item', labels);
+      await chooseInRepoList(t, 'sdk-cli');
+      t.expectEqual(await page.evaluate('location.search'), `?repo=${SDK_CLI}`, 'the URL names the repo');
+      t.expectEqual(await page.evaluate(rowNames), [NAMES.cloned], 'its session');
+      await openFromRow(t, NAMES.cloned);
+      const text = await page.evaluate<string | null>(`document.querySelector('.session-view-worked-text')?.textContent ?? null`);
+      const line = text?.replace(/\s+/g, ' ').trim() ?? null;
+      t.expect((line ?? '').startsWith('Started in docs-site') && (line ?? '').includes('sdk-cli'), "the view's line 3 says it started in docs-site and worked in sdk-cli", line);
+      await t.shot('cloned-repo-group');
+    });
+
+    await t.step('grouped by where it started, the same session is under docs-site, and sdk-cli has no item', async () => {
+      await t.fresh({ search: '?view=all', cloned: true, storage: { 'pitwall.group-by.v1': 'where-started' } });
+      await openRepoList(t);
+      const labels = await page.evaluate<string[]>(repoLabels);
+      t.expect(labels.includes('docs-site') && !labels.includes('sdk-cli'), 'docs-site has an item, sdk-cli none', labels);
+      await chooseInRepoList(t, 'docs-site');
+      t.expectEqual(await page.evaluate('location.search'), `?repo=${DOCS_SITE}`, 'the URL names the directory');
+      t.expectEqual(await page.evaluate(rowNames), [NAMES.cloned], 'its session, the one started there');
     });
 
     await t.step('two roots: a tab per root, and a badge on the one that needs you', async () => {

@@ -621,7 +621,7 @@ const PAGES: PageCase[] = [
   },
   {
     title: "The root's group",
-    note: 'Every session started in the root, one that worked in pitwall-test-api and pitwall-test-docs too. The directory below it, pitwall-test-scratch, keeps its own group.',
+    note: 'Every session started in the root, one that worked in pitwall-test-api and pitwall-test-docs too. The directory below it, pitwall-test-scratch, has no group in Main repo: its one session worked in pitwall-test-docs alone, so it’s listed there (W145).',
     search: repo(ROOT),
     view: { state: 'live', snapshot: WORKED_SNAPSHOT },
   },
