@@ -4,7 +4,8 @@
 // conversation's questions, which fill the box; a message that starts it, the working line, and its
 // reply as markdown; its limit, 100,000 characters (W134); Load earlier; the draft cards, Edit and Send edit, Don't send, and where focus
 // goes; what it sent and started, with each session's state, Needs you's notice and Open (W124); a
-// resume draft for a finished session and its "Resumed" row (W127); the sessions and PRs its replies name, which open them (W125); Stop; held, with the stop command and the app strip's line; failed, with Start; a reload that
+// resume draft for a finished session and its "Resumed" row (W127); Open from another root's tab, which
+// selects the session's tab and group in one history entry (W144); the sessions and PRs its replies name, which open them (W125); Stop; held, with the stop command and the app strip's line; failed, with Start; a reload that
 // starts nothing; its context in the header, New conversation with its confirmation, cancelled,
 // confirmed and refused, and a draft's text up to half the window (W136), with its buttons in the band
 // at 600 to 1000 px tall (W143); pitwall's line under a
@@ -14,9 +15,9 @@
 
 import { REFUSED_TO_SUPERVISOR_NOTICE } from '../../../src/index/conversation.js';
 import { SUPERVISOR_MESSAGE_FOOTER } from '../../../src/shared/protocol.js';
-import { NAMES, SUPERVISOR_APPROVALS, SUPERVISOR_RACE_REFUSAL } from '../fixtures.js';
+import { CODE, DEMO_APP, NAMES, OSS, SUPERVISOR_APPROVALS, SUPERVISOR_RACE_REFUSAL } from '../fixtures.js';
 import type { Part } from '../runner.js';
-import { focused, listHeading, openFromRow, openRepoList, repoLabels, VIEW, viewClose } from './_dom.js';
+import { focused, listHeading, openFromRow, openRepoList, repoLabels, selectedRepo, VIEW, viewClose, viewName } from './_dom.js';
 
 const q = JSON.stringify;
 const ITEM = `document.querySelector('nav[aria-label="Repos"] a[data-supervisor-item]')`;
@@ -31,6 +32,8 @@ const CONFIRM_BOX = `${SVIEW}?.querySelector('[data-supervisor-new-confirm] .inl
 const confirmButton = (label: string) => `[...(${CONFIRM_BOX}?.querySelectorAll('button') ?? [])].find((b) => b.textContent.trim() === ${q(label)})`;
 const CONTEXT = `(${SVIEW}?.querySelector('[data-supervisor-context]')?.textContent?.trim() ?? null)`;
 const CARDS = `[...(${SVIEW}?.querySelectorAll('li.approval-card') ?? [])]`;
+/** The open root tab's label, with two roots. */
+const OPEN_TAB = `(document.querySelector('header .root-tab[aria-selected="true"] .root-tab-label')?.textContent ?? null)`;
 const HANDOFFS = `[...(${SVIEW}?.querySelectorAll('[data-supervisor-handoffs] li.supervisor-handoff') ?? [])]`;
 /** A card's line pitwall adds (W138): its label, its text, and whether it's inside the card and the window. */
 const footerOf = (index: number) =>
@@ -230,6 +233,31 @@ const part: Part = {
       await page.waitFor('its session view, in the supervisor’s place', `!${SVIEW} && !!document.querySelector('#session-view')`);
       t.expect((await page.evaluate<string>('location.search')).includes('session='), 'the session in the URL', await page.evaluate('location.search'));
       t.expectEqual(await page.evaluate(`document.querySelector('#session-view h2 .session-view-name')?.textContent ?? null`), 'pr-57', 'the session it started');
+    });
+
+    await t.step('Open from the other root’s tab (W144): the session’s tab and group come with it, in one entry, and Back returns', async () => {
+      const start = `?view=all&root=${OSS}`;
+      await t.fresh({ search: start, supervisor: 'idle', approvals: true, roots: 2 });
+      await openRepoList(t);
+      await page.click('the Supervisor item', ITEM);
+      await page.waitFor('two cards', `${CARDS}.length === 2`);
+      await page.click('Send', cardButton(0, 'Send'));
+      await page.waitFor('the message’s row', `${HANDOFFS}.length === 1`);
+      await page.click('Send', cardButton(0, 'Send'));
+      await page.waitFor('both rows', `${HANDOFFS}.length === 2 && ${CARDS}.length === 0`);
+      t.expectEqual(await page.evaluate(OPEN_TAB), '~/oss', 'in ~/oss’s tab');
+      await page.click('Open pr-57', `${HANDOFFS}[0].querySelector('[data-handoff-open]')`);
+      await page.waitFor('its session view, in the supervisor’s place', `!${SVIEW} && ${viewName} === 'pr-57'`);
+      const search = await page.evaluate<string>('location.search');
+      t.expect(search.startsWith(`?repo=${DEMO_APP}&root=${CODE}&session=`), 'its group and root in the URL, with the session', search);
+      t.expectEqual(await page.evaluate(OPEN_TAB), '~/code', 'its root’s tab open');
+      t.expectEqual(await page.evaluate(focused), 'the view heading', 'focus on its heading');
+      if (t.layout !== 'drawer') t.expectEqual(await page.evaluate(selectedRepo), 'demo-app', 'demo-app selected in the repo list');
+      t.expect(await page.evaluate<boolean>(`[...document.querySelectorAll('.session-list [data-open-session]')].some((el) => el.textContent.trim() === 'pr-57')`), 'its row in the session list');
+      await t.shot('handoff-other-root');
+      await page.evaluate('history.back()');
+      await page.waitFor('the supervisor again, in ~/oss’s tab', `!!${SVIEW}?.querySelector('h2') && ${OPEN_TAB} === '~/oss'`);
+      t.expectEqual(await page.evaluate('location.search'), `${start}&supervisor`, 'one Back returns to where it was, so it was one entry');
     });
 
     await t.step('a reply to the supervisor (W138): To pitwall-supervisor in its session, and the refusal in pitwall’s words', async () => {

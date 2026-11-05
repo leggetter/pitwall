@@ -162,6 +162,7 @@ import {
   scopeFor,
   selectionHref,
   selectionName,
+  selectionShowing,
   useSelection,
   viewIn,
   withSelection,
@@ -1029,11 +1030,23 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     return () => cancelAnimationFrame(frame);
   }, [supervisorOpen, openId, prOpen, layout, tab]);
 
-  // A session from the PR view's Sessions: its view takes the PR's place, with focus on its heading.
-  // No focus gesture (W57): its terminal, if it opens on one, leaves focus where it is.
+  // A session from the PR view's Sessions or the supervisor's Sent and started: its view takes the
+  // PR's or the supervisor's place, with focus on its heading. No focus gesture (W57): its terminal, if
+  // it opens on one, leaves focus where it is. Its root tab and a group that lists it come with it, in
+  // the one pushed entry, unless the selection already lists it (W144, selectionShowing()); one no
+  // group lists yet opens alone.
   const openSessionFromPr = (sessionId: string) => {
     focusView.current = { id: sessionId, on: 'heading' };
-    opened.open(sessionId, 'push');
+    const next = snapshot ? selectionShowing({ roots, groups: groupedAll.groups }, selection, tab, sessionId, groupedAll.home) : undefined;
+    if (next === undefined) {
+      opened.open(sessionId, 'push');
+      return;
+    }
+    const { pathname, search, hash } = navigation.location;
+    navigation.history.pushState(navigation.history.state, '', `${pathname}${withSession(withSelection(search, next), sessionId)}${hash}`);
+    writeStoredSelection(next, storage);
+    followSelection();
+    opened.follow();
   };
   // Show older for PRs: the same button with its other name keeps focus, or the list's heading once it's gone.
   const focusOlderPrs = useRef(false);
