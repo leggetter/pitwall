@@ -118,6 +118,7 @@ const rowItem = (name: string) => {
 };
 /** The group label line 2 starts with, in Needs you and All sessions. */
 const rowGroup = (name: string) => rowItem(name).querySelector('.session-group')?.textContent?.replace(/ · $/, '');
+const rowElsewhere = (name: string) => rowItem(name).querySelector('.session-elsewhere')?.textContent?.replace(/^ · /, '');
 const listHeading = () => within(screen.getByRole('main')).getByRole('heading', { level: 2 });
 const summary = () => document.querySelector('.session-list .summary')?.textContent ?? '';
 const tabs = () => screen.getAllByRole('tab').filter((tab) => tab.classList.contains('root-tab'));
@@ -194,7 +195,7 @@ describe('the Preferences dialog', () => {
     }
     const options = (setting: string) => preferenceOptions(setting).map((radio) => [labelOf(radio), describedBy(radio), radio.checked]);
     expect(options(GROUP_BY)).toEqual([
-      ['Main repo', 'A session started in a root goes under the repo it changed most; one started in another folder, under the only repo it worked in.', true],
+      ['Main repo', 'A session started in a root goes under the repo in that root it changed most; one started in another folder, under the only repo in that root it worked in.', true],
       ['Where it started', 'Each session stays under the repo or directory it started in.', false],
       ['Every repo it worked in', 'A session shows under every repo it worked in, so counts can overlap.', false],
     ]);
@@ -418,34 +419,38 @@ describe('the settings with buttons of their own, which Preferences leaves to th
 describe('Main repo, the default', () => {
   it("moves a session started in a root itself to the repo it changed most, a group built for it, and leaves the rest where they started", () => {
     renderApp();
-    // ~/work: alone stays; big moves to evals, which has no group of its own; cross to blog, under ~/personal.
-    expect(repoItems()).toEqual(['Needs you2 need you', 'All sessions4 sessions', 'Starred', '~/work, directory1 session', 'api, git repo1 needs you', 'evals, git repo1 needs you', 'web, git repo1 session']);
+    // ~/work: alone stays; big moves to evals, which has no group of its own; cross to api, its main repo
+    // in ~/work, though it changed blog, under ~/personal, more (W149).
+    expect(repoItems()).toEqual(['Needs you2 need you', 'All sessions5 sessions', 'Starred', '~/work, directory1 session', 'api, git repo1 needs you', 'evals, git repo1 needs you', 'web, git repo1 session']);
     choose('evals');
     expect(listHeading().textContent).toBe('evals, git repo');
     expect(rowNames()).toEqual(['big']);
     expect(summary()).toBe('1 session1 needs you');
     choose('~/work');
     expect(rowNames()).toEqual(['alone']);
-    // in-api, started in api, stays there, though it worked in evals.
+    // in-api, started in api, stays there, though it worked in evals; cross joins it.
     choose('api');
-    expect(rowNames()).toEqual(['in-api']);
+    expect(rowNames()).toEqual(['in-api', 'cross']);
   });
 
-  it("puts a session whose main repo is under another root in that root's tab, its badge and counts included", () => {
+  it("keeps a session in its own root's tab though it changed a repo under another root most, and its row says so (W149)", () => {
     renderApp();
     expect(tabNames()).toEqual(['~/work', '~/personal, 1 needs you']);
+    choose('api');
+    expect(rowNames().sort()).toEqual(['cross', 'in-api']);
+    expect(rowElsewhere('cross')).toBe('also in blog');
     fireEvent.click(tab('~/personal'));
-    expect(repoItems()).toEqual(['Needs you1 needs you', 'All sessions3 sessions', 'Starred', '~/personal, directory1 session', 'blog, git repo1 needs you']);
+    expect(repoItems()).toEqual(['Needs you1 needs you', 'All sessions2 sessions', 'Starred', '~/personal, directory1 session', 'blog, git repo1 needs you']);
     choose('blog');
-    expect(rowNames()).toEqual(['in-blog', 'cross']);
+    expect(rowNames()).toEqual(['in-blog']);
     expect(tabNames()).toEqual(['~/work, 2 need you', '~/personal']);
   });
 
   it('lists each session once in Needs you and All sessions, each row naming its group, and the counts add up', () => {
     renderApp({ search: `?view=all&root=${WORK}` });
-    expect(rowNames()).toEqual(['big', 'in-api', 'alone', 'in-web']);
-    expect(['big', 'in-api', 'alone', 'in-web'].map(rowGroup)).toEqual(['evals', 'api', '~/work', 'web']);
-    expect(summary()).toBe('4 sessions2 need you');
+    expect(rowNames()).toEqual(['big', 'in-api', 'cross', 'alone', 'in-web']);
+    expect(['big', 'in-api', 'cross', 'alone', 'in-web'].map(rowGroup)).toEqual(['evals', 'api', 'api', '~/work', 'web']);
+    expect(summary()).toBe('5 sessions2 need you');
     choose('Needs you');
     expect(rowNames()).toEqual(['big', 'in-api']);
     expect(rowGroup('big')).toBe('evals');
@@ -453,11 +458,11 @@ describe('Main repo, the default', () => {
     expect(document.title).toBe('(3) pitwall · ~/work');
   });
 
-  it('selects the group a ?session= is listed under: its main repo, in its tab', () => {
+  it('selects the group a ?session= is listed under: its main repo in the root it started in, in that tab', () => {
     const { history } = renderApp({ search: `?session=${id(2)}` });
-    expect(listHeading().textContent).toBe('blog, git repo');
-    expect(tab('~/personal').getAttribute('aria-selected')).toBe('true');
-    expect(new URLSearchParams(history.location.search).get('repo')).toBe(at(PERSONAL, 'blog'));
+    expect(listHeading().textContent).toBe('api, git repo');
+    expect(tab('~/work').getAttribute('aria-selected')).toBe('true');
+    expect(new URLSearchParams(history.location.search).get('repo')).toBe(at(WORK, 'api'));
     expect(document.querySelector('#session-view')).not.toBeNull();
   });
 });
@@ -507,7 +512,7 @@ describe('Every repo it worked in', () => {
   it('lists each session once in All sessions and Needs you, each row naming where it started, or a root-started session’s main repo', () => {
     renderApp({ mode: 'every-repo', search: `?view=all&root=${WORK}` });
     expect(rowNames()).toEqual(['big', 'in-api', 'cross', 'alone', 'in-web']);
-    expect(['big', 'in-api', 'cross', 'alone', 'in-web'].map(rowGroup)).toEqual(['evals', 'api', 'blog', '~/work', 'web']);
+    expect(['big', 'in-api', 'cross', 'alone', 'in-web'].map(rowGroup)).toEqual(['evals', 'api', 'api', '~/work', 'web']);
     expect(summary()).toBe('5 sessions2 need you');
     choose('Needs you');
     expect(rowNames()).toEqual(['big', 'in-api']);
@@ -529,7 +534,7 @@ describe('what stays the same in every mode', () => {
     expect(rowNames().sort()).toEqual(['big', 'in-api']);
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'blog' } });
     // In ~/work's tab: the sessions there that worked in blog.
-    expect(rowNames().sort()).toEqual(mode === 'main-repo' ? ['big'] : ['big', 'cross']);
+    expect(rowNames().sort()).toEqual(['big', 'cross']);
   });
 
   it.each(['main-repo', 'where-started', 'every-repo'] as const)("%s: the session view's line 3 says where it started and every repo it worked in", (mode) => {

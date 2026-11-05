@@ -1904,6 +1904,21 @@ mark.match {
   white-space: pre;
 }
 
+/*
+ * "· also in phil-skills" (W149): a repo it worked in under another root, after the running count, in
+ * --pw-text-subtle, up to half the line. Its tiny shrink keeps its room until what it wants or did last
+ * has given way entirely; then it gives way too, with an ellipsis, so line 2 never overflows.
+ */
+.session-elsewhere {
+  flex: 0 0.001 auto;
+  min-width: 0;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--pw-text-subtle);
+  white-space: pre;
+}
+
 .session-group {
   color: var(--pw-text-subtle);
 }

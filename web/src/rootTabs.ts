@@ -9,8 +9,8 @@
 // root inside another, a session under the inner one is in the inner root's tab alone, as the index
 // lists it. A tab's sessions are those its groups list, as the chosen grouping has them (groupBy.ts),
 // so Needs you, All sessions and their counts are its own, each session once. In Main repo a
-// root-started session can move to a repo under another root, and so to that root's tab; in Every
-// repo it worked in, a session can be in more than one tab.
+// session stays in the tab of the root it started in (W149); in Every repo it worked in, a session
+// can be in more than one tab.
 //
 // The open tab is the selection's root, in the URL (selection.ts): ?view=all&root=<root>, as
 // ?repo=<key>&root=<root> already was with several roots. It's kept in localStorage as

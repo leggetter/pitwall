@@ -16,6 +16,7 @@ Last updated: 2026-11-05, on `m5.1/integration`: W142 (New session's Directory: 
 
 | Item | State |
 | --- | --- |
+| W149 (Main repo keeps a session in the root it started in) | Merged ([#174](https://github.com/leggetter/pitwall/pull/174), Phil, 2026-11-05, option A): a session that edits another root's repo stays in its own root's tab, its row "also in" that repo. Reviewed fresh; its fixes made by the coordinator. Worktree `.worktrees/w149` can go |
 | W132, recaps when they're worth it | Merged ([#146](https://github.com/leggetter/pitwall/pull/146)). Its security review's Info notes, left: expiry only at start; `RECAP_STORE_MAX_FILES` isn't ordered by age; a planted file chooses its session's recap text (no wider than writing the transcript) |
 | W136 (the supervisor's context, visible and clearable, and taller cards) | Merged ([#157](https://github.com/leggetter/pitwall/pull/157)). The review's blocking finding, fixed before merge: New conversation refused while your messages were queued, which, after a failed resume, left no way out; now it drops them, and its confirmation says so. Its non-blocking finding left: no test of a message or Start arriving while the old process takes time to exit (the code reads right). Not live-checked that `claude -p`'s stream carries `message.usage` |
 | W137 (code blocks in messages wrap their long lines) | Merged ([#156](https://github.com/leggetter/pitwall/pull/156)). Left: a wrapped line continues from the left edge, not under its indent (accepted); a URL in code that wraps gives its tooltip both lines' box |

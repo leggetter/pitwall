@@ -3,7 +3,8 @@
 // filter, chips and sort, and a filter bar that turning a filter on or off never moves (W75), with
 // Clear filters as an icon button and the bar's lines at each window (W91); a group that keeps the
 // open session only if it lists it (W139); a session started in a directory in no repo that worked
-// in one repo, listed under that repo (W145); and, with two roots, a tab per root.
+// in one repo, listed under that repo (W145); and, with two roots, a tab per root, a session that
+// changed another root's repo most kept in its own root's tab, its row "also in" that repo (W149).
 
 import { API_SERVER, CODE, DEMO_APP, DOCS_SITE, NAMES, OSS, SDK_CLI } from '../fixtures.js';
 import type { Part } from '../runner.js';
@@ -428,6 +429,19 @@ const part: Part = {
       await openRepoList(t);
       t.expectEqual(await page.evaluate(repoLabels), ['Needs you', 'All sessions', 'Starred', 'Pull requests', 'blog'], "its repo list, with the page's Pull requests");
       if (t.layout === 'drawer') await page.key('Escape');
+    });
+
+    await t.step("two roots: a session started in ~/code that changed two repos under ~/oss most stays in ~/code's tab, under api-server, its row also in them (W149)", async () => {
+      await t.fresh({ search: `?repo=${API_SERVER}&root=${CODE}`, roots: 2 });
+      t.expect((await page.evaluate<string[]>(rowNames)).includes(NAMES.fromRoot), 'api-server lists it', await page.evaluate(rowNames));
+      const also = await page.evaluate<string | null>(`${row(NAMES.fromRoot)}?.closest('li.session')?.querySelector('.session-elsewhere')?.textContent ?? null`);
+      t.expectEqual(also?.replace(/^ · /, '') ?? null, 'also in pitwall-test-a-made-up-repository-with-a-long-name +1 and 1 more repo', 'its line 2 ends "also in" the most changed, "+1", read out as "and 1 more repo"');
+      // With "· 12 sub-agents running" before it: it gives way with an ellipsis, inside its row, never past it.
+      const box = await page.evaluate<{ fits: boolean; inside: boolean }>(
+        `(() => { const li = ${row(NAMES.fromRoot)}?.closest('li.session'); const what = li?.querySelector('.session-what'); const el = li?.querySelector('.session-elsewhere'); if (!what || !el) return { fits: false, inside: false }; const w = what.getBoundingClientRect(), e = el.getBoundingClientRect(); return { fits: li.scrollWidth <= li.clientWidth + 1, inside: e.right <= w.right + 1 }; })()`,
+      );
+      t.expect(box.fits && box.inside, 'line 2 fits its row, "also in" inside it', box);
+      await t.shot('also-in-other-root');
     });
 
     await t.step('in forced colours, as a Windows contrast theme sets them, turning a filter on or off moves nothing either', async () => {

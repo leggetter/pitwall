@@ -4,12 +4,15 @@
 //
 // - Main repo, the default (Phil, 2026-10-21): a session started in a root itself that worked in
 //   repos is listed under one of them, its main repo: the one with the most changes, ties broken by
-//   tool calls, then the newest touch, then the path. The repo may be under another root, and so in
-//   that root's tab. A root-started session that worked in no repo stays in the root's own group.
-//   A session started in a directory below a root that's in no repo, which worked in exactly one
-//   repo, such as one it cloned there, is listed under that repo (W145, Phil, 2026-11-05); with two
-//   or more, or none, it stays in its directory. Every other session stays where it started. Each
-//   session is in one group, so counts add up, as in W39.
+//   tool calls, then the newest touch, then the path. A root-started session that worked in no repo
+//   stays in the root's own group. A session started in a directory below a root that's in no repo,
+//   which worked in exactly one repo, such as one it cloned there, is listed under that repo (W145,
+//   Phil, 2026-11-05); with two or more, or none, it stays in its directory. Every other session stays
+//   where it started. Each session is in one group, so counts add up, as in W39.
+//   Either move stays in the root the session started in (W149, Phil, 2026-11-05): only the repos
+//   under that root count, so a session never leaves its root's tab. A session in a Hookdeck root that
+//   edits a skill in a personal root stays in the Hookdeck tab, and its row says "also in" that repo
+//   (elsewhereRepos()). Every repo it worked in still lists it under that repo as well.
 // - Where it started: the snapshot's groups as they are (W39).
 // - Every repo it worked in: W34's listing. Each session is under the group it started in and under
 //   every repo it worked in, except that the root's own group holds only the root-started sessions
@@ -61,7 +64,7 @@ export const GROUP_BY_LABELS: Readonly<Record<GroupBy, string>> = {
 
 /** Each mode's one plain line in the Preferences dialog, under its label. */
 export const GROUP_BY_DESCRIPTIONS: Readonly<Record<GroupBy, string>> = {
-  'main-repo': 'A session started in a root goes under the repo it changed most; one started in another folder, under the only repo it worked in.',
+  'main-repo': 'A session started in a root goes under the repo in that root it changed most; one started in another folder, under the only repo in that root it worked in.',
   'where-started': 'Each session stays under the repo or directory it started in.',
   'every-repo': 'A session shows under every repo it worked in, so counts can overlap.',
 };
@@ -137,16 +140,39 @@ export function isRootStart(group: Pick<SessionGroup, 'root' | 'key' | 'kind'>):
   return group.kind === 'directory' && isRootGroup(group);
 }
 
+/** Whether two roots are the same configured root, ignoring a trailing slash, as isRootGroup() does. */
+function sameRoot(a: string, b: string): boolean {
+  return a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
+}
+
 /**
  * The repo Main repo lists a session under instead of the group it started in, or undefined to leave
- * it there. A root's own directory: its main repo, of any number. Another directory in no repo (W145):
- * the one repo it worked in, and only when there's one. A repo, a root that is itself one included:
- * none. `worked` holds only placeable repos.
+ * it there. Only the repos under the root it started in count (W149), so it never leaves that root's
+ * tab. A root's own directory: its main repo among those, of any number. Another directory in no repo
+ * (W145): the one repo it worked in under that root, and only when there's one. A repo, a root that is
+ * itself one included: none. `worked` holds only placeable repos.
  */
 export function movedTo(start: Pick<SessionGroup, 'root' | 'key' | 'kind'>, worked: readonly WorkedIn[]): WorkedIn | undefined {
   if (start.kind !== 'directory') return undefined;
-  if (isRootGroup(start)) return mainRepo(worked);
-  return worked.length === 1 ? worked[0] : undefined;
+  const inRoot = worked.filter((repo) => sameRoot(repo.root, start.root));
+  if (isRootGroup(start)) return mainRepo(inRoot);
+  return inRoot.length === 1 ? inRoot[0] : undefined;
+}
+
+/**
+ * The repos a session worked in under a root other than its group's (W149), most changed first, as
+ * mainRepo() orders them: its row's "also in". Main repo keeps a session in the root it started in,
+ * so these are the work the root's tab wouldn't otherwise show.
+ */
+export function elsewhereRepos(session: Pick<SessionSummary, 'workedIn'>, group: Pick<SessionGroup, 'root'>): WorkedIn[] {
+  const seen = new Set<string>();
+  const repos: WorkedIn[] = [];
+  for (const repo of session.workedIn ?? []) {
+    if (!placeable(repo) || sameRoot(repo.root, group.root) || seen.has(groupId(repo))) continue;
+    seen.add(groupId(repo));
+    repos.push(repo);
+  }
+  return repos.sort(compareMain);
 }
 
 export interface Grouped {
@@ -201,8 +227,8 @@ export function groupSessions(startGroups: SessionGroup[], mode: GroupBy): Group
         add(homeGroup, session);
         continue;
       }
-      // Every repo it worked in: the root's own group keeps only the sessions that worked in no repo;
-      // any other directory keeps every session that started in it.
+      // Every repo it worked in: the root's own group keeps only the sessions that worked in no repo
+      // under that root; any other directory keeps every session that started in it.
       if (moved === undefined || !isRootStart(start)) add(listed, session);
       for (const repo of worked) add(repoGroup(repo), session);
     }

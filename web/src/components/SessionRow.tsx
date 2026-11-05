@@ -2,7 +2,8 @@
 // its badges, when it was last active and its star toggle (W53); then what it needs or asked, or what
 // it was last asked, after its group's label in Needs you, All sessions and Starred, and "Not needed
 // now" while it's marked so (W88), and, quietly at its end, how many of its sub-agents are running
-// while any are (W77), then, while it needs you or is marked, its Not needed now toggle, under the star. A finished session's row
+// while any are (W77), and "also in" a repo under another root it worked in (W149), then, while it
+// needs you or is marked, its Not needed now toggle, under the star. A finished session's row
 // is muted, an ended interactive session's too (W67), with Ended as its status. The rest, such as its
 // replies, its relay exchange, its directory, the repos it worked in and the message box, is in the
 // session view, one click away. A session whose last call carried over 200K tokens of context has a
@@ -29,6 +30,7 @@ import { absoluteTime, plainText } from '../format.js';
 import type { NotNeeded } from '../notNeeded.js';
 import { prNeedText, sessionPrBadge } from '../prs.js';
 import { ENDED_RECAP_HINT, FINISHED_RECAP_HINT, finishedWaitingOnYou, quietWaitingOn, WAITING_ON_TEXT } from '../recap.js';
+import { elsewhereRepos } from '../groupBy.js';
 import { groupLabel, isNotNeeded, needsAttention, needsText, recapNeedsText, rowStatusBadge } from '../sessions.js';
 import { runningText } from '../subagents.js';
 import { contextLevel } from '../context.js';
@@ -205,6 +207,8 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
   const label = showGroup ? plainText(groupLabel(group)) : undefined;
   // How many of its sub-agents are running, at the end of line 2, while any are (W77).
   const running = session.subagentsRunning !== undefined && session.subagentsRunning > 0 ? runningText(session.subagentsRunning) : undefined;
+  // The repos it worked in under another root (W149): Main repo keeps it in its own root's tab, so the row says where else it worked.
+  const elsewhere = elsewhereParts(session, group);
 
   const openFromRow = (event: MouseEvent<HTMLLIElement>) => {
     if (!onOpen) return;
@@ -247,7 +251,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
   ].filter(Boolean);
 
   // Line 2, when there's anything to say (W88's toggle has a line 2 to itself when there isn't).
-  const line2 = (label !== undefined || wants || running || marked || waitingOn !== undefined) && (
+  const line2 = (label !== undefined || wants || running || marked || waitingOn !== undefined || elsewhere !== undefined) && (
     <Tooltip content={wants?.hint} relation="none" onlyIfCut>
       <p className="session-what">
         {/* What gives way, with an ellipsis, before the running count does. */}
@@ -297,6 +301,23 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
               </span>
             )}
             {running}
+          </span>
+        )}
+        {elsewhere !== undefined && (
+          // Quiet, as the count is, after it: "· also in phil-skills", "+1" for each more.
+          <span className="session-elsewhere">
+            {(label !== undefined || wants || marked || waitingOn !== undefined || running !== undefined) && (
+              <span className="session-what-sep" aria-hidden="true">
+                {' · '}
+              </span>
+            )}
+            <Highlight text={elsewhere.text} />
+            {elsewhere.more > 0 && (
+              <>
+                <span aria-hidden="true">{` +${elsewhere.more}`}</span>
+                <span className="visually-hidden">{` and ${elsewhere.more} more ${elsewhere.more === 1 ? 'repo' : 'repos'}`}</span>
+              </>
+            )}
           </span>
         )}
       </p>
@@ -359,4 +380,21 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
       )}
     </li>
   );
+}
+
+/**
+ * "also in phil-skills", or "also in phil-skills +2" for more: the repos a session worked in under a
+ * root other than its group's (W149, elsewhereRepos()), the most changed named. Undefined when none.
+ */
+export function elsewhereText(session: Pick<SessionSummary, 'workedIn'>, group: Pick<SessionGroup, 'root'>): string | undefined {
+  const parts = elsewhereParts(session, group);
+  return parts === undefined ? undefined : `${parts.text}${parts.more > 0 ? ` +${parts.more}` : ''}`;
+}
+
+/** The same in two parts, so the row can read "+2" out as "and 2 more repos": "also in phil-skills", and how many more. */
+export function elsewhereParts(session: Pick<SessionSummary, 'workedIn'>, group: Pick<SessionGroup, 'root'>): { text: string; more: number } | undefined {
+  const repos = elsewhereRepos(session, group);
+  const first = repos[0];
+  if (first === undefined) return undefined;
+  return { text: `also in ${plainText(groupLabel(first))}`, more: repos.length - 1 };
 }
