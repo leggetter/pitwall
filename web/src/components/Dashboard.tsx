@@ -615,7 +615,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const reposCovered = overlaid && overlayCoversRepos;
   // The New session dialog, and the session it started, selected once it's listed (W63). Opened in
   // the repo or directory selected in the repo list, or with none chosen from a view, never the open
-  // session's (W146, D27), taken as it opens.
+  // session's (W147, D27), taken as it opens.
   const [newSession, setNewSession] = useState<{ cwd: string | undefined }>();
   const openNewSessionDialog = () => setNewSession({ cwd: snapshot ? newSessionDirectory(selection, snapshot.roots, tab) : undefined });
   // New session for a PR (W107): for a cloned repo, the dialog prefilled in its directory; for one

@@ -1,4 +1,4 @@
-// + New session's directory (W146, D27, Phil, 2026-11-05): the repo or directory selected in the repo
+// + New session's directory (W147, D27, Phil, 2026-11-05): the repo or directory selected in the repo
 // list, never the open session's, since choosing a group can close the session (W139) and the repo
 // list always has a selection. With a view selected (All sessions, Needs you, Starred, Pull
 // requests), no directory is chosen. A group outside the roots or the open tab, or a not-cloned
@@ -106,7 +106,7 @@ describe('newSessionDirectory', () => {
   });
 });
 
-describe('+ New session from the repo list (W146)', () => {
+describe('+ New session from the repo list (W147)', () => {
   it('starts in the selected repo, from the header button, with nothing else filled in', async () => {
     renderAt(`?repo=${API}`);
     await settle();

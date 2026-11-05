@@ -171,9 +171,9 @@ interface DialogCase {
   /** A waiting state's spinner shows at once. */
   waited?: 'shown';
   run?: (root: HTMLElement) => Promise<unknown>;
-  /** Opened with a repo or directory selected in the repo list (W146, D27): its directory, chosen. */
+  /** Opened with a repo or directory selected in the repo list (W147, D27): its directory, chosen. */
   cwd?: string;
-  /** Opened from a view (W146): no directory chosen. */
+  /** Opened from a view (W147): no directory chosen. */
   noDirectory?: boolean;
 }
 
@@ -359,12 +359,12 @@ const DIALOG_CASES: DialogCase[] = [
   },
   {
     title: 'With a repo selected',
-    note: '+ New session or n with a repo or directory selected in the repo list (W146): its directory chosen, whatever session is open. The rest is as usual.',
+    note: '+ New session or n with a repo or directory selected in the repo list (W147): its directory chosen, whatever session is open. The rest is as usual.',
     cwd: APP_DIR,
   },
   {
     title: 'From a view',
-    note: '+ New session or n with a view selected, such as All sessions (W146): no directory chosen, the placeholder showing the root, and Start session asks for one.',
+    note: '+ New session or n with a view selected, such as All sessions (W147): no directory chosen, the placeholder showing the root, and Start session asks for one.',
     noDirectory: true,
   },
 ];
@@ -697,7 +697,7 @@ const PAGES: PageCase[] = [
   {
     title: 'Session started',
     note: 'After Start session in the dialog: a toast, at the bottom right, and the view opens when the session shows up in the list. The toast stays here.',
-    // A directory selected, so New session opens with it chosen (W146).
+    // A directory selected, so New session opens with it chosen (W147).
     search: repo(NOTES_DIR),
     view: { state: 'live', snapshot: CALM_SNAPSHOT },
     lasting: true,

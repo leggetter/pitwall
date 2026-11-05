@@ -1,4 +1,4 @@
-// New session's Directory in tests (W146): from a view, + New session opens with no directory
+// New session's Directory in tests (W147): from a view, + New session opens with no directory
 // chosen, so a test that starts a session from one chooses the first, as a person would.
 
 import { fireEvent, within } from '@testing-library/react';

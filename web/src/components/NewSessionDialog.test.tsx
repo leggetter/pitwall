@@ -70,7 +70,7 @@ const settle = () => act(async () => {});
 
 /**
  * New session from the header. These tests start in All sessions, a view, where it opens with no
- * directory chosen (W146), so it chooses the first, as a person would, unless `choose` is false.
+ * directory chosen (W147), so it chooses the first, as a person would, unless `choose` is false.
  */
 function openDialog({ choose = true }: { choose?: boolean } = {}): HTMLElement {
   fireEvent.click(screen.getByRole('button', { name: 'New session' }));
@@ -120,7 +120,7 @@ describe('New session: the dialog', () => {
     expect(dialog.getAttribute('aria-modal')).toBe('true');
     const picker = directory(dialog);
     expect(document.activeElement).toBe(picker);
-    // From All sessions, a view, no directory is chosen (W146): the field shows its placeholder.
+    // From All sessions, a view, no directory is chosen (W147): the field shows its placeholder.
     expect(picker.value).toBe('');
     expect(picker.placeholder).toBe('~/code/…');
     fireEvent.click(picker);

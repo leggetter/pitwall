@@ -193,7 +193,7 @@ export function directoryChoices(snapshot: Pick<IndexSnapshot, 'roots' | 'groups
 }
 
 /**
- * The directory + New session starts in (W146, D27, Phil, 2026-11-05): the repo or directory
+ * The directory + New session starts in (W147, D27, Phil, 2026-11-05): the repo or directory
  * selected in the repo list, when it's at or under a root, in the open root tab when there is one
  * (directoryProblem()). Never the open session's: choosing a group can close it (W139), and the repo
  * list always has a selection. Undefined with a view selected (Needs you, All sessions, Starred, Pull

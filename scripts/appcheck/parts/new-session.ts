@@ -7,7 +7,7 @@
 // asks the server to remove a kept one, an upload that's slow, one that fails, a start that sends
 // their ids, and a close that asks the server to remove them; Cancel closes it. + New session and `n`
 // start in the repo or directory selected in the repo list, never the open session's, and from a view
-// with no directory chosen (W146, D27). W63's switch to the new session's group and tab is its own
+// with no directory chosen (W147, D27). W63's switch to the new session's group and tab is its own
 // part, new-session-selected.
 
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -145,7 +145,7 @@ const part: Part = {
       t.expectEqual(labels, ['Directory', 'Name optional', 'Model optional', 'Effort optional', 'First prompt'], 'its fields');
       const values = await page.evaluate<string[]>(DIRECTORY_LABELS);
       for (const dir of [CODE, API_SERVER, DEMO_APP]) t.expect(values.includes(shortPath(dir)), `it offers ${dir}`, values);
-      t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), '', 'from All sessions, a view, no directory is chosen (W146)');
+      t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), '', 'from All sessions, a view, no directory is chosen (W147)');
       t.expectEqual(await page.evaluate(`${DIRECTORY}.placeholder`), '~/code/…', 'and its placeholder shows the root');
       t.expect(await page.evaluate(`document.activeElement === ${DIRECTORY}`), 'focus is on Directory, its first field', await page.evaluate(focused));
       t.expectEqual(await chooseDirectory(t, DIRECTORY, DEMO_APP), shortPath(DEMO_APP), 'a directory chosen');
@@ -188,7 +188,7 @@ const part: Part = {
     });
 
     await t.step('Directory is an autocomplete: focus selects its text, emptied it lists every directory, and it narrows as you type', async () => {
-      // With a repo selected, so Directory opens with it chosen (W146).
+      // With a repo selected, so Directory opens with it chosen (W147).
       await t.fresh({ search: `?repo=${DEMO_APP}` });
       await openDialog(t, 'New session');
       await page.waitFor('focus in Directory', `document.activeElement === ${COMBOBOX}`);
@@ -242,7 +242,7 @@ const part: Part = {
     });
 
     await t.step('Attach files takes files from the picker, uploads each, and lists it with its size, and a thumbnail for an image', async () => {
-      // With a repo selected, so Directory opens with it chosen and the start later in this case has one (W146).
+      // With a repo selected, so Directory opens with it chosen and the start later in this case has one (W147).
       await t.fresh({ search: `?repo=${API_SERVER}` });
       await openDialog(t, 'New session');
       t.expect(await page.evaluate(`!!${dialogButton('Attach files')}`), 'Attach files is there');
@@ -477,7 +477,7 @@ const part: Part = {
 
     const sessionOf = (sessionName: string) => server.world.byName(sessionName);
 
-    await t.step('with a repo selected, + New session starts in it, with nothing else filled in (W146)', async () => {
+    await t.step('with a repo selected, + New session starts in it, with nothing else filled in (W147)', async () => {
       await t.fresh({ search: `?repo=${API_SERVER}` });
       await openDialog(t, 'New session');
       const values = await page.evaluate<string[]>(DIRECTORY_LABELS);

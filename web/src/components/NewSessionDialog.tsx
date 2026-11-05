@@ -33,7 +33,7 @@
 //   change, a subtitle that names the PR, and a notice at the top of the body, as after a clone, which
 //   says how to trust the new folder. What was typed is measured against the prefill, so a click on
 //   the backdrop still closes it until you change something.
-// - From the repo list's selection (W146, D27): + New session opens with the selected repo or
+// - From the repo list's selection (W147, D27): + New session opens with the selected repo or
 //   directory chosen (newSessionDirectory(), Dashboard), never the open session's, and with a view
 //   selected, with no directory chosen (`noDirectory`): the field is empty, showing its placeholder,
 //   and its list offers every directory. The rest as usual.
@@ -126,7 +126,7 @@ export const DIRECTORY_TEXT = {
   narrow: 'Keep typing to narrow them.',
 } as const;
 
-/** What the dialog opens with: a PR's directory, name and prompt (W107), or the selected group's directory (W146), each one you can change. */
+/** What the dialog opens with: a PR's directory, name and prompt (W107), or the selected group's directory (W147), each one you can change. */
 export interface NewSessionPrefill {
   /** Absolute: chosen in Directory, and added to its choices when no group has it, as a new clone's or a worktree's. */
   cwd: string;
@@ -142,9 +142,9 @@ export interface NewSessionDialogProps {
   onStarted: (started: StartedSession, request: SpawnRequest) => void;
   /** With two or more roots, the open root tab, whose directories alone it offers (W38). */
   tab?: string | undefined;
-  /** Opened for a pull request (W107), or with a repo or directory selected (W146): the fields it starts with. */
+  /** Opened for a pull request (W107), or with a repo or directory selected (W147): the fields it starts with. */
   prefill?: NewSessionPrefill | undefined;
-  /** Without a prefilled directory, opens with none chosen, as from a view (W146), not the first choice. */
+  /** Without a prefilled directory, opens with none chosen, as from a view (W147), not the first choice. */
   noDirectory?: boolean | undefined;
   /** In place of the subtitle, as one that names the pull request. */
   subtitle?: ReactNode;

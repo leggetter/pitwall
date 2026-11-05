@@ -309,7 +309,7 @@ describe('what a tab narrows to its root', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New session' }));
     const dialog = screen.getByRole('dialog', { name: 'New session' });
     const directory = within(dialog).getByRole('combobox', { name: 'Directory' }) as HTMLInputElement;
-    // From All sessions, a view, no directory is chosen (W146), and the placeholder is the tab's root.
+    // From All sessions, a view, no directory is chosen (W147), and the placeholder is the tab's root.
     expect(directory.value).toBe('');
     expect(directory.placeholder).toBe('~/personal/…');
     fireEvent.click(directory);
