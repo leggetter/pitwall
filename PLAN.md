@@ -351,7 +351,7 @@ M5.1's own items start at W131, the evidence the rest of it needs; the others fo
 - **W148, Starred and Needs you give way when they don't list a session opened from outside the list** (`m5.1/view-gives-way`, S).
   - Phil, 2026-11-05, the coordinator's lean from W144's review: opening a session from the supervisor's Sent and started or a PR view's Sessions (W144) kept any view in the session's tab, so Starred or Needs you could show a session beside a list without it. Now Starred and Needs you are kept only when their list has it, whatever the filters show; All sessions and Pull requests (you came from a PR) are kept as before. W139's group clicks are unchanged.
   - Built: `selectionShowing()`'s `viewLists` (`web/src/selection.ts`), from the Dashboard's listed rows. Tests: `selection.test.tsx`, `OpenSelectsGroup.test.tsx`; `docs/design-system.md`'s Session view.
-  - Status: In review.
+  - Status: Merged ([#171](https://github.com/leggetter/pitwall/pull/171)). Its review's fix, by the coordinator: the view's list is read with every session, so a starred older ended session hidden by Show older doesn't give way. Left: no Dashboard test that Starred or Needs you keeps a session it lists, or that Needs you gives way.
 
 ## Open questions
 
