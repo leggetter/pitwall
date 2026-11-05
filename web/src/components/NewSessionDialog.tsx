@@ -536,6 +536,9 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
           status={directoryStatus(listing, walked?.truncated ?? false, offered.length, matches.total)}
           announcement={directoryAnnouncement(listing, walked?.truncated ?? false, offered.length, matches.total)}
           selectOnFocus={showingChosen}
+          // Typing part of a directory then Enter takes the best match (W142). Not while the text is
+          // the chosen one, typed back to it: the list then offers every directory, unnarrowed.
+          autoSelect={!showingChosen}
           chevron
           busy={busy}
           invalid={shown.cwd !== undefined}

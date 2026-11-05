@@ -955,7 +955,7 @@ Each component lists its anatomy, sizes, states and tokens. "Hover" means `@medi
 
 ### Combobox
 
-A text field with a list of suggestions that narrows as you type (W70; Phil, 2026-10-27: "Having to enter from /Users is difficult UX."). The WAI-ARIA APG's [editable combobox with list autocomplete](https://www.w3.org/WAI/ARIA/apg/patterns/combobox/examples/combobox-autocomplete-list/): what's typed stays as typed, and the list only offers. The [New session dialog](#dialogs)'s Directory is one (W140); anything that later needs one builds on it.
+A text field with a list of suggestions that narrows as you type (W70; Phil, 2026-10-27: "Having to enter from /Users is difficult UX."). The WAI-ARIA APG's [editable combobox with list autocomplete](https://www.w3.org/WAI/ARIA/apg/patterns/combobox/examples/combobox-autocomplete-list/): what's typed stays as typed, and the list only offers. With `autoSelect`, the APG's [list autocomplete with automatic selection](https://www.w3.org/WAI/ARIA/apg/patterns/combobox/) (W142; Phil, 2026-11-04): typing highlights the first option, so Enter takes it. Unlike the APG's, Tab leaves without taking it, so what's typed stays as typed unless you press Enter. The [New session dialog](#dialogs)'s Directory is one (W140); anything that later needs one builds on it.
 
 - **Component:** `Combobox` (`web/src/components/Combobox.tsx`), with the value, the options to show (already narrowed, best first), `onInput`, `onAccept`, status lines and an announcement. The caller narrows; the component draws the field and the list and handles the keys. The directory list's narrowing is `web/src/directories.ts`.
 - **Anatomy:**
@@ -967,13 +967,14 @@ A text field with a list of suggestions that narrows as you type (W70; Phil, 202
   - **Closed:** the field alone. It opens on a click in the field, on typing, and on ↓ or ↑, and, with `openOnMount`, the first time the field takes focus.
   - **Standing in for a select** (W140): `chevron` puts a select's chevron at the field's end, 8 px in, as a [select](#inputs-textareas-and-selects) has it, with the field's end padding to match, so it reads as a list to choose from as well as a field to type in. It's decoration (`aria-hidden`), and a click on it goes through to the field. `selectOnFocus` selects the field's text as it takes focus, by Tab, a click or the dialog opening, so typing replaces a choice already made; the click's own mouseup is kept from putting the caret back.
   - **Open:** the options and the status lines. With neither, the popup stays shut and `aria-expanded` is false.
-  - **Highlighted option:** the menu items' keyboard highlight, a `--pw-surface-hover` fill with `--pw-ring-focus-inset`, since focus stays in the field and a fill alone is under 3:1. Hover gives the fill alone. Forced colours: a 2 px `Highlight` outline, and the popup a 1 px `CanvasText` outline, as a menu has.
+  - **Highlighted option:** the one the arrows moved to, or, with `autoSelect`, the first once you type; the same look either way. It follows its option as the options change, as when the list arrives while you type, and goes when its option does. The menu items' keyboard highlight, a `--pw-surface-hover` fill with `--pw-ring-focus-inset`, since focus stays in the field and a fill alone is under 3:1. Hover gives the fill alone. Forced colours: a 2 px `Highlight` outline, and the popup a 1 px `CanvasText` outline, as a menu has.
   - **Loading:** a status line with a spinner, "Loading directories…".
   - **Busy:** while the dialog's action runs, the field is read-only and `aria-disabled`, and the popup shuts.
   - **Invalid:** the field's own invalid state and problem, as any field's.
 - **Keys** (focus stays in the field throughout):
   - ↓ opens the list on the first option, or moves to the next, wrapping; ↑ opens it on the last, or moves to the previous, wrapping. Alt + ↓ opens it without highlighting; Alt + ↑ closes it.
-  - Enter accepts the highlighted option and closes the list. It never submits the form, with or without one highlighted; ⌘/Ctrl + Enter is left to the form, so it still starts the session.
+  - Typing, with `autoSelect` (W142), highlights the first option, and keeps it on the first as the options change, so typing part of a name then Enter takes the best match; ↓ then moves to the second. With no option matching, none is highlighted. Nor is one with the text emptied, or only spaces, since the list then offers everything, unnarrowed, and Enter shouldn't pick one you didn't type towards; nor, in the directory combobox, with the text typed back to the chosen directory's. Opening by a click, ↓, Alt + ↓ or focus is as without it.
+  - Enter accepts the highlighted option and closes the list; with none, it closes the list and keeps the text. It never submits the form, with or without one highlighted; ⌘/Ctrl + Enter is left to the form, so it still starts the session.
   - Escape closes an open list, and goes no further, so the dialog stays open. With the list shut, it goes on as before, closing the dialog.
   - Tab and Shift + Tab leave without accepting, and close the list.
   - ← → Home End move the caret and take the highlight off the options.
@@ -2525,7 +2526,7 @@ Holding `n`, `?` or `s` down doesn't repeat them; holding `j` or `k` does. They'
 | ↓ / ↑, Home / End, Enter | The Sub-agents list | Move between the sub-agents' rows, stopping at the ends; jump to the first or last; open one's transcript (W77) |
 | ← / →, Home / End | The divider | Resize the session view by 16 px; jump to the minimum or maximum |
 | ↑ / ↓, Home / End, Enter, Escape | An open menu | Move, jump, activate, close |
-| ↓ / ↑, Alt + ↓, Enter, Escape | A combobox, such as New session's directory | Open the list, or move through it, wrapping; open it without highlighting; accept the highlighted option, never submitting the form; close the list, leaving the dialog open (W70) |
+| ↓ / ↑, Alt + ↓, Enter, Escape | A combobox, such as New session's directory | Open the list, or move through it, wrapping; open it without highlighting; accept the highlighted option, which typing makes the first match in New session's directory (W142), never submitting the form; close the list, leaving the dialog open (W70) |
 | ↑ / ↓, ← / → | A radio group, in Preferences | Choose the previous or next option, which applies at once; Tab moves on to the next group (W59) |
 | F6 | The terminal | Leave the terminal, to the Terminal tab |
 | Shift + Enter | The terminal | A new line in Claude Code's prompt: a line feed (Ctrl+J), where Enter's carriage return submits. Not with Ctrl, Alt or ⌘ too, nor while an input method composes |

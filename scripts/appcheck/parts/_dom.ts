@@ -108,7 +108,8 @@ export const shortPath = (path: string): string => path.replace(/^\/Users\/examp
 
 /**
  * Chooses `path`, absolute, in a directory combobox (W140): puts it in the field, as a paste would,
- * then ↓ and Enter take its best option. Resolves to what the field then shows.
+ * which highlights its best option, the first (W142), and Enter takes it. Resolves to what the field
+ * then shows.
  */
 export async function chooseDirectory(t: Case, combobox: string, path: string): Promise<string> {
   await t.page.evaluate(`(() => {
@@ -118,7 +119,6 @@ export async function chooseDirectory(t: Case, combobox: string, path: string): 
     field.dispatchEvent(new Event('input', { bubbles: true }));
     return true;
   })()`);
-  await t.page.key('ArrowDown');
   await t.page.key('Enter');
   return t.page.evaluate<string>(`${combobox}.value`);
 }

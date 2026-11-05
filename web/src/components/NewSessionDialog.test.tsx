@@ -92,11 +92,10 @@ function fill(dialog: HTMLElement, fields: { prompt?: string; name?: string }) {
 
 const directory = (dialog: HTMLElement) => within(dialog).getByRole('combobox', { name: 'Directory' }) as HTMLInputElement;
 
-/** Types `text` in Directory, then accepts the first option it offers, as ↓ and Enter do. */
+/** Types `text` in Directory, then accepts the first option it offers, which typing highlights, with Enter (W142). */
 function chooseDirectory(dialog: HTMLElement, text: string) {
   const input = directory(dialog);
   fireEvent.change(input, { target: { value: text } });
-  fireEvent.keyDown(input, { key: 'ArrowDown' });
   fireEvent.keyDown(input, { key: 'Enter' });
 }
 

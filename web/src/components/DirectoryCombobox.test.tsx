@@ -125,8 +125,7 @@ describe('Directory', () => {
     expect(optionLabels(dialog)).toEqual(ALL);
     fireEvent.change(input, { target: { value: 'notes' } });
     expect(optionLabels(dialog)).toEqual(['~/code/notes', '~/code/notes/<img src=x>']);
-    // Chosen again, it shows every one again.
-    key(input, 'ArrowDown');
+    // Chosen again, it shows every one again. Typing highlighted the first (W142).
     key(input, 'Enter');
     expect(input.value).toBe('~/code/notes');
     fireEvent.click(input);
@@ -229,7 +228,7 @@ describe('Directory', () => {
     fireEvent.change(input, { target: { value: 'demo' } });
     expect(optionLabels(dialog)).toEqual(['~/code/demo-app, repo', '~/code/demo-api, repo', '~/code/demo-app/web']);
 
-    key(input, 'ArrowDown');
+    // Typing highlighted the first (W142); ↓ moves on from it.
     expect(activeOption(input)?.textContent).toBe('~/code/demo-app, repo');
     expect(activeOption(input)?.getAttribute('aria-selected')).toBe('true');
     key(input, 'ArrowDown');
@@ -259,20 +258,117 @@ describe('Directory', () => {
     expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/demo-api`, prompt: 'go' }]);
   });
 
+  it('highlights the first match as you type, so Enter takes it (W142)', async () => {
+    const server = fakeServer();
+    const { dialog } = renderDialog(server.fetch);
+    const input = await reveal(dialog);
+    fireEvent.change(input, { target: { value: 'dem' } });
+    expect(isOpen(input)).toBe(true);
+    const first = within(listbox(dialog)).getAllByRole('option', { hidden: true })[0];
+    expect(input.getAttribute('aria-activedescendant')).toBe(first?.id);
+    expect(first?.getAttribute('aria-selected')).toBe('true');
+    // ↓ moves to the second, and typing again goes back to the first.
+    key(input, 'ArrowDown');
+    expect(activeOption(input)?.textContent).toBe('~/code/demo-api, repo');
+    fireEvent.change(input, { target: { value: 'dem-' } });
+    fireEvent.change(input, { target: { value: 'demo-' } });
+    expect(activeOption(input)?.textContent).toBe('~/code/demo-app, repo');
+
+    expect(fireEvent.keyDown(input, { key: 'Enter' })).toBe(false);
+    expect(input.value).toBe('~/code/demo-app');
+    expect(isOpen(input)).toBe(false);
+    fireEvent.change(within(dialog).getByLabelText('First prompt'), { target: { value: 'go' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
+    await settle();
+    expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/demo-app`, prompt: 'go' }]);
+  });
+
+  it('highlights none while nothing matches, or the text is emptied, so Enter keeps the text (W142)', async () => {
+    const server = fakeServer();
+    const { dialog } = renderDialog(server.fetch);
+    const input = await reveal(dialog);
+    fireEvent.change(input, { target: { value: 'nothing-like-it' } });
+    expect(input.getAttribute('aria-activedescendant')).toBeNull();
+    key(input, 'Enter');
+    expect(input.value).toBe('nothing-like-it');
+    expect(isOpen(input)).toBe(false);
+
+    // Emptied, or only spaces: the list offers every directory, and none is picked for you.
+    for (const text of ['', '  ']) {
+      fireEvent.change(input, { target: { value: 'dem' } });
+      expect(activeOption(input)).not.toBeNull();
+      fireEvent.change(input, { target: { value: text } });
+      expect(optionLabels(dialog)).toEqual(ALL);
+      expect(input.getAttribute('aria-activedescendant')).toBeNull();
+      key(input, 'Enter');
+      expect(input.value).toBe(text);
+      expect(isOpen(input)).toBe(false);
+    }
+    // ↓ still highlights the first.
+    key(input, 'ArrowDown');
+    expect(activeOption(input)?.textContent).toBe('~/code/demo-app, repo');
+  });
+
+  it('highlights the first match once the list comes, when you typed before it did (W142)', async () => {
+    const server = fakeServer('never');
+    const { dialog } = renderDialog(server.fetch);
+    await settle();
+    const input = directory(dialog);
+    // Only the group's directory and the root are offered yet; neither matches.
+    fireEvent.change(input, { target: { value: 'api' } });
+    expect(activeOption(input)).toBeNull();
+    server.release();
+    await settle();
+    expect(activeOption(input)?.textContent).toBe('~/code/demo-api, repo');
+    key(input, 'Enter');
+    expect(input.value).toBe('~/code/demo-api');
+  });
+
+  it("highlights none while it shows the chosen directory, until you type, nor when you type back to it (W142)", async () => {
+    const server = fakeServer();
+    const { dialog } = renderDialog(server.fetch);
+    await settle();
+    const input = directory(dialog);
+    const chosen = input.value;
+    expect(chosen).not.toBe('');
+    key(input, 'ArrowDown', { altKey: true });
+    expect(isOpen(input)).toBe(true);
+    expect(activeOption(input)).toBeNull();
+    // Typed back to the chosen text, the list offers everything again, and Enter keeps the choice.
+    fireEvent.change(input, { target: { value: chosen.slice(0, -1) } });
+    expect(activeOption(input)).not.toBeNull();
+    fireEvent.change(input, { target: { value: chosen } });
+    expect(activeOption(input)).toBeNull();
+    key(input, 'Enter');
+    expect(input.value).toBe(chosen);
+  });
+
   it('never submits on Enter, with or without a highlighted option; ⌘ and Ctrl + Enter still do', async () => {
     const server = fakeServer();
     const { dialog } = renderDialog(server.fetch);
     const input = await reveal(dialog);
     fireEvent.change(within(dialog).getByLabelText('First prompt'), { target: { value: 'go' } });
+    // With the first match highlighted, as typing leaves it (W142), Enter accepts it.
     fireEvent.change(input, { target: { value: '~/code/notes' } });
+    expect(activeOption(input)?.textContent).toBe('~/code/notes');
     expect(fireEvent.keyDown(input, { key: 'Enter' })).toBe(false);
     expect(isOpen(input)).toBe(false);
+    // With none, as when nothing matches, Enter only closes the list.
+    fireEvent.change(input, { target: { value: '~/code/nothing-like-it' } });
+    expect(activeOption(input)).toBeNull();
+    expect(fireEvent.keyDown(input, { key: 'Enter' })).toBe(false);
+    expect(isOpen(input)).toBe(false);
+    expect(input.value).toBe('~/code/nothing-like-it');
     await settle();
     expect(spawns(server.fetch)).toEqual([]);
 
+    // ⌘ + Enter starts with what's typed, not the first match it highlights.
+    fireEvent.change(input, { target: { value: '~/code/note' } });
+    expect(activeOption(input)?.textContent).toBe('~/code/notes');
+
     key(input, 'Enter', { metaKey: true });
     await settle();
-    expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/notes`, prompt: 'go' }]);
+    expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/note`, prompt: 'go' }]);
   });
 
   it('opens with ↓, highlighting the first; with ↑, the last; and with Alt + ↓, highlighting none', async () => {
@@ -327,13 +423,15 @@ describe('Directory', () => {
     const { dialog, onClose } = renderDialog(server.fetch);
     const input = await reveal(dialog);
     fireEvent.change(input, { target: { value: 'demo' } });
-    // Choosing a candidate, then confirming the conversion, while composing.
+    // Choosing a candidate, then confirming the conversion, while composing: the highlight stays on
+    // the first, where typing put it (W142).
+    expect(activeOption(input)?.textContent).toBe('~/code/demo-app, repo');
     expect(fireEvent.keyDown(input, { key: 'ArrowDown', isComposing: true })).toBe(true);
-    expect(activeOption(input)).toBeNull();
+    expect(activeOption(input)?.textContent).toBe('~/code/demo-app, repo');
     key(input, 'ArrowDown');
-    expect(activeOption(input)?.textContent).toBe('~/code/demo-app, repo');
+    expect(activeOption(input)?.textContent).toBe('~/code/demo-api, repo');
     expect(fireEvent.keyDown(input, { key: 'ArrowDown', isComposing: true })).toBe(true);
-    expect(activeOption(input)?.textContent).toBe('~/code/demo-app, repo');
+    expect(activeOption(input)?.textContent).toBe('~/code/demo-api, repo');
     expect(fireEvent.keyDown(input, { key: 'Enter', isComposing: true })).toBe(true);
     expect(fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 })).toBe(true);
     expect(input.value).toBe('demo');
@@ -347,7 +445,7 @@ describe('Directory', () => {
     expect(screen.getByRole('dialog', { name: 'New session' })).toBe(dialog);
     // Composition over, the keys are the list's again.
     key(input, 'Enter');
-    expect(input.value).toBe('~/code/demo-app');
+    expect(input.value).toBe('~/code/demo-api');
     expect(onClose).not.toHaveBeenCalled();
     expect(spawns(server.fetch)).toEqual([]);
   });
