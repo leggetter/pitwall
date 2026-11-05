@@ -326,7 +326,7 @@ M5.1's own items start at W131, the evidence the rest of it needs; the others fo
   - Phil, 2026-11-05: "The new session should be driven from the selected repo or directory in the left-hand nav, not from the selected session... There can be nothing selected in the middle pane, but you always have something in the left-hand pane." Since W139 (selecting a repo or directory keeps the open session only if it's in that group), moving around the repo list closes the session view, so #139's default, the open session's directory, came and went. With a view selected (Needs you, All sessions, Starred, Pull requests): "maybe there isn't a default."
   - Built: `newSessionDirectory()` (`web/src/spawn.ts`) takes the repo list's selection: a group's directory when it's under a root, in the open root tab; nothing for a view or a not-cloned repo. The dialog's `noDirectory` opens Directory empty, its placeholder the root, and Start session says "Choose a directory." D27 revised in place. A worktree session's own directory is no longer the default; it's one typed path away in the combobox (W140).
   - A UI change: the app check's `new-session` part (a repo selected, a repo with a worktree's session open, a view with a session open), the `#uikit` gallery's New session cases, and `docs/design-system.md` (Combobox, Dialogs).
-  - Status: In review
+  - Status: In review ([#167](https://github.com/leggetter/pitwall/pull/167))
 
 ## Open questions
 
