@@ -58,6 +58,10 @@ export const RECAP_SETTINGS = JSON.stringify({ crossSessionInbound: 'refuse', au
  * fixes, and each to-do the step itself, with no lead-in, since the strip tags its owner and line 2
  * puts "Next:" before it (W111's review). A session you've said is done has nothing left for you,
  * whatever follow-ups it named outside itself, so its recap never puts it under Needs you (#140).
+ * A question stays until you answer or explicitly dismiss it, even when later turns move on without
+ * it, and a to-do of yours that waits on something else comes after it, so only what's due from you
+ * now puts a session under Needs you (W146; Phil, 2026-11-05: questions "should be carried forward
+ * unless they have been explicitly ignored").
  */
 export const RECAP_SYSTEM_PROMPT = `You write recaps of Claude Code sessions for pitwall, a local dashboard that shows its user every Claude Code session on their machine. The user reads your recap to pick a session back up without scrolling through it: what the work is, where it is, and what's left to do.
 
@@ -69,14 +73,14 @@ Answer with one JSON object and nothing else: no code fence, no text before or a
 
 - summary: one short paragraph of two to four sentences, at most 50 words in all: first why the session was started, from the user's first prompt, then where it is now. If the work has since moved on to another goal, say so and name it. If it's working through a plan, such as a milestone or a numbered list of work items, give one sentence on where it is in that plan. Not a history of what was done.
 - todos: what's still to do, in the order it should happen, the most immediate first, at most 6. Leave out anything done. An empty list when nothing is left. Each to-do:
-  - text: the step itself, a few words to one sentence, with no lead-in such as "It's waiting for you to", "Next," or "You need to". For example "Say whether to mark #42 ready", "Open a backport PR for the 1.x branch", "Finish the checks on #42". Each question the user still has to answer is its own to-do.
+  - text: the step itself, a few words to one sentence, with no lead-in such as "It's waiting for you to", "Next," or "You need to". For example "Say whether to mark #42 ready", "Open a backport PR for the 1.x branch", "Finish the checks on #42". Each question the user still has to answer is its own to-do. A question stays a to-do until the user answers it or explicitly dismisses it, such as "skip that" or "not interested": a later turn that moves on, or lists no open questions, doesn't end it. A to-do that can only happen after something else, such as a merge or a release, comes after that thing's to-do.
   - owner: who it waits on, exactly one of "you", "session", "CI", "someone else".
     - "you": the user answers a question, decides, approves or acts.
     - "session": this session does it itself, once it carries on.
     - "CI": checks, a build or a deploy.
     - "someone else": another person, such as a reviewer or an author, or another Claude Code session.
 - waitingOn: what the session is waiting on right now, exactly one of "you", "another session", "CI", "someone else", "nothing".
-  - "you": the latest turn asks the user a question, or needs their decision, approval or action. Then at least one to-do is the user's.
+  - "you": the user has a question still to answer, from the latest turn or an earlier one, or a decision, approval or action due now, not only after something else happens. Then the first to-do that isn't the session's is the user's.
   - "another session": it's waiting for a reply or a result from another Claude Code session.
   - "CI": it's waiting for checks, a build or a deploy to finish.
   - "someone else": it's waiting on another person, such as a reviewer or an author.
@@ -86,7 +90,7 @@ Answer with one JSON object and nothing else: no code fence, no text before or a
 
 Write to the user as "you", never by their name, even where the material names them. Call the session "it" or "this session", never "I", "me" or "we", even where the material does. Plain words, with no Markdown. Be specific: name a file, a PR or a command only when it helps the user act. Don't invent anything the material doesn't say.
 
-When updating, revise the previous recap rather than writing a new one. Keep the summary steady: keep why the session was started, and its sentences that are still true, in their words, and change only what the newer turns change. Drop the to-dos the newer turns finished, keep the rest in their order, and add new ones where they belong. A question the newer turns show you answered is finished: drop it, and if the answer leaves work, that work is a new to-do, usually the session's.`;
+When updating, revise the previous recap rather than writing a new one. Keep the summary steady: keep why the session was started, and its sentences that are still true, in their words, and change only what the newer turns change. Drop the to-dos the newer turns finished, keep the rest in their order, and add new ones where they belong. A question the newer turns show you answered or explicitly dismissed is finished: drop it, and if the answer leaves work, that work is a new to-do, usually the session's. Keep every other question for you, even when the newer turns don't mention it.`;
 
 /**
  * Passed with --system-prompt for a plan status (W123; Phil, 2026-11-02: "things are generally done
@@ -307,10 +311,12 @@ export type RecapReading = { ok: true; answer: RecapAnswer; repaired: RecapRepai
  * (RecapRefusal), a code fence with other text or a second object included.
  *
  * waitingOn and the to-dos must agree, so Needs you always has a to-do for you to show: 'nothing'
- * when there are no to-dos, 'you' only with a to-do for you, and not 'nothing' beside a to-do for you
- * (#123's review). Where they don't, pitwall derives waitingOn from the to-dos instead of refusing
- * the answer (W126): 'nothing' with none, 'you' with one for you, and otherwise the first to-do's
- * owner. Every other value the model chose stays.
+ * when there are no to-dos, and 'you' only when the first to-do the session doesn't own itself is
+ * yours (W146): a to-do of yours behind someone else's, such as "release it once #42 ships", is
+ * yours but not due, so it doesn't put the session under Needs you. 'you' is forced only when that
+ * to-do is the very first, or the model said 'nothing'; behind the session's own step, its CI or
+ * another session stays (#168's review). Where they don't agree, pitwall derives waitingOn from the
+ * to-dos instead of refusing the answer (W126). Every other value the model chose stays.
  */
 export function readRecapAnswer(text: string): RecapReading {
   const object = objectText(text);
@@ -356,11 +362,26 @@ const WAITING_ON_FOR_OWNER: Readonly<Record<RecapTodoOwner, RecapWaitingOn>> = {
 function agreedWaitingOn(waitingOn: RecapWaitingOn, todos: readonly RecapTodo[]): RecapWaitingOn {
   const first = todos[0];
   if (first === undefined) return 'nothing';
-  const forYou = todos.some((todo) => todo.owner === 'you');
-  if (waitingOn === 'nothing') return forYou ? 'you' : waitingOn;
   // The first to-do someone other than the session owns says what it waits on (#128's review: [session, CI] is CI).
-  if (waitingOn === 'you' && !forYou) return WAITING_ON_FOR_OWNER[(todos.find((todo) => todo.owner !== 'session') ?? first).owner];
+  const lead = leadTodo(todos);
+  if (lead?.owner === 'you') {
+    // Yours first of all, such as a question you haven't answered, or 'nothing' beside it: you (W146).
+    if (waitingOn === 'you' || waitingOn === 'nothing' || first.owner === 'you') return 'you';
+    // Behind a step of the session's, the model's CI or another session stays: [session "Watch CI on
+    // #42 and fix failures", you "Merge #42"] waits on CI, not you (#168's review).
+    return waitingOn;
+  }
+  // Yours only later, or not at all: not you (W146).
+  if (waitingOn === 'you') return WAITING_ON_FOR_OWNER[(lead ?? first).owner];
   return waitingOn;
+}
+
+/**
+ * The first to-do someone other than the session owns, or undefined when the session owns them all:
+ * whose step is next. Needs you's 'recap' reason holds only when it's yours (W146).
+ */
+export function leadTodo<T extends { owner: RecapTodoOwner }>(todos: readonly T[]): T | undefined {
+  return todos.find((todo) => todo.owner !== 'session');
 }
 
 /** readRecapAnswer() without the reason: the answer, or undefined. */

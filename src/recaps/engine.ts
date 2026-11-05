@@ -98,6 +98,7 @@ import {
   PLAN_ANSWER_INVALID,
   parseEnvelope,
   parsePlanAnswer,
+  leadTodo,
   readRecapAnswer,
   RECAP_REFUSALS,
   type RecapRepair,
@@ -832,7 +833,9 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
 
   /** Needs you's 'recap' reason, when it holds and no earlier reason does (NeedsYou's order). */
   function needsYouOf(session: SessionSummary, recap: SessionRecap): NeedsYou | undefined {
-    const next = recap.todos.find((todo) => todo.owner === 'you')?.text;
+    // Only when your step is the next one, not a later to-do of yours behind someone else's (W146).
+    const lead = leadTodo(recap.todos);
+    const next = lead?.owner === 'you' ? lead.text : undefined;
     if (recap.source !== 'pitwall' || recap.stale === true || recap.waitingOn !== 'you' || next === undefined || next === '') return undefined;
     if (session.stale || session.finished || working(session)) return undefined;
     const reason = session.needsYou?.reason;

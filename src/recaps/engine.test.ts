@@ -861,6 +861,26 @@ describe('what the snapshot shows', () => {
     for (const reason of ['restarted', 'blocked'] as const) expect(h.engine.decorate({ ...a, needsYou: { reason } }).needsYou).toEqual({ reason: 'recap', text: NEXT });
   });
 
+  it("not for a to-do of yours behind someone else's, which isn't due yet (W146)", async () => {
+    const todos = [
+      { text: 'Merge #42', owner: 'someone else' },
+      { text: 'Release the CLI once #42 ships', owner: 'you' },
+    ];
+    const { h, a } = await recapped({ todos, waitingOn: 'you' });
+    expect(h.engine.decorate(a).recap).toMatchObject({ waitingOn: 'someone else', forYou: 1 });
+    expect(h.engine.decorate(a)).not.toHaveProperty('needsYou');
+  });
+
+  it("not while CI runs a step of the session's before yours (#168's review)", async () => {
+    const todos = [
+      { text: 'Watch CI on #42 and fix failures', owner: 'session' },
+      { text: 'Merge #42', owner: 'you' },
+    ];
+    const { h, a } = await recapped({ todos, waitingOn: 'CI' });
+    expect(h.engine.decorate(a).recap).toMatchObject({ waitingOn: 'CI', forYou: 1, next: 'Merge #42' });
+    expect(h.engine.decorate(a)).not.toHaveProperty('needsYou');
+  });
+
   it('never for a working, stale or finished session, a stale recap, or one that waits on anyone else', async () => {
     const { h, a } = await recapped();
     const newer = new Date(Date.parse(a.lastActivityAt!) + 1000).toISOString();

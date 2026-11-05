@@ -51,9 +51,15 @@ function recap(extra: Partial<SessionRecap> = {}): SessionRecap {
   };
 }
 
-/** The first to-do for you, or undefined. */
+/** The first to-do for you, or undefined, as the engine's summaryOf() gives it. */
 function nextOf(full: SessionRecap): string | undefined {
   return full.todos.find((todo) => todo.owner === 'you')?.text;
+}
+
+/** The to-do Needs you's 'recap' reason shows: the first one the session doesn't own, when it's yours (W146). */
+function dueOf(full: SessionRecap): string | undefined {
+  const lead = full.todos.find((todo) => todo.owner !== 'session');
+  return lead?.owner === 'you' ? lead.text : undefined;
 }
 
 /** What the snapshot carries of `full` (D14): how many to-dos are yours, and the first of them as `next`. */
@@ -72,7 +78,7 @@ function summaryOf(full: SessionRecap): RecapSummary {
 
 /** A session with `full` as its recap, its title from it, and, waiting on you, Needs you's 'recap' reason. */
 function recapped(name: string, full: SessionRecap | undefined, extra: Partial<SessionSummary> = {}): { session: SessionSummary; full: SessionRecap | undefined } {
-  const next = full ? nextOf(full) : undefined;
+  const next = full ? dueOf(full) : undefined;
   const needs = full && full.waitingOn === 'you' && !full.stale && full.source === 'pitwall' && next !== undefined;
   return {
     session: session(name, {
