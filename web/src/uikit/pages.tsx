@@ -72,9 +72,9 @@ function field<T extends HTMLElement>(root: HTMLElement, label: string): Promise
   });
 }
 
-/** `directory` is typed in Directory, then its first option chosen; `path` is typed and left as typed. */
+/** `directory` is typed in Directory, then Enter takes the first match it highlights (W142); `path` is typed and left as typed. */
 async function fill(root: HTMLElement, values: { directory?: string; path?: string; name?: string; model?: string; alias?: string; prompt?: string }) {
-  if (values.directory) await directoryList(root, values.directory, values.directory, ['ArrowDown', 'Enter']);
+  if (values.directory) await directoryList(root, values.directory, values.directory, ['Enter']);
   if (values.path !== undefined) type(await field<HTMLInputElement>(root, 'Directory'), values.path);
   if (values.name !== undefined) type(await field<HTMLInputElement>(root, 'Name'), values.name);
   if (values.model) choose(await field<HTMLSelectElement>(root, 'Model'), values.model);

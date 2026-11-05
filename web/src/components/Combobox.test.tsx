@@ -69,6 +69,18 @@ describe('Combobox', () => {
     expect(onAccept).toHaveBeenCalledWith({ label: 'alpha' });
   });
 
+  it('scrolls the list back to the top as you type, so a first match it highlights is in sight', () => {
+    const { input, rerender } = renderBox({ options: options('alpha', 'beta', 'gamma'), autoSelect: true });
+    key(input, 'ArrowDown');
+    const list = screen.getByRole('listbox', { name: 'Things' });
+    const scrolledTo: number[] = [];
+    Object.defineProperty(list, 'scrollTop', { configurable: true, get: () => 40, set: (to: number) => scrolledTo.push(to) });
+    fireEvent.change(input, { target: { value: 'a' } });
+    rerender({ value: 'a', options: options('alpha', 'gamma'), autoSelect: true });
+    expect(scrolledTo).toEqual([0]);
+    expect(active(input)).toBe('alpha');
+  });
+
   it('with autoSelect turned off as it renders, the first typed towards is not highlighted', () => {
     const { input, rerender } = renderBox({ options: options('alpha'), autoSelect: true });
     fireEvent.change(input, { target: { value: 'alpha' } });

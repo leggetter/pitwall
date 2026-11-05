@@ -362,11 +362,13 @@ describe('Directory', () => {
     await settle();
     expect(spawns(server.fetch)).toEqual([]);
 
-    fireEvent.change(input, { target: { value: '~/code/notes' } });
+    // ⌘ + Enter starts with what's typed, not the first match it highlights.
+    fireEvent.change(input, { target: { value: '~/code/note' } });
+    expect(activeOption(input)?.textContent).toBe('~/code/notes');
 
     key(input, 'Enter', { metaKey: true });
     await settle();
-    expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/notes`, prompt: 'go' }]);
+    expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/note`, prompt: 'go' }]);
   });
 
   it('opens with ↓, highlighting the first; with ↑, the last; and with Alt + ↓, highlighting none', async () => {

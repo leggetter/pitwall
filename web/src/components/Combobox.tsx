@@ -201,6 +201,9 @@ export function Combobox<T extends ComboboxOption>({
     // autoSelect is checked as the field renders, not here: this render's may be about to change
     // with the text, as when the text stops being a choice already made.
     update({ open: true, highlight: text.trim() !== '' ? { to: 'first' } : NONE });
+    // The options narrow from the top, so the list goes back there: a first match highlighted while
+    // the list stayed scrolled down would be out of sight, and Enter would take it unseen (W142).
+    if (list.current) list.current.scrollTop = 0;
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
