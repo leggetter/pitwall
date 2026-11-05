@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { allowSignalsTo } from '../test/noClaude.js';
 import { absoluteSearchPath, RunError, oneLine, runFile } from './exec.js';
 
@@ -187,18 +187,23 @@ describe('runFile', () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-exec-'));
     const pidFile = path.join(dir, 'pid');
     try {
+      // The handler first, so a pid on disk means the SIGTERM is ignored. A timeout of 2 s, so a child
+      // slow to start on a busy machine has written it by then (W149: 500 ms was a race).
       const script =
-        'require("node:fs").writeFileSync(process.argv[1], String(process.pid)); process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);';
-      const err = await failure(runFile(node, ['-e', script, pidFile], { timeoutMs: 500 }));
+        'process.on("SIGTERM", () => {}); require("node:fs").writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1000);';
+      const err = await failure(runFile(node, ['-e', script, pidFile], { timeoutMs: 2000 }));
       expect(err.reason).toBe('timeout');
       const pid = Number(await readFile(pidFile, 'utf8'));
+      // The run rejects at the SIGTERM. A second later, before the SIGKILL at 2 s, the child is still there.
+      await new Promise((resolve) => setTimeout(resolve, 1000));
       expect(isRunning(pid)).toBe(true);
-      await new Promise((resolve) => setTimeout(resolve, 2500));
-      expect(isRunning(pid)).toBe(false);
+      // Then the SIGKILL removes it. Waited for, not a fixed sleep: on a busy machine the SIGKILL and a
+      // check at 2.5 s could run in one turn of the event loop, before the child is reaped (W149).
+      await vi.waitFor(() => expect(isRunning(pid)).toBe(false), { timeout: 8000, interval: 50 });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
-  }, 10_000);
+  }, 20_000);
 
   it('finishes when the child exits, even if a process it started still holds stderr', async () => {
     // The child starts a detached grandchild that inherits stderr and lives for
