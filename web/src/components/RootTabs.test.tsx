@@ -13,6 +13,7 @@ import { ROOT_TAB_KEY } from '../rootTabs.js';
 import { VIEW_STATE_KEY } from '../selection.js';
 import { fakeSockets, group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
+import { chooseFirstDirectory } from '../test/newSession.js';
 import { Dashboard } from './Dashboard.js';
 import type { TerminalHandle } from './Terminal.js';
 
@@ -308,7 +309,9 @@ describe('what a tab narrows to its root', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New session' }));
     const dialog = screen.getByRole('dialog', { name: 'New session' });
     const directory = within(dialog).getByRole('combobox', { name: 'Directory' }) as HTMLInputElement;
-    expect(directory.value).toBe('~/personal/blog');
+    // From All sessions, a view, no directory is chosen (W147), and the placeholder is the tab's root.
+    expect(directory.value).toBe('');
+    expect(directory.placeholder).toBe('~/personal/…');
     fireEvent.click(directory);
     expect(within(within(dialog).getByRole('listbox', { name: 'Directories' })).getAllByRole('option').map((option) => option.textContent)).toEqual(['~/personal/blog', '~/personal']);
     expect(within(dialog).getByText('Under ~/personal.')).toBeTruthy();
@@ -468,6 +471,7 @@ describe("each tab's own place", () => {
     const { update, history } = renderDashboard(twoRoots(list), { search: `?view=all&root=${PERSONAL}` });
     fireEvent.click(screen.getByRole('button', { name: 'New session' }));
     const dialog = screen.getByRole('dialog', { name: 'New session' });
+    chooseFirstDirectory(dialog);
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'First prompt' }), { target: { value: 'A made-up first prompt.' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New session' })).toBeNull());

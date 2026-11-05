@@ -5,10 +5,10 @@
 // root first, narrows as you type, takes an option from the keyboard, and starts a session in it; files for the first prompt (W82), through
 // Attach files, a drop and a paste, refused ones, the server's refusal and its 503, Remove, which
 // asks the server to remove a kept one, an upload that's slow, one that fails, a start that sends
-// their ids, and a close that asks the server to remove them; Cancel closes it. With a session open
-// (#139, D27), + New session and `n` start in that session's directory, a worktree's added first; with
-// none open, or its directory gone, the first of the groups' directories, as before. W63's switch to
-// the new session's group and tab is its own part, new-session-selected.
+// their ids, and a close that asks the server to remove them; Cancel closes it. + New session and `n`
+// start in the repo or directory selected in the repo list, never the open session's, and from a view
+// with no directory chosen (W147, D27). W63's switch to the new session's group and tab is its own
+// part, new-session-selected.
 
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -143,19 +143,20 @@ const part: Part = {
       await openDialog(t, 'New session');
       const labels = await page.evaluate<string[]>(`[...${DIALOG}.querySelectorAll('label.field-label')].map((l) => l.textContent.trim())`);
       t.expectEqual(labels, ['Directory', 'Name optional', 'Model optional', 'Effort optional', 'First prompt'], 'its fields');
+      const values = await page.evaluate<string[]>(DIRECTORY_LABELS);
+      for (const dir of [CODE, API_SERVER, DEMO_APP]) t.expect(values.includes(shortPath(dir)), `it offers ${dir}`, values);
+      t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), '', 'from All sessions, a view, no directory is chosen (W147)');
+      t.expectEqual(await page.evaluate(`${DIRECTORY}.placeholder`), '~/code/…', 'and its placeholder shows the root');
+      t.expect(await page.evaluate(`document.activeElement === ${DIRECTORY}`), 'focus is on Directory, its first field', await page.evaluate(focused));
+      t.expectEqual(await chooseDirectory(t, DIRECTORY, DEMO_APP), shortPath(DEMO_APP), 'a directory chosen');
       // Model and Effort start from the defaults for sessions, which their first options name (W119): the made-up
       // config file's effort, and Claude Code's own model, from made-up settings, read for the directory (W122).
       await page.waitFor('the defaults for sessions', `${field('Effort')}?.options[0]?.textContent === 'Default: high'`);
       t.expectEqual(await page.evaluate(`${field('Model')}.options[0].textContent`), 'Default: Opus 5.5 (your Claude Code settings)', "Model's first option names Claude Code's default and where it's from");
-      t.expectEqual(
-        await page.evaluate(`${field('Effort')}.options[1].textContent`),
-        "Claude Code's default: xhigh (the project's Claude Code settings)",
+      await page.waitFor(
         "Effort's Claude Code's default, from the directory's project settings",
+        `${field('Effort')}?.options[1]?.textContent === ${q("Claude Code's default: xhigh (the project's Claude Code settings)")}`,
       );
-      const values = await page.evaluate<string[]>(DIRECTORY_LABELS);
-      for (const dir of [CODE, API_SERVER, DEMO_APP]) t.expect(values.includes(shortPath(dir)), `it offers ${dir}`, values);
-      t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), values[0], 'with no session open, the first choice is chosen, as before #139');
-      t.expect(await page.evaluate(`document.activeElement === ${DIRECTORY}`), 'focus is on Directory, its first field', await page.evaluate(focused));
       t.expect(await page.evaluate(`!!${dialogButton('Start session')} && !!${dialogButton('Cancel')}`), 'Start session and Cancel');
       const card = await page.evaluate<{ left: number; right: number; top: number; bottom: number }>(dialogBox);
       t.expect(card.left >= 15.5 && card.right <= t.viewport.width - 15.5 && card.top >= 0 && card.bottom <= t.viewport.height, 'inside the window', card);
@@ -187,7 +188,8 @@ const part: Part = {
     });
 
     await t.step('Directory is an autocomplete: focus selects its text, emptied it lists every directory, and it narrows as you type', async () => {
-      await t.fresh({ search: '?view=all' });
+      // With a repo selected, so Directory opens with it chosen (W147).
+      await t.fresh({ search: `?repo=${DEMO_APP}` });
       await openDialog(t, 'New session');
       await page.waitFor('focus in Directory', `document.activeElement === ${COMBOBOX}`);
       t.expect(
@@ -240,7 +242,8 @@ const part: Part = {
     });
 
     await t.step('Attach files takes files from the picker, uploads each, and lists it with its size, and a thumbnail for an image', async () => {
-      await t.fresh({ search: '?view=all' });
+      // With a repo selected, so Directory opens with it chosen and the start later in this case has one (W147).
+      await t.fresh({ search: `?repo=${API_SERVER}` });
       await openDialog(t, 'New session');
       t.expect(await page.evaluate(`!!${dialogButton('Attach files')}`), 'Attach files is there');
       t.expectEqual(
@@ -474,22 +477,21 @@ const part: Part = {
 
     const sessionOf = (sessionName: string) => server.world.byName(sessionName);
 
-    await t.step("with a session open, + New session starts in that session's directory (#139)", async () => {
-      await t.fresh({ search: '?view=all' });
-      await openFromRow(t, NAMES.inApi);
-      const cwd = sessionOf(NAMES.inApi).cwd;
+    await t.step('with a repo selected, + New session starts in it, with nothing else filled in (W147)', async () => {
+      await t.fresh({ search: `?repo=${API_SERVER}` });
       await openDialog(t, 'New session');
       const values = await page.evaluate<string[]>(DIRECTORY_LABELS);
-      t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), shortPath(cwd), "the session's directory is chosen");
-      t.expect(values[0] !== shortPath(cwd), 'which is not the first choice, so it was chosen for the session', values);
-      t.expectEqual(values.filter((value) => value === shortPath(cwd)).length, 1, 'and listed once');
-      t.expectEqual(await page.evaluate(`${PROMPT}.value`), '', 'the prompt is blank: nothing from its conversation');
-      await t.shot('session-open');
+      t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), shortPath(API_SERVER), 'the selected repo is chosen');
+      t.expect(values[0] !== shortPath(API_SERVER), 'which is not the first choice, so it was chosen for the selection', values);
+      t.expectEqual(values.filter((value) => value === shortPath(API_SERVER)).length, 1, 'and listed once');
+      t.expectEqual(await page.evaluate(`${PROMPT}.value`), '', 'the prompt is blank');
+      await t.shot('repo-selected');
       await page.click('Cancel', dialogButton('Cancel'));
       await page.waitFor('the dialog to close', `!${DIALOG}`);
     });
 
-    await t.step("n with a worktree's session open: its directory, which no group has, is added first and chosen, and the start sends it", async () => {
+    await t.step("n with the repo selected and a worktree's session open: the repo, not the session's worktree, and the start sends it", async () => {
+      await openFromRow(t, NAMES.inApi);
       server.world.move(sessionOf(NAMES.inApi).sessionId, WORKTREE);
       server.broadcast();
       await page.waitFor('the moved session', `${viewName} === ${q(NAMES.inApi)}`);
@@ -497,26 +499,30 @@ const part: Part = {
       await page.evaluate(`(document.activeElement?.blur(), true)`);
       await page.key('n');
       await page.waitFor('the dialog', `${dialogName} === 'New session'`);
-      t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), shortPath(WORKTREE), "the worktree's directory is chosen");
-      t.expectEqual(await page.evaluate(`${DIRECTORY_LABELS}[0]`), '~/code/api-server/.claude/worktrees/pitwall-test-wt', 'first in the list, with home as ~');
-      await t.shot('worktree');
+      t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), shortPath(API_SERVER), 'the selected repo is chosen');
+      t.expect(!(await page.evaluate<string[]>(DIRECTORY_LABELS)).includes(shortPath(WORKTREE)), "the session's worktree isn't offered");
       await page.click('First prompt', PROMPT);
       await page.type(FIRST_PROMPT);
       server.clearRecords();
       await page.click('Start session', dialogButton('Start session'));
       await page.waitFor('the dialog to close', `!${DIALOG}`);
-      t.expectEqual(server.records.spawns.map((spawn) => spawn.cwd), [WORKTREE], 'the start sent the worktree');
+      t.expectEqual(server.records.spawns.map((spawn) => spawn.cwd), [API_SERVER], 'the start sent the repo');
     });
 
-    await t.step("with a session whose directory has gone open, it starts where it did before", async () => {
+    await t.step('with a view selected and a session open, no directory is chosen, and Start session asks for one', async () => {
       await t.fresh({ search: '?view=all' });
-      const gone = sessionOf(NAMES.endedGone);
-      await page.navigate(`/?view=all&session=${gone.sessionId}`);
-      await page.waitFor(`the ${NAMES.endedGone} view`, `${viewName} === ${q(NAMES.endedGone)}`, 10_000);
+      await openFromRow(t, NAMES.inApi);
       await openDialog(t, 'New session');
-      const values = await page.evaluate<string[]>(DIRECTORY_LABELS);
-      t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), values[0], 'the first choice, as with no session open');
-      t.expect(!values.includes(shortPath(gone.cwd)), 'and the gone directory is not offered', values);
+      t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), '', "no directory, not the session's");
+      await page.click('First prompt', PROMPT);
+      await page.type(FIRST_PROMPT);
+      server.clearRecords();
+      await page.click('Start session', dialogButton('Start session'));
+      await page.waitFor('the problem', `!!${DIALOG}.querySelector('.field-problem')`);
+      t.expectEqual(await page.evaluate(`${DIALOG}.querySelector('.field-problem')?.textContent`), 'Choose a directory.', 'it says to choose one');
+      t.expect(await page.evaluate(`document.activeElement === ${DIRECTORY}`), 'focus goes to Directory', await page.evaluate(focused));
+      t.expectEqual(server.records.spawns, [], 'nothing was started');
+      await t.shot('view-selected');
       await page.click('Cancel', dialogButton('Cancel'));
       await page.waitFor('the dialog to close', `!${DIALOG}`);
     });

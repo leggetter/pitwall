@@ -32,6 +32,7 @@ import { TERMINAL_FOCUS_KEY } from '../terminalFocus.js';
 import { fakeSockets, group, minutesAgo, NOW, session, snapshot, type FakeSocket, withoutSubagents } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
 import { choosePreference, openPreferences, preferenceGroup, preferenceOption, preferenceOptions, preferencesButton, preferencesDialog } from '../test/preferences.js';
+import { chooseFirstDirectory } from '../test/newSession.js';
 import { toastMessages } from '../test/toasts.js';
 import { ATTACH_DELAY_MS } from '../timing.js';
 import { TOKEN_STORAGE_KEY } from '../token.js';
@@ -211,6 +212,7 @@ async function startSession() {
   button.focus();
   fireEvent.click(button);
   const dialog = screen.getByRole('dialog', { name: 'New session' });
+  chooseFirstDirectory(dialog);
   fireEvent.change(within(dialog).getByRole('textbox', { name: 'First prompt' }), { target: { value: 'A made-up first prompt.' } });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New session' })).toBeNull());
@@ -577,6 +579,7 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
       // `n` with nothing focused, so focus has nowhere to go back to, and the view's heading takes it as the view opens.
       press('n');
       const dialog = screen.getByRole('dialog', { name: 'New session' });
+      chooseFirstDirectory(dialog);
       fireEvent.change(within(dialog).getByRole('textbox', { name: 'First prompt' }), { target: { value: 'A made-up first prompt.' } });
       fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
       await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New session' })).toBeNull());
