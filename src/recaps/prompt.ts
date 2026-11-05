@@ -311,11 +311,12 @@ export type RecapReading = { ok: true; answer: RecapAnswer; repaired: RecapRepai
  * (RecapRefusal), a code fence with other text or a second object included.
  *
  * waitingOn and the to-dos must agree, so Needs you always has a to-do for you to show: 'nothing'
- * when there are no to-dos, and 'you' exactly when the first to-do the session doesn't own itself is
+ * when there are no to-dos, and 'you' only when the first to-do the session doesn't own itself is
  * yours (W146): a to-do of yours behind someone else's, such as "release it once #42 ships", is
- * yours but not due, so it doesn't put the session under Needs you. Where they don't agree, pitwall
- * derives waitingOn from the to-dos instead of refusing the answer (W126). Every other value the
- * model chose stays.
+ * yours but not due, so it doesn't put the session under Needs you. 'you' is forced only when that
+ * to-do is the very first, or the model said 'nothing'; behind the session's own step, its CI or
+ * another session stays (#168's review). Where they don't agree, pitwall derives waitingOn from the
+ * to-dos instead of refusing the answer (W126). Every other value the model chose stays.
  */
 export function readRecapAnswer(text: string): RecapReading {
   const object = objectText(text);
@@ -363,8 +364,13 @@ function agreedWaitingOn(waitingOn: RecapWaitingOn, todos: readonly RecapTodo[])
   if (first === undefined) return 'nothing';
   // The first to-do someone other than the session owns says what it waits on (#128's review: [session, CI] is CI).
   const lead = leadTodo(todos);
-  // Yours first, such as a question you haven't answered: it waits on you, whatever the model said (W146).
-  if (lead?.owner === 'you') return 'you';
+  if (lead?.owner === 'you') {
+    // Yours first of all, such as a question you haven't answered, or 'nothing' beside it: you (W146).
+    if (waitingOn === 'you' || waitingOn === 'nothing' || first.owner === 'you') return 'you';
+    // Behind a step of the session's, the model's CI or another session stays: [session "Watch CI on
+    // #42 and fix failures", you "Merge #42"] waits on CI, not you (#168's review).
+    return waitingOn;
+  }
   // Yours only later, or not at all: not you (W146).
   if (waitingOn === 'you') return WAITING_ON_FOR_OWNER[(lead ?? first).owner];
   return waitingOn;

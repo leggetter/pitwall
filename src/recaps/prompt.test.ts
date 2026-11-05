@@ -208,7 +208,7 @@ describe('parseRecapAnswer', () => {
     // A value that agrees stays, and nothing is reported.
     expect(repaired({ todos: [{ text: 'Finish the checks on #42', owner: 'CI' }], waitingOn: 'CI' })).toEqual({ waitingOn: 'CI', repaired: [] });
     expect(repaired({ todos: [{ text: 'Run the checks', owner: 'session' }], waitingOn: 'nothing' })).toEqual({ waitingOn: 'nothing', repaired: [] });
-    expect(repaired({ todos: [{ text: 'a', owner: 'session' }, { text: 'Finish the checks on #42', owner: 'CI' }, { text: 'b', owner: 'you' }], waitingOn: 'CI' })).toEqual({ waitingOn: 'CI', repaired: [] });
+    expect(repaired({ todos: [{ text: 'a', owner: 'session' }, { text: 'b', owner: 'you' }], waitingOn: 'CI' })).toEqual({ waitingOn: 'CI', repaired: [] });
     expect(repaired({})).toEqual({ waitingOn: 'you', repaired: [] });
   });
 
@@ -225,11 +225,17 @@ describe('parseRecapAnswer', () => {
     expect(waiting([{ text: 'Rerun the export', owner: 'session' }, theirs, later], 'you')).toBe('someone else');
     expect(waiting([{ text: 'Finish the checks on #42', owner: 'CI' }, later], 'you')).toBe('CI');
     expect(waiting([theirs, later], 'nothing')).toBe('nothing');
-    // Yours first, such as a question you haven't answered: you, whatever the model said.
+    // Yours first of all, such as a question you haven't answered: you, whatever the model said.
     for (const waitingOn of ['nothing', 'CI', 'someone else', 'another session']) {
       expect(waiting([question, theirs, later], waitingOn), waitingOn).toBe('you');
-      expect(waiting([{ text: 'Rerun the export', owner: 'session' }, question, theirs], waitingOn), waitingOn).toBe('you');
     }
+    // Behind the session's own step, only 'nothing' becomes you; CI or another session stays (#168's review).
+    const watch = { text: 'Watch CI on #42 and fix failures', owner: 'session' };
+    const merge = { text: 'Merge #42', owner: 'you' };
+    expect(waiting([watch, merge], 'CI')).toBe('CI');
+    expect(waiting([{ text: "Act on the other session's reply", owner: 'session' }, merge], 'another session')).toBe('another session');
+    expect(waiting([watch, merge], 'nothing')).toBe('you');
+    expect(waiting([watch, merge], 'you')).toBe('you');
   });
 
   it('tells the model questions stay until answered or dismissed, and a later to-do comes after what it waits on (W146)', () => {
