@@ -321,7 +321,7 @@ M5.1's own items start at W131, the evidence the rest of it needs; the others fo
   - Cause: the card's text box was half the window (W136) whatever room the band had, so with its heading, notes and pitwall's line the card was taller than the band, which is at most 70% of the view. The wheel over the text scrolled the text, not the band, so only Tab reached the buttons. W141's `flex-basis: 0` stays.
   - Fix: `ApprovalCards` measures the room in the band's list, with no box bounded, and gives each card's text box, or its editor, a smaller `max-height` when the card wouldn't fit, never below two lines, so the whole card is in view. On a window too short even for that, such as 375 by 600, the buttons stick to the band's bottom edge (`position: sticky`, `web/src/supervisor.css`).
   - Check: the app check's `supervisor` part sets the window 600, 680, 760, 800, 900 and 1000 px tall and, for each long card first in the band, checks Send, and Send edit while editing, inside the band and above the message box, and the whole card in the band on a wide window. It failed before the fix at every height at 375 and 1440 px wide.
-  - Status: In review.
+  - Status: Merged ([#166](https://github.com/leggetter/pitwall/pull/166)). Its review's two fixes, made by the coordinator before merge: the buttons stick to the band's bottom only on a card that can't fit even at two lines (`data-cramped`), so a card peeking under another never shows its buttons over its own unread text; and a fit keeps each text box's and the list's scroll position.
 
 ## Open questions
 

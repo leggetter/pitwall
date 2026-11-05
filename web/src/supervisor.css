@@ -428,13 +428,16 @@
 
 /*
  * Its buttons. ApprovalCards bounds the text box, or the editor, so the whole card fits the band and
- * these are in view (W143); on a window too short for the rest of the card, such as 375 x 600, they
+ * these are in view (W143); only on a card too short for the rest of it, such as at 375 x 600, marked data-cramped, they
  * stick to the band's bottom edge, on the card's surface, over what the band hasn't scrolled to yet,
  * so they're never out of reach. The padding, cancelled by the margin, keeps a gap above them there.
  */
-.approval-actions {
+.approval-card[data-cramped] .approval-actions {
   position: sticky;
   bottom: 0;
+}
+
+.approval-actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--pw-space-2);

@@ -144,6 +144,10 @@ function useTextRoom(list: RefObject<HTMLUListElement | null>, count: number): v
         card,
         box: card.querySelector<HTMLElement>('.approval-text, .approval-editor'),
       }));
+      // Where each box, and the list, had been read to: removing the bounds clamps scrollTop, and a fit
+      // runs on every new draft, note or resize, so put it back after (W143's review).
+      const read = each.map(({ box }) => box?.scrollTop ?? 0);
+      const listTop = scroller.scrollTop;
       for (const { box } of each) box?.style.removeProperty('max-height');
       const style = getComputedStyle(scroller);
       const room = scroller.clientHeight - px(style.paddingTop) - px(style.paddingBottom);
@@ -155,7 +159,14 @@ function useTextRoom(list: RefObject<HTMLUListElement | null>, count: number): v
         const floor = 2 * px(own.lineHeight) + px(own.paddingTop) + px(own.paddingBottom) + px(own.borderTopWidth) + px(own.borderBottomWidth);
         const bound = Math.max(floor, Math.floor(room - rest));
         if (bound < height) box.style.maxHeight = `${bound}px`;
+        // Too short for the card even at two lines: only then do its buttons stick to the band's bottom,
+        // so a card peeking under another never shows its buttons over its own unread text (W143's review).
+        card.toggleAttribute('data-cramped', floor + rest > room);
       }
+      each.forEach(({ box }, i) => {
+        if (box) box.scrollTop = read[i] ?? 0;
+      });
+      scroller.scrollTop = listTop;
     };
     fit();
     if (typeof ResizeObserver !== 'function') return;
