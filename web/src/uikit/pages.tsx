@@ -171,8 +171,10 @@ interface DialogCase {
   /** A waiting state's spinner shows at once. */
   waited?: 'shown';
   run?: (root: HTMLElement) => Promise<unknown>;
-  /** Opened with a session open (#139, D27): that session's directory, chosen. */
+  /** Opened with a repo or directory selected in the repo list (W147, D27): its directory, chosen. */
   cwd?: string;
+  /** Opened from a view (W147): no directory chosen. */
+  noDirectory?: boolean;
 }
 
 const DIALOG_CASES: DialogCase[] = [
@@ -356,9 +358,14 @@ const DIALOG_CASES: DialogCase[] = [
     },
   },
   {
-    title: 'With a session open',
-    note: "+ New session or n with a session open (#139): the session's directory chosen, here a worktree's, which no group has, so it's first in the list. The rest is as usual, and nothing from its conversation goes in.",
-    cwd: `${APP_DIR}/.worktrees/pitwall-test-export-fix`,
+    title: 'With a repo selected',
+    note: '+ New session or n with a repo or directory selected in the repo list (W147): its directory chosen, whatever session is open. The rest is as usual.',
+    cwd: APP_DIR,
+  },
+  {
+    title: 'From a view',
+    note: '+ New session or n with a view selected, such as All sessions (W147): no directory chosen, the placeholder showing the root, and Start session asks for one.',
+    noDirectory: true,
   },
 ];
 
@@ -371,7 +378,13 @@ export function Dialogs() {
             <Reopenable>
               {(close) => {
                 const shown = (
-                  <NewSessionDialog snapshot={DIALOG_SNAPSHOT} onClose={close} onStarted={close} prefill={dialog.cwd === undefined ? undefined : { cwd: dialog.cwd }} />
+                  <NewSessionDialog
+                    snapshot={DIALOG_SNAPSHOT}
+                    onClose={close}
+                    onStarted={close}
+                    prefill={dialog.cwd === undefined ? undefined : { cwd: dialog.cwd }}
+                    noDirectory={dialog.noDirectory}
+                  />
                 );
                 return dialog.run ? <Scenario run={dialog.run}>{shown}</Scenario> : shown;
               }}
@@ -684,6 +697,8 @@ const PAGES: PageCase[] = [
   {
     title: 'Session started',
     note: 'After Start session in the dialog: a toast, at the bottom right, and the view opens when the session shows up in the list. The toast stays here.',
+    // A directory selected, so New session opens with it chosen (W147).
+    search: repo(NOTES_DIR),
     view: { state: 'live', snapshot: CALM_SNAPSHOT },
     lasting: true,
     run: async (root) => {

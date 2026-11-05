@@ -7,6 +7,7 @@ import type { ConnectionView } from '../connection.js';
 import { directoryChoices, directoryProblem, modelProblem, nameProblem, promptProblem, rootOf } from '../spawn.js';
 import { block, declarations, withoutComments } from '../test/css.js';
 import { group, NOW, session, snapshot } from '../test/fixtures.js';
+import { chooseFirstDirectory } from '../test/newSession.js';
 import { hover, unhover } from '../test/tooltips.js';
 import { Dashboard } from './Dashboard.js';
 import dialogCss from './Dialog.css?raw';
@@ -67,9 +68,15 @@ function renderDashboard(fetch: FetchLike | undefined, first: IndexSnapshot = sn
 
 const settle = () => act(async () => {});
 
-function openDialog(): HTMLElement {
+/**
+ * New session from the header. These tests start in All sessions, a view, where it opens with no
+ * directory chosen (W147), so it chooses the first, as a person would, unless `choose` is false.
+ */
+function openDialog({ choose = true }: { choose?: boolean } = {}): HTMLElement {
   fireEvent.click(screen.getByRole('button', { name: 'New session' }));
-  return screen.getByRole('dialog', { name: 'New session' });
+  const dialog = screen.getByRole('dialog', { name: 'New session' });
+  if (choose) chooseFirstDirectory(dialog);
+  return dialog;
 }
 
 /** Fills in a first prompt and returns the dialog, for a submit. */
@@ -108,12 +115,14 @@ beforeEach(() => {
 describe('New session: the dialog', () => {
   it('opens from the header, with the directory picker focused, offering the groups under a root, then the roots', () => {
     renderDashboard(fakeServer(started));
-    const dialog = openDialog();
+    const dialog = openDialog({ choose: false });
 
     expect(dialog.getAttribute('aria-modal')).toBe('true');
     const picker = directory(dialog);
     expect(document.activeElement).toBe(picker);
-    expect(picker.value).toBe('~/code/demo-app');
+    // From All sessions, a view, no directory is chosen (W147): the field shows its placeholder.
+    expect(picker.value).toBe('');
+    expect(picker.placeholder).toBe('~/code/…');
     fireEvent.click(picker);
     // This fake server has no directory list: the groups' directories and the root alone.
     expect(within(within(dialog).getByRole('listbox', { name: 'Directories' })).getAllByRole('option').map((option) => option.textContent)).toEqual([
@@ -228,7 +237,8 @@ describe('New session: the dialog', () => {
     renderDashboard(fakeServer(started));
     const button = screen.getByRole('button', { name: 'New session' });
     button.focus();
-    let dialog = openDialog();
+    // Choosing a directory is a change, as typing is, so this one leaves Directory as it opened.
+    let dialog = openDialog({ choose: false });
     const backdrop = () => document.querySelector('.dialog-backdrop')!;
     // A click inside the card isn't one on the backdrop.
     fireEvent.pointerDown(dialog);
@@ -247,7 +257,7 @@ describe('New session: the dialog', () => {
     expect(document.activeElement).toBe(button);
 
     // A press that starts in the card and ends on the backdrop, as when selecting text, isn't a click on it.
-    dialog = openDialog();
+    dialog = openDialog({ choose: false });
     fireEvent.pointerDown(dialog);
     fireEvent.click(backdrop());
     expect(screen.getByRole('dialog', { name: 'New session' })).toBe(dialog);
@@ -311,6 +321,7 @@ describe('New session: starting one', () => {
     fromEmpty.focus();
     fireEvent.click(fromEmpty);
     const dialog = screen.getByRole('dialog', { name: 'New session' });
+    chooseFirstDirectory(dialog);
     fill(dialog, { prompt: 'Reply with: ready' });
     await submit(dialog);
     expect(document.activeElement).toBe(fromEmpty);
