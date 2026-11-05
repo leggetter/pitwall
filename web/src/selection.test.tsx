@@ -163,6 +163,10 @@ describe('groups and selections', () => {
       const second = group({ key: `${WORK}/docs`, label: 'docs', root: WORK, sessions: [session({ sessionId: 'w-web' })] });
       const groups = { roots: [WORK, PERSONAL], groups: [web, second, blog] };
       expect(selectionShowing(groups, { view: 'all', root: PERSONAL }, PERSONAL, 'w-web', new Map([['w-web', second]]))).toEqual({ repo: `${WORK}/docs`, root: WORK });
+      // With one root there's no tab, and its home group still wins (#169's review): "Every repo it worked in" lists it under two.
+      const api = group({ key: `${ROOT}/api`, label: 'api', root: ROOT, sessions: [session({ sessionId: 'both' })] });
+      const site = group({ key: `${ROOT}/site`, label: 'site', root: ROOT, sessions: [session({ sessionId: 'both' })] });
+      expect(selectionShowing({ roots: [ROOT], groups: [api, site, notes] }, { repo: `${ROOT}/notes` }, undefined, 'both', new Map([['both', site]]))).toEqual({ repo: `${ROOT}/site` });
     });
 
     it('keeps the selection for a session no group lists yet', () => {

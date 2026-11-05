@@ -140,7 +140,7 @@ export function selectionShowing(
   if (inTab.length > 0 && (tab === undefined || selection.root === tab) && keepsOpenSession(inTab, selection, sessionId)) return undefined;
   const homeGroup = home?.get(sessionId);
   const listsHome = homeGroup !== undefined && listing.some((group) => group.key === homeGroup.key && group.root === homeGroup.root);
-  const chosen = listsHome && (inTab.length === 0 || homeGroup.root === tab) ? homeGroup : (inTab[0] ?? listing[0]!);
+  const chosen = listsHome && (tab === undefined || inTab.length === 0 || homeGroup.root === tab) ? homeGroup : (inTab[0] ?? listing[0]!);
   return groupSelection(chosen, snapshot.roots);
 }
 
