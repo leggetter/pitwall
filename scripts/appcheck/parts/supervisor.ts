@@ -6,7 +6,8 @@
 // goes; what it sent and started, with each session's state, Needs you's notice and Open (W124); a
 // resume draft for a finished session and its "Resumed" row (W127); the sessions and PRs its replies name, which open them (W125); Stop; held, with the stop command and the app strip's line; failed, with Start; a reload that
 // starts nothing; its context in the header, New conversation with its confirmation, cancelled,
-// confirmed and refused, and a draft's text up to half the window (W136); pitwall's line under a
+// confirmed and refused, and a draft's text up to half the window (W136), with its buttons in the band
+// at 600 to 1000 px tall (W143); pitwall's line under a
 // message draft and its editor, and a session's reply to the supervisor, To pitwall-supervisor, with
 // Claude Code's refusal in pitwall's words (W138); and none with --no-supervisor. Made-up example/*
 // content only.
@@ -265,16 +266,19 @@ const part: Part = {
       await t.fresh({ search: '?view=all&supervisor', supervisor: 'idle', approvals: 'long' });
       await page.waitFor('two cards', `${CARDS}.length === 2`);
       const [card, longer] = [`${CARDS}[0]`, `${CARDS}[1]`];
-      /** A card's text box: its height, what it holds, eight lines' height, and half the window. */
-      const measure = (which: string) =>
-        page.evaluate<{ height: number; content: number; eight: number; half: number }>(
-          `(() => { const box = ${which}.querySelector('.approval-text'); const s = getComputedStyle(box); const eight = 8 * parseFloat(s.lineHeight) + parseFloat(s.paddingTop) + parseFloat(s.paddingBottom); return { height: box.clientHeight, content: box.scrollHeight, eight, half: innerHeight / 2 }; })()`,
+      /**
+       * A card's text box: its height, what it holds, eight lines' height, half the window, and the room
+       * the band leaves it, when that's less (W143).
+       */
+      const measure = (which: string, box = '.approval-text') =>
+        page.evaluate<{ height: number; content: number; eight: number; half: number; room: number }>(
+          `(() => { const card = ${which}; const box = card.querySelector(${q(box)}); const s = getComputedStyle(box); const eight = 8 * parseFloat(s.lineHeight) + parseFloat(s.paddingTop) + parseFloat(s.paddingBottom); const room = parseFloat(box.style.maxHeight) || Infinity; return { height: box.getBoundingClientRect().height, content: box.scrollHeight, eight, half: innerHeight / 2, room }; })()`,
         );
       // 14 lines: taller than the 8 lines a box had before W136. Where they fit, as at 1,200 px, no length
       // note; where they wrap past half the window, as at 375 px, the note: exactly when it scrolls.
       const first = await measure(card);
       const scrolls = first.content > first.height + 1;
-      t.expect(first.height > first.eight + 1, 'the box taller than 8 lines', first);
+      t.expect(first.height > first.eight + 1 || first.height >= first.room - 1, 'the box taller than 8 lines, or as tall as the band leaves it room for', first);
       if (!t.compact) t.expect(!scrolls, '14 lines shown whole on a wide, tall window', first);
       const codeNote = "Drawn as their codes, since they don't show as themselves: U+00A0 NO-BREAK SPACE.";
       t.expectEqual(
@@ -283,9 +287,9 @@ const part: Part = {
         'its length said exactly when it scrolls, and the code',
       );
       t.expectEqual(await page.evaluate(`[...${card}.querySelectorAll('.approval-hidden')].map((each) => each.textContent)`), ['U+00A0'], 'the no-break space as its code');
-      // 60 lines: the box at half the window, then it scrolls, saying how long it is.
+      // 60 lines: the box at half the window, or the room the band leaves it (W143), then it scrolls, saying how long it is.
       const second = await measure(longer);
-      t.expect(Math.abs(second.height - second.half) <= 2 && second.content > second.height + 1, 'the box at half the window, the text scrolling in it', second);
+      t.expect(Math.abs(second.height - Math.min(second.half, second.room)) <= 2 && second.content > second.height + 1, 'the box at half the window or the band’s room, the text scrolling in it', second);
       t.expect(/^60 lines, [\d,]+ characters: scroll to read it all before you send it\.$/.test(await page.evaluate<string>(`${longer}.querySelector('.approval-length')?.textContent ?? ''`)), 'its length said under it');
       t.expect(await page.evaluate<boolean>(`${longer}.querySelector('.approval-text').getAttribute('role') === 'region'`), 'a Tab stop while it scrolls');
       // The band grows past the 40% it was, up to 70% of the view, so the long card is read in it; and
@@ -306,9 +310,61 @@ const part: Part = {
       // Its editor grows as far, then scrolls.
       await page.click('Edit', cardButton(1, 'Edit'));
       await page.waitFor('the editor', `!!${longer}.querySelector('.approval-editor')`);
-      const editor = await page.evaluate<{ height: number; half: number }>(`(() => { const e = ${longer}.querySelector('.approval-editor'); return { height: e.getBoundingClientRect().height, half: innerHeight / 2 }; })()`);
-      t.expect(Math.abs(editor.height - editor.half) <= 2, 'the editor as tall as half the window', editor);
+      await page.settle(50);
+      const editor = await measure(longer, '.approval-editor');
+      t.expect(Math.abs(editor.height - Math.min(editor.half, editor.room)) <= 2, 'the editor as tall as half the window, or the band’s room', editor);
       await page.click('Cancel', cardButton(1, 'Cancel'));
+      t.expectEqual(records.decisions, [], 'nothing decided');
+    });
+
+    await t.step('a long draft’s buttons in reach (W143): at 600 to 1000 px tall, a card first in the band shows Send, and Send edit while editing, inside the band and above the message box', async () => {
+      // Before W143, the text box was half the window whatever room the band had, so a long card was
+      // taller than the band: its buttons sat under the message box, and the wheel over the text
+      // scrolled the text, not the band.
+      await t.fresh({ search: '?view=all&supervisor', supervisor: 'idle', approvals: 'long' });
+      await page.waitFor('two cards', `${CARDS}.length === 2`);
+      const LIST = `${SVIEW}.querySelector('.supervisor-approvals-scroll')`;
+      /** Scrolls the band's list so card `index` is the first in view, then where its button `label` is against the list and the message box. */
+      const reach = (index: number, label: string) =>
+        page.evaluate<{ inBand: boolean; whole: boolean; aboveBox: boolean; readable: boolean; twoLines: boolean; button: number[]; band: number[]; box: number }>(`(() => {
+          const list = ${LIST}; const card = ${CARDS}[${index}];
+          list.scrollTop += card.getBoundingClientRect().top - list.getBoundingClientRect().top - parseFloat(getComputedStyle(list).paddingTop);
+          const b = ${cardButton(index, label)}.getBoundingClientRect(); const l = list.getBoundingClientRect();
+          const f = ${SVIEW}.querySelector('.supervisor-foot').getBoundingClientRect();
+          const text = card.querySelector('.approval-editor') ?? card.querySelector('.approval-text'); const s = getComputedStyle(text);
+          const scrolls = text.scrollHeight > text.clientHeight + 1;
+          return {
+            inBand: b.top >= l.top - 0.5 && b.bottom <= l.bottom + 0.5,
+            whole: card.getBoundingClientRect().bottom <= l.bottom + 0.5,
+            aboveBox: b.bottom <= f.top + 0.5,
+            // All of it can be read: it fits, or it scrolls as a Tab stop (the editor is one anyway).
+            readable: !scrolls || text.tagName === 'TEXTAREA' || text.getAttribute('role') === 'region',
+            twoLines: text.clientHeight >= Math.min(text.scrollHeight, 2 * parseFloat(s.lineHeight)) - 1,
+            button: [Math.round(b.top), Math.round(b.bottom)], band: [Math.round(l.top), Math.round(l.bottom)], box: Math.round(f.top),
+          };
+        })()`);
+      for (const height of [600, 680, 760, 800, 900, 1000]) {
+        await page.send('Emulation.setDeviceMetricsOverride', { width: t.viewport.width, height, deviceScaleFactor: 1, mobile: false });
+        await page.settle(50);
+        for (const index of [0, 1]) {
+          const shown = await reach(index, 'Send');
+          t.expect(shown.inBand && shown.aboveBox && shown.readable && shown.twoLines, `at ${height} px, card ${index + 1}'s Send inside the band, above the box, and its text readable`, shown);
+          // On a wide window the whole card fits, its notes and pitwall's line too, the text giving way;
+          // at 375 px, short of room, its buttons stick to the band's bottom edge over the rest.
+          if (!t.compact) t.expect(shown.whole, `at ${height} px, card ${index + 1} whole in the band`, shown);
+          if (index === 1 && (height === 600 || height === 1000)) await t.shot(`draft-in-reach-${height}`);
+          await page.click('Edit', cardButton(index, 'Edit'));
+          await page.waitFor('the editor', `!!${CARDS}[${index}].querySelector('.approval-editor')`);
+          await page.settle(50);
+          const editing = await reach(index, 'Send edit');
+          t.expect(editing.inBand && editing.aboveBox && editing.twoLines, `at ${height} px, card ${index + 1}'s Send edit inside the band and above the box`, editing);
+          if (!t.compact) t.expect(editing.whole, `at ${height} px, card ${index + 1} whole in the band while editing`, editing);
+          await page.click('Cancel', cardButton(index, 'Cancel'));
+          await page.waitFor('the text again', `!!${CARDS}[${index}].querySelector('.approval-text')`);
+        }
+      }
+      await page.send('Emulation.setDeviceMetricsOverride', { width: t.viewport.width, height: t.viewport.height, deviceScaleFactor: 1, mobile: false });
+      await page.settle(50);
       t.expectEqual(records.decisions, [], 'nothing decided');
     });
 

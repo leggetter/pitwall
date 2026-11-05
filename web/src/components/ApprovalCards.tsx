@@ -30,7 +30,7 @@
 //   before, or, with none left, to the caller (onEmpty), which puts it in the message box. Edit puts it
 //   in the editor, and Cancel or Escape back on Edit.
 
-import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import { SPAWN_PROMPT_MAX, SUPERVISOR_MESSAGE_FOOTER, type SupervisorApproval, type SupervisorDecision } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { useAutoGrow } from '../autoGrow.js';
@@ -125,6 +125,74 @@ export const SPAWN_NOTE = 'Starts a background session there with claude --bg, i
 /** What a resume card adds under its heading (W127): how the finished session comes back, and what it reads. */
 export const RESUME_NOTE = 'Resumes this finished session in the background with claude --resume, in its own folder, and sends the message below as its next turn.';
 
+/**
+ * Each card's text box, or its editor, at most as tall as leaves the whole card in the band's visible
+ * list (W143), so a card first in view shows its buttons: half the window, as W136 has it, could be
+ * taller than the band, and the wheel over the text scrolls the text, not the band. The room is
+ * measured with no box bounded, so a card that fits keeps its height and a bound never ratchets down.
+ * Never below two lines: on a window too short even for that, the buttons stick to the band's bottom
+ * edge instead (supervisor.css). An inline max-height, under the stylesheet's, since a stylesheet
+ * names only tokens.
+ */
+function useTextRoom(list: RefObject<HTMLUListElement | null>, count: number): void {
+  useLayoutEffect(() => {
+    const cards = list.current;
+    const scroller = cards?.parentElement;
+    if (!cards || !scroller) return;
+    const fit = () => {
+      const each = [...cards.querySelectorAll<HTMLElement>(':scope > .approval-card')].map((card) => ({
+        card,
+        box: card.querySelector<HTMLElement>('.approval-text, .approval-editor'),
+      }));
+      // Where each box, and the list, had been read to: removing the bounds clamps scrollTop, and a fit
+      // runs on every new draft, note or resize, so put it back after (W143's review).
+      const read = each.map(({ box }) => box?.scrollTop ?? 0);
+      const listTop = scroller.scrollTop;
+      for (const { box } of each) box?.style.removeProperty('max-height');
+      const style = getComputedStyle(scroller);
+      const room = scroller.clientHeight - px(style.paddingTop) - px(style.paddingBottom);
+      for (const { card, box } of each) {
+        if (!box) continue;
+        const own = getComputedStyle(box);
+        const height = box.getBoundingClientRect().height;
+        const rest = card.getBoundingClientRect().height - height;
+        const floor = 2 * px(own.lineHeight) + px(own.paddingTop) + px(own.paddingBottom) + px(own.borderTopWidth) + px(own.borderBottomWidth);
+        const bound = Math.max(floor, Math.floor(room - rest));
+        if (bound < height) box.style.maxHeight = `${bound}px`;
+        // Too short for the card even at two lines: only then do its buttons stick to the band's bottom,
+        // so a card peeking under another never shows its buttons over its own unread text (W143's review).
+        card.toggleAttribute('data-cramped', floor + rest > room);
+      }
+      each.forEach(({ box }, i) => {
+        if (box) box.scrollTop = read[i] ?? 0;
+      });
+      scroller.scrollTop = listTop;
+    };
+    fit();
+    if (typeof ResizeObserver !== 'function') return;
+    // The band's room changing (the window, the message box, the header) or a card's content (Edit, the
+    // editor growing, a note or an alert): fit again in the next frame, since doing it in the callback
+    // would change what it observes in this one.
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(fit);
+    });
+    observer.observe(scroller);
+    observer.observe(cards);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [list, count]);
+}
+
+/** A computed length in px, or 0 for one that isn't, such as line-height: normal. */
+function px(value: string): number {
+  const parsed = parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 export interface ApprovalCardsProps {
   approvals: readonly SupervisorApproval[];
   /** The last card went with focus in it: the caller puts focus somewhere that stays, the message box. */
@@ -137,6 +205,7 @@ export function ApprovalCards({ approvals, onEmpty }: ApprovalCardsProps) {
   // The card focus was last in, by id, while it's still in one.
   const focusedCard = useRef<string | undefined>(undefined);
   const shownIds = useRef(approvals.map((each) => each.id));
+  useTextRoom(list, approvals.length);
 
   useLayoutEffect(() => {
     const was = shownIds.current;

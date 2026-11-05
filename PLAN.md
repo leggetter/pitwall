@@ -316,6 +316,12 @@ M5.1's own items start at W131, the evidence the rest of it needs; the others fo
   - Cause: the supervisor's conversation, at its content's height, and the band shrank in proportion to their heights, so a long conversation left the band about 46px of 848. W136's app check had only a short conversation.
   - Fix: the supervisor's conversation grows from no height (`flex-basis: 0`, `web/src/supervisor.css`), so it gives way first, as the design system says. The app check's `supervisor` part puts a 20,000px conversation behind the long drafts and checks the band keeps its height; it failed before the fix (46px against 490px).
   - Status: Merged ([#163](https://github.com/leggetter/pitwall/pull/163)).
+- **W143, A draft card's buttons out of reach in the supervisor's drafts band** (`m5.1/draft-actions`, S).
+  - Phil, 2026-11-04, a bug, twice: a 25-line message draft (2,506 characters) showed its text box and the top of its length note, cut off by the message box; Send, Edit and Don't send were below, out of reach with a pointer.
+  - Cause: the card's text box was half the window (W136) whatever room the band had, so with its heading, notes and pitwall's line the card was taller than the band, which is at most 70% of the view. The wheel over the text scrolled the text, not the band, so only Tab reached the buttons. W141's `flex-basis: 0` stays.
+  - Fix: `ApprovalCards` measures the room in the band's list, with no box bounded, and gives each card's text box, or its editor, a smaller `max-height` when the card wouldn't fit, never below two lines, so the whole card is in view. On a window too short even for that, such as 375 by 600, the buttons stick to the band's bottom edge (`position: sticky`, `web/src/supervisor.css`).
+  - Check: the app check's `supervisor` part sets the window 600, 680, 760, 800, 900 and 1000 px tall and, for each long card first in the band, checks Send, and Send edit while editing, inside the band and above the message box, and the whole card in the band on a wide window. It failed before the fix at every height at 375 and 1440 px wide.
+  - Status: Merged ([#166](https://github.com/leggetter/pitwall/pull/166)). Its review's two fixes, made by the coordinator before merge: the buttons stick to the band's bottom only on a card that can't fit even at two lines (`data-cramped`), so a card peeking under another never shows its buttons over its own unread text; and a fit keeps each text box's and the list's scroll position.
 
 ## Open questions
 

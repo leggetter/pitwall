@@ -348,6 +348,8 @@
 /*
  * The model's text, as text: its line breaks kept, up to half the window's height, never less than
  * eight lines, then it scrolls (W136: a long proposal is read before it's sent, not in an 8-line slot).
+ * Never taller than leaves its card whole in the band, down to two lines: ApprovalCards measures the
+ * room and sets a smaller max-height on the element when it has to (W143), on the editor too.
  */
 .approval-text {
   max-height: max(calc(8 * var(--pw-leading-m) + 2 * var(--pw-space-2)), 50vh);
@@ -424,10 +426,24 @@
   align-self: flex-end;
 }
 
+/*
+ * Its buttons. ApprovalCards bounds the text box, or the editor, so the whole card fits the band and
+ * these are in view (W143); only on a card too short for the rest of it, such as at 375 x 600, marked data-cramped, they
+ * stick to the band's bottom edge, on the card's surface, over what the band hasn't scrolled to yet,
+ * so they're never out of reach. The padding, cancelled by the margin, keeps a gap above them there.
+ */
+.approval-card[data-cramped] .approval-actions {
+  position: sticky;
+  bottom: 0;
+}
+
 .approval-actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--pw-space-2);
+  margin-top: calc(-1 * var(--pw-space-1-5));
+  padding-top: var(--pw-space-1-5);
+  background: var(--pw-surface);
 }
 
 @media (max-height: 760px) {
