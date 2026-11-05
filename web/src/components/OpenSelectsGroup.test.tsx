@@ -191,6 +191,15 @@ describe("from the supervisor's Sent and started (W144)", () => {
     expect(viewName()).toBe(started.name);
   });
 
+  it("Starred, which doesn't list it, gives way to its group (W148)", async () => {
+    const { history } = renderDashboard(oneRoot(handoffs({ name: started.name, sessionId: started.sessionId })), { search: '?view=starred&supervisor' });
+    await settle();
+    await openFromHandoffs(started.name);
+    expect(history.entries).toEqual(['?view=starred&supervisor', `?repo=${at(WORK, 'api')}&session=${started.sessionId}`]);
+    expect(selected()).toBe('api');
+    expect(viewName()).toBe(started.name);
+  });
+
   it("a view in the other root's tab does not keep it", async () => {
     const { history } = renderDashboard(twoRoots(handoffs({ name: inWeb.name, sessionId: inWeb.sessionId })), { search: `?view=all&root=${PERSONAL}&supervisor` });
     await settle();

@@ -118,6 +118,7 @@ import {
   countRows,
   filterRows,
   hiddenOwners,
+  isPrRow,
   listWork,
   matchesRelations,
   notClonedKey,
@@ -1033,11 +1034,13 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // A session from the PR view's Sessions or the supervisor's Sent and started: its view takes the
   // PR's or the supervisor's place, with focus on its heading. No focus gesture (W57): its terminal, if
   // it opens on one, leaves focus where it is. Its root tab and a group that lists it come with it, in
-  // the one pushed entry, unless the selection already lists it (W144, selectionShowing()); one no
+  // the one pushed entry, unless the selection already lists it (W144, selectionShowing(); Starred and Needs you only if they do, W148); one no
   // group lists yet opens alone.
   const openSessionFromPr = (sessionId: string) => {
     focusView.current = { id: sessionId, on: 'heading' };
-    const next = snapshot ? selectionShowing({ roots, groups: groupedAll.groups }, selection, tab, sessionId, groupedAll.home) : undefined;
+    // Starred or Needs you gives way when it doesn't list the session (W148), whatever the filters show.
+    const viewLists = [...listed.current, ...listed.finished].some((row) => !isPrRow(row) && row.session.sessionId === sessionId);
+    const next = snapshot ? selectionShowing({ roots, groups: groupedAll.groups }, selection, tab, sessionId, groupedAll.home, viewLists) : undefined;
     if (next === undefined) {
       opened.open(sessionId, 'push');
       return;

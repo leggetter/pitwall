@@ -141,6 +141,14 @@ describe('groups and selections', () => {
       expect(selectionShowing(single, { repo: `${ROOT}/gone` }, undefined, 'n')).toEqual({ repo: `${ROOT}/notes` });
     });
 
+    it("gives way from Starred and Needs you when they don't list it, never from All sessions or Pull requests (W148)", () => {
+      for (const view of ['needs-you', 'starred'] as const) {
+        expect(selectionShowing(single, { view }, undefined, one, undefined, false)).toEqual({ repo: `${ROOT}/app` });
+        expect(selectionShowing(single, { view }, undefined, one, undefined, true)).toBeUndefined();
+      }
+      for (const view of ['all', 'prs'] as const) expect(selectionShowing(single, { view }, undefined, one, undefined, false)).toBeUndefined();
+    });
+
     it('with root tabs: a session in the other tab selects its group there, whatever the view', () => {
       expect(selectionShowing(tabs, { view: 'all', root: PERSONAL }, PERSONAL, 'w-api')).toEqual({ repo: `${WORK}/api`, root: WORK });
       expect(selectionShowing(tabs, { repo: `${PERSONAL}/blog`, root: PERSONAL }, PERSONAL, 'w-web')).toEqual({ repo: `${WORK}/web`, root: WORK });
