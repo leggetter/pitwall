@@ -1263,7 +1263,8 @@ export class World {
       job(NAMES.running3, { contextTokens: 612_000 }),
       job(NAMES.prompting, { status: 'waiting', state: 'blocked', waitingFor: 'permission prompt', needsYou: { reason: 'prompt' } }),
       job(NAMES.finished, { state: 'done', alive: false, pid: undefined, finished: true, lastActivityAt: this.#ago(95) }),
-      session(NAMES.fromRoot, { cwd: CODE, title: 'Tidy both made-up services', workedIn: [worked('api-server', 12, 140), worked('demo-app', 3, 60)], prLinks: [this.#link('pushed', PRS.quiet, 3 * 60)] }),
+      // With two roots it changed blog, under ~/oss, most too (W149): Main repo still lists it under api-server, in ~/code's tab, its row "also in blog".
+      session(NAMES.fromRoot, { cwd: CODE, title: 'Tidy both made-up services', workedIn: [worked('api-server', 12, 140), worked('demo-app', 3, 60), ...(this.#roots === 2 ? [{ key: BLOG, label: 'blog', root: OSS, calls: 90, changes: 30, lastAt: this.#ago(2) }] : [])], prLinks: [this.#link('pushed', PRS.quiet, 3 * 60)] }),
       session(NAMES.inApi, { cwd: API_SERVER, title: 'Add a made-up route', subagentsRunning: 2, prLinks: [this.#link('mentioned', PRS.conflicts, 60)] }),
       session(NAMES.blog, { cwd: BLOG, title: 'Draft the made-up release notes', status: 'waiting', waitingFor: 'input needed', needsYou: { reason: 'prompt' } }),
       ended(NAMES.ended, 2, { title: 'Tidy the made-up release notes', prLinks: [this.#link('prompted', PRS.quiet, 2 * 24 * 60)] }),

@@ -11,6 +11,7 @@ import {
   groupByPhrase,
   groupSessions,
   isRootStart,
+  elsewhereRepos,
   mainRepo,
   readGroupBy,
   writeGroupBy,
@@ -94,6 +95,17 @@ describe('mainRepo', () => {
   });
 });
 
+describe('elsewhereRepos (W149)', () => {
+  it("is the repos under another root than the group's, most changed first, each once, placeable only", () => {
+    const old = { key: at(PERSONAL, 'old'), label: 'old', calls: 9, changes: 99, lastAt: minutesAgo(1) } as unknown as WorkedIn;
+    const s = session({ cwd: WORK, workedIn: [repo(PERSONAL, 'blog', 1, 9), repo(WORK, 'api', 50, 50), repo(PERSONAL, 'skills', 4, 4), repo(PERSONAL, 'blog', 1, 9), old] });
+    expect(elsewhereRepos(s, { root: WORK }).map((r) => r.label)).toEqual(['skills', 'blog']);
+    expect(elsewhereRepos(s, { root: `${WORK}/` }).map((r) => r.label)).toEqual(['skills', 'blog']);
+    expect(elsewhereRepos(s, { root: PERSONAL }).map((r) => r.label)).toEqual(['api']);
+    expect(elsewhereRepos(session({ cwd: WORK }), { root: WORK })).toEqual([]);
+  });
+});
+
 describe('isRootStart', () => {
   it("is a root's own directory, not a repo, nor a root that is itself a repo", () => {
     expect(isRootStart({ key: WORK, root: WORK, kind: 'directory' })).toBe(true);
@@ -143,17 +155,31 @@ describe('groupSessions: Main repo, the default', () => {
     expect(home.get(fx.alone.sessionId)?.key).toBe(WORK);
   });
 
-  it("moves a session whose main repo is under another root to that root, and so to that root's tab", () => {
+  it("keeps a session in the root it started in: its main repo there, though it changed another root's repo more (W149)", () => {
     const fx = fixture();
-    // Worked most in blog, under ~/personal, this time.
+    // Worked most in blog, under ~/personal, this time, and a little in api, under ~/work.
     const crossing = session({ name: 'crossing', cwd: WORK, workedIn: [repo(WORK, 'api', 1, 5), repo(PERSONAL, 'blog', 4, 5)] });
     const groups = fx.groups.map((g) => (g.key === WORK ? { ...g, sessions: [...g.sessions, crossing] } : g));
     const result = groupSessions(groups, 'main-repo');
-    const blog = result.groups.find((g) => g.key === at(PERSONAL, 'blog'));
-    expect(blog?.root).toBe(PERSONAL);
-    expect(blog?.sessions.map((s) => s.name).sort()).toEqual(['crossing', 'in-blog']);
-    expect(result.home.get(crossing.sessionId)).toBe(blog);
-    expect(result.groups.filter((g) => g.root === WORK).flatMap((g) => g.sessions)).not.toContain(crossing);
+    const api = result.groups.find((g) => g.key === at(WORK, 'api'));
+    expect(api?.sessions).toContain(crossing);
+    expect(result.home.get(crossing.sessionId)).toBe(api);
+    expect(result.groups.filter((g) => g.root === PERSONAL).flatMap((g) => g.sessions)).not.toContain(crossing);
+  });
+
+  it("keeps a root-started session that worked only in another root's repos in the root's own group (W149)", () => {
+    const fx = fixture();
+    const skills = session({ name: 'skills', cwd: WORK, workedIn: [repo(PERSONAL, 'skills', 6, 30)] });
+    const groups = fx.groups.map((g) => (g.key === WORK ? { ...g, sessions: [...g.sessions, skills] } : g));
+    const result = groupSessions(groups, 'main-repo');
+    expect(result.groups.find((g) => g.key === WORK)?.sessions.map((s) => s.name).sort()).toEqual(['alone', 'skills']);
+    expect(result.home.get(skills.sessionId)?.key).toBe(WORK);
+    expect(result.groups.some((g) => g.key === at(PERSONAL, 'skills'))).toBe(false);
+    // Every repo it worked in still lists it under that repo too, and keeps it in the root's own group.
+    const every = groupSessions(groups, 'every-repo');
+    expect(every.groups.find((g) => g.key === WORK)?.sessions).toContain(skills);
+    expect(every.groups.find((g) => g.key === at(PERSONAL, 'skills'))?.sessions).toEqual([skills]);
+    expect(every.home.get(skills.sessionId)?.key).toBe(WORK);
   });
 
   it('lists each session in one group, so the counts add up to All sessions', () => {
@@ -208,13 +234,14 @@ describe('groupSessions: a session started in a directory in no repo (W145)', ()
   const inNotes = (name: string, workedIn?: WorkedIn[]) => session({ name, cwd: NOTES, ...(workedIn ? { workedIn } : {}) });
   const notesGroup = (...sessions: ReturnType<typeof session>[]) => [group({ key: NOTES, label: 'notes', kind: 'directory', root: WORK, sessions })];
 
-  it('moves to the one repo it worked in, though it only read it, and that repo may be under another root', () => {
+  it('moves to the one repo it worked in under its root, though it only read it; one under another root counts for nothing (W149)', () => {
     const cloned = inNotes('cloned', [repo(WORK, 'some-repo', 0, 40)]);
     const crossing = inNotes('crossing', [repo(PERSONAL, 'blog', 3, 9)]);
-    const result = groupSessions(notesGroup(cloned, crossing), 'main-repo');
-    expect(placement(result.groups)).toEqual({ 'some-repo (work)': ['cloned'], 'blog (personal)': ['crossing'] });
+    const both = inNotes('both', [repo(PERSONAL, 'blog', 9, 90), repo(WORK, 'api', 1, 2)]);
+    const result = groupSessions(notesGroup(cloned, crossing, both), 'main-repo');
+    expect(placement(result.groups)).toEqual({ 'notes (work)': ['crossing'], 'some-repo (work)': ['cloned'], 'api (work)': ['both'] });
     expect(result.home.get(cloned.sessionId)?.key).toBe(at(WORK, 'some-repo'));
-    expect(result.home.get(crossing.sessionId)?.root).toBe(PERSONAL);
+    expect(result.home.get(crossing.sessionId)?.key).toBe(NOTES);
   });
 
   it('stays in its directory with two or more repos, with none, and before its scan has landed', () => {

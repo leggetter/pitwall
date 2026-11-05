@@ -284,16 +284,11 @@ describe('with groupings and root tabs (W139)', () => {
     expect(view()).toBeUndefined();
   });
 
-  it('Main repo lists it under its main repo alone: blog keeps it, and web, under the other root, closes it', async () => {
-    const first = renderDashboard(twoRoots(), { mode: 'main-repo', search: `?view=all&root=${PERSONAL}&session=${CROSS}` });
+  it('Main repo lists it under its main repo in the root it started in alone (W149): api keeps it, and web closes it', async () => {
+    const { history } = renderDashboard(twoRoots(), { mode: 'main-repo', search: `?view=all&root=${WORK}&session=${CROSS}` });
     await settle();
-    await choose('blog');
-    expect(first.history.location.search).toBe(`?repo=${at(PERSONAL, 'blog')}&root=${PERSONAL}&session=${CROSS}`);
-    expect(viewName()).toBe('cross');
-    first.unmount();
-
-    const { history } = renderDashboard(twoRoots(), { mode: 'main-repo', search: `?repo=${at(WORK, 'api')}&root=${WORK}&session=${CROSS}` });
-    await settle();
+    await choose('api');
+    expect(history.location.search).toBe(`?repo=${at(WORK, 'api')}&root=${WORK}&session=${CROSS}`);
     expect(viewName()).toBe('cross');
     await choose('web');
     expect(history.location.search).toBe(`?repo=${at(WORK, 'web')}&root=${WORK}`);

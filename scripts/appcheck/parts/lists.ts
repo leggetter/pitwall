@@ -3,7 +3,8 @@
 // filter, chips and sort, and a filter bar that turning a filter on or off never moves (W75), with
 // Clear filters as an icon button and the bar's lines at each window (W91); a group that keeps the
 // open session only if it lists it (W139); a session started in a directory in no repo that worked
-// in one repo, listed under that repo (W145); and, with two roots, a tab per root.
+// in one repo, listed under that repo (W145); and, with two roots, a tab per root, a session that
+// changed another root's repo most kept in its own root's tab, its row "also in" that repo (W149).
 
 import { API_SERVER, CODE, DEMO_APP, DOCS_SITE, NAMES, OSS, SDK_CLI } from '../fixtures.js';
 import type { Part } from '../runner.js';
@@ -428,6 +429,16 @@ const part: Part = {
       await openRepoList(t);
       t.expectEqual(await page.evaluate(repoLabels), ['Needs you', 'All sessions', 'Starred', 'Pull requests', 'blog'], "its repo list, with the page's Pull requests");
       if (t.layout === 'drawer') await page.key('Escape');
+    });
+
+    await t.step("two roots: a session started in ~/code that changed blog, under ~/oss, most stays in ~/code's tab, under api-server, its row also in blog (W149)", async () => {
+      await t.fresh({ search: `?repo=${API_SERVER}&root=${CODE}`, roots: 2 });
+      t.expect((await page.evaluate<string[]>(rowNames)).includes(NAMES.fromRoot), 'api-server lists it', await page.evaluate(rowNames));
+      const also = await page.evaluate<string | null>(`${row(NAMES.fromRoot)}?.closest('li.session')?.querySelector('.session-elsewhere')?.textContent ?? null`);
+      t.expectEqual(also?.replace(/^ · /, '') ?? null, 'also in blog', 'its line 2 ends "also in blog"');
+      const fits = await page.evaluate<boolean>(`(() => { const li = ${row(NAMES.fromRoot)}?.closest('li.session'); const what = li?.querySelector('.session-what'); return !!what && what.scrollWidth <= what.clientWidth + 1 && li.scrollWidth <= li.clientWidth + 1; })()`);
+      t.expect(fits, 'line 2 fits its row');
+      await t.shot('also-in-other-root');
     });
 
     await t.step('in forced colours, as a Windows contrast theme sets them, turning a filter on or off moves nothing either', async () => {
