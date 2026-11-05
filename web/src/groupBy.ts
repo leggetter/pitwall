@@ -61,7 +61,7 @@ export const GROUP_BY_LABELS: Readonly<Record<GroupBy, string>> = {
 
 /** Each mode's one plain line in the Preferences dialog, under its label. */
 export const GROUP_BY_DESCRIPTIONS: Readonly<Record<GroupBy, string>> = {
-  'main-repo': 'A session started in a root goes under the repo it changed most.',
+  'main-repo': 'A session started in a root goes under the repo it changed most; one started in another folder, under the only repo it worked in.',
   'where-started': 'Each session stays under the repo or directory it started in.',
   'every-repo': 'A session shows under every repo it worked in, so counts can overlap.',
 };
