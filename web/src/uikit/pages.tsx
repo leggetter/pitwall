@@ -193,13 +193,13 @@ const DIALOG_CASES: DialogCase[] = [
   },
   {
     title: 'Directory: the list',
-    note: "A click in the field, or ↓, opens its list. While the field shows the chosen directory, the list offers every one, as a select would: the groups' directories and the root first, then the directories under the root, three levels down, repos marked, shallower first. ↓ ↑ move, Enter or a click chooses, Escape closes the list and a second closes the dialog, Tab leaves without choosing. A long path is cut in the middle.",
+    note: "A click in the field, or ↓, opens its list. While the field shows the chosen directory, the list offers every one, as a select would: the groups' directories and the root first, then the directories under the root, three levels down, repos marked, shallower first. ↓ ↑ move, Enter or a click chooses (typing highlights the first match, so Enter takes it), Escape closes the list and a second closes the dialog, Tab leaves without choosing. A long path is cut in the middle.",
     run: (root) => directoryList(root, '~/code/pitwall-test-api'),
   },
   {
     title: 'Directory: narrowed, one highlighted',
-    note: "Focus selects the chosen directory's text, so typing replaces it. Every typed term must be in the path under the root, or in the whole path when it starts with ~ or /. A last segment that is the text comes first, then one that starts with it, the groups' directories first on a tie. ↓ highlights an option; the field keeps focus. Enter or a click puts it in the field as the shortened path, and the request sends the absolute one. With nothing matching, a typed path still works, as before.",
-    run: (root) => directoryList(root, '~/code/pitwall-test-api', 'app', ['ArrowDown', 'ArrowDown']),
+    note: "Focus selects the chosen directory's text, so typing replaces it. Every typed term must be in the path under the root, or in the whole path when it starts with ~ or /. A last segment that is the text comes first, then one that starts with it, the groups' directories first on a tie. Typing highlights the first match, so Enter takes it (W142); ↓ ↑ move from there, and the field keeps focus. Enter or a click puts it in the field as the shortened path, and the request sends the absolute one. With nothing matching, or the text emptied, none is highlighted, and a typed path still works, as before.",
+    run: (root) => directoryList(root, '~/code/pitwall-test-api', 'app'),
   },
   {
     title: 'Directory: loading',

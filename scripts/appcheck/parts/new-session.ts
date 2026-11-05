@@ -2,7 +2,7 @@
 // roots' directories; Start session asks for a first prompt; a start says so in a toast, and the
 // session's view opens once the index lists it, as the fake server does a moment later; Directory is
 // one autocomplete (W70, W140), whose text focus selects, which lists the groups' directories and the
-// root first, narrows as you type, takes an option from the keyboard, and starts a session in it; files for the first prompt (W82), through
+// root first, narrows as you type, highlights the first match as you type so Enter takes it (W142), and starts a session in it; files for the first prompt (W82), through
 // Attach files, a drop and a paste, refused ones, the server's refusal and its 503, Remove, which
 // asks the server to remove a kept one, an upload that's slow, one that fails, a start that sends
 // their ids, and a close that asks the server to remove them; Cancel closes it. + New session and `n`
@@ -213,9 +213,9 @@ const part: Part = {
       await t.shot('directory-list');
     });
 
-    await t.step('takes an option from the keyboard, and Escape closes only the list', async () => {
-      await page.key('ArrowDown');
-      t.expectEqual(await page.evaluate(`${ACTIVE}?.textContent`), '~/code/demo-app/web', '↓ highlights the option');
+    await t.step('takes the first match on Enter, highlighted as you type, and Escape closes only the list', async () => {
+      t.expectEqual(await page.evaluate(`${ACTIVE}?.textContent`), '~/code/demo-app/web', 'typing highlights the first match, with no ↓ (W142)');
+      t.expectEqual(await page.evaluate(`${ACTIVE}?.getAttribute('aria-selected')`), 'true', 'and it is the selected option');
       const box = await page.evaluate<{ top: number; bottom: number; left: number; right: number }>(
         `(() => { const r = ${ACTIVE}.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }; })()`,
       );
