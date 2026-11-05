@@ -33,9 +33,10 @@
 //   change, a subtitle that names the PR, and a notice at the top of the body, as after a clone, which
 //   says how to trust the new folder. What was typed is measured against the prefill, so a click on
 //   the backdrop still closes it until you change something.
-// - With a session open (#139, D27): + New session opens with that session's directory chosen,
-//   added to the choices when no group has it, as a worktree's (newSessionDirectory(), Dashboard),
-//   and the rest as usual. Nothing from its conversation goes in.
+// - From the repo list's selection (W146, D27): + New session opens with the selected repo or
+//   directory chosen (newSessionDirectory(), Dashboard), never the open session's, and with a view
+//   selected, with no directory chosen (`noDirectory`): the field is empty, showing its placeholder,
+//   and its list offers every directory. The rest as usual.
 
 import {
   useContext,
@@ -125,7 +126,7 @@ export const DIRECTORY_TEXT = {
   narrow: 'Keep typing to narrow them.',
 } as const;
 
-/** What the dialog opens with: a PR's directory, name and prompt (W107), or the open session's directory (#139), each one you can change. */
+/** What the dialog opens with: a PR's directory, name and prompt (W107), or the selected group's directory (W146), each one you can change. */
 export interface NewSessionPrefill {
   /** Absolute: chosen in Directory, and added to its choices when no group has it, as a new clone's or a worktree's. */
   cwd: string;
@@ -141,8 +142,10 @@ export interface NewSessionDialogProps {
   onStarted: (started: StartedSession, request: SpawnRequest) => void;
   /** With two or more roots, the open root tab, whose directories alone it offers (W38). */
   tab?: string | undefined;
-  /** Opened for a pull request (W107), or with a session open (#139): the fields it starts with. */
+  /** Opened for a pull request (W107), or with a repo or directory selected (W146): the fields it starts with. */
   prefill?: NewSessionPrefill | undefined;
+  /** Without a prefilled directory, opens with none chosen, as from a view (W146), not the first choice. */
+  noDirectory?: boolean | undefined;
   /** In place of the subtitle, as one that names the pull request. */
   subtitle?: ReactNode;
   /** At the top of the body: what happened before it opened, such as a clone, and what to do next. */
@@ -189,7 +192,7 @@ function directoryAnnouncement(listing: Listing, truncated: boolean, listed: num
   return truncated ? `${count} Not every directory is listed.` : count;
 }
 
-export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, subtitle, notice }: NewSessionDialogProps) {
+export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, noDirectory = false, subtitle, notice }: NewSessionDialogProps) {
   const api = useContext(ApiContext);
   const ids = { dir: useId(), name: useId(), model: useId(), customModel: useId(), effort: useId(), prompt: useId() };
   const alive = useRef(true);
@@ -204,8 +207,8 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
   }, [snapshot, tab, prefilledCwd]);
   // The roots it offers directories under: the open tab's, or every one.
   const roots = tab === undefined ? snapshot.roots : [tab];
-  // The directory it opens with: the prefill's, or the first choice. Taken once, as it opens.
-  const [first] = useState(() => choices.find((choice) => choice.path === (prefilledCwd ?? choices[0]?.path)));
+  // The directory it opens with: the prefill's, none with `noDirectory`, or the first choice. Taken once, as it opens.
+  const [first] = useState(() => (prefilledCwd === undefined && noDirectory ? undefined : choices.find((choice) => choice.path === (prefilledCwd ?? choices[0]?.path))));
   const [customDir, setCustomDir] = useState(first?.label ?? '');
   // The option chosen from the list, or the first, while the field still shows it.
   const [accepted, setAccepted] = useState<{ label: string; path: string } | undefined>(first);

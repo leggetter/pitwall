@@ -613,10 +613,11 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // hidden takes focus or a click. The header stays usable above it, and j and k still change the session.
   const overlaid = layout !== 'three-columns' && (openId !== undefined || prOpen !== undefined || supervisorOpen);
   const reposCovered = overlaid && overlayCoversRepos;
-  // The New session dialog, and the session it started, selected once it's listed (W63). Opened with
-  // a session open, in that session's directory (#139, D27), taken as it opens.
+  // The New session dialog, and the session it started, selected once it's listed (W63). Opened in
+  // the repo or directory selected in the repo list, or with none chosen from a view, never the open
+  // session's (W146, D27), taken as it opens.
   const [newSession, setNewSession] = useState<{ cwd: string | undefined }>();
-  const openNewSessionDialog = () => setNewSession({ cwd: snapshot ? newSessionDirectory(listedOpen, snapshot.roots, tab) : undefined });
+  const openNewSessionDialog = () => setNewSession({ cwd: snapshot ? newSessionDirectory(selection, snapshot.roots, tab) : undefined });
   // New session for a PR (W107): for a cloned repo, the dialog prefilled in its directory; for one
   // that isn't, Clone and start's confirmation first, then the dialog in the new clone.
   const [prStart, setPrStart] = useState<PrStart>();
@@ -2032,6 +2033,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
           snapshot={dialogSnapshot ?? snapshot}
           tab={tab}
           prefill={newSession.cwd === undefined ? undefined : { cwd: newSession.cwd }}
+          noDirectory
           onClose={() => setNewSession(undefined)}
           onStarted={(session) => {
             setNewSession(undefined);

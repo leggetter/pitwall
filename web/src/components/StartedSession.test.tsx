@@ -15,6 +15,7 @@ import type { StorageSource } from '../groupState.js';
 import { fakeSockets, group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
 import { toastMessages, toastSaying } from '../test/toasts.js';
+import { chooseFirstDirectory } from '../test/newSession.js';
 import { TOAST_ACTION_TIMEOUT_MS } from '../timing.js';
 import { Dashboard, listedText, OPEN_LISTED, startedText } from './Dashboard.js';
 import type { TerminalHandle } from './Terminal.js';
@@ -132,6 +133,7 @@ async function startSession(from: HTMLElement = screen.getByRole('button', { nam
   if (from.matches('header button')) fireEvent.click(from);
   else fireEvent.keyDown(from, { key: 'n' });
   const dialog = screen.getByRole('dialog', { name: 'New session' });
+  chooseFirstDirectory(dialog);
   fireEvent.change(within(dialog).getByRole('textbox', { name: 'First prompt' }), { target: { value: 'A made-up first prompt.' } });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New session' })).toBeNull());
@@ -382,6 +384,7 @@ describe("not over what you're in the middle of", () => {
     // New session, without waitFor, whose own timeout would wait on the fake clock.
     fireEvent.click(screen.getByRole('button', { name: 'New session' }));
     const dialog = screen.getByRole('dialog', { name: 'New session' });
+    chooseFirstDirectory(dialog);
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'First prompt' }), { target: { value: 'A made-up first prompt.' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
     for (let turn = 0; turn < 5 && screen.queryByRole('dialog', { name: 'New session' }); turn += 1) await settle();

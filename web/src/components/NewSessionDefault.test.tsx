@@ -1,8 +1,8 @@
-// + New session's directory (#139, D27): with a session open, the header button and `n` start in that
-// session's directory, a worktree's added first to the choices; with none open, its directory gone,
-// outside the roots or the open tab, or the session no longer listed, the dialog's first choice, as
-// before. Nothing from the session's conversation goes in. Made-up sessions only, and a fake server:
-// nothing here reaches a session.
+// + New session's directory (W146, D27, Phil, 2026-11-05): the repo or directory selected in the repo
+// list, never the open session's, since choosing a group can close the session (W139) and the repo
+// list always has a selection. With a view selected (All sessions, Needs you, Starred, Pull
+// requests), no directory is chosen. A group outside the roots or the open tab, or a not-cloned
+// repo's, gives none either. Made-up sessions only, and a fake server: nothing here reaches a session.
 
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -18,16 +18,21 @@ const API_KEY = 'k'.repeat(43);
 const CODE = '/Users/example/code';
 const DEMO = `${CODE}/demo-app`;
 const API = `${CODE}/api-server`;
+const NOTES = `${CODE}/notes`;
 const WORKTREE = `${API}/.claude/worktrees/pitwall-test-wt`;
-const id = (n: number) => `00000000-0000-4000-8000-0000001390${String(n).padStart(2, '0')}`;
+const id = (n: number) => `00000000-0000-4000-8000-0000001460${String(n).padStart(2, '0')}`;
 
 const live = () => session({ sessionId: id(1), name: 'api-live', cwd: API, lastActivityAt: minutesAgo(5) });
 const inWorktree = () => session({ sessionId: id(2), name: 'api-worktree', cwd: WORKTREE, lastActivityAt: minutesAgo(6) });
-const gone = () => session({ sessionId: id(3), name: 'api-gone', cwd: `${API}/.claude/worktrees/pitwall-test-gone`, cwdMissing: true, lastActivityAt: minutesAgo(7) });
 const demo = () => session({ sessionId: id(4), name: 'demo-live', cwd: DEMO, lastActivityAt: minutesAgo(1) });
+const note = () => session({ sessionId: id(5), name: 'notes-live', cwd: NOTES, lastActivityAt: minutesAgo(2) });
 
-const snap = (apiSessions: SessionSummary[] = [live(), inWorktree(), gone()]): IndexSnapshot =>
-  snapshot([group({ key: DEMO, label: 'demo-app', sessions: [demo()] }), group({ key: API, label: 'api-server', sessions: apiSessions })]);
+const snap = (apiSessions: SessionSummary[] = [live(), inWorktree()]): IndexSnapshot =>
+  snapshot([
+    group({ key: DEMO, label: 'demo-app', sessions: [demo()] }),
+    group({ key: API, label: 'api-server', sessions: apiSessions }),
+    group({ key: NOTES, label: 'notes', kind: 'directory', sessions: [note()] }),
+  ]);
 
 /** GETs are an empty conversation page; a POST starts a session. */
 function fakeServer() {
@@ -37,7 +42,7 @@ function fakeServer() {
       const page: ConversationPage = { sessionId, entries: [] };
       return new Response(JSON.stringify(page), { status: 200 });
     }
-    return new Response(JSON.stringify({ ok: true, shortId: 'pt139001', name: 'api-follow-up' }), { status: 200 });
+    return new Response(JSON.stringify({ ok: true, shortId: 'pt146001', name: 'api-follow-up' }), { status: 200 });
   });
 }
 
@@ -64,6 +69,7 @@ const values = () => {
   fireEvent.click(directory());
   return within(within(dialog()).getByRole('listbox', { name: 'Directories' })).getAllByRole('option').map((option) => option.textContent);
 };
+const startButton = () => within(dialog()).getByRole('button', { name: 'Start session' });
 
 async function openFromHeader() {
   fireEvent.click(screen.getByRole('button', { name: 'New session' }));
@@ -83,86 +89,93 @@ afterEach(() => {
 
 describe('newSessionDirectory', () => {
   const roots = [CODE];
-  it("is the session's directory, at or under a root", () => {
-    expect(newSessionDirectory(live(), roots)).toBe(API);
-    expect(newSessionDirectory(inWorktree(), roots)).toBe(WORKTREE);
-    expect(newSessionDirectory({ cwd: CODE }, roots)).toBe(CODE);
+  it("is the selected repo's or directory's, at or under a root", () => {
+    expect(newSessionDirectory({ repo: API }, roots)).toBe(API);
+    expect(newSessionDirectory({ repo: NOTES, root: CODE }, roots)).toBe(NOTES);
+    expect(newSessionDirectory({ repo: CODE }, roots)).toBe(CODE);
   });
 
-  it('is undefined with no session, its directory gone, or outside the roots or the open tab', () => {
-    expect(newSessionDirectory(undefined, roots)).toBeUndefined();
-    expect(newSessionDirectory(gone(), roots)).toBeUndefined();
-    expect(newSessionDirectory({ cwd: '/Users/example/elsewhere' }, roots)).toBeUndefined();
-    expect(newSessionDirectory({ cwd: '/Users/example/codebase' }, roots)).toBeUndefined();
+  it('is undefined for a view, a not-cloned repo, or a group outside the roots or the open tab', () => {
+    for (const view of ['all', 'needs-you', 'starred', 'prs'] as const) expect(newSessionDirectory({ view }, roots)).toBeUndefined();
+    expect(newSessionDirectory({ repo: 'github.com/example/elsewhere' }, roots)).toBeUndefined();
+    expect(newSessionDirectory({ repo: '/Users/example/elsewhere' }, roots)).toBeUndefined();
+    expect(newSessionDirectory({ repo: '/Users/example/codebase' }, roots)).toBeUndefined();
     // With a root tab open (W38), only a directory in that tab.
-    expect(newSessionDirectory({ cwd: `${CODE}/oss/thing` }, [CODE, `${CODE}/oss`], CODE)).toBeUndefined();
-    expect(newSessionDirectory({ cwd: `${CODE}/oss/thing` }, [CODE, `${CODE}/oss`], `${CODE}/oss`)).toBe(`${CODE}/oss/thing`);
+    expect(newSessionDirectory({ repo: `${CODE}/oss/thing` }, [CODE, `${CODE}/oss`], CODE)).toBeUndefined();
+    expect(newSessionDirectory({ repo: `${CODE}/oss/thing` }, [CODE, `${CODE}/oss`], `${CODE}/oss`)).toBe(`${CODE}/oss/thing`);
   });
 });
 
-describe('+ New session with a session open (#139)', () => {
-  it("starts in the session's directory, from the header button, with nothing else filled in", async () => {
-    renderAt(`?view=all&session=${id(1)}`);
+describe('+ New session from the repo list (W146)', () => {
+  it('starts in the selected repo, from the header button, with nothing else filled in', async () => {
+    renderAt(`?repo=${API}`);
     await settle();
     await openFromHeader();
     expect(directory().value).toBe(short(API));
-    expect(values()[0]).not.toBe(short(API));
     expect(values().filter((value) => value === short(API))).toHaveLength(1);
     expect(prompt().value).toBe('');
     expect((within(dialog()).getByLabelText(/^Name/) as HTMLInputElement).value).toBe('');
   });
 
-  it("adds a worktree's directory, which no group has, first, and n opens it the same; the start sends it", async () => {
-    const { fetch } = renderAt(`?view=all&session=${id(2)}`);
+  it('starts in a selected directory that is not a repo, and n opens it the same; the start sends it', async () => {
+    const { fetch } = renderAt(`?repo=${NOTES}`);
     await settle();
     (document.activeElement as HTMLElement | null)?.blur();
     act(() => {
       fireEvent.keyDown(document.body, { key: 'n' });
     });
     await settle();
-    expect(directory().value).toBe(short(WORKTREE));
-    expect(values()[0]).toBe(short(WORKTREE));
-    expect(values()[0]).toContain('.claude/worktrees/pitwall-test-wt');
+    expect(directory().value).toBe(short(NOTES));
     fireEvent.change(prompt(), { target: { value: 'A made-up first prompt.' } });
-    fireEvent.click(within(dialog()).getByRole('button', { name: 'Start session' }));
+    fireEvent.click(startButton());
     await settle();
     const post = fetch.mock.calls.find(([url, init]) => url === SPAWN_PATH && init.method === 'POST');
     expect(post).toBeDefined();
-    expect(JSON.parse(String(post?.[1].body)).cwd).toBe(WORKTREE);
+    expect(JSON.parse(String(post?.[1].body)).cwd).toBe(NOTES);
   });
 
-  it('starts where it did before with no session open', async () => {
-    renderAt('?view=all');
-    await settle();
-    await openFromHeader();
-    expect(directory().value).toBe(values()[0]);
-    expect(values()).not.toContain(short(WORKTREE));
-  });
-
-  it("starts where it did before when the session's directory has gone", async () => {
-    renderAt(`?view=all&session=${id(3)}`);
-    await settle();
-    await openFromHeader();
-    expect(directory().value).toBe(values()[0]);
-    expect(values()).not.toContain(short(gone().cwd));
-  });
-
-  it('starts where it did before once the session is no longer listed, since pitwall cannot tell whether its directory is there', async () => {
-    const { update } = renderAt(`?view=all&session=${id(2)}`);
-    await settle();
-    update(snap([live(), gone()]));
+  it("takes the selected group's directory, not the open session's worktree", async () => {
+    renderAt(`?repo=${API}&session=${id(2)}`);
     await settle();
     expect(document.getElementById('session-view')).toBeTruthy();
     await openFromHeader();
-    expect(directory().value).toBe(values()[0]);
+    expect(directory().value).toBe(short(API));
     expect(values()).not.toContain(short(WORKTREE));
   });
 
-  it('keeps the directory it opened with when the snapshot changes while it is open', async () => {
-    const { update } = renderAt(`?view=all&session=${id(1)}`);
+  it('takes the group selected, not the open one, after choosing another group', async () => {
+    renderAt(`?repo=${API}&session=${id(1)}`);
+    await settle();
+    fireEvent.click(screen.getByRole('link', { name: /^demo-app/ }));
     await settle();
     await openFromHeader();
-    update(snap([live(), inWorktree()]));
+    expect(directory().value).toBe(short(DEMO));
+  });
+
+  it.each(['?view=all', `?view=all&session=${id(1)}`, '?view=starred', '?view=needs-you', '?view=prs'])('chooses no directory with a view selected (%s), and offers every one', async (search) => {
+    renderAt(search);
+    await settle();
+    await openFromHeader();
+    expect(directory().value).toBe('');
+    expect(values()).toEqual(expect.arrayContaining([short(DEMO), short(API), short(NOTES)]));
+  });
+
+  it('starts nothing until a directory is chosen when none was', async () => {
+    const { fetch } = renderAt('?view=all');
+    await settle();
+    await openFromHeader();
+    fireEvent.change(prompt(), { target: { value: 'A made-up first prompt.' } });
+    fireEvent.click(startButton());
+    await settle();
+    expect(within(dialog()).getByText('Choose a directory.')).toBeTruthy();
+    expect(fetch.mock.calls.some(([url, init]) => url === SPAWN_PATH && init.method === 'POST')).toBe(false);
+  });
+
+  it('keeps the directory it opened with when the snapshot changes while it is open', async () => {
+    const { update } = renderAt(`?repo=${API}`);
+    await settle();
+    await openFromHeader();
+    update(snap([live()]));
     await settle();
     expect(directory().value).toBe(short(API));
   });
