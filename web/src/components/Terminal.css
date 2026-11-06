@@ -73,7 +73,7 @@
 /*
  * The screen: its padding, edge and fill. Its 1 px edge is what sets it apart in the dark theme,
  * where --pw-term-bg is the page's own --pw-bg; it's decorative (2.5), as the fill already shows
- * where the screen is in the light theme. Ligatures are off, so `->`, `!=` and `//` show as typed
+ * where the screen is in the light theme. With focus in it, the focus ring takes the edge's place. Ligatures are off, so `->`, `!=` and `//` show as typed
  * (2.7).
  */
 .attach-terminal {
@@ -100,4 +100,21 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+/*
+ * Focus in the screen, xterm.js's textarea, shows as the focus ring around it (W151), steady, by click
+ * or by key alike: Claude Code seems to draw its own cursor, so xterm.js's outline cursor for a
+ * terminal without focus doesn't show, and the screen looked the same with focus or without.
+ */
+.attach-terminal:focus-within {
+  box-shadow: var(--pw-ring-focus);
+}
+
+/* Forced colours drop box-shadow (styles.css), so the ring is an outline there. */
+@media (forced-colors: active) {
+  .attach-terminal:focus-within {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
 }

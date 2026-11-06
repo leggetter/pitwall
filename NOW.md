@@ -2,7 +2,7 @@
 
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
-Last updated: 2026-11-06, on `m5.1/integration`: W135 (attach a file in the supervisor's message box, [#176](https://github.com/leggetter/pitwall/pull/176)), built by a sub-agent in `.worktrees/w135` (removed), one fresh review, its two fixes made by the coordinator, squash-merged after the PR's CI passed. W150 (the recap strip gives the picture, [#175](https://github.com/leggetter/pitwall/pull/175)) merged before it. W149 names two items: the flaky timing tests ([#173](https://github.com/leggetter/pitwall/pull/173)) and Main repo keeps a session in the root it started in ([#174](https://github.com/leggetter/pitwall/pull/174)); say which by its title.
+Last updated: 2026-11-06, on `m5.1/terminal-keys-focus`: W151 (the terminal: ⌘ line-editing keys, a focus ring, and a paste from outside it), built in `.worktrees/w151` from Phil's feedback on the terminal view, in review. Before it, on `m5.1/integration`: W135 (attach a file in the supervisor's message box, [#176](https://github.com/leggetter/pitwall/pull/176)) merged.
 
 ## Current milestone
 
@@ -16,6 +16,7 @@ Last updated: 2026-11-06, on `m5.1/integration`: W135 (attach a file in the supe
 
 | Item | State |
 | --- | --- |
+| W151 (the terminal: ⌘ line-editing keys, a focus ring, and a paste from outside it) | In review, on `m5.1/terminal-keys-focus` (Phil, 2026-11-06, chose A, the focus ring, and D, the paste). ⌘+Backspace, ⌘+← and ⌘+→ send Ctrl+U, Ctrl+A and Ctrl+E; the screen shows the focus ring while it has focus; a paste with focus in the session view but not in a field goes to the terminal. Next: a fresh review, then merge |
 | W135 (attach a file in the supervisor's message box) | Merged ([#176](https://github.com/leggetter/pitwall/pull/176)), built by a sub-agent, one fresh review, its two fixes (Send waits while a file is read; a file with 100K+ runs of backticks no longer leaves the box stuck) made by the coordinator. Attach file reads a UTF-8 text file in the page into the box, under its name, in a fence, at the caret; no server change, and the supervisor still can't read files (D4, read-only tools, acts only after your click). Left: a file put mid-text isn't scrolled to; one file at a time; not live-checked |
 | W150 (the recap strip gives the picture) | Merged ([#175](https://github.com/leggetter/pitwall/pull/175)). Left: no live check yet of a one-off fix with a PR, which should come back with no plan; an open PR in an archived repo isn't in the list, so one the session opened there is called no longer open; merged and closed can't be told apart without a lookup per PR (for Plan status only, a later item); the supervisor's tools don't read goal, workingOn or plan |
 | W149 (Main repo keeps a session in the root it started in) | Merged ([#174](https://github.com/leggetter/pitwall/pull/174), Phil, 2026-11-05, option A): a session that edits another root's repo stays in its own root's tab, its row "also in" that repo. Reviewed fresh; its fixes made by the coordinator. Its worktree removed |
