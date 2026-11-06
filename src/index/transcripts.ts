@@ -5,7 +5,7 @@
 import { open, readdir, stat, type FileHandle } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import type { AskedYou, TranscriptStatus } from '../shared/protocol.js';
+import { RELAY_NAME, type AskedYou, type TranscriptStatus } from '../shared/protocol.js';
 import { detectAskedYou } from './asked.js';
 import { isRecord } from './guards.js';
 import { cap, truncate } from './text.js';
@@ -56,6 +56,13 @@ export interface TranscriptInfo {
    * entries read have no such usage.
    */
   contextTokens?: number;
+  /**
+   * ISO 8601: the newest turn something other than you started (W154, SessionSummary.wokenAt): a
+   * message from another session or a sub-agent, or a task notification (turnSignalOf()'s
+   * 'arrived'), that came while no turn ran, not one from pitwall's relay (RELAY_NAME). Undefined
+   * when the entries read have none.
+   */
+  wokenAt?: string;
 }
 
 /** Claude Code's own short recap of a session, an `away_summary` entry (TranscriptInfo.awaySummary). */
@@ -490,6 +497,8 @@ export interface Fields {
   contextTokens?: number;
   /** That call's `message.id`, so the same response written on several lines counts once. */
   contextMessageId?: string;
+  /** The newest wake's timestamp, in file order (TranscriptInfo.wokenAt). */
+  lastWokenMs?: number;
 }
 
 /** Applies one JSONL line. Lines that don't parse, and entry types the index doesn't use, are skipped. */
@@ -592,6 +601,11 @@ export function applyEntry(fields: Fields, entry: unknown): void {
     return;
   }
 
+  // A turn something other than you started (W154): what arrived while no turn ran. Before the turn's
+  // state changes below, though an arrival doesn't change it. Mid-turn arrivals, attachments, don't count.
+  if (at !== undefined && fields.turnEnded !== false && turnSignalOf(entry) === 'arrived' && arrivedFrom(entry) !== RELAY_NAME) {
+    if (fields.lastWokenMs === undefined || at > fields.lastWokenMs) fields.lastWokenMs = at;
+  }
   const prompt = userPromptOf(entry);
   if (prompt !== undefined) {
     fields.userPrompt = prompt;
@@ -849,6 +863,29 @@ function arrived(entry: Record<string, unknown>): boolean {
   return text.startsWith(CROSS_SESSION_PREFIX) || text.startsWith('<task-notification>') || CROSS_SESSION_TAGS.some((tag) => text.startsWith(`<${tag}`));
 }
 
+/**
+ * The sender's name on what arrived (W154): `origin.name`, which Claude Code writes on a message from
+ * another session (with `from-name` in its tag, spike 003) and a sub-agent's report; otherwise the
+ * tag's `from-name` attribute, read from the text's start, as older entries carry it. Undefined for a
+ * task notification and anything without one. Internal and undocumented.
+ */
+export function arrivedFrom(entry: Record<string, unknown>): string | undefined {
+  const origin = entry.origin;
+  if (isRecord(origin) && typeof origin.name === 'string') return origin.name;
+  const message = entry.message;
+  const raw = isRecord(message) ? textOf(message.content) : undefined;
+  if (raw === undefined) return undefined;
+  const text = stripSystemReminders(cap(raw, ARRIVED_READ_MAX));
+  for (const tag of CROSS_SESSION_TAGS) {
+    const open = text.indexOf(`<${tag}`);
+    if (open === -1) continue;
+    const end = text.indexOf('>', open);
+    const attributes = text.slice(open, end === -1 ? text.length : end);
+    return /\sfrom-name="([^"]*)"/.exec(attributes)?.[1];
+  }
+  return undefined;
+}
+
 /** A user entry carrying a tool's result, from the main conversation rather than a sub-agent's: part of a running turn. */
 function isToolResult(entry: Record<string, unknown>): boolean {
   if (entry.type !== 'user' || entry.isSidechain === true) return false;
@@ -916,6 +953,7 @@ function toInfo(state: FileState): TranscriptInfo {
   if (fields.lastPromptMs !== undefined) info.lastPromptMs = fields.lastPromptMs;
   if (fields.awaySummary !== undefined) info.awaySummary = { ...fields.awaySummary };
   if (fields.contextTokens !== undefined) info.contextTokens = fields.contextTokens;
+  if (fields.lastWokenMs !== undefined) info.wokenAt = new Date(fields.lastWokenMs).toISOString();
   return info;
 }
 

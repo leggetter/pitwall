@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import type { Indexer } from '../index/index.js';
-import { flagPath, relayPath, unflagPath, WS_PATH, type IndexSnapshot, type RelayResult, type ServerMessage, type SessionSummary } from '../shared/protocol.js';
+import { flagPath, relayPath, snoozePath, unflagPath, unsnoozePath, WS_PATH, type IndexSnapshot, type RelayResult, type ServerMessage, type SessionSummary } from '../shared/protocol.js';
 import type { RunningServer } from './index.js';
 import type { RelayManager, RelaySendOutcome, RelayTarget } from './relay.js';
 import { MAX_RELAY_TEXT_LENGTH, validateRelayRequest } from './relayRoute.js';
@@ -402,5 +402,33 @@ describe('the flag routes (W153) through the server', () => {
     expect(bg.status).toBe(200);
     expect(started.relay.sends.map((send) => send.target.sessionId)).toEqual([INTERACTIVE_ID, BG_ID]);
     expect(started.relay.sends[0]!.text).toContain('"Pick a port"');
+  });
+});
+
+describe('the snooze routes (W154) through the server', () => {
+  const needing = () => {
+    const snap = snapshot();
+    snap.groups[0]!.sessions[0] = { ...snap.groups[0]!.sessions[0]!, needsYou: { reason: 'claude-code', text: 'Pick a port' } };
+    return snap;
+  };
+
+  it('refuses the raw token, and the apiKey from another Origin', async () => {
+    const started = await start(fakeRelay(), fakeIndexer(needing()));
+    const raw = await post(started.server.port, snoozePath(INTERACTIVE_ID), '{}', { authorization: `Bearer ${TOKEN}`, origin: origin(started.server.port), 'content-type': 'application/json' });
+    expect(raw.status).toBe(403);
+    const elsewhere = await post(started.server.port, snoozePath(INTERACTIVE_ID), '{}', { authorization: `Bearer ${started.apiKey}`, origin: 'http://evil.example', 'content-type': 'application/json' });
+    expect(elsewhere.status).toBe(403);
+    const undo = await post(started.server.port, unsnoozePath(INTERACTIVE_ID), undefined, { authorization: `Bearer ${TOKEN}`, origin: origin(started.server.port) });
+    expect(undo.status).toBe(403);
+  });
+
+  it('snoozes as the page does, sending nothing to the session', async () => {
+    const started = await start(fakeRelay(), fakeIndexer(needing()));
+    const res = await postAsPage(started, snoozePath(INTERACTIVE_ID), {});
+    expect(res.status).toBe(200);
+    expect(res.json).toMatchObject({ ok: true, snoozed: { at: expect.any(String) } });
+    const undo = await postAsPage(started, unsnoozePath(INTERACTIVE_ID), {});
+    expect(undo.status).toBe(200);
+    expect(started.relay.sends).toEqual([]);
   });
 });

@@ -169,6 +169,19 @@ export interface SessionSummary {
    */
   flagged?: SessionFlag;
   /**
+   * You snoozed it (W154): Needs you is right about it, but not now. The web UI leaves a snoozed
+   * session out of Needs you and every count, as it does a flagged one; `needsYou` stays set. Kept on
+   * the server, in a 0600 file under pitwall's home, so it holds in every browser and across restarts.
+   * Ends when `until` passes, if it has one, or sooner when the session is woken (`wokenAt` after
+   * `at`), or when you take it off; then `snoozeEnded` says why.
+   */
+  snoozed?: SessionSnooze;
+  /**
+   * Why a snooze on it ended by itself (W154), for SNOOZE_ENDED_SHOWN_MS after it ended, so its row
+   * can say why it's back. Not set while it's snoozed again.
+   */
+  snoozeEnded?: SnoozeEnded;
+  /**
    * The session's recap, as the list needs it (M5, RecapSummary). Absent until one is made, and
    * with `--no-recaps`. Sub-agents and pitwall's own sessions are never listed, so never have one.
    * pitwall recaps an ended or finished session only when you ask (recapRefreshPath()), but one
@@ -187,6 +200,14 @@ export interface SessionSummary {
   planStatusAt?: string;
   /** ISO 8601 timestamp of the newest transcript entry, when the transcript was readable. */
   lastActivityAt?: string;
+  /**
+   * ISO 8601: the newest turn something other than you started (W154), what wakes a snoozed session:
+   * a message from another session or a sub-agent's report, or a background task's notification,
+   * that arrived while no turn ran. A prompt you typed doesn't count, and neither does a message from
+   * pitwall's relay (RELAY_NAME), which you sent or approved. Read from the transcript (internal);
+   * absent when the entries read have none.
+   */
+  wokenAt?: string;
   /**
    * How many tokens of context the session's newest call carried (W133): what the model read, from
    * the cache or not, on its last main-chain call, from the transcript's usage records. Every call
@@ -489,6 +510,13 @@ export interface RelayAlert {
    */
   cause: 'unrequested' | 'changed' | 'repeated';
 }
+
+/**
+ * pitwall's relay's session name (D8): what a target sees as the sender of a message pitwall sent
+ * for you. The index leaves its messages out of what wakes a snoozed session (W154,
+ * SessionSummary.wokenAt): you sent them, or approved them.
+ */
+export const RELAY_NAME = 'pitwall-relay';
 
 /**
  * A session's context (SessionSummary.contextTokens, W133) is flagged over this many tokens, in
@@ -882,6 +910,48 @@ export function relayPath(sessionId: string): string {
 export interface SessionFlag {
   /** When you flagged it, ISO 8601. */
   at: string;
+}
+
+/** A snooze you put on a session in Needs you (W154). */
+export interface SessionSnooze {
+  /** When you snoozed it, ISO 8601. */
+  at: string;
+  /** When it ends by itself, ISO 8601. Absent for Later, which ends only when the session is woken. */
+  until?: string;
+}
+
+/** Why a snooze ended by itself (W154): its time was up, or the session was woken by a turn you didn't start. */
+export interface SnoozeEnded {
+  /** When it ended, ISO 8601. */
+  at: string;
+  why: 'time' | 'woken';
+}
+
+/** How long a row says why a snooze ended (SessionSummary.snoozeEnded): 12 hours. */
+export const SNOOZE_ENDED_SHOWN_MS = 12 * 60 * 60 * 1000;
+
+/** The longest snooze: 31 days, past next week from any day. */
+export const SNOOZE_MAX_MS = 31 * 24 * 60 * 60 * 1000;
+
+/**
+ * Body of a POST to snoozePath() (W154). `until`, ISO 8601, in the future and at most SNOOZE_MAX_MS
+ * away, is when it ends by itself; without it, it's Later, which ends only when the session is woken.
+ */
+export interface SnoozeRequest {
+  until?: string;
+}
+
+/** The answer to a POST to snoozePath() or unsnoozePath() (W154). */
+export type SnoozeResult = { ok: true; snoozed?: SessionSnooze } | { ok: false; error: string };
+
+/** Snooze a session in Needs you (W154): out of Needs you until `until`, or until it's woken. Nothing is sent to the session. */
+export function snoozePath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/snooze`;
+}
+
+/** Take a snooze off (W154): the session is back in Needs you while it needs you. */
+export function unsnoozePath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/unsnooze`;
 }
 
 /** Where a flag was asked from, for the flag log's counts (W153). */
