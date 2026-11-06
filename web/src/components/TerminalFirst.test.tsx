@@ -59,6 +59,7 @@ class FakeTerminal implements TerminalHandle {
     container.append(this.screen);
   }
   write() {}
+  paste() {}
   onData(listener: (data: string) => void) {
     this.listeners.push(listener);
   }

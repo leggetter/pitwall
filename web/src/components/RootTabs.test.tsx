@@ -24,6 +24,7 @@ class QuietTerminal implements TerminalHandle {
   disposed = false;
   write() {}
   onData() {}
+  paste() {}
   fit() {}
   focus() {}
   dispose() {

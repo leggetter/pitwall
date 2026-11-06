@@ -253,6 +253,7 @@ export async function createXterm(container: HTMLElement, options: XtermOptions 
     onData: (listener) => {
       terminal.onData(listener);
     },
+    paste: (data) => terminal.paste(data),
     fit: () => fit.fit(),
     focus: () => terminal.focus(),
     dispose: () => {
