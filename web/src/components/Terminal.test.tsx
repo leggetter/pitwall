@@ -19,7 +19,7 @@ import { descriptionOf } from '../test/tooltips.js';
 import { BACKGROUND_TAB_KEY } from '../backgroundTab.js';
 import { TOKEN_STORAGE_KEY } from '../token.js';
 import { Dashboard } from './Dashboard.js';
-import { NEW_LINE, type TerminalHandle } from './Terminal.js';
+import { LINE_EDIT_KEYS, NEW_LINE, pasteGoesToTerminal, type TerminalHandle } from './Terminal.js';
 
 // Made-up sessions only. xterm.js is replaced by FakeTerminal, through the
 // module the view loads it from, and ResizeObserver by one the tests trigger.
@@ -62,6 +62,12 @@ class FakeTerminal implements TerminalHandle {
   }
   onData(listener: (data: string) => void) {
     this.listeners.push(listener);
+  }
+  /** Each paste, as xterm.js's paste() gets it; it goes on to the session as typed data. */
+  pasted: string[] = [];
+  paste(data: string) {
+    this.pasted.push(data);
+    this.type(data);
   }
   fit() {
     if (this.nextSize) ({ cols: this.cols, rows: this.rows } = this.nextSize);
@@ -814,6 +820,185 @@ describe("SessionView: Shift+Enter, a new line in Claude Code's prompt (W41)", (
     await ready(socket);
     act(() => socket.receive({ type: 'attached' }));
     expect(sent(socket).map((message) => message.type)).toEqual(['auth', 'open']);
+  });
+});
+
+describe('SessionView: ⌘ line-editing keys, as a Mac text field has them (W151)', () => {
+  async function attached() {
+    const { fake } = renderDashboard();
+    const view = await openView('demo-worker');
+    const { socket, terminal } = await attach(view, fake);
+    await ready(socket);
+    act(() => socket.receive({ type: 'attached' }));
+    expect(document.activeElement).toBe(terminal.screen);
+    return { view, socket, terminal, from: socket.sent.length };
+  }
+
+  const inputs = (socket: FakeSocket, from: number) => sent(socket).slice(from).map((message) => (message.type === 'input' ? message.data : message.type));
+  const BACKSPACE = { key: 'Backspace', code: 'Backspace', keyCode: 8 };
+  const LEFT = { key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37 };
+  const RIGHT = { key: 'ArrowRight', code: 'ArrowRight', keyCode: 39 };
+
+  it('⌘+Backspace, ⌘+← and ⌘+→ send Ctrl+U, Ctrl+A and Ctrl+E, taken before xterm.js sees them', async () => {
+    const { socket, terminal, from } = await attached();
+    expect(LINE_EDIT_KEYS).toEqual({ Backspace: '\u0015', ArrowLeft: '\u0001', ArrowRight: '\u0005' });
+    for (const init of [BACKSPACE, LEFT, RIGHT]) expect(fireEvent.keyDown(terminal.screen, { ...init, metaKey: true })).toBe(false);
+    expect(terminal.keys).toEqual([]);
+    expect(inputs(socket, from)).toEqual(['\u0015', '\u0001', '\u0005']);
+    expect(document.activeElement).toBe(terminal.screen);
+  });
+
+  it('without ⌘, with another modifier too, or while an input method composes, they go to xterm.js', async () => {
+    const { socket, terminal, from } = await attached();
+    const others = [
+      BACKSPACE,
+      LEFT,
+      { ...BACKSPACE, metaKey: true, shiftKey: true },
+      { ...LEFT, metaKey: true, altKey: true },
+      { ...RIGHT, metaKey: true, ctrlKey: true },
+      { ...BACKSPACE, metaKey: true, isComposing: true },
+      { key: 'Delete', code: 'Delete', metaKey: true },
+    ];
+    for (const init of others) expect(fireEvent.keyDown(terminal.screen, init)).toBe(true);
+    expect(terminal.keys).toEqual(['Backspace', 'ArrowLeft', 'Meta+Shift+Backspace', 'Alt+Meta+ArrowLeft', 'Ctrl+Meta+ArrowRight', 'Meta+Backspace', 'Meta+Delete']);
+    expect(inputs(socket, from)).toEqual([]);
+  });
+
+  it('outside the screen, on the Terminal tab, ⌘+Backspace does nothing of its own', async () => {
+    const { view, socket, terminal, from } = await attached();
+    fireEvent.keyDown(terminal.screen, { key: 'F6' });
+    const termTab = tab(view, 'Terminal');
+    expect(fireEvent.keyDown(termTab, { ...BACKSPACE, metaKey: true })).toBe(true);
+    expect(socket.sent.length).toBe(from);
+  });
+});
+
+describe('SessionView: a paste with focus outside the screen goes to the terminal (W151)', () => {
+  async function attached() {
+    const result = renderDashboard();
+    const view = await openView('demo-worker');
+    const { socket, terminal } = await attach(view, result.fake);
+    await ready(socket);
+    act(() => socket.receive({ type: 'attached' }));
+    return { view, socket, terminal, from: socket.sent.length };
+  }
+
+  const inputs = (socket: FakeSocket, from: number) => sent(socket).slice(from).map((message) => (message.type === 'input' ? message.data : message.type));
+  /** Pastes `text` with focus on `target`: whether the paste went on unhandled (fireEvent's return). */
+  const paste = (target: Element, text = 'pasted text') => fireEvent.paste(target, { clipboardData: { getData: (type: string) => (type === 'text/plain' ? text : '') } });
+
+  it('with focus on the Terminal tab, after F6: pasted into the terminal, which takes focus', async () => {
+    const { view, socket, terminal, from } = await attached();
+    fireEvent.keyDown(terminal.screen, { key: 'F6' });
+    const termTab = tab(view, 'Terminal');
+    expect(document.activeElement).toBe(termTab);
+    expect(paste(termTab)).toBe(false);
+    expect(terminal.pasted).toEqual(['pasted text']);
+    expect(inputs(socket, from)).toEqual(['pasted text']);
+    expect(document.activeElement).toBe(terminal.screen);
+  });
+
+  it("with focus on the bar's buttons, or nowhere: pasted into the terminal", async () => {
+    const { view, terminal } = await attached();
+    const detach = within(view).getByRole('button', { name: 'Detach' });
+    detach.focus();
+    expect(paste(detach, 'one')).toBe(false);
+    (document.activeElement as HTMLElement).blur();
+    expect(document.activeElement).toBe(document.body);
+    expect(paste(document.body, 'two')).toBe(false);
+    expect(terminal.pasted).toEqual(['one', 'two']);
+  });
+
+  it('with focus in the screen, the paste is xterm.js’s own, and nothing else sends it', async () => {
+    const { socket, terminal, from } = await attached();
+    expect(document.activeElement).toBe(terminal.screen);
+    expect(paste(terminal.screen)).toBe(true);
+    expect(terminal.pasted).toEqual([]);
+    expect(socket.sent.length).toBe(from);
+  });
+
+  it('with focus outside the session view, or in a field, the paste stays there', async () => {
+    const { view, socket, terminal, from } = await attached();
+    // The page behind the overlaid view is inert here, so a field and a control of its own stand in.
+    const outside = document.body.appendChild(document.createElement('input'));
+    outside.focus();
+    expect(document.activeElement).toBe(outside);
+    expect(paste(outside)).toBe(true);
+    outside.remove();
+    // A field inside the session view keeps its paste too.
+    const field = within(view).getByRole('tabpanel').appendChild(document.createElement('input'));
+    field.focus();
+    expect(document.activeElement).toBe(field);
+    expect(paste(field)).toBe(true);
+    field.remove();
+    const elsewhere = document.body.appendChild(document.createElement('button'));
+    elsewhere.focus();
+    expect(document.activeElement).toBe(elsewhere);
+    expect(paste(elsewhere)).toBe(true);
+    elsewhere.remove();
+    expect(terminal.pasted).toEqual([]);
+    expect(socket.sent.length).toBe(from);
+  });
+
+  it('with a modal dialog open, or the view hidden behind another root tab, the paste stays there', async () => {
+    const { view, socket, terminal, from } = await attached();
+    (document.activeElement as HTMLElement).blur();
+    // A dialog's card, as Dialog and the repo drawer mark it, with focus left on the page by a click on its text.
+    const modal = document.body.appendChild(document.createElement('div'));
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    expect(paste(document.body)).toBe(true);
+    modal.remove();
+    view.hidden = true;
+    expect(paste(document.body)).toBe(true);
+    view.hidden = false;
+    expect(terminal.pasted).toEqual([]);
+    expect(socket.sent.length).toBe(from);
+    expect(paste(document.body)).toBe(false);
+    expect(terminal.pasted).toEqual(['pasted text']);
+  });
+
+  it('with focus nowhere after a click outside the view, the paste stays there, until a click in the view', async () => {
+    const { view, terminal } = await attached();
+    // Text in the session list or the supervisor: a click there leaves focus on the page.
+    const text = document.body.appendChild(document.createElement('p'));
+    fireEvent.pointerDown(text);
+    (document.activeElement as HTMLElement).blur();
+    expect(paste(document.body)).toBe(true);
+    expect(terminal.pasted).toEqual([]);
+    fireEvent.pointerDown(within(view).getByRole('heading', { level: 2 }));
+    expect(paste(document.body)).toBe(false);
+    expect(terminal.pasted).toEqual(['pasted text']);
+    text.remove();
+  });
+
+  it("pasteGoesToTerminal: the message box's footer keeps its paste, its buttons included", () => {
+    const view = document.body.appendChild(document.createElement('section'));
+    view.className = 'session-view';
+    view.innerHTML = '<h2 tabindex="-1">demo</h2><div class="screen"><textarea></textarea></div><footer class="session-view-foot"><button>Send</button></footer>';
+    const screenBox = view.querySelector<HTMLElement>('.screen')!;
+    expect(pasteGoesToTerminal(view.querySelector('h2'), screenBox)).toBe(true);
+    expect(pasteGoesToTerminal(view.querySelector('footer button'), screenBox)).toBe(false);
+    expect(pasteGoesToTerminal(view.querySelector('textarea'), screenBox)).toBe(false);
+    expect(pasteGoesToTerminal(document.body, screenBox)).toBe(true);
+    expect(pasteGoesToTerminal(document.body, screenBox, true)).toBe(false);
+    view.remove();
+  });
+
+  it('an empty paste, or one before the attach or after it ended, goes nowhere', async () => {
+    const { fake } = renderDashboard();
+    const view = await openView('demo-worker');
+    const { socket, terminal } = await attach(view, fake);
+    expect(paste(document.body)).toBe(true);
+    await ready(socket);
+    act(() => socket.receive({ type: 'attached' }));
+    const from = socket.sent.length;
+    (document.activeElement as HTMLElement).blur();
+    expect(paste(document.body, '')).toBe(true);
+    act(() => socket.receive({ type: 'exit', code: 0 }));
+    expect(paste(document.body)).toBe(true);
+    expect(terminal.pasted).toEqual([]);
+    expect(socket.sent.length).toBe(from);
   });
 });
 

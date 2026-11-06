@@ -111,6 +111,16 @@ export function keyboardMap(command: boolean = usesCommandKey()): MapGroup[] {
         { doc: { key: '⌘/Ctrl + Enter', where: 'The message box' }, what: 'In the message box: send', keys: [[modEnter]] },
         { doc: { key: 'F6', where: 'The terminal' }, what: 'In the terminal: leave it, for the Terminal tab', keys: [[key('F6')]] },
         { doc: { key: 'Shift + Enter', where: 'The terminal' }, what: "In the terminal: a new line in Claude Code's prompt", keys: [[SHIFT_ENTER]] },
+        // ⌘ only: elsewhere Ctrl+U, Ctrl+A and Ctrl+E are typed as they are (W151).
+        ...(command
+          ? [
+              {
+                doc: { key: '⌘ + Backspace, ⌘ + ← / →', where: 'The terminal' },
+                what: 'In the terminal: delete to the start of the line, or go to its start or end',
+                keys: [[{ keys: ['⌘', '⌫'], label: 'Command Backspace' }], [{ keys: ['⌘', '←'], label: 'Command Left arrow' }, { keys: ['⌘', '→'], label: 'Command Right arrow' }]],
+              },
+            ]
+          : []),
       ],
     },
     {
