@@ -8,13 +8,20 @@
 // `snoozed` on the session and the web UI leaves it out of Needs you and every count, as it does a
 // flagged one. It ends:
 //
-//   - when `until` passes ('time'): a timer here, so it ends with no page open;
+//   - when `until` passes ('time'): a timer here tells the views, so it ends at the next decorate(),
+//     which comes with the next poll while a page or the supervisor reads the snapshot, and otherwise
+//     when one next does;
 //   - when the session is woken ('woken'): its `wokenAt`, the newest turn something other than you
 //     started (a message from another session, a sub-agent's report, a background task's
 //     notification; never one you typed or pitwall's relay sent), is after the snooze. Not W88's rule,
 //     where a change in what it needs brought it back, since a recap rewording the same to-do would
 //     wake every Later (settled with Phil, 2026-11-06);
-//   - when you take it off. Then nothing is said.
+//   - when you take it off, or start or join a turn in it: its `attendedAt` (a prompt, or a message
+//     from pitwall's relay, which you sent or approved) is after the snooze. Then nothing is said:
+//     you've been there, so a need it shows after that is a new one, not the one you snoozed.
+//
+// `at` is when you snoozed it, or the time of the snapshot you snoozed from if that's earlier, so a
+// wake that arrived after that snapshot was made, which the page couldn't show yet, still counts.
 //
 // One that ended by itself leaves `snoozeEnded` on the session for SNOOZE_ENDED_SHOWN_MS, so its row
 // can say "Snooze ended" or "Woken: a new turn". A snooze on a session listed as ended or finished is
@@ -119,16 +126,22 @@ export class SnoozeStore {
     this.#file = this.#home === undefined ? undefined : path.join(this.#home, SNOOZE_FILE_NAME);
     this.#now = options.now ?? (() => new Date());
     this.#timers = options.timers ?? DEFAULT_TIMERS;
-    const stored = this.#file === undefined ? { snoozes: [], ended: [] } : readSnoozeFile(this.#file);
+    const stored = this.#file === undefined ? { snoozes: [], ended: [] } : readSnoozeFile(this.#file, this.#now());
     for (const { id, ...snooze } of stored.snoozes) this.#snoozes.set(id, snooze);
     for (const { id, ...end } of stored.ended) if (!this.#snoozes.has(id)) this.#ended.set(id, end);
     this.#cap();
     this.#schedule();
   }
 
-  /** Snoozes `sessionId` until `until`, or, without it, until it's woken. Replaces a snooze it had. */
-  snooze(sessionId: string, until?: Date): SessionSnooze {
-    const snooze: SessionSnooze = { at: this.#now().toISOString(), ...(until === undefined ? {} : { until: until.toISOString() }) };
+  /**
+   * Snoozes `sessionId` until `until`, or, without it, until it's woken. Replaces a snooze it had.
+   * `seenAt` is the time of the snapshot it was snoozed from; `at` is that, if it's earlier than now.
+   */
+  snooze(sessionId: string, until?: Date, seenAt?: string): SessionSnooze {
+    const now = this.#now().getTime();
+    const seen = ms(seenAt);
+    const at = new Date(seen < now ? seen : now).toISOString();
+    const snooze: SessionSnooze = { at, ...(until === undefined ? {} : { until: until.toISOString() }) };
     this.#snoozes.delete(sessionId);
     this.#snoozes.set(sessionId, snooze);
     this.#ended.delete(sessionId);
@@ -173,6 +186,11 @@ export class SnoozeStore {
             groupChanged = true;
             return { ...session, snoozed: { ...snooze } };
           }
+          if (why === 'attended') {
+            this.#snoozes.delete(id);
+            dirty = true;
+            return session;
+          }
           // Not #changed(): this view already says so, and the next one has nothing to add.
           this.#snoozes.delete(id);
           this.#ended.set(id, { at: new Date(now).toISOString(), why });
@@ -212,9 +230,18 @@ export class SnoozeStore {
     this.#timer = undefined;
   }
 
-  /** Drops the ends shown long enough. True when one went. */
+  /**
+   * Drops the ends shown long enough, and the timed snoozes whose end would have been: those of a
+   * session no longer listed, which decorate() never sees. True when one went.
+   */
   #expire(now: number): boolean {
     let dropped = false;
+    for (const [id, snooze] of this.#snoozes) {
+      if (snooze.until !== undefined && ms(snooze.until) + SNOOZE_ENDED_SHOWN_MS <= now) {
+        this.#snoozes.delete(id);
+        dropped = true;
+      }
+    }
     for (const [id, end] of this.#ended) {
       if (ms(end.at) + SNOOZE_ENDED_SHOWN_MS <= now) {
         this.#ended.delete(id);
@@ -289,8 +316,12 @@ export class SnoozeStore {
   }
 }
 
-/** Why `snooze` has ended at `now` for `session`, or undefined while it holds. */
-function endOf(snooze: SessionSnooze, session: SessionSummary, now: number): SnoozeEnded['why'] | undefined {
+/**
+ * Why `snooze` has ended at `now` for `session`, or undefined while it holds. 'attended', a turn you
+ * started or joined since, ends it with nothing said, and comes first: you've been there.
+ */
+function endOf(snooze: SessionSnooze, session: SessionSummary, now: number): SnoozeEnded['why'] | 'attended' | undefined {
+  if (ms(session.attendedAt) > ms(snooze.at)) return 'attended';
   if (ms(session.wokenAt) > ms(snooze.at)) return 'woken';
   if (snooze.until !== undefined && ms(snooze.until) <= now) return 'time';
   return undefined;
@@ -301,9 +332,13 @@ const isTime = (value: unknown): value is string => typeof value === 'string' &&
 /**
  * The snoozes and ends in the file at `file` that check out; none when there's no file or it can't be
  * trusted: not a regular file of this user's, a link, writable by group or others, or over
- * SNOOZE_FILE_MAX_BYTES.
+ * SNOOZE_FILE_MAX_BYTES. A time after `now` is read as `now`, and an `until` more than SNOOZE_MAX_MS
+ * after its `at` as that, so an edited file can't snooze a session for longer than the routes allow,
+ * or one no wake could end.
  */
-export function readSnoozeFile(file: string): { snoozes: StoredSnooze[]; ended: StoredEnd[] } {
+export function readSnoozeFile(file: string, now: Date = new Date()): { snoozes: StoredSnooze[]; ended: StoredEnd[] } {
+  const nowMs = now.getTime();
+  const notAfterNow = (iso: string): string => (Date.parse(iso) > nowMs ? now.toISOString() : iso);
   const none = { snoozes: [], ended: [] };
   let fd: number | undefined;
   let value: unknown;
@@ -331,12 +366,15 @@ export function readSnoozeFile(file: string): { snoozes: StoredSnooze[]; ended: 
   for (const entry of Array.isArray(value.snoozes) ? (value.snoozes as unknown[]) : []) {
     if (!isRecord(entry) || typeof entry.id !== 'string' || !isSafeSessionId(entry.id) || !isTime(entry.at)) continue;
     if (entry.until !== undefined && !isTime(entry.until)) continue;
-    snoozes.push({ id: entry.id, at: entry.at, ...(entry.until === undefined ? {} : { until: entry.until }) });
+    const at = notAfterNow(entry.at);
+    const longest = Date.parse(at) + SNOOZE_MAX_MS;
+    const until = entry.until === undefined ? undefined : Date.parse(entry.until) > longest ? new Date(longest).toISOString() : entry.until;
+    snoozes.push({ id: entry.id, at, ...(until === undefined ? {} : { until }) });
   }
   for (const entry of Array.isArray(value.ended) ? (value.ended as unknown[]) : []) {
     if (!isRecord(entry) || typeof entry.id !== 'string' || !isSafeSessionId(entry.id) || !isTime(entry.at)) continue;
     if (entry.why !== 'time' && entry.why !== 'woken') continue;
-    ended.push({ id: entry.id, at: entry.at, why: entry.why });
+    ended.push({ id: entry.id, at: notAfterNow(entry.at), why: entry.why });
   }
   return { snoozes, ended };
 }
@@ -401,7 +439,7 @@ export function registerSnoozes(app: Hono, sources: SnoozeRouteSources): void {
       const { session } = lookup;
       if (session.finished || session.ended === true) return answer(c, { ok: false, error: "It has finished, so there's nothing to snooze." }, 409);
       if (session.needsYou === undefined) return answer(c, { ok: false, error: "It doesn't need you now, so there's nothing to snooze." }, 409);
-      const snoozed = sources.store.snooze(session.sessionId, request.until);
+      const snoozed = sources.store.snooze(session.sessionId, request.until, sources.snapshots.latest()?.generatedAt);
       return answer(c, { ok: true, snoozed }, 200);
     },
   );

@@ -474,6 +474,21 @@ describe('applyEntry: a turn something other than you started, what wakes a snoo
     expect(arrivedFrom(notification())).toBeUndefined();
   });
 
+  it("keeps a message from pitwall's relay as a turn you joined, mid-turn too, for attendedAt", () => {
+    const relay = peer('pitwall-relay');
+    expect(fieldsOf(...idle(), relay).lastRelayMs).toBe(at(relay));
+    const midTurn = peer('pitwall-relay');
+    expect(fieldsOf(...idle(), user('again'), assistant([toolUse('Bash')], 'm2'), midTurn).lastRelayMs).toBe(at(midTurn));
+    expect(fieldsOf(...idle(), peer('pitwall-test-peer')).lastRelayMs).toBeUndefined();
+  });
+
+  it("reads a tag's from-name only at the text's start, never one quoted inside the message", () => {
+    const quoting = user('Another Claude session sent a message:\n<cross-session-message from="/tmp/x.sock">See <agent-message from-name="pitwall-relay"> above</cross-session-message>', { isMeta: true });
+    expect(arrivedFrom(quoting)).toBeUndefined();
+    expect(fieldsOf(...idle(), quoting).lastWokenMs).toBe(at(quoting));
+    expect(arrivedFrom(user('<agent-message from="a1" from-name="pitwall-test-peer">report</agent-message>', { isMeta: true }))).toBe('pitwall-test-peer');
+  });
+
   it('counts an arrival when the transcript marks no turn end at all, as from an older Claude Code', () => {
     const message = peer('pitwall-test-peer');
     expect(fieldsOf(user('go'), assistant([text('Done.')]), message).lastWokenMs).toBe(at(message));
@@ -697,6 +712,7 @@ describe('createTranscriptReader', () => {
       lastActivityAt: reply.timestamp,
       lastUserPrompt: 'add a test',
       lastPromptMs: Date.parse(prompt.timestamp as string),
+      attendedAt: new Date(Date.parse(prompt.timestamp as string)).toISOString(),
     });
   });
 
@@ -707,6 +723,21 @@ describe('createTranscriptReader', () => {
     });
     await writeFile(file, jsonl(user('go'), assistant([text('Done.')]), turnDuration(), message));
     expect((await reader().read(SID, [CWD])).wokenAt).toBe(new Date(Date.parse(message.timestamp as string)).toISOString());
+  });
+
+  it('says the newest turn you started or joined as attendedAt (W154): a prompt, or a relay message', async () => {
+    const prompt = user('go');
+    await writeFile(file, jsonl(prompt, assistant([text('Done.')]), turnDuration()));
+    expect((await reader().read(SID, [CWD])).attendedAt).toBe(new Date(Date.parse(prompt.timestamp as string)).toISOString());
+    const before = [user('go'), assistant([text('Done.')]), turnDuration()];
+    const relay = user('Another Claude session sent a message:\n<cross-session-message from-name="pitwall-relay">hi</cross-session-message>', {
+      isMeta: true,
+      origin: { kind: 'peer', name: 'pitwall-relay' },
+    });
+    await writeFile(file, jsonl(...before, relay));
+    const read = await reader().read(SID, [CWD]);
+    expect(read.attendedAt).toBe(new Date(Date.parse(relay.timestamp as string)).toISOString());
+    expect(read.wokenAt).toBeUndefined();
   });
 
   it('strips markdown from the question it finds in the assistant text', async () => {
@@ -1047,6 +1078,7 @@ describe('createTranscriptReader', () => {
         lastActivityAt: expect.any(String),
         lastUserPrompt: 'fresh start',
         lastPromptMs: expect.any(Number),
+        attendedAt: expect.any(String),
       });
     });
 
@@ -1177,6 +1209,7 @@ describe('readNewestEntries', () => {
         lastActivityAt: latest.timestamp,
         lastUserPrompt: 'the last prompt',
         lastPromptMs: Date.parse(prompt.timestamp as string),
+        attendedAt: new Date(Date.parse(prompt.timestamp as string)).toISOString(),
         askedYou: { reason: 'question', excerpt: 'Shall I go on?' },
         aiTitle: 'A title',
       },

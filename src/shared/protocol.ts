@@ -173,7 +173,8 @@ export interface SessionSummary {
    * session out of Needs you and every count, as it does a flagged one; `needsYou` stays set. Kept on
    * the server, in a 0600 file under pitwall's home, so it holds in every browser and across restarts.
    * Ends when `until` passes, if it has one, or sooner when the session is woken (`wokenAt` after
-   * `at`), or when you take it off; then `snoozeEnded` says why.
+   * `at`), and then `snoozeEnded` says why; or, with nothing said, when you take it off or start or
+   * join a turn in it (`attendedAt` after `at`).
    */
   snoozed?: SessionSnooze;
   /**
@@ -208,6 +209,13 @@ export interface SessionSummary {
    * absent when the entries read have none.
    */
   wokenAt?: string;
+  /**
+   * ISO 8601: the newest turn you started or joined (W154): a prompt, or a message from pitwall's
+   * relay, which you sent or approved. A snooze from before it is dropped, with nothing said: you've
+   * been there, so a need it shows later is a new one. Read from the transcript (internal); absent
+   * when the entries read have none.
+   */
+  attendedAt?: string;
   /**
    * How many tokens of context the session's newest call carried (W133): what the model read, from
    * the cache or not, on its last main-chain call, from the transcript's usage records. Every call
@@ -914,7 +922,10 @@ export interface SessionFlag {
 
 /** A snooze you put on a session in Needs you (W154). */
 export interface SessionSnooze {
-  /** When you snoozed it, ISO 8601. */
+  /**
+   * When you snoozed it, ISO 8601: the time of the snapshot you snoozed from, if that's earlier, so a
+   * wake the page hadn't shown yet still counts.
+   */
   at: string;
   /** When it ends by itself, ISO 8601. Absent for Later, which ends only when the session is woken. */
   until?: string;

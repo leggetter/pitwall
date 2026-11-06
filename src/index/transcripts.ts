@@ -63,6 +63,12 @@ export interface TranscriptInfo {
    * when the entries read have none.
    */
   wokenAt?: string;
+  /**
+   * ISO 8601: the newest turn you started or joined (W154, SessionSummary.attendedAt): a prompt
+   * (lastPromptMs), or a message from pitwall's relay (RELAY_NAME), which you sent or approved.
+   * Undefined when the entries read have neither.
+   */
+  attendedAt?: string;
 }
 
 /** Claude Code's own short recap of a session, an `away_summary` entry (TranscriptInfo.awaySummary). */
@@ -499,6 +505,8 @@ export interface Fields {
   contextMessageId?: string;
   /** The newest wake's timestamp, in file order (TranscriptInfo.wokenAt). */
   lastWokenMs?: number;
+  /** The newest message from pitwall's relay, in file order (TranscriptInfo.attendedAt, with lastPromptMs). */
+  lastRelayMs?: number;
 }
 
 /** Applies one JSONL line. Lines that don't parse, and entry types the index doesn't use, are skipped. */
@@ -603,8 +611,12 @@ export function applyEntry(fields: Fields, entry: unknown): void {
 
   // A turn something other than you started (W154): what arrived while no turn ran. Before the turn's
   // state changes below, though an arrival doesn't change it. Mid-turn arrivals, attachments, don't count.
-  if (at !== undefined && fields.turnEnded !== false && turnSignalOf(entry) === 'arrived' && arrivedFrom(entry) !== RELAY_NAME) {
-    if (fields.lastWokenMs === undefined || at > fields.lastWokenMs) fields.lastWokenMs = at;
+  if (at !== undefined && turnSignalOf(entry) === 'arrived') {
+    if (arrivedFrom(entry) === RELAY_NAME) {
+      if (fields.lastRelayMs === undefined || at > fields.lastRelayMs) fields.lastRelayMs = at;
+    } else if (fields.turnEnded !== false && (fields.lastWokenMs === undefined || at > fields.lastWokenMs)) {
+      fields.lastWokenMs = at;
+    }
   }
   const prompt = userPromptOf(entry);
   if (prompt !== undefined) {
@@ -866,7 +878,7 @@ function arrived(entry: Record<string, unknown>): boolean {
 /**
  * The sender's name on what arrived (W154): `origin.name`, which Claude Code writes on a message from
  * another session (with `from-name` in its tag, spike 003) and a sub-agent's report; otherwise the
- * tag's `from-name` attribute, read from the text's start, as older entries carry it. Undefined for a
+ * tag's `from-name` attribute, from a tag at the text's start (after Claude Code's own line, if any), as older entries carry it. Undefined for a
  * task notification and anything without one. Internal and undocumented.
  */
 export function arrivedFrom(entry: Record<string, unknown>): string | undefined {
@@ -875,15 +887,14 @@ export function arrivedFrom(entry: Record<string, unknown>): string | undefined 
   const message = entry.message;
   const raw = isRecord(message) ? textOf(message.content) : undefined;
   if (raw === undefined) return undefined;
-  const text = stripSystemReminders(cap(raw, ARRIVED_READ_MAX));
-  for (const tag of CROSS_SESSION_TAGS) {
-    const open = text.indexOf(`<${tag}`);
-    if (open === -1) continue;
-    const end = text.indexOf('>', open);
-    const attributes = text.slice(open, end === -1 ? text.length : end);
-    return /\sfrom-name="([^"]*)"/.exec(attributes)?.[1];
-  }
-  return undefined;
+  let text = stripSystemReminders(cap(raw, ARRIVED_READ_MAX)).trim();
+  if (text.startsWith(CROSS_SESSION_PREFIX)) text = text.slice(CROSS_SESSION_PREFIX.length).trimStart();
+  // The tag at the text's start, as arrived() reads it, never one quoted further into the message.
+  const tag = CROSS_SESSION_TAGS.find((name) => text.startsWith(`<${name}`));
+  if (tag === undefined) return undefined;
+  const end = text.indexOf('>');
+  const attributes = text.slice(0, end === -1 ? text.length : end);
+  return /\sfrom-name="([^"]*)"/.exec(attributes)?.[1];
 }
 
 /** A user entry carrying a tool's result, from the main conversation rather than a sub-agent's: part of a running turn. */
@@ -954,6 +965,8 @@ function toInfo(state: FileState): TranscriptInfo {
   if (fields.awaySummary !== undefined) info.awaySummary = { ...fields.awaySummary };
   if (fields.contextTokens !== undefined) info.contextTokens = fields.contextTokens;
   if (fields.lastWokenMs !== undefined) info.wokenAt = new Date(fields.lastWokenMs).toISOString();
+  const attended = Math.max(fields.lastPromptMs ?? -Infinity, fields.lastRelayMs ?? -Infinity);
+  if (Number.isFinite(attended)) info.attendedAt = new Date(attended).toISOString();
   return info;
 }
 

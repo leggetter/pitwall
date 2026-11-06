@@ -120,6 +120,52 @@ describe('SnoozeStore', () => {
     expect(first(store.decorate(snapshotOf(session()))).snoozed).toBeDefined();
   });
 
+  it('drops a snooze, saying nothing, once you start or join a turn after it, so a later need shows', () => {
+    const time = fakeTime();
+    const store = new SnoozeStore({ now: time.now, timers: time.timers });
+    store.snooze(ID);
+    store.snooze(OTHER, new Date(START + 3 * HOUR));
+    const before = '2026-11-06T09:59:00.000Z';
+    let view = store.decorate(snapshotOf(session({ attendedAt: before }), session({ sessionId: OTHER, attendedAt: before })));
+    expect(view.groups[0]!.sessions.map((s) => s.snoozed !== undefined)).toEqual([true, true]);
+    time.advance(60_000);
+    // A prompt you typed, and a message pitwall's relay sent, after the snooze; a wake after both.
+    const after = '2026-11-06T10:00:30.000Z';
+    const woken = '2026-11-06T10:00:40.000Z';
+    view = store.decorate(snapshotOf(session({ attendedAt: after }), session({ sessionId: OTHER, attendedAt: after, wokenAt: woken })));
+    expect(view.groups[0]!.sessions.map((s) => [s.snoozed, s.snoozeEnded])).toEqual([[undefined, undefined], [undefined, undefined]]);
+    expect(time.pending()).toEqual([]);
+    expect(first(store.decorate(snapshotOf(session({ attendedAt: after })))).snoozed).toBeUndefined();
+    store.close();
+  });
+
+  it('takes `at` from the snapshot it was snoozed from, if earlier, so a wake the page had not shown counts', () => {
+    const time = fakeTime();
+    const store = new SnoozeStore({ now: time.now, timers: time.timers });
+    const seen = '2026-11-06T09:59:55.000Z';
+    expect(store.snooze(ID, undefined, seen)).toEqual({ at: seen });
+    expect(store.snooze(OTHER, undefined, '2026-11-06T10:05:00.000Z')).toEqual({ at: '2026-11-06T10:00:00.000Z' });
+    expect(store.snooze(OTHER, undefined, 'not a time')).toEqual({ at: '2026-11-06T10:00:00.000Z' });
+    // Woken at 09:59:58, after the snapshot the page showed, before the click at 10:00.
+    expect(first(store.decorate(snapshotOf(session({ wokenAt: '2026-11-06T09:59:58.000Z' })))).snoozeEnded?.why).toBe('woken');
+    store.close();
+  });
+
+  it('drops a timed snooze on a session no longer listed once its end would no longer show', () => {
+    const time = fakeTime();
+    const store = new SnoozeStore({ now: time.now, timers: time.timers });
+    store.snooze(ID, new Date(START + HOUR));
+    time.advance(HOUR + SNOOZE_ENDED_SHOWN_MS - 1);
+    store.decorate(snapshotOf(session({ sessionId: OTHER })));
+    store.decorate(snapshotOf(session({ sessionId: OTHER })));
+    time.advance(1);
+    store.decorate(snapshotOf(session({ sessionId: OTHER })));
+    // Listed again: neither snoozed nor an end, since it ended unseen.
+    const back = first(store.decorate(snapshotOf(session())));
+    expect([back.snoozed, back.snoozeEnded]).toEqual([undefined, undefined]);
+    store.close();
+  });
+
   it('drops a snooze on a session listed as ended or finished, saying nothing', () => {
     const store = new SnoozeStore();
     store.snooze(ID);
@@ -192,6 +238,27 @@ describe('SnoozeStore', () => {
     expect(readSnoozeFile(file).snoozes).toEqual([]);
   });
 
+  it('reads a time after now as now, and an until past SNOOZE_MAX_MS from its at as that', () => {
+    const file = join(home, SNOOZE_FILE_NAME);
+    const now = new Date(START);
+    const body = {
+      v: 1,
+      snoozes: [
+        { id: ID, at: '2026-11-06T09:00:00.000Z', until: '9999-01-01T00:00:00.000Z' },
+        { id: OTHER, at: '2030-01-01T00:00:00.000Z' },
+      ],
+      ended: [{ id: '44444444-4444-4444-8444-444444444444', at: '2030-01-01T00:00:00.000Z', why: 'time' }],
+    };
+    writeFileSync(file, JSON.stringify(body), { mode: 0o600 });
+    expect(readSnoozeFile(file, now)).toEqual({
+      snoozes: [
+        { id: ID, at: '2026-11-06T09:00:00.000Z', until: new Date(Date.parse('2026-11-06T09:00:00.000Z') + SNOOZE_MAX_MS).toISOString() },
+        { id: OTHER, at: '2026-11-06T10:00:00.000Z' },
+      ],
+      ended: [{ id: '44444444-4444-4444-8444-444444444444', at: '2026-11-06T10:00:00.000Z', why: 'time' }],
+    });
+  });
+
   it('holds at most SNOOZES_HELD_MAX, the oldest going first', () => {
     const store = new SnoozeStore();
     const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -246,6 +313,17 @@ describe('the snooze routes', () => {
     const unsnooze = (id: string) => app.request(unsnoozePath(id), { method: 'POST' });
     return { store, view, snooze, unsnooze, setSessions: (next: SessionSummary[]) => (current = snapshotOf(...next)) };
   }
+
+  it('snoozes from the time of the snapshot it reads, when that is earlier than now', async () => {
+    const store = new SnoozeStore({ home, now: () => new Date(START) });
+    const earlier = { ...snapshotOf(session()), generatedAt: '2026-11-06T09:59:57.000Z' };
+    const view = createSnoozeView({ latest: () => earlier, subscribe: () => () => {} }, store);
+    const app = new Hono();
+    registerSnoozes(app, { snapshots: view, store, now: () => new Date(START) });
+    const res = await app.request(snoozePath(ID), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    expect(await res.json()).toEqual({ ok: true, snoozed: { at: '2026-11-06T09:59:57.000Z' } });
+    store.close();
+  });
 
   it('snoozes for a time, or Later, and the snapshot carries it', async () => {
     const { snooze, view, store } = setup([session()]);

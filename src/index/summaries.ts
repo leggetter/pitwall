@@ -94,6 +94,7 @@ export function toSessionSummary(
   if (transcript.lastUserPrompt !== undefined) summary.lastUserPrompt = transcript.lastUserPrompt;
   if (transcript.contextTokens !== undefined) summary.contextTokens = transcript.contextTokens;
   if (transcript.wokenAt !== undefined) summary.wokenAt = transcript.wokenAt;
+  if (transcript.attendedAt !== undefined) summary.attendedAt = transcript.attendedAt;
   if (transcript.askedYou !== undefined && askedHolds(row, transcript, stale)) summary.askedYou = transcript.askedYou;
   if (transcript.aiTitle !== undefined && !sameTitle(transcript.aiTitle, row.name)) {
     summary.title = transcript.aiTitle;
