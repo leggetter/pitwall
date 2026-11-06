@@ -2605,9 +2605,11 @@ mark.match {
 /*
  * The recap strip (section 4: Recap strip, W111): between the session view's header and its tabs, on
  * --pw-surface-muted, as the footer is, with a bottom --pw-border. Line 1: the disclosure button, the
- * age, "May be out of date" while it's stale, and Refresh. Then the summary, always, on one line with an
- * ellipsis while it's collapsed; then, while it's open, the to-dos (W121). At most 35% of the view's height, scrolling inside itself
- * past that, as the footer does at half, so the body always keeps its room.
+ * age, Refresh right after it (W150), and "May be out of date" while it's stale. Then the picture
+ * (W150): Goal, Working on, on one line with an ellipsis while it's collapsed, Plan with Show plan, and
+ * your to-dos; or, for a recap without one, the summary and, while it's open, the to-dos (W121). At
+ * most 35% of the view's height, scrolling inside itself past that, as the footer does at half, so the
+ * body always keeps its room.
  */
 .session-recap {
   flex: none;
@@ -2633,10 +2635,7 @@ mark.match {
   min-width: 0;
 }
 
-/*
- * Plan status and Refresh (W123), together at the end of line 1, so they wrap onto a line of their own
- * together when line 1 is too narrow for them, as at 375 px with "May be out of date".
- */
+/* The plan status panel's Make a new one and Close (W123), together at the end of its line 1. */
 .recap-actions {
   flex: none;
   display: inline-flex;
@@ -2645,10 +2644,89 @@ mark.match {
   margin-left: auto;
 }
 
-/* Plan status: a ghost sm text button, its block margins taken back so line 1 stays 24 px. */
+/*
+ * Plan status, or Show plan on the picture's Plan line (W150): a ghost sm text button, a disclosure
+ * with the chevron, turned down while the panel is open, its block margins taken back so its line
+ * keeps its height.
+ */
 .button.recap-plan-button {
   flex: none;
   margin-block: calc(-1 * var(--pw-space-0-5));
+  vertical-align: baseline;
+}
+
+.recap-plan-button .chevron {
+  flex: none;
+  transition: transform var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+.recap-plan-button[aria-expanded='true'] .chevron {
+  transform: rotate(90deg);
+}
+
+/* Plan status's own line in a recap without the picture (W150), under the to-dos. */
+.recap-plan-action {
+  margin: 0;
+}
+
+.recap-plan-action .button.recap-plan-button {
+  margin-left: calc(-1 * var(--pw-space-2));
+}
+
+/*
+ * The picture's lines (W150): "Goal:", "Working on:", "Plan:" and "For you (n):", each label in 500
+ * --pw-text, then its text, wrapping while the strip is open.
+ */
+.recap-line {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.recap-line[hidden] {
+  display: none;
+}
+
+.recap-label {
+  font-weight: var(--pw-weight-medium);
+}
+
+/* Working on: wrapping under its label while it's open, as Goal does; collapsed, its label, its first line and "2 for you" on one baseline. */
+.session-recap[data-collapsed='true'] .recap-working-on {
+  display: flex;
+  align-items: baseline;
+  gap: var(--pw-space-1);
+}
+
+.recap-working-on .recap-label,
+.recap-working-on .badge {
+  flex: none;
+}
+
+.recap-working-on .badge {
+  margin-left: var(--pw-space-0-5);
+}
+
+.recap-working-on .recap-line-text {
+  min-width: 0;
+}
+
+/* Collapsed: Working on's first line, its whole in a tooltip when it's cut. */
+.session-recap[data-collapsed='true'] .recap-working-on .recap-line-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Inside the picture's body: 4 px between its lines, as between the strip's. */
+.session-recap[data-picture] .recap-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+}
+
+.session-recap[data-picture] .recap-body[hidden] {
+  display: none;
 }
 
 .recap-heading {
@@ -2711,7 +2789,7 @@ mark.match {
   flex: none;
 }
 
-/* At the end of line 1, its block margins taken back so the line stays 24 px. */
+/* Right after the age (W150), its block margins taken back so the line stays 24 px. */
 .icon-button.recap-refresh {
   flex: none;
   margin-block: calc(-1 * var(--pw-space-0-5));
@@ -2784,7 +2862,7 @@ mark.match {
 }
 
 /*
- * The plan status panel (W123): under the summary and the to-dos, a top --pw-border, its heading, age,
+ * The plan status panel (W123): under its button, a top --pw-border, its heading, age,
  * Make a new one and Close on its line 1; then the plan's one line, its items in order, each with its
  * state as a small tag, and how the plan changed.
  */

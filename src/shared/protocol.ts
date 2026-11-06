@@ -1710,6 +1710,16 @@ export interface SessionRecap {
   waitingOn: RecapWaitingOn;
   /** What the session is about, at most RECAP_TITLE_MAX_WORDS words. */
   title: string;
+  /**
+   * W150 (the recap strip gives the picture): why the session was started, kept steady across
+   * updates. Absent from a recap stored before W150 and from Claude Code's own (source
+   * 'claude-code'); goal, workingOn and plan are there together or not at all.
+   */
+  goal?: string;
+  /** W150: the item it's on now, with its ID when it has one, and why it matters to the goal or the plan. */
+  workingOn?: string;
+  /** W150: the plan it works through, in one line; empty when the material shows none. */
+  plan?: string;
   /** ISO 8601: when it was made. */
   at: string;
   /** ISO 8601: the newest transcript entry it covers. */
@@ -1784,8 +1794,14 @@ export const RECAP_TURNS_CAP = 8000;
 /** Characters of the first prompt a recap reads, keeping its start and end. */
 export const RECAP_FIRST_PROMPT_CAP = 1500;
 
-/** The longest summary, and the longest to-do. */
+/** The longest summary, the longest to-do, and the longest goal, working on and plan line (W150). */
 export const RECAP_FIELD_MAX = 400;
+
+/**
+ * The most of a session's PRs a recap's or a plan status's input names (W150): its strong links
+ * (prLinkIsStrong()), newest first, each PR once.
+ */
+export const RECAP_PRS_MAX = 5;
 
 /** The most words in a recap's title. */
 export const RECAP_TITLE_MAX_WORDS = 8;

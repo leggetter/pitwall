@@ -82,7 +82,7 @@ function fakeIndexer(initial: IndexSnapshot): Indexer & { push(next: IndexSnapsh
 }
 
 const NEXT = 'Merge #42';
-const RECAP = { summary: 'You asked it to fix the export, and it fixed it.', todos: [{ text: NEXT, owner: 'you' }], waitingOn: 'you', title: 'Fix the export' };
+const RECAP = { summary: 'You asked it to fix the export, and it fixed it.', todos: [{ text: NEXT, owner: 'you' }], waitingOn: 'you', title: 'Fix the export', goal: 'Make the export work.', workingOn: 'The export fix, which the goal needs.', plan: '' };
 
 /** A real engine with a fake claude, which holds each call until the test answers it. */
 function engineWithFakeClaude(options: { budget?: number } = {}) {

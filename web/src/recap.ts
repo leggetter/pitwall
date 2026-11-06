@@ -25,6 +25,11 @@
 //   Off, saying why, while the day's budget is spent. Its other results are toasts, as Refresh for
 //   the PR list has them.
 //
+// - **The picture** (W150, the recap strip gives the picture): a recap since W150 also has the goal,
+//   what it's working on and why, and the plan's line (recapPicture()). The strip shows those, and of
+//   the to-dos only yours, since what's next is the conversation's. One without them, stored before
+//   W150 or Claude Code's own, shows its summary as before.
+//
 // Only one thing is stored: whether the strip is collapsed, a boolean, per viewer (D14).
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -122,11 +127,13 @@ function parseTodo(raw: unknown): RecapTodo | undefined {
  * A recap from recapPath()'s body, read defensively: every field of SessionRecap with its type, a
  * known `waitingOn`, `source` and owner for each to-do, and times that are times; anything else is no
  * recap. The summary, each to-do and the title are cut to RECAP_FIELD_MAX, and the to-dos to
- * RECAP_TODOS_MAX, as the server should already have them.
+ * RECAP_TODOS_MAX, as the server should already have them. W150's goal, working on and plan are kept,
+ * cut the same way, only when all three are text; one that isn't text makes it no recap.
  */
 export function parseRecap(body: unknown): SessionRecap | undefined {
   if (!isRecord(body)) return undefined;
-  const { summary, todos, waitingOn, title, at, throughAt, source, stale } = body;
+  const { summary, todos, waitingOn, title, at, throughAt, source, stale, goal, workingOn, plan } = body;
+  for (const field of [goal, workingOn, plan]) if (field !== undefined && typeof field !== 'string') return undefined;
   if (typeof summary !== 'string' || typeof title !== 'string' || !Array.isArray(todos)) return undefined;
   if (typeof waitingOn !== 'string' || !(RECAP_WAITING_ON as readonly string[]).includes(waitingOn)) return undefined;
   if (source !== 'pitwall' && source !== 'claude-code') return undefined;
@@ -143,8 +150,52 @@ export function parseRecap(body: unknown): SessionRecap | undefined {
     throughAt,
     source,
   };
+  if (typeof goal === 'string' && typeof workingOn === 'string' && typeof plan === 'string') {
+    recap.goal = cutText(goal, RECAP_FIELD_MAX);
+    recap.workingOn = cutText(workingOn, RECAP_FIELD_MAX);
+    recap.plan = cutText(plan, RECAP_FIELD_MAX);
+  }
   if (stale === true) recap.stale = true;
   return recap;
+}
+
+/** W150's picture of a recap: its goal, what it's working on and its plan's line, as plain text. */
+export interface RecapPicture {
+  goal: string;
+  workingOn: string;
+  /** Empty when the recap names no plan. */
+  plan: string;
+}
+
+/**
+ * The recap's picture (W150), when it's pitwall's and has one: a goal and a working on that aren't
+ * empty once made plain, and a plan's line, which may be. Undefined for one stored before W150 and
+ * for Claude Code's, which the strip shows as their summary.
+ */
+export function recapPicture(recap: SessionRecap): RecapPicture | undefined {
+  if (recap.source !== 'pitwall' || recap.goal === undefined || recap.workingOn === undefined || recap.plan === undefined) return undefined;
+  const goal = plainText(recap.goal).trim();
+  const workingOn = plainText(recap.workingOn).trim();
+  if (goal === '' || workingOn === '') return undefined;
+  return { goal, workingOn, plan: plainText(recap.plan).trim() };
+}
+
+/** The picture's labels (W150). */
+export const GOAL_LABEL = 'Goal:';
+export const WORKING_ON_LABEL = 'Working on:';
+export const PLAN_LABEL = 'Plan:';
+/** "For you (2):", before your to-dos. */
+export const forYouLabel = (count: number) => `For you (${count.toLocaleString('en-US')}):`;
+/** The plan line when the recap names none: Show plan can still look. */
+export const NO_PLAN_LINE = 'None named.';
+
+/**
+ * The quiet line under the picture when the session waits on CI, someone else or another session
+ * (W150): "Waiting on CI.". Undefined for you, whose to-dos are listed, and for nothing.
+ */
+export function waitingLineText(waitingOn: RecapWaitingOn): string | undefined {
+  if (waitingOn === 'you' || waitingOn === 'nothing') return undefined;
+  return `${WAITING_ON_TEXT[waitingOn]}.`;
 }
 
 /** A to-do's owner as its tag says it (W121). The session is "Session": the tag is a label, not a sentence. */

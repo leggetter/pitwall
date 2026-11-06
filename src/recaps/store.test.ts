@@ -105,6 +105,46 @@ describe('the file', () => {
     expect(parseStoredRecap(text, A, NOW)).toBeUndefined();
   });
 
+  describe("W150's goal, working on and plan", () => {
+    const PICTURE = { goal: 'Make the nightly export work on large files.', workingOn: '#42: the fix, which the export needs.', plan: '' };
+
+    it('writes them after the title when the recap has all three, and reads them back', () => {
+      const pictured = recap(PICTURE);
+      expect(JSON.parse(storedText(A, pictured)).recap).toEqual({ ...JSON.parse(storedText(A, recap())).recap, ...PICTURE });
+      expect(Object.keys(JSON.parse(storedText(A, pictured)).recap)).toEqual(['summary', 'todos', 'waitingOn', 'title', 'goal', 'workingOn', 'plan']);
+      expect(parseStoredRecap(storedText(A, pictured), A, NOW)).toEqual(pictured);
+      expect(parseStoredRecap(storedText(A, recap({ ...PICTURE, plan: 'M2 of the export, on W2' })), A, NOW)).toMatchObject({ plan: 'M2 of the export, on W2' });
+      // Some of them only is never written.
+      expect(JSON.parse(storedText(A, recap({ goal: 'g' }))).recap).not.toHaveProperty('goal');
+    });
+
+    it('still loads a file stored before W150, without them, at the same version', () => {
+      const before = storedText(A, recap());
+      expect(JSON.parse(before).version).toBe(1);
+      expect(parseStoredRecap(before, A, NOW)).toEqual(recap());
+    });
+
+    it('fits the longest recap in RECAP_STORE_MAX_BYTES', () => {
+      // Three bytes for each UTF-16 unit, the most UTF-8 takes for one.
+      const field = '€'.repeat(RECAP_FIELD_MAX - 1) + '…';
+      const longest = recap({ summary: field, todos: Array.from({ length: 6 }, () => ({ text: field, owner: 'session' as const })), waitingOn: 'nothing', goal: field, workingOn: field, plan: field });
+      const text = storedText(A, longest);
+      expect(Buffer.byteLength(text)).toBeLessThanOrEqual(RECAP_STORE_MAX_BYTES);
+      expect(parseStoredRecap(text, A, NOW)).toEqual(longest);
+    });
+
+    it.each<[string, (file: Record<string, unknown> & { recap: Record<string, unknown> }) => void]>([
+      ['only some of them', (file) => delete file.recap.plan],
+      ['an empty goal', (file) => (file.recap.goal = '')],
+      ['a hidden character in working on', (file) => (file.recap.workingOn = 'W2\u202e: the writer')],
+      ['a plan that is not text', (file) => (file.recap.plan = 3)],
+      ['a plan a recap would make plain', (file) => (file.recap.plan = 'Two\nlines')],
+      ['a goal longer than a recap keeps', (file) => (file.recap.goal = 'x'.repeat(RECAP_FIELD_MAX + 1))],
+    ])('ignores a file with %s', (_name, change) => {
+      expect(parseStoredRecap(edited(change, A, recap(PICTURE)), A, NOW)).toBeUndefined();
+    });
+  });
+
   it("ignores a recap stored before W146 that its rule would change, so it isn't loaded", () => {
     // [someone else, you] with 'you': W146 reads it as waiting on someone else, so it isn't what pitwall now writes.
     const old = edited((file) => {

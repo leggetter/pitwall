@@ -36,7 +36,12 @@
 //
 // The call is an update (the previous recap and the turns since) when there's a previous recap and
 // turns since it, else a first recap (src/recaps/input.ts). Activity with no turn the input shows,
-// such as a tool's result, moves the recap's `throughAt` on without a call.
+// such as a tool's result, moves the recap's `throughAt` on without a call. Since W150 (the recap
+// strip gives the picture) a first recap reads as much as a plan status does, up to PLAN_TURNS_CAP,
+// and a previous recap without W150's goal, working on and plan, or a compaction summary newer than
+// the previous recap's `throughAt`, makes the call a first recap, so the picture is read again.
+// Both calls, and a plan status, also name the session's PRs from the PR list start() is given
+// (input.ts sessionPrs()), which runs no gh of its own.
 //
 // The call runs from one fixed 0700 directory, `$PITWALL_HOME/recap`, with recapArgs() and
 // recapEnvironment() (prompt.ts), no shell and a timeout, once `claude --version` says it's at
@@ -90,7 +95,7 @@ import { checkClaudeVersion, prepareRelayDir } from '../server/relay.js';
 import { budgetFile, type BudgetStore } from './budget.js';
 import { runRecapCall, spawnRecapChild, type CallOutcome, type RecapSpawner } from './call.js';
 import { recapStoreDir, type RecapStore } from './store.js';
-import { firstRecapInput, planStatusInput, TurnCollector, updateRecapInput, type RelayMessages } from './input.js';
+import { firstRecapInput, planStatusInput, sessionPrs, TurnCollector, updateRecapInput, type RelayMessages, type SessionPrs } from './input.js';
 import {
   CALL_FAILED,
   ENVELOPE_UNREADABLE,
@@ -98,6 +103,7 @@ import {
   PLAN_ANSWER_INVALID,
   parseEnvelope,
   parsePlanAnswer,
+  hasPicture,
   leadTodo,
   readRecapAnswer,
   RECAP_REFUSALS,
@@ -115,7 +121,7 @@ import {
 /** What the engine reads from the index. */
 export type RecapIndex = Pick<Indexer, 'latest' | 'subscribe' | 'conversation'>;
 
-/** What the engine reads of your open PRs (src/prs, PrSource), for a finished session's recap (W128). */
+/** What the engine reads of your open PRs (src/prs, PrSource): for a finished session's recap (W128), and each input's PRs (W150). */
 export interface RecapPrs {
   latest(): PullRequestList;
   subscribe(listener: (list: PullRequestList) => void): () => void;
@@ -592,13 +598,17 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     }
 
     const previous = recaps.get(job.sessionId);
-    const update = previous !== undefined && !(startedActivity <= parseMs(previous.throughAt));
     const read = await sources.read(file);
+    // A first recap when there's no previous one, nothing since it, no picture in it (W150), or a
+    // compaction since it, after which the picture is read again (W150).
+    const compactedSince = previous !== undefined && read.compaction?.at !== undefined && parseMs(read.compaction.at) > parseMs(previous.throughAt);
+    const update = previous !== undefined && !(startedActivity <= parseMs(previous.throughAt)) && hasPicture(previous) && !compactedSince;
     const collector = new TurnCollector({
       ...(options.relay === undefined ? {} : { relay: options.relay }),
-      ...(update ? { after: previous.throughAt } : {}),
+      ...(update ? { after: previous.throughAt } : { cap: PLAN_TURNS_CAP }),
     });
-    await collectTurns(source, job.sessionId, collector);
+    // A first recap reads a plan status's turns, three times an update's, so up to twice its pages.
+    await collectTurns(source, job.sessionId, collector, update ? maxPages : 2 * maxPages);
     if (closed) return;
     const throughMs = Math.max(Number.isNaN(startedActivity) ? 0 : startedActivity, collector.newestMs ?? 0);
 
@@ -610,14 +620,17 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     if (!update && collector.count === 0 && read.firstPrompt === undefined) {
       return fail(job.sessionId, throughMs, 'This session has nothing pitwall can recap yet.', 'quiet');
     }
+    const prs = prsOf(session);
+    const withPrs = prs === undefined ? {} : { prs };
     const input = update
-      ? updateRecapInput({ ...(read.firstPrompt === undefined ? {} : { firstPrompt: read.firstPrompt }), previous: answerOf(previous), turns: collector.text() }, options.randomId)
+      ? updateRecapInput({ ...(read.firstPrompt === undefined ? {} : { firstPrompt: read.firstPrompt }), previous: answerOf(previous), turns: collector.text(), ...withPrs }, options.randomId)
       : firstRecapInput(
           {
             ...(read.firstPrompt === undefined ? {} : { firstPrompt: read.firstPrompt }),
             ...(read.awaySummary === undefined ? {} : { awaySummary: read.awaySummary }),
             ...(read.compaction === undefined ? {} : { compaction: read.compaction }),
             turns: collector.text(),
+            ...withPrs,
           },
           options.randomId,
         );
@@ -677,6 +690,15 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     changed();
   }
 
+  /** The session's PRs for an input (W150): its strong links matched with the latest PR list, or none. */
+  function prsOf(session: SessionSummary): SessionPrs | undefined {
+    try {
+      return sessionPrs(session.prLinks, prSource?.latest());
+    } catch {
+      return undefined;
+    }
+  }
+
   /** The latest turns, newest first through the conversation's pages, until the collector is done. Fails soft. */
   async function collectTurns(source: RecapIndex, sessionId: string, collector: TurnCollector, pages = maxPages): Promise<void> {
     let before: string | undefined;
@@ -703,7 +725,8 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
    * against the day's budget. Its failures are its own: they don't set RecapHealth's error or pause
    * recaps, since the strip says why at once.
    */
-  async function runPlan(sessionId: string, file: string, throughFrom: number): Promise<PlanStatusOutcome> {
+  async function runPlan(session: SessionSummary, file: string, throughFrom: number): Promise<PlanStatusOutcome> {
+    const { sessionId } = session;
     const source = index;
     if (source === undefined) return { kind: 'failed', reason: "pitwall hasn't read the sessions yet. Try again in a moment." };
     const read = await sources.read(file);
@@ -722,11 +745,13 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     };
     // Nothing to read: no plan, without a call.
     if (collector.count === 0 && read.firstPrompt === undefined && read.compaction === undefined) return keep({ found: false });
+    const prs = prsOf(session);
     const input = planStatusInput(
       {
         ...(read.firstPrompt === undefined ? {} : { firstPrompt: read.firstPrompt }),
         ...(read.compaction === undefined ? {} : { compaction: read.compaction }),
         turns: collector.text(),
+        ...(prs === undefined ? {} : { prs }),
       },
       options.randomId,
     );
@@ -893,7 +918,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
       // One call per session, and a few at a time in all, on top of recaps' own maxConcurrent.
       if (planRunning.size >= PLAN_MAX_CONCURRENT) return Promise.resolve({ kind: 'running', retryAfterSeconds: 5, others: true });
       if (spent()) return Promise.resolve({ kind: 'spent', retryAfterSeconds: secondsToMidnight(now()) });
-      const made = runPlan(session.sessionId, file, parseMs(session.lastActivityAt))
+      const made = runPlan(session, file, parseMs(session.lastActivityAt))
         .catch((error: unknown): PlanStatusOutcome => {
           log(`a plan status failed unexpectedly: ${error instanceof Error ? error.message : String(error)}`);
           return { kind: 'failed', reason: 'pitwall hit an unexpected error while making a plan status.' };
@@ -959,9 +984,11 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   };
 }
 
-/** A stored recap's answer fields, for an update's input. */
+/** A stored recap's answer fields, for an update's input: W150's goal, working on and plan when it has them. */
 function answerOf(recap: SessionRecap): RecapAnswer {
-  return { summary: recap.summary, todos: recap.todos.map(({ text, owner }) => ({ text, owner })), waitingOn: recap.waitingOn, title: recap.title };
+  const answer: RecapAnswer = { summary: recap.summary, todos: recap.todos.map(({ text, owner }) => ({ text, owner })), waitingOn: recap.waitingOn, title: recap.title };
+  if (hasPicture(recap)) Object.assign(answer, { goal: recap.goal, workingOn: recap.workingOn, plan: recap.plan });
+  return answer;
 }
 
 /** What a call's process gave: a recap, or why not, in pitwall's words, with its cost when it reported one. */

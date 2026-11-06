@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionFacts } from '../index/index.js';
 import type { RecapSourceReader, RecapSources } from '../index/recapSources.js';
-import { PLAN_TURNS_CAP, RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, RECAP_MODEL, RECAP_TURNS_CAP, RECAP_UPDATE_DEBOUNCE_MS, type ConversationEntry, type ConversationPage, type IndexSnapshot, type PullRequestList, type PullRequestSummary, type SessionSummary, type WorkChoice } from '../shared/protocol.js';
+import { PLAN_TURNS_CAP, RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, RECAP_MODEL, RECAP_TURNS_CAP, RECAP_UPDATE_DEBOUNCE_MS, type ConversationEntry, type ConversationPage, type IndexSnapshot, type PullRequestList, type PullRequestSummary, type SessionRecap, type SessionSummary, type WorkChoice } from '../shared/protocol.js';
 import { modelRejectedMessage } from '../server/work.js';
 import { memoryBudget } from './budget.js';
 import { memoryRecapStore } from './store.js';
@@ -38,6 +38,9 @@ const answer = (overrides: Record<string, unknown> = {}) => ({
   ],
   waitingOn: 'you',
   title: 'Fix the nightly export',
+  goal: 'Make the nightly export work on large files.',
+  workingOn: '#42: the fix, which the export needs.',
+  plan: '',
   ...overrides,
 });
 const envelope = (result: unknown, overrides: Record<string, unknown> = {}) =>
@@ -85,7 +88,7 @@ const pullRequest = (overrides: Partial<PullRequestSummary> = {}): PullRequestSu
   relation: 'authored',
   ...overrides,
 });
-const prList = (prs: PullRequestSummary[]): PullRequestList => ({ source: { ok: true }, refreshing: false, prs, fetchedAt: '2026-10-29T12:00:00.000Z' });
+const prList = (prs: PullRequestSummary[], extra: Partial<PullRequestList> = {}): PullRequestList => ({ source: { ok: true }, refreshing: false, prs, fetchedAt: '2026-10-29T12:00:00.000Z', ...extra });
 const OPENED_42 = [{ kind: 'opened' as const, repo: 'example/demo-app', number: 42, lastAt: '2026-10-01T12:00:00.000Z' }];
 
 const tick = async (times = 10) => {
@@ -190,8 +193,8 @@ function harness(options: Partial<RecapEngineOptions> = {}) {
       });
     },
     /** A new PR list, as the PR poller sends one. */
-    async setPrs(list: PullRequestSummary[]) {
-      prs = prList(list);
+    async setPrs(list: PullRequestSummary[], extra: Partial<PullRequestList> = {}) {
+      prs = prList(list, extra);
       for (const listener of [...prListeners]) listener(prs);
       await tick();
     },
@@ -347,11 +350,11 @@ describe('when a session is recapped', () => {
     await h.poll([a]);
     expect(h.calls).toHaveLength(2);
     const input = h.calls[1]!.input!;
-    expect(input).toContain('<previous-recap>\n{"summary":"You asked it to fix the nightly export. It opened draft PR #42 with a fix, and CI passes.","todos":[{"text":"Open a backport PR for 1.x","owner":"session"}');
+    expect(input).toContain('<previous-recap>\n{"goal":"Make the nightly export work on large files.","workingOn":"#42: the fix, which the export needs.","plan":"","summary":"You asked it to fix the nightly export. It opened draft PR #42 with a fix, and CI passes.","todos":[{"text":"Open a backport PR for 1.x","owner":"session"}');
     expect(input).toContain('<turns-since-previous-recap>');
     expect(input).toContain('User: Yes, open it.');
     expect(input).not.toContain('Please fix a.');
-    expect(input).toContain('Revise the previous recap with what the newer turns show: keep its summary steady');
+    expect(input).toContain('Revise the previous recap with what the newer turns show: keep its goal, plan and summary steady');
     expect(input).not.toContain('<latest-turns>');
     const reviewed = [{ text: 'Review #43', owner: 'someone else' }];
     await h.reply(h.calls[1], envelope(answer({ summary: 'It opened #43.', todos: reviewed, waitingOn: 'someone else' })));
@@ -381,7 +384,7 @@ describe('when a session is recapped', () => {
     expect(h.calls[0]!.input).not.toContain('Message from session pitwall-relay');
   });
 
-  it('sends Claude Code’s own recap and the compaction summary in a first recap', async () => {
+  it('sends Claude Code’s own recap and the whole compaction summary in a first recap (W150)', async () => {
     const h = harness();
     h.start();
     const a = h.add('a');
@@ -392,7 +395,8 @@ describe('when a session is recapped', () => {
     });
     await h.poll([a]);
     expect(h.calls[0]!.input).toContain(`<claude-code-recap at="${a.lastActivityAt}">\nClaude Code says: waiting for review.\n</claude-code-recap>`);
-    expect(h.calls[0]!.input).toContain('<compaction-summary>\n1. Primary Request and Intent:\nFix a.\n</compaction-summary>');
+    // Whole since W150, as a plan status reads it.
+    expect(h.calls[0]!.input).toContain('<compaction-summary>\n1. Primary Request and Intent:\nFix a.\n2. Two:\nleft out\n</compaction-summary>');
   });
 });
 
@@ -449,7 +453,7 @@ describe('kept across restarts (W132)', () => {
     expect(two.engine.recap(a)?.stale).toBe(true);
     await two.poll([a]);
     expect(two.calls).toHaveLength(1);
-    expect(two.calls[0]!.input).toContain('<previous-recap>\n{"summary":"You asked it to fix the nightly export.');
+    expect(two.calls[0]!.input).toContain('<previous-recap>\n{"goal":"Make the nightly export work on large files.","workingOn":"#42: the fix, which the export needs.","plan":"","summary":"You asked it to fix the nightly export.');
     expect(two.calls[0]!.input).toContain('User: Yes, open it.');
     await two.reply(two.calls[0], envelope(answer({ summary: 'It opened #43.' })));
     expect(store.current().get(A)).toMatchObject({ summary: 'It opened #43.', throughAt: newer });
@@ -1143,5 +1147,103 @@ describe('the model and effort for recaps (W119)', () => {
     await h.reply(h.calls[0], refused, 1);
     expect(h.engine.health().error).toBe(modelRejectedMessage('recaps'));
     expect(h.engine.health().error).toMatch(/Preferences, under Models and effort, or in the config file's "work.recaps"/);
+  });
+});
+
+describe("the picture and the session's PRs (W150)", () => {
+  it('reads up to PLAN_TURNS_CAP of turns for a first recap, and keeps the goal, working on and plan', async () => {
+    const h = harness();
+    h.start();
+    const a = h.add('a');
+    h.pages.set('a', Array.from({ length: 40 }, (_, i) => ({ kind: 'assistant' as const, text: `Turn ${i} ${'x'.repeat(900)}`, at: new Date(h.clock.now - (46 - i) * MINUTE).toISOString() })));
+    await h.poll([a]);
+    const turns = /<latest-turns>\n([\s\S]*)\n<\/latest-turns>/.exec(h.calls[0]!.input!)![1]!;
+    expect(turns.length).toBeGreaterThan(RECAP_TURNS_CAP);
+    expect(turns.length).toBeLessThanOrEqual(PLAN_TURNS_CAP);
+    await h.reply(h.calls[0], envelope(answer({ plan: 'M2 of the export, on W2' })));
+    expect(h.engine.recap(a)).toMatchObject({ goal: answer().goal, workingOn: answer().workingOn, plan: 'M2 of the export, on W2' });
+  });
+
+  it('makes a first recap, not an update, after a recap without the picture, and after a compaction newer than the previous recap', async () => {
+    const ID = '00000000-0000-4000-8000-0000000000c1';
+    for (const why of ['no picture', 'compacted'] as const) {
+      const clock = Date.parse('2026-10-29T12:00:00.000Z');
+      const { goal: _goal, workingOn: _workingOn, plan: _plan, ...beforeW150 } = answer();
+      // A recap kept before W150, without the picture, or one made now, with it.
+      const kept: SessionRecap = { ...(why === 'no picture' ? beforeW150 : answer()), at: new Date(clock).toISOString(), throughAt: new Date(clock - 6 * MINUTE).toISOString(), source: 'pitwall' } as SessionRecap;
+      const h = harness({ recapStore: memoryRecapStore(new Map([[ID, kept]])) });
+      h.start();
+      let a = h.add(ID);
+      expect(h.engine.recap(a), why).toMatchObject({ summary: kept.summary });
+      const newer = new Date(h.clock.now + MINUTE).toISOString();
+      h.pages.get(ID)!.push({ kind: 'user', text: 'Carry on with W3.', at: newer });
+      if (why === 'compacted') h.sources.set(`/made-up/projects/${ID}.jsonl`, { firstPrompt: `Fix ${ID}.`, compaction: { text: '1. Primary Request and Intent:\nM2.', at: newer } });
+      h.clock.now += 16 * MINUTE;
+      a = { ...a, lastActivityAt: newer };
+      await h.poll([a]);
+      expect(h.calls, why).toHaveLength(1);
+      const input = h.calls[0]!.input!;
+      expect(input, why).toContain('<latest-turns>');
+      expect(input, why).not.toContain('<previous-recap>');
+      expect(input, why).toContain('Write the recap.');
+    }
+  });
+
+  it('makes an update, not a first recap, after a compaction older than the previous recap', async () => {
+    const ID = '00000000-0000-4000-8000-0000000000c2';
+    const clock = Date.parse('2026-10-29T12:00:00.000Z');
+    const kept: SessionRecap = { ...answer(), at: new Date(clock).toISOString(), throughAt: new Date(clock - 6 * MINUTE).toISOString(), source: 'pitwall' } as SessionRecap;
+    const h = harness({ recapStore: memoryRecapStore(new Map([[ID, kept]])) });
+    h.start();
+    let a = h.add(ID);
+    const newer = new Date(h.clock.now + MINUTE).toISOString();
+    h.pages.get(ID)!.push({ kind: 'user', text: 'Carry on with W3.', at: newer });
+    // Compacted before the previous recap's throughAt: that recap already read it.
+    h.sources.set(`/made-up/projects/${ID}.jsonl`, { firstPrompt: `Fix ${ID}.`, compaction: { text: '1. Primary Request and Intent:\nM2.', at: new Date(clock - 10 * MINUTE).toISOString() } });
+    h.clock.now += 16 * MINUTE;
+    a = { ...a, lastActivityAt: newer };
+    await h.poll([a]);
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0]!.input!).toContain('<previous-recap>');
+  });
+
+  it("names the session's PRs in a recap's input, an update's and a plan status's, and none without a list", async () => {
+    const h = harness();
+    h.start();
+    const links = [
+      { kind: 'opened' as const, repo: 'example/demo-app', number: 42, lastAt: '2026-10-29T11:00:00.000Z' },
+      { kind: 'opened' as const, repo: 'example/demo-app', number: 40, lastAt: '2026-10-28T11:00:00.000Z' },
+      { kind: 'mentioned' as const, repo: 'example/demo-app', number: 7, lastAt: '2026-10-29T11:30:00.000Z' },
+    ];
+    await h.setPrs([pullRequest({ checks: 'failing', review: 'changes-requested' }), pullRequest({ number: 7, url: 'https://github.com/example/demo-app/pull/7' })], {
+      searches: { authored: { fetchedAt: '2026-10-29T12:00:00.000Z' } },
+    });
+    let a = h.add('a', { prLinks: links });
+    await h.poll([a]);
+    const block = '<pull-requests fetched-at="2026-10-29T12:00:00.000Z">\nexample/demo-app#42: open, draft, checks failing, changes requested. Title: "Fix the nightly export"\nexample/demo-app#40: no longer open: merged or closed\n</pull-requests>\n</session-0123456789abcdef>';
+    expect(h.calls[0]!.input).toContain(block);
+    expect(h.calls[0]!.input).not.toContain('#7');
+    await h.reply(h.calls[0], envelope(answer()));
+    const newer = new Date(h.clock.now + MINUTE).toISOString();
+    h.pages.get('a')!.push({ kind: 'user', text: 'Carry on.', at: newer });
+    h.clock.now += 16 * MINUTE;
+    a = { ...a, lastActivityAt: newer };
+    await h.poll([a]);
+    expect(h.calls[1]!.input).toContain('<previous-recap>');
+    expect(h.calls[1]!.input).toContain(block);
+    await h.reply(h.calls[1], envelope(answer()));
+    const made = h.engine.makePlanStatus(a);
+    await tick();
+    expect(h.calls[2]!.input).toContain(block);
+    await h.reply(h.calls[2], envelope({ found: false }));
+    await made;
+
+    // With --no-prs, or before the first fetch: no block.
+    await h.setPrs([], { source: { ok: false, reason: 'off', error: 'off' }, fetchedAt: undefined });
+    const plain = h.engine.makePlanStatus(a);
+    await tick();
+    expect(h.calls[3]!.input).not.toContain('<pull-requests');
+    await h.reply(h.calls[3], envelope({ found: false }));
+    await plain;
   });
 });
