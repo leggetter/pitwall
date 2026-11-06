@@ -30,6 +30,8 @@ export const ATTACH_FILE_TEXT = {
   notText: "It isn't UTF-8 text: only text files can be attached.",
   nul: "It has NUL bytes, so it isn't text: only text files can be attached.",
   unreadable: "The browser couldn't read it.",
+  /** The box's text changed while the file was read, by a suggested question or a send. */
+  changed: 'The message changed while the file was read: attach it again.',
   /** Before it's read: its size alone is more than the room left. */
   tooBig: (size: number, room: number) =>
     room >= SUPERVISOR_TEXT_MAX
@@ -49,14 +51,19 @@ export function fewestCharacters(bytes: number): number {
   return Math.max(0, Math.ceil((bytes - 3) / 3));
 }
 
-/** A name for the line above the file: control characters, a line break among them, as spaces. */
+/**
+ * A name for the line above the file: control characters, a line break among them, and the
+ * characters that reorder text (bidirectional embeddings, overrides and isolates), as spaces.
+ */
 export function fileLabel(name: string): string {
-  return name.replace(/[\p{Cc}\u2028\u2029]/gu, ' ').trim() || 'file';
+  return name.replace(/[\p{Cc}\u2028\u2029\u202a-\u202e\u2066-\u2069]/gu, ' ').trim() || 'file';
 }
 
 /** "File: notes.md", then its text, without one trailing line break, in a fence longer than any run of backticks in it. */
 export function fileBlock(name: string, text: string): string {
-  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  // A loop, not Math.max(...runs): a file of 100K or more runs would pass too many arguments.
+  let longest = 0;
+  for (const run of text.matchAll(/`+/g)) longest = Math.max(longest, run[0].length);
   const fence = '`'.repeat(Math.max(3, longest + 1));
   const body = text.endsWith('\n') ? text.slice(0, -1) : text;
   return `File: ${fileLabel(name)}\n${fence}\n${body}\n${fence}`;

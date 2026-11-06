@@ -24,7 +24,7 @@ import { useAutoGrow } from '../autoGrow.js';
 import { DraftStorageContext, readDraft, writeDraft, type UnsureSend } from '../drafts.js';
 import { plainText } from '../format.js';
 import { characterCount, outgoingText } from '../relay.js';
-import { ATTACH_FILE_TEXT, attachFile } from '../supervisorAttach.js';
+import { ATTACH_FILE_TEXT, attachFile, fileLabel } from '../supervisorAttach.js';
 import { CHECK_ITS_CONVERSATION, interruptSupervisor, modelName, sendToSupervisor, SUPERVISOR_DRAFT_ID, SUPERVISOR_TEXT_MAX } from '../supervisor.js';
 import { Alert, Detail } from './Alert.js';
 import { Button } from './Button.js';
@@ -102,6 +102,10 @@ export function SupervisorBox({ status, suggestion, onDraftChange, onSent, field
   const [reading, setReading] = useState(false);
   const caret = useRef<number | undefined>(undefined);
   const placeCaret = useRef<number | undefined>(undefined);
+  // The box's text as of the last render, so a read that ends after a send or a suggested question
+  // can tell the text it read against has gone.
+  const latest = useRef(text);
+  latest.current = text;
 
   const keep = (next: string, send?: UnsureSend) => writeDraft(SUPERVISOR_DRAFT_ID, next === '' ? undefined : { text: next, send }, drafts);
   const edit = (next: string) => {
@@ -188,7 +192,7 @@ export function SupervisorBox({ status, suggestion, onDraftChange, onSent, field
   const held = status === 'held';
   const length = outgoingText(text).length;
   const tooLong = length > SUPERVISOR_TEXT_MAX;
-  const canSend = !held && !sending && text.trim() !== '' && !tooLong && api !== undefined;
+  const canSend = !held && !sending && !reading && text.trim() !== '' && !tooLong && api !== undefined;
   const count = characterCount(length, SUPERVISOR_TEXT_MAX);
   const sendOff = sending
     ? undefined
@@ -253,16 +257,26 @@ export function SupervisorBox({ status, suggestion, onDraftChange, onSent, field
     if (!file || reading || sending) return;
     setReading(true);
     setShown(undefined);
-    const outcome = await attachFile(file, text, caret.current);
+    const before = text;
+    let outcome: Awaited<ReturnType<typeof attachFile>>;
+    try {
+      outcome = await attachFile(file, before, caret.current);
+    } catch {
+      outcome = { ok: false, error: `${ATTACH_FILE_TEXT.couldNot(fileLabel(file.name))} ${ATTACH_FILE_TEXT.unreadable}` };
+    } finally {
+      if (alive.current) setReading(false);
+    }
     if (!alive.current) return;
-    setReading(false);
+    if (outcome.ok && latest.current !== before) {
+      outcome = { ok: false, error: `${ATTACH_FILE_TEXT.couldNot(fileLabel(file.name))} ${ATTACH_FILE_TEXT.changed}` };
+    }
     if (!outcome.ok) {
       setShown({ tone: 'danger', text: outcome.error });
       return;
     }
     placeCaret.current = outcome.caret;
     edit(outcome.text);
-    setShown({ tone: 'attached', name: file.name });
+    setShown({ tone: 'attached', name: fileLabel(file.name) });
   };
 
   const onSubmit = (event: FormEvent) => {

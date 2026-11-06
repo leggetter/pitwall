@@ -21,6 +21,16 @@ describe('fileBlock', () => {
     expect(fileLabel('two\nlines\u0007.txt')).toBe('two lines .txt');
     expect(fileLabel('\n')).toBe('file');
   });
+
+  it('shows the characters that reorder text in a name as spaces', () => {
+    expect(fileLabel('report\u202etxt.exe')).toBe('report txt.exe');
+    expect(fileLabel('a\u2066b\u2069.md')).toBe('a b .md');
+  });
+
+  it('copes with more runs of backticks than a call takes arguments', () => {
+    const text = '`a'.repeat(150_000);
+    expect(fileBlock('many.md', text)).toBe(`File: many.md\n\`\`\`\n${text}\n\`\`\``);
+  });
 });
 
 describe('insertBlock', () => {

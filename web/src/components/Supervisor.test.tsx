@@ -679,6 +679,33 @@ describe('attaching a file (W135)', () => {
     expect(viewOf().getByRole('alert').textContent).toBe("Couldn't attach log.txt. With it, the message would be 124 characters over the 100,000 limit.");
     expect(box().value).toBe(draft);
   });
+  it('holds Send while a file is read, and refuses the file if the box changed meanwhile', async () => {
+    const fetch = fakeServer();
+    renderDashboard(snap({ status: 'idle', approvals: [] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.change(box(), { target: { value: 'hello' } });
+    let finish: (buffer: ArrayBuffer) => void = () => {};
+    const slow = new File(['notes'], 'slow.txt', { type: 'text/plain' });
+    Object.defineProperty(slow, 'arrayBuffer', { value: () => new Promise<ArrayBuffer>((resolve) => (finish = resolve)) });
+    await act(async () => {
+      fireEvent.change(attachInput(), { target: { files: [slow] } });
+    });
+    expect(box().readOnly).toBe(true);
+    fireEvent.click(sendButton());
+    fireEvent.keyDown(box(), { key: 'Enter', metaKey: true });
+    await settle();
+    expect(posts(fetch)).toEqual([]);
+    // As a suggested question or a send would, the text changes before the read ends.
+    box().readOnly = false;
+    fireEvent.change(box(), { target: { value: 'something else' } });
+    await act(async () => {
+      finish(new TextEncoder().encode('notes').buffer as ArrayBuffer);
+    });
+    await settle();
+    expect(box().value).toBe('something else');
+    expect(viewOf().getByRole('alert').textContent).toBe("Couldn't attach slow.txt. The message changed while the file was read: attach it again.");
+    expect(box().readOnly).toBe(false);
+  });
 });
 
 describe('its draft cards', () => {
