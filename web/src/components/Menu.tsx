@@ -82,6 +82,10 @@ export interface MenuButtonProps {
   onOpenChange?: (open: boolean) => void;
   /** The button's size: md, the default, or sm, as the filter bar's Sort is (W106's review). */
   size?: 'sm' | 'md';
+  /** Classes for the anchor, which holds the button and the menu, as a row's snooze menu needs (W154). */
+  className?: string;
+  /** Data attributes for the button, such as a row's `data-snooze-session` (W154). */
+  buttonData?: Readonly<Record<`data-${string}`, string>>;
 }
 
 const isItem = (entry: MenuEntry): entry is MenuItem => entry.kind === undefined || entry.kind === 'item';
@@ -117,7 +121,7 @@ export function closeMenus(within: Element): boolean {
   return closed;
 }
 
-export function MenuButton({ label, icon, entries, buttonRef, onOpenChange, size = 'md' }: MenuButtonProps) {
+export function MenuButton({ label, icon, entries, buttonRef, onOpenChange, size = 'md', className, buttonData }: MenuButtonProps) {
   const menuId = useId();
   const own = useRef<HTMLButtonElement>(null);
   const button = buttonRef ?? own;
@@ -298,7 +302,7 @@ export function MenuButton({ label, icon, entries, buttonRef, onOpenChange, size
   };
 
   return (
-    <div ref={anchor} className="menu-anchor">
+    <div ref={anchor} className={className === undefined ? 'menu-anchor' : `menu-anchor ${className}`}>
       <Tooltip content={label} relation="label">
         <button
           ref={button}
@@ -307,6 +311,7 @@ export function MenuButton({ label, icon, entries, buttonRef, onOpenChange, size
           aria-haspopup="menu"
           aria-expanded={open}
           aria-controls={open ? menuId : undefined}
+          {...buttonData}
           onClick={() => show(!open)}
         >
           <Icon name={icon} />

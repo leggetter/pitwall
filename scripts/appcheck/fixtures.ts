@@ -1213,6 +1213,14 @@ export class World {
    * Until the next reset, the session is flagged as not needing you (W153), or not. The real server
    * drops a flag once what the session needs changes; need() leaves that to the part.
    */
+  /** Snoozes it (W154), or takes the snooze off; with `ended`, as when the server ended it by itself. */
+  snooze(sessionId: string, snoozed: SessionSummary['snoozed'], ended?: SessionSummary['snoozeEnded']): void {
+    const session = this.#sessions.get(sessionId);
+    if (!session) return;
+    const { snoozed: _old, snoozeEnded: _end, ...rest } = session;
+    this.#sessions.set(sessionId, { ...rest, ...(snoozed === undefined ? {} : { snoozed }), ...(ended === undefined ? {} : { snoozeEnded: ended }) });
+  }
+
   flag(sessionId: string, flagged: SessionSummary['flagged']): void {
     const session = this.#sessions.get(sessionId);
     if (!session) return;

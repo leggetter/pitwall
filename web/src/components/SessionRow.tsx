@@ -1,9 +1,10 @@
 // A session row (docs/design-system.md, 4: Session rows), two lines at most: which session it is,
 // its badges, when it was last active and its star toggle (W53); then what it needs or asked, or what
-// it was last asked, after its group's label in Needs you, All sessions and Starred, and "Not needed
-// now" while it's marked so (W88), and, quietly at its end, how many of its sub-agents are running
-// while any are (W77), and "also in" a repo under another root it worked in (W149), then, while it
-// needs you or is marked, its Not needed now toggle, under the star. A finished session's row
+// it was last asked, after its group's label in Needs you, All sessions and Starred, and "You flagged
+// this" (W153) or "Snoozed until 14:30" (W154) while it's set aside, or "Snooze ended" or "Woken: a
+// new turn" once a snooze ended by itself, and, quietly at its end, how many of its sub-agents are
+// running while any are (W77), and "also in" a repo under another root it worked in (W149), then,
+// while it needs you or is set aside, its flag toggle and its snooze menu, under the star. A finished session's row
 // is muted, an ended interactive session's too (W67), with Ended as its status. The rest, such as its
 // replies, its relay exchange, its directory, the repos it worked in and the message box, is in the
 // session view, one click away. A session whose last call carried over 200K tokens of context has a
@@ -14,8 +15,8 @@
 // or when one of those PRs needs attention, and then line 2 says so, "Needs you for example/demo-app#128:
 // CI failing" (W128), unless the session needs you itself, which comes first. A finished or ended session that owns an open PR
 // isn't finished work, so its row isn't muted; its badge still says Ended, and, where the list offers
-// it, its line 2 ends with Resume (W107, RowResume.tsx), where a session that needs you has its Not
-// needed now toggle: it resumes an ended interactive session, or a background one that isn't running.
+// it, its line 2 ends with Resume (W107, RowResume.tsx), where a session that needs you has its flag
+// and snooze controls: it resumes an ended interactive session, or a background one that isn't running.
 //
 // Tooltips, on hover only, since none of them is on the name's button: the session's id and start
 // time on its name; the whole title and where it came from; Stale's and a finished Asked you's
@@ -27,11 +28,11 @@
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import { prNeedsAttention, type PullRequestSummary, type SessionGroup, type SessionSummary } from '../../../src/shared/protocol.js';
 import { absoluteTime, plainText } from '../format.js';
-import type { NotNeeded } from '../notNeeded.js';
 import { prNeedText, sessionPrBadge } from '../prs.js';
 import { ENDED_RECAP_HINT, FINISHED_RECAP_HINT, finishedWaitingOnYou, quietWaitingOn, WAITING_ON_TEXT } from '../recap.js';
 import { elsewhereRepos } from '../groupBy.js';
-import { canFlag, groupLabel, isFlagged, isNotNeeded, needsAttention, needsText, recapNeedsText, rowStatusBadge } from '../sessions.js';
+import { canFlag, canSnooze, groupLabel, isFlagged, isSnoozed, needsAttention, needsText, recapNeedsText, rowStatusBadge, snoozeBack } from '../sessions.js';
+import { SNOOZE_BACK_TEXT, snoozedText } from '../snooze.js';
 import { FLAGGED_TEXT } from '../flags.js';
 import { FlagButton } from './FlagButton.js';
 import { runningText } from '../subagents.js';
@@ -39,9 +40,9 @@ import { contextLevel } from '../context.js';
 import { Badge, StatusBadge } from './Badge.js';
 import { ContextBadge } from './ContextGauge.js';
 import { Highlight } from './Highlight.js';
-import { NotNeededButton } from './NotNeededButton.js';
 import { canResumeFromRow, RowResume } from './RowResume.js';
 import { SessionPrBadgeView } from './PrBadges.js';
+import { SnoozeButton } from './SnoozeButton.js';
 import { StarButton } from './StarButton.js';
 import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
@@ -69,8 +70,16 @@ export function finishedRecapHint(session: SessionSummary): string {
   return session.ended ? ENDED_RECAP_HINT : FINISHED_RECAP_HINT;
 }
 
-/** What a row marked not needed now says on line 2, quietly, after its group's label (W88). */
-export const NOT_NEEDED_TEXT = 'Not needed now';
+/**
+ * What a row says on line 2, quietly, after its group's label, while a flag or a snooze sets it aside,
+ * or once a snooze ended by itself: why it's back. Undefined for neither.
+ */
+export function asideText(session: SessionSummary, now: Date = new Date()): string | undefined {
+  if (isFlagged(session)) return FLAGGED_TEXT;
+  if (isSnoozed(session)) return snoozedText(session.snoozed!, now);
+  const back = snoozeBack(session);
+  return back === undefined ? undefined : SNOOZE_BACK_TEXT[back];
+}
 
 /** Whether a row shows its context badge: over 200K (W133). */
 function contextOver(tokens: number | undefined): boolean {
@@ -170,10 +179,11 @@ export interface SessionRowProps {
   starred?: boolean;
   /** Stars or unstars it: the star toggle at the end of line 1, which there's none without. */
   onStar?: ((sessionId: string, on: boolean) => void) | undefined;
-  /** The viewer's Not needed now marks (W88), so a marked session's row is quiet. */
-  notNeeded?: NotNeeded | undefined;
-  /** Marks it not needed now, or takes the mark away: its toggle, while it needs you, which there's none without. */
-  onNotNeeded?: ((session: SessionSummary, on: boolean) => void) | undefined;
+  /**
+   * Snoozes it until a time, or Later without one, or, with `false`, takes the snooze off (W154): its
+   * snooze menu, while it can be snoozed, or its pressed toggle, while it's snoozed. None without.
+   */
+  onSnooze?: ((session: SessionSummary, until: Date | undefined | false) => void) | undefined;
   /** Flags it as not needing you, or takes the flag away (W153): its flag toggle, while it can be flagged or is, which there's none without. */
   onFlag?: ((session: SessionSummary, on: boolean) => void) | undefined;
   /**
@@ -189,20 +199,21 @@ export interface SessionRowProps {
   offerResume?: boolean;
 }
 
-export function SessionRow({ session, group, showGroup = false, onOpen, onStep, isOpen = false, starred = false, onStar, notNeeded, onNotNeeded, onFlag, owned, offerResume = false }: SessionRowProps) {
-  // Marked not needed now (W88): it still needs you, by the index, but has no bar, its badge is outlined, and line 2 says so.
-  const marked = isNotNeeded(session, notNeeded);
-  // Flagged as not needing you (W153): quiet as a marked one is, and line 2 says "You flagged this".
+export function SessionRow({ session, group, showGroup = false, onOpen, onStep, isOpen = false, starred = false, onStar, onSnooze, onFlag, owned, offerResume = false }: SessionRowProps) {
+  // Snoozed (W154) or flagged as not needing you (W153): it still needs you, by the index, but has no
+  // bar, its badge is outlined, and line 2 says so.
+  const snoozed = isSnoozed(session);
   const flagged = isFlagged(session);
-  const quiet = marked || flagged;
-  const quietText = flagged ? FLAGGED_TEXT : NOT_NEEDED_TEXT;
+  const quiet = snoozed || flagged;
+  // That, or why it's back from a snooze, quietly, first on line 2 after the group's label.
+  const aside = asideText(session);
   // It needs you itself, or a PR it owns does (W106).
-  const own = needsAttention(session, notNeeded);
+  const own = needsAttention(session);
   const prNeed = owned?.find(prNeedsAttention);
   const attention = own || prNeed !== undefined;
   // An ended or finished session that owns an open PR isn't finished work (W106).
   const finished = session.finished && (owned?.length ?? 0) === 0;
-  const badge = rowStatusBadge(session, notNeeded);
+  const badge = rowStatusBadge(session);
   const name = plainText(session.name);
   const title = session.title ? plainText(session.title) : '';
   const reason = !own && prNeed !== undefined ? prNeedText(prNeed) : undefined;
@@ -232,7 +243,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
     event.preventDefault();
     onStep(session.sessionId, event.key === 'ArrowDown' ? 1 : -1);
   };
-  const className = ['session', attention && 'attention', quiet && 'not-needed', finished && 'finished', onOpen && 'openable', isOpen && 'open', onStar && starred && 'starred']
+  const className = ['session', attention && 'attention', quiet && 'set-aside', finished && 'finished', onOpen && 'openable', isOpen && 'open', onStar && starred && 'starred']
     .filter(Boolean)
     .join(' ');
   const badges = [
@@ -258,8 +269,8 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
     ),
   ].filter(Boolean);
 
-  // Line 2, when there's anything to say (W88's toggle has a line 2 to itself when there isn't).
-  const line2 = (label !== undefined || wants || running || quiet || waitingOn !== undefined || elsewhere !== undefined) && (
+  // Line 2, when there's anything to say (the flag and snooze controls have a line 2 to themselves when there isn't).
+  const line2 = (label !== undefined || wants || running || aside !== undefined || waitingOn !== undefined || elsewhere !== undefined) && (
     <Tooltip content={wants?.hint} relation="none" onlyIfCut>
       <p className="session-what">
         {/* What gives way, with an ellipsis, before the running count does. */}
@@ -269,7 +280,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
               <span className="session-group">
                 <Highlight text={label} />
               </span>
-              {(quiet || wants || waitingOn !== undefined) && (
+              {(aside !== undefined || wants || waitingOn !== undefined) && (
                 <span className="session-what-sep" aria-hidden="true">
                   {' · '}
                 </span>
@@ -287,10 +298,10 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
               )}
             </>
           )}
-          {quiet && (
+          {aside !== undefined && (
             // Quiet, as the group's label is, and before what it needs, so it's seen when that's cut short.
             <>
-              <span className="session-not-needed">{quietText}</span>
+              <span className="session-set-aside">{aside}</span>
               {wants && (
                 <span className="session-what-sep" aria-hidden="true">
                   {' · '}
@@ -303,7 +314,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
         {running !== undefined && (
           // Quiet, and never cut: "· 2 sub-agents running", after whatever is before it.
           <span className="session-running">
-            {(label !== undefined || wants || quiet || waitingOn !== undefined) && (
+            {(label !== undefined || wants || aside !== undefined || waitingOn !== undefined) && (
               <span className="session-what-sep" aria-hidden="true">
                 {' · '}
               </span>
@@ -314,7 +325,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
         {elsewhere !== undefined && (
           // Quiet, as the count is, after it: "· also in phil-skills", "+1" for each more.
           <span className="session-elsewhere">
-            {(label !== undefined || wants || quiet || waitingOn !== undefined || running !== undefined) && (
+            {(label !== undefined || wants || aside !== undefined || waitingOn !== undefined || running !== undefined) && (
               <span className="session-what-sep" aria-hidden="true">
                 {' · '}
               </span>
@@ -331,23 +342,30 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
       </p>
     </Tooltip>
   );
-  // While it needs you itself, or is marked not needed now (W88): a mark is for what the session needs, never its PRs'. Shown while it's marked, otherwise on hover and focus.
-  // W153's flag, before it: while it can be flagged, or is. Shown while it's flagged, otherwise on hover and focus.
+  // W153's flag: while it can be flagged, or is. Shown while it's flagged, otherwise on hover and focus.
+  // W154's snooze, after it: while it can be snoozed, or is. A snooze is for what the session needs, never its PRs'.
   const flag = onFlag && (canFlag(session) || flagged) && (
-    <FlagButton sessionId={session.sessionId} name={session.name} flagged={flagged} onChange={(on) => onFlag(session, on)} className="session-not-needed-toggle session-flag-toggle" />
+    <FlagButton sessionId={session.sessionId} name={session.name} flagged={flagged} onChange={(on) => onFlag(session, on)} className="session-set-aside-toggle session-flag-toggle" />
   );
-  const notNeededToggle = onNotNeeded && (own || marked) && (
-    <NotNeededButton sessionId={session.sessionId} name={session.name} marked={marked} onChange={(on) => onNotNeeded(session, on)} className="session-not-needed-toggle" />
+  const snooze = onSnooze && (canSnooze(session) || snoozed) && (
+    <SnoozeButton
+      sessionId={session.sessionId}
+      name={session.name}
+      snoozed={snoozed}
+      onSnooze={(until) => onSnooze(session, until)}
+      onWake={() => onSnooze(session, false)}
+      className="session-set-aside-toggle"
+    />
   );
   const toggle =
-    flag || notNeededToggle ? (
+    flag || snooze ? (
       <>
         {flag}
-        {notNeededToggle}
+        {snooze}
       </>
     ) : (
       // Its place, on a finished session that owns an open PR (W107): it never needs you itself.
-      offerResume && (owned?.length ?? 0) > 0 && canResumeFromRow(session) && <RowResume session={session} className="session-not-needed-toggle session-row-resume" />
+      offerResume && (owned?.length ?? 0) > 0 && canResumeFromRow(session) && <RowResume session={session} className="session-set-aside-toggle session-row-resume" />
     );
 
   return (

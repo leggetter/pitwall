@@ -107,6 +107,8 @@ export interface Records {
   relays: Array<{ name: string; length: number }>;
   /** Each flag and unflag the server answered (W153), by the session's name, with the flag's reason and where it came from. */
   flags: Array<{ action: 'flag' | 'unflag'; name: string; reason?: string; from?: string }>;
+  /** Each snooze and unsnooze the server answered (W154), by the session's name, with its `until`, if any. */
+  snoozes: Array<{ action: 'snooze' | 'unsnooze'; name: string; until?: string }>;
   actions: Array<{ action: 'stop' | 'remove'; name: string }>;
   /** Each resume of an ended session the server answered (W67), by the session's name. */
   resumes: string[];
@@ -146,6 +148,7 @@ const emptyRecords = (): Records => ({
   workPosts: [],
   relays: [],
   flags: [],
+  snoozes: [],
   actions: [],
   resumes: [],
   opens: [],
@@ -385,7 +388,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     const planMake = /^\/api\/sessions\/([^/]+)\/plan-status\/refresh$/.exec(url.pathname);
     if (planMake && method === 'POST') return makePlanStatus(req, res, decodeURIComponent(planMake[1]!));
 
-    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|flag|unflag|stop|remove|resume|open|subagents|end|recap|plan-status)$/.exec(url.pathname);
+    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|flag|unflag|snooze|unsnooze|stop|remove|resume|open|subagents|end|recap|plan-status)$/.exec(url.pathname);
     if (!match) return end(res, 404);
     const session = world.session(decodeURIComponent(match[1]!));
     if (!session) return end(res, 404);
@@ -429,6 +432,23 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (route === 'unflag' && method === 'POST') {
       records.flags.push({ action: 'unflag', name: session.name });
       world.flag(session.sessionId, undefined);
+      broadcast();
+      return json(res, 200, { ok: true });
+    }
+    if (route === 'snooze' && method === 'POST') {
+      // snoozePath(id) (W154): snoozed at once, as the real route says, with `until` or Later.
+      const body = await readJson(req);
+      if (!isRecord(body) || (body.until !== undefined && (typeof body.until !== 'string' || Number.isNaN(Date.parse(body.until))))) return json(res, 400, { ok: false, error: 'Made up: not a SnoozeRequest.' });
+      if (session.needsYou === undefined) return json(res, 409, { ok: false, error: "It doesn't need you now, so there's nothing to snooze." });
+      const snoozed = { at: new Date().toISOString(), ...(typeof body.until === 'string' ? { until: body.until } : {}) };
+      records.snoozes.push({ action: 'snooze', name: session.name, ...(typeof body.until === 'string' ? { until: body.until } : {}) });
+      world.snooze(session.sessionId, snoozed);
+      broadcast();
+      return json(res, 200, { ok: true, snoozed });
+    }
+    if (route === 'unsnooze' && method === 'POST') {
+      records.snoozes.push({ action: 'unsnooze', name: session.name });
+      world.snooze(session.sessionId, undefined);
       broadcast();
       return json(res, 200, { ok: true });
     }

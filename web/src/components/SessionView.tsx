@@ -9,9 +9,10 @@
 // terminal (W47). Under line 2, a line says where to answer while it waits on you, and another what to
 // do about a directory that has gone (W47).
 //
-// A session that needs you can be marked not needed now from the actions menu (W88), and put back in
-// Needs you from there too. While it's marked, its status badge is outlined, with "Not needed now"
-// after it, as its row has. The Dashboard keeps the marks and says so in a toast.
+// A session that needs you can be flagged (W153) or snoozed (W154) from the actions menu, and the flag
+// or snooze taken off from there too. While it's set aside, its status badge is outlined, with "You
+// flagged this" or "Snoozed until 14:30" after it, as its row has; once a snooze ended by itself,
+// "Snooze ended" or "Woken: a new turn". The server keeps both; the Dashboard says so in a toast.
 //
 // An ended interactive session (W67), whose process has exited, has the Conversation tab alone, Ended
 // as its status, and in the footer a note with Resume in background and Copy command, which its actions
@@ -71,11 +72,11 @@ import { focusGesture, spendGesture, type FocusGesture } from '../focusGesture.j
 import { DEFAULT_TERMINAL_FOCUS, type TerminalFocus } from '../terminalFocus.js';
 import { formatRoots, plainText, shortenHome } from '../format.js';
 import { PANEL_MENU_STEP, PANEL_MIN, panelLimits, panelReset, shownPanel, type PanelWidthStore } from '../panelWidth.js';
-import type { NotNeeded } from '../notNeeded.js';
 import { replyInConversation } from '../relay.js';
 import { finishedWaitingOnYou, WAITING_ON_TEXT } from '../recap.js';
-import { attachCommand, canFlag, indexNeedsYou, isFlagged, isNotNeeded, needsAttention, resumeCommand, statusBadge } from '../sessions.js';
-import { FLAG_ITEM, FLAGGED_TEXT, UNFLAG_ITEM } from '../flags.js';
+import { attachCommand, canFlag, canSnooze, isFlagged, isSnoozed, needsAttention, resumeCommand, statusBadge } from '../sessions.js';
+import { SNOOZE_CHOICES, WAKE_ITEM } from '../snooze.js';
+import { FLAG_ITEM, UNFLAG_ITEM } from '../flags.js';
 import { SHORTCUT_KEYS } from '../shortcuts.js';
 import { moveTabFocus } from '../tabs.js';
 import { turnMode, WORKING_POLL_MS, workingLineState } from '../working.js';
@@ -96,7 +97,7 @@ import { MiddleEllipsis } from './MiddleEllipsis.js';
 import { RelayBox } from './RelayBox.js';
 import { SessionConfirm, useSessionActions } from './SessionActions.js';
 import { RecapStrip } from './RecapStrip.js';
-import { finishedAskedHint, finishedRecapHint, NOT_NEEDED_TEXT, SESSION_VIEW_ID, STALE_HINT, titleHint } from './SessionRow.js';
+import { asideText, finishedAskedHint, finishedRecapHint, SESSION_VIEW_ID, STALE_HINT, titleHint } from './SessionRow.js';
 import { StarButton } from './StarButton.js';
 import { SubagentsPanel, subagentsCount, useSubagents } from './Subagents.js';
 import { SessionTerminal, type RestartPhase } from './Terminal.js';
@@ -216,9 +217,6 @@ export interface SessionPlacement {
   workedIn: readonly string[];
 }
 
-/** The actions menu's Not needed now items (W88): one marks the session, the other takes the mark away. */
-export const MARK_NOT_NEEDED = 'Mark not needed now';
-export const PUT_BACK = 'Put back in Needs you';
 
 /** The actions menu's width items' tooltips, when they can't do anything. */
 export const WIDTH_HINTS = {
@@ -364,10 +362,10 @@ export interface SessionViewProps {
   /** Its star toggle, before the actions menu (W53): whether it's starred, and a way to star or unstar it. */
   star?: { starred: boolean; onStar: (sessionId: string, on: boolean) => void } | undefined;
   /**
-   * The viewer's Not needed now marks (W88), and a way to mark it or take the mark away: the actions
-   * menu has Mark not needed now while it needs you, and Put back in Needs you while it's marked.
+   * Snoozes it until a time, or Later, or with `false` takes the snooze off (W154): the actions menu
+   * has a Snooze item for each choice while it can be snoozed, and Wake now while it's snoozed.
    */
-  notNeeded?: { entries: NotNeeded; onChange: (session: SessionSummary, on: boolean) => void } | undefined;
+  onSnooze?: ((session: SessionSummary, until: Date | undefined | false) => void) | undefined;
   /**
    * Flags it as not needing you, or takes the flag away (W153): the actions menu has It doesn't need
    * me while it can be flagged, and Undo flag while it's flagged.
@@ -438,7 +436,7 @@ export function SessionView({
   panel,
   hidden = false,
   star,
-  notNeeded,
+  onSnooze,
   onFlag,
   backgroundTab = 'conversation',
   stepped = false,
@@ -725,11 +723,13 @@ export function SessionView({
     onStep(event.key === 'ArrowDown' ? 1 : -1);
   };
 
-  const badge = statusBadge(session, notNeeded?.entries);
-  // Marked not needed now (W88): its badge is outlined, with "Not needed now" after it.
-  const marked = isNotNeeded(session, notNeeded?.entries);
+  const badge = statusBadge(session);
+  // Snoozed (W154): its badge is outlined, with "Snoozed until …" after it.
+  const snoozed = isSnoozed(session);
   // Flagged as not needing you (W153): the same, with "You flagged this".
   const flagged = isFlagged(session);
+  // That, or why it's back from a snooze.
+  const aside = asideText(session);
   const name = plainText(session.name);
   const title = session.title ? plainText(session.title) : '';
   const cwd = plainText(session.cwd);
@@ -797,34 +797,36 @@ export function SessionView({
           })),
         ]
       : [];
-  // Not needed now (W88), while it needs you and is listed, after the copies: Mark not needed now, or
-  // Put back in Needs you once it's marked.
-  const notNeededEntries: MenuEntry[] =
-    notNeeded && listed && indexNeedsYou(session)
-      ? [
-          { kind: 'separator', id: 'not-needed-separator' },
-          {
-            id: 'not-needed',
-            label: marked ? PUT_BACK : MARK_NOT_NEEDED,
-            icon: marked ? 'undo' : 'not-needed',
-            onSelect: () => notNeeded.onChange(session, !marked),
-          },
-        ]
-      : [];
-  // W153's flag, while it can be flagged or is, and listed: It doesn't need me, or Undo flag.
+  // W153's flag, while it can be flagged or is, and listed, after the copies: It doesn't need me, or Undo flag.
   const flagEntries: MenuEntry[] =
     onFlag && listed && (canFlag(session) || flagged)
       ? [
-          ...(notNeededEntries.length > 0 ? [] : [{ kind: 'separator' as const, id: 'flag-separator' }]),
-          { id: 'flag', label: flagged ? UNFLAG_ITEM : FLAG_ITEM, icon: flagged ? ('undo' as const) : ('flag' as const), onSelect: () => onFlag(session, !flagged) },
+          { kind: 'separator', id: 'flag-separator' },
+          { id: 'flag', label: flagged ? UNFLAG_ITEM : FLAG_ITEM, icon: flagged ? 'undo' : 'flag', onSelect: () => onFlag(session, !flagged) },
+        ]
+      : [];
+  // W154's snooze, while it can be snoozed or is, and listed, after the flag: a Snooze item for each
+  // choice, or Wake now once it's snoozed.
+  const snoozeEntries: MenuEntry[] =
+    onSnooze && listed && (canSnooze(session) || snoozed)
+      ? [
+          ...(flagEntries.length > 0 ? [] : [{ kind: 'separator' as const, id: 'snooze-separator' }]),
+          ...(snoozed
+            ? [{ id: 'wake', label: WAKE_ITEM, icon: 'undo' as const, onSelect: () => onSnooze(session, false) }]
+            : SNOOZE_CHOICES.map((choice, index) => ({
+                id: `snooze-${choice.id}`,
+                label: choice.menuLabel,
+                ...(index === 0 ? { icon: 'snooze' as const } : {}),
+                onSelect: () => onSnooze(session, choice.until(new Date())),
+              }))),
         ]
       : [];
   const entries: MenuEntry[] = [
     { id: 'copy-id', label: 'Copy session ID', icon: 'copy', onSelect: () => copy('Session ID', sessionId) },
     ...(command ? [{ id: 'copy-attach', label: 'Copy attach command', icon: 'terminal' as const, onSelect: () => copy('Attach command', command) }] : []),
     ...(resumeCopy ? [{ id: 'copy-resume', label: COPY_RESUME_COMMAND, icon: 'terminal' as const, onSelect: () => copy('Resume command', resumeCopy) }] : []),
-    ...notNeededEntries,
     ...flagEntries,
+    ...snoozeEntries,
     ...editorEntries,
     ...widthEntries,
     // An ended session can be resumed, never stopped or removed: it has no process (W67).
@@ -920,7 +922,7 @@ export function SessionView({
   // The Pull requests tab shows once the session owns an open PR or is strongly linked to one (W106). Then it stays, as Sub-agents does.
   const ownedPrs = prs?.owned ?? [];
   // Why it needs you, when that's a PR it owns and not the session itself (W128), as its row says it.
-  const prNeed = needsAttention(session, notNeeded?.entries) ? undefined : ownedPrs.find(prNeedsAttention);
+  const prNeed = needsAttention(session) ? undefined : ownedPrs.find(prNeedsAttention);
   const linkedPrs = prs?.linked ?? [];
   const hasPrs = ownedPrs.length > 0 || linkedPrs.length > 0;
   const [prsRevealed, setPrsRevealed] = useState(false);
@@ -960,7 +962,7 @@ export function SessionView({
         <div className="session-view-meta">
           {/* Idle shows here, though not in the list. */}
           <StatusBadge badge={badge} />
-          {(marked || flagged) && <span className="session-view-not-needed">{flagged ? FLAGGED_TEXT : NOT_NEEDED_TEXT}</span>}
+          {aside !== undefined && <span className="session-view-set-aside">{aside}</span>}
           {/*
             The row's other badges, each with an info button after it, so its explanation, which is a
             hover-only tooltip in the row, is reachable here by keyboard and screen readers.

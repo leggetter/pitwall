@@ -18,7 +18,6 @@
 
 import { useId } from 'react';
 import type { SessionSummary, SupervisorHandoff } from '../../../src/shared/protocol.js';
-import type { NotNeeded } from '../notNeeded.js';
 import { statusBadge } from '../sessions.js';
 import { HANDOFF_COPY_NOTE, handoffName, handoffRows, handoffVerb } from '../supervisor.js';
 import { Badge } from './Badge.js';
@@ -39,14 +38,13 @@ export interface SupervisorHandoffsProps {
   handoffs: readonly SupervisorHandoff[] | undefined;
   /** Every session the snapshot lists. */
   sessions: readonly SessionSummary[];
-  notNeeded?: NotNeeded | undefined;
   /** Opens a session's view, as its row in the list does. */
   onOpenSession?: ((sessionId: string) => void) | undefined;
 }
 
-export function SupervisorHandoffs({ handoffs, sessions, notNeeded, onOpenSession }: SupervisorHandoffsProps) {
+export function SupervisorHandoffs({ handoffs, sessions, onOpenSession }: SupervisorHandoffsProps) {
   const headingId = useId();
-  const rows = handoffRows(handoffs, sessions, notNeeded);
+  const rows = handoffRows(handoffs, sessions);
   if (rows.length === 0) return null;
   return (
     <section className="supervisor-handoffs" aria-labelledby={headingId} data-supervisor-handoffs="">
@@ -58,7 +56,7 @@ export function SupervisorHandoffs({ handoffs, sessions, notNeeded, onOpenSessio
         <ul className="supervisor-handoff-list">
           {rows.map((row) => {
             const name = handoffName(row);
-            const badge = row.session === undefined ? undefined : statusBadge(row.session, notNeeded);
+            const badge = row.session === undefined ? undefined : statusBadge(row.session);
             return (
               <li key={row.handoff.id} className={['supervisor-handoff', row.needs !== undefined && 'supervisor-handoff-needs-you'].filter(Boolean).join(' ')} data-handoff={row.handoff.kind}>
                 <div className="supervisor-handoff-line">

@@ -1234,10 +1234,10 @@ h2.empty-state-title:focus {
 }
 
 /*
- * Marked not needed now (W88): outlined, as a stale Blocked is, whatever its status, which keeps its
+ * Flagged (W153) or snoozed (W154): outlined, as a stale Blocked is, whatever its status, which keeps its
  * text. After the rules above, so it takes the place of the solid look: solid is for needing you.
  */
-.badge.state-not-needed {
+.badge.state-set-aside {
   background: none;
   box-shadow: none;
   outline: 1px dashed var(--pw-state-offline-border);
@@ -1839,11 +1839,11 @@ mark.match {
 }
 
 /*
- * A row's Not needed now toggle (section 4: Not needed now, W88), on the rows of sessions that need
- * you, or are marked: at the end of line 2, under the star, so line 1, the session's identity, gives
- * none of its room to it. Line 2 gives way before it, as it does before the sub-agents count. It shows
- * while its session is marked, and otherwise on the row's hover and focus, always on a touch screen,
- * as the star does. 24 px in a 20 px line: the negative block margins keep line 2, and the row, as tall
+ * A row's flag toggle (W153) and snooze menu or toggle (section 4: Snooze, W154), on the rows of
+ * sessions that need you, or are set aside: at the end of line 2, under the star, so line 1, the
+ * session's identity, gives none of its room to them. Line 2 gives way before them, as it does before
+ * the sub-agents count. Each shows while its session is flagged or snoozed, and otherwise on the row's
+ * hover and focus, or while its menu is open, always on a touch screen, as the star does. 24 px in a 20 px line: the negative block margins keep line 2, and the row, as tall
  * as before, and the end margin puts its icon under the star's.
  */
 .session-line-2 {
@@ -1857,29 +1857,30 @@ mark.match {
   flex: 1 1 auto;
 }
 
-.session-not-needed-toggle {
+.session-set-aside-toggle {
   margin-block: calc((var(--pw-leading-s) - var(--pw-control-sm)) / 2);
   margin-inline: auto calc(-1 * var(--pw-space-1));
   transition: opacity var(--pw-duration-fast) var(--pw-ease-standard);
 }
 
-/* W153's flag toggle, before the Not needed now toggle when both show: the pair sits at the end, one gap apart. */
+/* W153's flag toggle, before the snooze menu when both show: the pair sits at the end, one gap apart. */
 .session-flag-toggle:not(:last-child) {
   margin-inline-end: 0;
 }
 
-.session-flag-toggle + .session-not-needed-toggle {
+.session-flag-toggle + .session-set-aside-toggle {
   margin-inline-start: 0;
 }
 
 @media (hover: hover) {
-  .session-not-needed-toggle[aria-pressed='false'],
+  .session-set-aside-toggle[aria-pressed='false'],
+  .snooze-menu.session-set-aside-toggle,
   .session-row-resume:not([aria-busy='true']) {
     opacity: 0;
   }
 
-  .session:hover .session-not-needed-toggle,
-  .session:focus-within .session-not-needed-toggle {
+  .session:hover .session-set-aside-toggle,
+  .session:focus-within .session-set-aside-toggle {
     opacity: 1;
   }
 }
@@ -1941,8 +1942,8 @@ mark.match {
   font-weight: var(--pw-weight-medium);
 }
 
-/* "Not needed now" (W88), as quiet as the group's label, before what it needs. */
-.session-not-needed {
+/* "You flagged this" (W153), "Snoozed until 14:30" or "Snooze ended" (W154), as quiet as the group's label, before what it needs. */
+.session-set-aside {
   color: var(--pw-text-subtle);
 }
 
@@ -1982,9 +1983,9 @@ mark.match {
   color: var(--pw-text-muted);
 }
 
-/* Marked not needed now (W88): what it needs or asked in muted, with nothing in a tone colour, as it doesn't need you now. */
-.session.not-needed .asked,
-.session.not-needed .asked-label {
+/* Flagged or snoozed: what it needs or asked in muted, with nothing in a tone colour, as it doesn't need you now. */
+.session.set-aside .asked,
+.session.set-aside .asked-label {
   color: var(--pw-text-muted);
 }
 
@@ -2325,8 +2326,8 @@ mark.match {
   font-variant-numeric: tabular-nums;
 }
 
-/* "Not needed now" after the outlined status badge (W88), in line 2's meta text, as the row says it. */
-.session-view-not-needed {
+/* "You flagged this" or "Snoozed until …" after the outlined status badge, in line 2's meta text, as the row says it. */
+.session-view-set-aside {
   flex: none;
   white-space: nowrap;
 }

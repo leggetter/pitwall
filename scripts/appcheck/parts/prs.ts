@@ -311,27 +311,29 @@ const part: Part = {
       await page.waitFor('the filters to clear', `!${MAIN}.querySelector('.filter-chips .chip[aria-pressed="true"]')`);
     });
 
-    await t.step('Needs you lists the PR rows that need you, with the sessions; one marked not needed now stays while its PR needs you, and says why', async () => {
+    await t.step('Needs you lists the PR rows that need you, with the sessions; one snoozed stays while its PR needs you, and says why (W154)', async () => {
       await chooseInRepoList(t, 'Needs you');
       t.expectEqual(await page.evaluate(rows), [NAMES.waiting, NAMES.asked, NAMES.prompting, n(PRS.review), n(PRS.teamReview)], 'the sessions, then the PR rows, by activity');
-      const toggle = `${row(NAMES.asked)}?.closest('li').querySelector('[data-not-needed-session]')`;
-      await page.click(`the toggle on ${NAMES.asked}`, toggle);
-      await page.waitFor('it marked', `${toggle}?.getAttribute('aria-pressed') === 'true'`);
+      const toggle = `${row(NAMES.asked)}?.closest('li').querySelector('[data-snooze-session]')`;
+      await page.click(`the snooze menu on ${NAMES.asked}`, toggle);
+      await page.waitFor('its menu', `!!${row(NAMES.asked)}?.closest('li').querySelector('[role="menu"]')`);
+      await page.click('Later', `[...${row(NAMES.asked)}.closest('li').querySelectorAll('[role="menuitem"]')].find((item) => item.textContent.startsWith('Later'))`);
+      await page.waitFor('it snoozed', `${toggle}?.getAttribute('aria-pressed') === 'true'`);
       await page.settle(150);
       t.expect((await page.evaluate<string[]>(rows)).includes(NAMES.asked), '#612 still needs you, so it stays');
-      t.expectEqual(await page.evaluate(`${row(NAMES.asked)}?.closest('li').querySelector('.session-what-text')?.textContent`), 'demo-app · Not needed now · Needs you for example/event-relay#612: conflicts', 'line 2 says why, naming the PR (W128)');
-      t.expect(await page.evaluate<boolean>(`${toasts}.includes(${q(`Marked ${NAMES.asked} not needed now. It stays in Needs you while #612 needs you.`)})`), 'the toast says it stays, and why');
-      const colours = await page.evaluate<{ reason: string; muted: string }>(`(() => { const li = ${row(NAMES.asked)}.closest('li'); return { reason: getComputedStyle(li.querySelector('.pr-reason')).color, muted: getComputedStyle(li.querySelector('.session-not-needed')).color }; })()`);
+      t.expectEqual(await page.evaluate(`${row(NAMES.asked)}?.closest('li').querySelector('.session-what-text')?.textContent`), "demo-app · Snoozed until it's woken · Needs you for example/event-relay#612: conflicts", 'line 2 says why, naming the PR (W128)');
+      t.expect(await page.evaluate<boolean>(`${toasts}.includes(${q(`Snoozed ${NAMES.asked} until it's woken: a turn you didn't start, such as a message or a finished task. It stays in Needs you while #612 needs you.`)})`), 'the toast says it stays, and why');
+      const colours = await page.evaluate<{ reason: string; muted: string }>(`(() => { const li = ${row(NAMES.asked)}.closest('li'); return { reason: getComputedStyle(li.querySelector('.pr-reason')).color, muted: getComputedStyle(li.querySelector('.session-set-aside')).color }; })()`);
       t.expect(colours.reason !== colours.muted, "the PR's reason isn't muted: it still holds", colours);
-      await t.shot('marked-with-pr');
+      await t.shot('snoozed-with-pr');
       // Its view says so too, the PR a link (W128).
       await openFromRow(t, NAMES.asked);
       const need = await page.evaluate<{ text: string; link: string } | null>(`(() => { const p = ${SESSION_VIEW}.querySelector('.session-view-pr-need'); return p ? { text: p.textContent, link: p.querySelector('button.pr-link')?.getAttribute('aria-label') ?? '' } : null; })()`);
       t.expectEqual(need, { text: 'Needs you for example/event-relay#612: conflicts', link: 'Pull request example/event-relay#612' }, 'its view says why, the PR a link');
       await t.shot('view-pr-need');
       await closeView();
-      await page.click(`the toggle on ${NAMES.asked} again`, toggle);
-      await page.waitFor('the mark gone', `${toggle}?.getAttribute('aria-pressed') === 'false'`);
+      await page.click(`the snooze toggle on ${NAMES.asked}`, toggle);
+      await page.waitFor('the snooze gone', `${toggle}?.getAttribute('aria-haspopup') === 'menu'`);
     });
 
     await t.step('Refresh fetches once, with its spinner, then is off for a minute', async () => {
