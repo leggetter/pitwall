@@ -41,7 +41,6 @@ import { PR_PARAM, SESSION_PARAM, SUPERVISOR_PARAM, withoutParams, type HistoryM
 import { outgoingText } from './relay.js';
 import { browserNavigation, type NavigationEnv } from './selection.js';
 import { needsAttention, needsText, recapNeedsText, statusBadge, type BadgeLook, type StatusBadge } from './sessions.js';
-import type { NotNeeded } from './notNeeded.js';
 import { currentStep, turnStartIndex, turnStarted, type WorkingLineState } from './working.js';
 
 export { SUPERVISOR_PARAM };
@@ -297,7 +296,7 @@ export const handoffName = (row: HandoffRow) => visibleString(row.handoff.copy =
  * session started and then messaged is one row, "Started", since that's where it came from, and so is
  * one resumed and then messaged, "Resumed" (W127).
  */
-export function handoffRows(handoffs: readonly SupervisorHandoff[] | undefined, sessions: readonly SessionSummary[], notNeeded?: NotNeeded): HandoffRow[] {
+export function handoffRows(handoffs: readonly SupervisorHandoff[] | undefined, sessions: readonly SessionSummary[]): HandoffRow[] {
   const byKey = new Map<string, { row: HandoffRow; order: number; started: boolean }>();
   (handoffs ?? []).forEach((handoff, order) => {
     const session = handoffSession(handoff, sessions);
@@ -309,7 +308,7 @@ export function handoffRows(handoffs: readonly SupervisorHandoff[] | undefined, 
     const row: HandoffRow = { handoff: kept };
     if (session !== undefined) {
       row.session = session;
-      if (needsAttention(session, notNeeded)) row.needs = `${visibleString(session.name)} needs you: ${needsReason(session)}`;
+      if (needsAttention(session)) row.needs = `${visibleString(session.name)} needs you: ${needsReason(session)}`;
     }
     byKey.set(key, { row, order, started });
   });

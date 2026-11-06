@@ -14,7 +14,7 @@
 // need-you badge when any need you, otherwise how many, and nothing while none is starred, as Needs you
 // shows nothing while nothing needs you.
 //
-// A session marked not needed now (W88, notNeeded.ts) counts in none of the need-you badges: Needs
+// A session flagged (W153) or snoozed (W154) counts in none of the need-you badges: Needs
 // you's, Starred's, the groups' and the Hidden section's. Each group still counts it among its sessions.
 //
 // The Supervisor (M5, W114), first, above Needs you, in every root tab while pitwall runs one: a link
@@ -53,7 +53,6 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent, t
 import type { SessionGroup, SupervisorStatus } from '../../../src/shared/protocol.js';
 import { plainText } from '../format.js';
 import { absentGroup, sameGroup, type HiddenGroup } from '../hidden.js';
-import type { NotNeeded } from '../notNeeded.js';
 import { groupSelection, sameSelection, selectionHref, VIEW_NAMES, viewIn, type Selection } from '../selection.js';
 import { groupId, groupLabel, repoListGroups, sessionsIn } from '../sessions.js';
 import { itemStatusText, STATUS_LABELS, STATUS_LOOKS, SUPERVISOR_NAME, SUPERVISOR_VIEW_ID } from '../supervisor.js';
@@ -81,17 +80,17 @@ interface Item {
 
 /**
  * A group's item: its rows, each session once, as Group sessions by lists them (W42), and the PRs no
- * session owns listed under it (W106), and how many of them need you, without what's marked not
- * needed now (W88).
+ * session owns listed under it (W106), and how many of them need you, without what's flagged or
+ * snoozed.
  */
-function groupItem(group: ListGroup, roots: readonly string[], notNeeded: NotNeeded | undefined, work: Work): Item {
+function groupItem(group: ListGroup, roots: readonly string[], work: Work): Item {
   return {
     id: groupId(group),
     selection: groupSelection(group, roots),
     label: plainText(groupLabel(group)),
     kind: group.kind,
     ...(group.notCloned ? { notCloned: true } : {}),
-    attention: countNeeds([group], notNeeded, work),
+    attention: countNeeds([group], work),
     count: countRows([group]),
     muted: allDone(group, work),
   };
@@ -130,8 +129,6 @@ export interface RepoListProps {
   tab?: string | undefined;
   /** The starred sessions' ids, under any root, for Starred's count (W53). Nothing is starred when it's undefined. */
   starred?: ReadonlySet<string> | undefined;
-  /** The viewer's Not needed now marks (W88), which no need-you badge counts. Nothing is marked when it's undefined. */
-  notNeeded?: NotNeeded | undefined;
   /**
    * The Pull requests item, under Starred (W95, W106): how many of the root's rows with an open PR need
    * you through one, and how many there are, undefined before the first fetch. No item when it's
@@ -162,7 +159,7 @@ const SUPERVISOR_ITEM = 'supervisor';
 /** Where focus was in the list, to hand it on if what had it goes. */
 type FocusedPart = { zone: 'items'; index: number } | { zone: 'hidden'; part: 'link' | 'unhide'; index: number };
 
-export function RepoList({ groups, roots, selection, onSelect, autoFocus = false, skeletons = false, inert = false, hidden, tab, starred, notNeeded, prs, work = NO_WORK, supervisor }: RepoListProps) {
+export function RepoList({ groups, roots, selection, onSelect, autoFocus = false, skeletons = false, inert = false, hidden, tab, starred, prs, work = NO_WORK, supervisor }: RepoListProps) {
   const hiddenId = useId();
   const nav = useRef<HTMLElement>(null);
   // Each session once, though in Every repo it worked in it may be in several groups (W42).
@@ -174,7 +171,7 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
       id: 'view:needs-you',
       selection: viewIn('needs-you', tab),
       label: VIEW_NAMES['needs-you'],
-      attention: countNeeds(groups ?? [], notNeeded, work) + (supervisor?.approvals ?? 0),
+      attention: countNeeds(groups ?? [], work) + (supervisor?.approvals ?? 0),
       count: undefined,
       muted: false,
     },
@@ -185,7 +182,7 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
       id: 'view:starred',
       selection: viewIn('starred', tab),
       label: VIEW_NAMES.starred,
-      attention: starredSessions.filter((session) => sessionNeedsYou(session, notNeeded, work)).length,
+      attention: starredSessions.filter((session) => sessionNeedsYou(session, work)).length,
       count: groups && starredSessions.length > 0 ? starredSessions.length : undefined,
       muted: false,
     },
@@ -197,7 +194,7 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
   const sections = repoListGroups(
     (groups ?? []).filter((group) => !hiddenGroups.some((entry) => sameGroup(entry, group))),
     roots,
-  ).map(({ root, groups: rootGroups }) => ({ root, entries: rootGroups.map((group) => groupItem(group, roots, notNeeded, work)) }));
+  ).map(({ root, groups: rootGroups }) => ({ root, entries: rootGroups.map((group) => groupItem(group, roots, work)) }));
   const items = [...views, ...sections.flatMap((section) => section.entries)];
 
   // The hidden groups as the snapshot has them, or with no sessions when it hasn't, in the list's order.
@@ -209,12 +206,12 @@ export function RepoList({ groups, roots, selection, onSelect, autoFocus = false
     root,
     entries: rootGroups.flatMap((group) => {
       const listed = listedHidden.find(({ entry }) => sameGroup(entry, group));
-      return listed ? [{ item: groupItem(group, roots, notNeeded, work), entry: listed.entry, present: listed.group !== undefined }] : [];
+      return listed ? [{ item: groupItem(group, roots, work), entry: listed.entry, present: listed.group !== undefined }] : [];
     }),
   }));
   const hiddenEntries = hiddenSections.flatMap((section) => section.entries);
   // The hidden groups' sessions that need you, each once, so nothing that needs you is out of sight.
-  const hiddenAttention = countNeeds(listedHidden.flatMap(({ group }) => (group ? [group] : [])), notNeeded, work);
+  const hiddenAttention = countNeeds(listedHidden.flatMap(({ group }) => (group ? [group] : [])), work);
 
   // The one item in the Tab order: the last one focused, else the selection, else the first.
   const [focused, setFocused] = useState<string>();

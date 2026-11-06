@@ -25,8 +25,9 @@ import { isRecord } from '../index/guards.js';
 import { DENIAL_PREFIX, KNOWN_INPUT_FIELDS } from './relayGateHook.mjs';
 import { describeCopyDifference } from './relayText.js';
 
-/** The relay's session name: what a target sees as the sender. */
-export const RELAY_NAME = 'pitwall-relay';
+/** The relay's session name: what a target sees as the sender. In the protocol since W154, whose wake rule leaves its messages out. */
+import { RELAY_NAME } from '../shared/protocol.js';
+export { RELAY_NAME };
 
 /** The model the relay runs on. Each request costs one short turn. */
 export const RELAY_MODEL = 'haiku';

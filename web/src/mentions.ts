@@ -27,7 +27,6 @@
 
 import { visibleParts, visibleString } from '../../src/shared/hiddenText.js';
 import type { PullRequestSummary, SessionSummary } from '../../src/shared/protocol.js';
-import type { NotNeeded } from './notNeeded.js';
 import { prKey, prName } from './prs.js';
 import { needsAttention } from './sessions.js';
 
@@ -88,9 +87,9 @@ interface Node {
  * The session a name means when several share it: the one that needs you, or else the one alive,
  * or none.
  */
-function pick(sessions: readonly SessionSummary[], notNeeded: NotNeeded | undefined): SessionSummary | undefined {
+function pick(sessions: readonly SessionSummary[]): SessionSummary | undefined {
   if (sessions.length === 1) return sessions[0];
-  const needing = sessions.filter((session) => needsAttention(session, notNeeded));
+  const needing = sessions.filter((session) => needsAttention(session));
   if (needing.length === 1) return needing[0];
   if (needing.length > 1) return undefined;
   const alive = sessions.filter((session) => session.alive && !session.ended);
@@ -101,7 +100,7 @@ function pick(sessions: readonly SessionSummary[], notNeeded: NotNeeded | undefi
  * The mentions pitwall can link: every session in `sessions`, by name, short id and id, and every PR
  * in `prs`. With neither, nothing is ever linked.
  */
-export function createMentions(sessions: readonly SessionSummary[], prs: readonly PullRequestSummary[] = [], notNeeded?: NotNeeded): Mentions {
+export function createMentions(sessions: readonly SessionSummary[], prs: readonly PullRequestSummary[] = []): Mentions {
   // Each name or id, by its lowercase form, with every session it could mean.
   const byKey = new Map<string, { text: string; sessions: SessionSummary[] }>();
   for (const session of sessions) {
@@ -116,7 +115,7 @@ export function createMentions(sessions: readonly SessionSummary[], prs: readonl
   }
   const targets = new Map<string, { target: MentionTarget; generic: boolean }>();
   for (const [lower, entry] of byKey) {
-    const session = pick(entry.sessions, notNeeded);
+    const session = pick(entry.sessions);
     if (session === undefined) continue;
     targets.set(lower, { target: { kind: 'session', sessionId: session.sessionId, name: session.name }, generic: GENERIC.test(entry.text) });
   }

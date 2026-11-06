@@ -21,7 +21,8 @@ import { createShortcutsStore, ShortcutsStoreContext } from '../shortcuts.js';
 import { group, minutesAgo, NOW, pr, prLink, prList, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
 import { toastMessages } from '../test/toasts.js';
-import { Dashboard, notNeededStaysText } from './Dashboard.js';
+import { snoozedToast } from '../snooze.js';
+import { Dashboard } from './Dashboard.js';
 import { CONFIGURATION_URL, NO_RELATION, prSourceBody, REFRESH_LABEL, REFRESH_OFF } from './PrList.js';
 import { COPY_LINK, OPEN_ON_GITHUB, OWNS_IT, PR_MISSING, PrView } from './PrView.js';
 import { LINKED_NOTE } from './SessionPrs.js';
@@ -236,16 +237,16 @@ describe('rows', () => {
     expect(sessionRow('alpha').querySelector('.session-what')?.textContent).toBe('demo-app · You: run the tests');
   });
 
-  it('marking a session not needed now while its PR needs you keeps it in Needs you, and the toast says why', async () => {
+  it('a session snoozed while its PR needs you stays in Needs you, and the toast says why (W154)', async () => {
     const base = snap();
-    const kappa = session({ sessionId: 'pr-kappa', name: 'kappa', status: 'waiting', waitingFor: 'permission prompt', prLinks: [prLink('pushed', failing, 1)] });
+    const kappa = session({ sessionId: 'pr-kappa', name: 'kappa', status: 'waiting', waitingFor: 'permission prompt', prLinks: [prLink('pushed', failing, 1)], snoozed: { at: '2026-03-02T11:00:00.000Z' } });
     const s = { ...base, groups: [...base.groups, group({ key: `${ROOT}/more`, label: 'more', sessions: [kappa] })] };
     render(<Dashboard view={{ state: 'live', snapshot: s, prs: prList(PRS) }} navigation={memoryNavigation('?view=needs-you')} storage={memory().source} />);
-    fireEvent.click(sessionRow('kappa').querySelector<HTMLElement>('[data-not-needed-session]')!);
     await settle();
-    expect(toastMessages()).toEqual([notNeededStaysText('kappa', 42)]);
-    expect(notNeededStaysText('kappa', 42)).toBe('Marked kappa not needed now. It stays in Needs you while #42 needs you.');
-    expect(sessionRow('kappa').querySelector('.session-what-text')?.textContent).toBe('more · Not needed now · Needs you for example/demo-app#42: CI failing');
+    expect(sessionRow('kappa').querySelector('.session-what-text')?.textContent).toBe("more · Snoozed until it's woken · Needs you for example/demo-app#42: CI failing");
+    expect(snoozedToast('kappa', { at: '2026-03-02T11:00:00.000Z' }, new Date(NOW), 42)).toBe(
+      "Snoozed kappa until it's woken: a turn you didn't start, such as a message or a finished task. It stays in Needs you while #42 needs you.",
+    );
   });
 
   it("says nothing of its PR in the session view while the session needs you itself (W128)", async () => {

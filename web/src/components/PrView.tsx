@@ -21,7 +21,6 @@
 import { useId, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import type { PrLinkKind, PullRequestSummary } from '../../../src/shared/protocol.js';
 import { plainText } from '../format.js';
-import type { NotNeeded } from '../notNeeded.js';
 import { githubPrUrl, prName, prRelationText, type LinkedSession } from '../prs.js';
 import { statusBadge } from '../sessions.js';
 import { Alert } from './Alert.js';
@@ -87,14 +86,14 @@ function plainKey(event: KeyboardEvent): boolean {
 }
 
 /** One linked session: its name, a button that opens it, its status badge, its last activity, and why it's linked. */
-function LinkedRow({ linked, notNeeded, onOpen, owns = false }: { linked: LinkedSession; notNeeded: NotNeeded | undefined; onOpen: (sessionId: string) => void; owns?: boolean }) {
+function LinkedRow({ linked, onOpen, owns = false }: { linked: LinkedSession; onOpen: (sessionId: string) => void; owns?: boolean }) {
   const { session, link } = linked;
   return (
     <li className={session.finished ? 'pr-view-session finished' : 'pr-view-session'}>
       <button type="button" className="link-button pr-view-session-open" data-open-linked-session={session.sessionId} onClick={() => onOpen(session.sessionId)}>
         <bdi>{plainText(session.name)}</bdi>
       </button>
-      <StatusBadge badge={statusBadge(session, notNeeded)} />
+      <StatusBadge badge={statusBadge(session)} />
       {session.lastActivityAt && <Timestamp className="pr-view-session-activity" at={session.lastActivityAt} prefix="Active " />}
       <span className="pr-view-session-why">
         {LINK_KINDS[link.kind]}
@@ -116,8 +115,6 @@ export interface PrViewProps {
   sessions: { strong: readonly LinkedSession[]; mentioned: readonly LinkedSession[] };
   /** The session that owns it (W106, prOwner()), listed first under Sessions, as its session. */
   ownerId?: string | undefined;
-  /** The viewer's Not needed now marks (W88), for the sessions' status badges. */
-  notNeeded?: NotNeeded | undefined;
   /** Opens a linked session's view, in this view's place. */
   onOpenSession: (sessionId: string) => void;
   /**
@@ -138,7 +135,7 @@ export interface PrViewProps {
   backLabel?: string | undefined;
 }
 
-export function PrView({ pr, missing, sessions, ownerId, notNeeded, onOpenSession, onStart, onClose, layout = 'overlay', compact = false, headingRef, onStep, animate = true, backLabel }: PrViewProps) {
+export function PrView({ pr, missing, sessions, ownerId, onOpenSession, onStart, onClose, layout = 'overlay', compact = false, headingRef, onStep, animate = true, backLabel }: PrViewProps) {
   const ids = { title: useId(), details: useId(), sessions: useId(), mentioned: useId() };
   const title = plainText(pr.title);
   const url = githubPrUrl(pr);
@@ -210,7 +207,7 @@ export function PrView({ pr, missing, sessions, ownerId, notNeeded, onOpenSessio
               {[...sessions.strong]
                 .sort((a, b) => Number(b.session.sessionId === ownerId) - Number(a.session.sessionId === ownerId))
                 .map((linked) => (
-                  <LinkedRow key={linked.session.sessionId} linked={linked} notNeeded={notNeeded} onOpen={onOpenSession} owns={linked.session.sessionId === ownerId} />
+                  <LinkedRow key={linked.session.sessionId} linked={linked} onOpen={onOpenSession} owns={linked.session.sessionId === ownerId} />
                 ))}
             </ul>
           ) : (
@@ -233,7 +230,7 @@ export function PrView({ pr, missing, sessions, ownerId, notNeeded, onOpenSessio
             </h3>
             <ul className="pr-view-sessions">
               {sessions.mentioned.map((linked) => (
-                <LinkedRow key={linked.session.sessionId} linked={linked} notNeeded={notNeeded} onOpen={onOpenSession} />
+                <LinkedRow key={linked.session.sessionId} linked={linked} onOpen={onOpenSession} />
               ))}
             </ul>
           </section>

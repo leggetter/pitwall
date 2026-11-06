@@ -85,10 +85,10 @@
 }
 
 /*
- * A session marked not needed now mutes what it needs (styles.css), but not why a PR it owns needs
+ * A session flagged or snoozed mutes what it needs (styles.css), but not why a PR it owns needs
  * you (W106): that still holds, and keeps the row in Needs you.
  */
-.session.not-needed .session-what .asked.pr-reason {
+.session.set-aside .session-what .asked.pr-reason {
   color: var(--pw-text);
 }
 

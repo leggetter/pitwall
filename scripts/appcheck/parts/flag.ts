@@ -1,5 +1,5 @@
 // Flag: "It doesn't need me" (W153; docs/design-system.md, 4: Flag): the flag toggle on the row of a
-// running session that needs you, before the Not needed now toggle, which stays under the star; flagging
+// running session that needs you, before the snooze menu (W154), which stays under the star; flagging
 // a row in Needs you takes it out, with a toast and Undo, the title counting one fewer; flagged, it's
 // quiet in All sessions with "You flagged this" and the toggle pressed; the toggle takes the flag away;
 // and the session view's actions menu flags it and undoes it.
@@ -19,11 +19,11 @@ const NEEDING = [NAMES.waiting, NAMES.asked, NAMES.prompting];
 
 const part: Part = {
   name: 'flag',
-  title: "Flag, It doesn't need me: the row's toggle beside Not needed now's, flagging from Needs you, the quiet row in All sessions, undoing from the row, and the actions menu",
+  title: "Flag, It doesn't need me: the row's toggle beside the snooze menu, flagging from Needs you, the quiet row in All sessions, undoing from the row, and the actions menu",
   async run(t) {
     const { page, server } = t;
 
-    await t.step("each running row that needs you has a flag toggle before the Not needed now toggle, which stays under the star; a row that needs nothing has none", async () => {
+    await t.step("each running row that needs you has a flag toggle before the snooze menu, which stays under the star; a row that needs nothing has none", async () => {
       await t.fresh({ search: '?view=all', prs: 'off' });
       for (const name of NEEDING) {
         const state = await page.evaluate<Record<string, unknown> | null>(
@@ -32,7 +32,7 @@ const part: Part = {
             if (!flag) return null;
             const li = flag.closest('li.session');
             const line2 = li.querySelector('.session-line-2');
-            const mark = line2.querySelector('.not-needed-toggle');
+            const mark = line2.querySelector('.snooze-menu');
             const star = li.querySelector('.session-star').getBoundingClientRect();
             const f = flag.getBoundingClientRect();
             const m = mark.getBoundingClientRect();
@@ -40,7 +40,7 @@ const part: Part = {
             return { pressed: flag.getAttribute('aria-pressed'), next: flag.nextElementSibling === mark, markLast: line2.lastElementChild === mark, under: Math.round(Math.abs(m.right - star.right)), apart: f.right <= m.left, inside: f.left >= l.left && m.right <= Math.ceil(star.right) + 1 };
           })()`,
         );
-        t.expectEqual(state, { pressed: 'false', next: true, markLast: true, under: 0, apart: true, inside: true }, `${name}'s flag toggle, before Not needed now's`);
+        t.expectEqual(state, { pressed: 'false', next: true, markLast: true, under: 0, apart: true, inside: true }, `${name}'s flag toggle, before the snooze menu`);
       }
       for (const name of [NAMES.running, NAMES.conversation]) t.expect(!(await page.evaluate<boolean>(`!!${rowOf(name)}?.querySelector('.flag-toggle')`)), `${name} needs nothing, so it has none`);
       // Focus in the row shows both toggles, as hover does.
@@ -65,11 +65,11 @@ const part: Part = {
         const li = ${rowOf(NAMES.asked)};
         const badge = li.querySelector('.badge[data-status]');
         const flag = li.querySelector('.flag-toggle');
-        return { attention: li.dataset.attention ?? null, quiet: badge.classList.contains('state-not-needed'), outline: getComputedStyle(badge).outlineStyle, line2: li.querySelector('.session-what')?.textContent ?? '', pressed: flag?.getAttribute('aria-pressed'), shown: getComputedStyle(flag).opacity, mark: !!li.querySelector('.not-needed-toggle') };
+        return { attention: li.dataset.attention ?? null, quiet: badge.classList.contains('state-set-aside'), outline: getComputedStyle(badge).outlineStyle, line2: li.querySelector('.session-what')?.textContent ?? '', pressed: flag?.getAttribute('aria-pressed'), shown: getComputedStyle(flag).opacity, mark: !!li.querySelector('.snooze-menu') };
       })()`);
       t.expectEqual([look.attention, look.quiet, look.outline], [null, true, 'dashed'], 'no attention, its badge outlined');
       t.expect(String(look.line2).startsWith('demo-app · You flagged this · Asked: '), 'line 2: the group, You flagged this, then what it asked', look.line2);
-      t.expectEqual([look.pressed, look.shown, look.mark], ['true', '1', false], 'the flag pressed and shown, and no Not needed now toggle');
+      t.expectEqual([look.pressed, look.shown, look.mark], ['true', '1', false], 'the flag pressed and shown, and no snooze menu');
       await t.shot('quiet');
     });
 
@@ -81,12 +81,12 @@ const part: Part = {
       t.expectEqual(await page.evaluate('document.title'), '(3) pitwall', 'the title counts it');
     });
 
-    await t.step("the session view's actions menu flags it after Mark not needed now, and Undo flag takes it away", async () => {
+    await t.step("the session view's actions menu flags it, after the copies and before the Snooze items, and Undo flag takes it away", async () => {
       await openFromRow(t, NAMES.prompting);
       await page.click('Session actions', MENU_BUTTON);
       await page.waitFor('the menu', `!!${VIEW}?.querySelector('[role="menu"]')`);
       const items = await page.evaluate<string[]>(ITEMS);
-      t.expect(items.indexOf("It doesn't need me") === items.indexOf('Mark not needed now') + 1, "It doesn't need me, after Mark not needed now", items);
+      t.expect(items.indexOf("It doesn't need me") === items.indexOf('Copy attach command') + 1 && items.indexOf('Snooze for 1 hour') === items.indexOf("It doesn't need me") + 1, "It doesn't need me, after the copies, before the Snooze items", items);
       await page.click("It doesn't need me", menuItem("It doesn't need me"));
       await page.waitFor('the toast', `${toasts}.includes(${q(flagged(NAMES.prompting))})`);
       const meta = await page.evaluate<string>(`${VIEW}.querySelector('.session-view-meta').textContent`);

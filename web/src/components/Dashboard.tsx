@@ -29,12 +29,13 @@
 // Starring never selects or opens a session. Unstarred in Starred, a row leaves at once, and focus
 // goes to the star toggle of the row that took its place (SessionList.tsx).
 //
-// A session that needs you can be marked not needed now (W88, notNeeded.ts), from the toggle on its
-// row or its view's actions menu, and it leaves everything needsAttention() drives: Needs you, the
-// repo list's badges, the session list's "N need you", the root tabs' badges, the document title's
-// count and the urgency sort. Each snapshot drops the marks whose sessions need something else now,
-// so they're back in Needs you by themselves. Each mark says so in a toast with Undo; a row marked in
-// Needs you leaves at once, and focus goes to the toggle of the row that took its place.
+// A session that needs you can be snoozed (W154, snooze.ts), from the snooze menu on its row or its
+// view's actions menu, and it leaves everything needsAttention() drives: Needs you, the repo list's
+// badges, the session list's "N need you", the root tabs' badges, the document title's count and the
+// urgency sort, as a flagged one does (W153). The server keeps it, and ends it when its time is up or
+// the session is woken, so it's back in Needs you by itself. Each snooze says so in a toast with Undo;
+// a row snoozed in Needs you leaves once the snapshot says so, and focus goes to the snooze menu of
+// the row that took its place. W88's marks, which the browser kept, are removed once, as it loads.
 //
 // The single-key shortcuts (6.2) are handled here: `/` focuses the filter field, `n` opens the New
 // session dialog, `?` the keyboard shortcuts dialog, `j` and `k` move through the session list as
@@ -113,6 +114,7 @@
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ApiContext } from '../api.js';
 import { flaggedText, flagSession, UNDO_FLAG, unflaggedText, unflagSession } from '../flags.js';
+import { dropOldMarks, snoozedToast, snoozeSession, UNDO_SNOOZE, unsnoozeSession, wokenText } from '../snooze.js';
 import type { PullRequestRelation, PullRequestSummary, SessionSummary } from '../../../src/shared/protocol.js';
 import {
   composeWork,
@@ -144,7 +146,6 @@ import { everyGroupId, groupByPhrase, groupSessions, useGroupBy, type GroupBy } 
 import { browserStorage, FINISHED_STATE_KEY, readGroupState, writeGroupState, type GroupState, type StorageSource } from '../groupState.js';
 import { absentGroup, useHiddenGroups, type HiddenGroup } from '../hidden.js';
 import { useLayout } from '../layout.js';
-import { useNotNeeded } from '../notNeeded.js';
 import { useOpenSession, withSession, type OpenSession } from '../openSession.js';
 import { useOpenPr, withPr } from '../openPr.js';
 import { approvalsWaiting, asSupervisorState, SUPERVISOR_DRAFT_ID, useOpenSupervisor, withSupervisor } from '../supervisor.js';
@@ -177,7 +178,6 @@ import {
   FILTER_CHIPS,
   filterNeedle,
   groupLabel,
-  indexNeedsYou,
   isOlderEnded,
   NO_FILTERS,
   noMatchText,
@@ -254,26 +254,8 @@ const startedKey = (shortId: string) => `started:${shortId}`;
 /** The toast for `s`, which stars or unstars the open session while focus is elsewhere (W53). */
 export const starredText = (name: string, on: boolean) => `${on ? 'Starred' : 'Unstarred'} ${plainText(name)}.`;
 
-/**
- * The toast once a session is marked not needed now (W88), with UNDO_NOT_NEEDED: it has left Needs you,
- * and says when it comes back.
- */
-export const notNeededText = (name: string) => `Marked ${plainText(name)} not needed now. It comes back to Needs you when what it needs changes.`;
-
-/**
- * The same toast for a session that also needs you through an open PR it owns (W106): the mark is
- * for what the session needs, so it stays in Needs you while the PR does.
- */
-export const notNeededStaysText = (name: string, number: number) => `Marked ${plainText(name)} not needed now. It stays in Needs you while #${number} needs you.`;
-
-/** That toast's action: it takes the mark away, so the session is back in Needs you. */
-export const UNDO_NOT_NEEDED = 'Undo';
-
-/** The toast once the session view's Put back in Needs you takes a mark away, since the menu has closed (W88). */
-export const putBackText = (name: string) => `Put ${plainText(name)} back in Needs you.`;
-
-/** What a session's Not needed now toasts are about, so each replaces the last. */
-const notNeededKey = (sessionId: string) => `not-needed:${sessionId}`;
+/** What a session's snooze toasts are about, so each replaces the last (W154). */
+const snoozeKey = (sessionId: string) => `snooze:${sessionId}`;
 
 /** Starred's empty state, with nothing starred under the root (W53, 4: Empty states). */
 export const NO_STARRED = { title: 'No starred sessions', sentence: 'Star a session from its row or its view to keep it here.' } as const;
@@ -493,16 +475,10 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const everySession = useMemo(() => sessionsIn(groups), [groups]);
   // How many rows the open tab lists: its sessions, and its PR rows (W106).
   const tabRows = useMemo(() => countRows(shownGroups), [shownGroups]);
-  // The sessions marked not needed now (W88), every root's, whether or not they're in the snapshot.
-  // Each snapshot drops those it lists as needing something else now; never those it doesn't list.
-  const notNeeded = useNotNeeded(storage);
-  const marks = notNeeded.entries;
-  const { prune } = notNeeded;
-  useEffect(() => {
-    if (startGroups) prune(sessionsIn(startGroups));
-  }, [startGroups, prune]);
+  // W88's Not needed now marks, which W154's snoozes replaced: removed once, not carried over.
+  useEffect(() => dropOldMarks(storage), [storage]);
   // Every root's rows that need you, a PR's included (W106): the page title's count.
-  const attention = countNeeds(groups, marks, work);
+  const attention = countNeeds(groups, work);
   const selectedGroup = findGroup(groups, selection);
   // Groups hidden from the repo list, under these roots, whether or not they're in the snapshot (W35).
   // The repo list shows the open tab's.
@@ -517,10 +493,10 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // The root tab's older PR rows (W106): only the Pull requests view lists them, with Show older on, and nothing counts them.
   const olderPrs = useMemo(() => olderPrRows(shownGroups, work, tab), [shownGroups, work, tab]);
   const listed = useMemo(() => {
-    const base = scope ? listWork(shownGroups, scope, sort, grouped.home, marks, work) : { current: [], finished: [] };
+    const base = scope ? listWork(shownGroups, scope, sort, grouped.home, work) : { current: [], finished: [] };
     if (scope?.kind !== 'prs' || !showOlderPrs || olderPrs.length === 0) return base;
-    return { current: [...base.current, ...olderPrs].sort(rowOrder('urgency', marks, work)), finished: [] };
-  }, [shownGroups, scope?.kind, selectedGroup, sort, grouped.home, starred.set, marks, work, showOlderPrs, olderPrs]);
+    return { current: [...base.current, ...olderPrs].sort(rowOrder('urgency', work)), finished: [] };
+  }, [shownGroups, scope?.kind, selectedGroup, sort, grouped.home, starred.set, work, showOlderPrs, olderPrs]);
   const [prFilter, setPrFilter] = useState('');
   // The Pull requests view's chips (W101): the page's, none on at each load, never stored, as the filter's text.
   const [prRelations, setPrRelations] = useState<ReadonlySet<PullRequestRelation>>(() => new Set());
@@ -539,7 +515,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     const every = tabGroups(groupedAll.groups, tab);
     const everyScope = scopeOf(every);
     if (!everyScope) return 0;
-    const old = listWork(every, everyScope, sort, groupedAll.home, undefined, work).finished.filter(({ session }) => older(session));
+    const old = listWork(every, everyScope, sort, groupedAll.home, work).finished.filter(({ session }) => older(session));
     return filterRows(old, filters, work).length;
   }, [anyOlder, prsSelected, groupedAll, tab, selection, starred.set, sort, endedNow, filters, work, owners]);
   // Every session pitwall lists, the older ended ones too, each once: the session view shows one
@@ -844,8 +820,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const stepByKey = (root: HTMLElement, by: 1 | -1): boolean => {
     const buttons = rowButtons();
     const active = document.activeElement;
-    // A row's name button, its star toggle (W53), or its Not needed now toggle (W88).
-    const toggleOf = active instanceof HTMLElement ? (active.dataset.starSession ?? active.dataset.notNeededSession) : undefined;
+    // A row's name button, its star toggle (W53), or its snooze menu or toggle (W154).
+    const toggleOf = active instanceof HTMLElement ? (active.dataset.starSession ?? active.dataset.snoozeSession) : undefined;
     const onRow =
       active instanceof HTMLElement && active.closest('.session-list') !== null
         ? buttons.includes(active)
@@ -1044,7 +1020,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     // and Show older show: so every session, as olderCount reads them.
     const every = tabGroups(groupedAll.groups, tab);
     const everyScope = scopeOf(every);
-    const inView = everyScope ? listWork(every, everyScope, sort, groupedAll.home, marks, work) : { current: [], finished: [] };
+    const inView = everyScope ? listWork(every, everyScope, sort, groupedAll.home, work) : { current: [], finished: [] };
     const viewLists = [...inView.current, ...inView.finished].some((row) => !isPrRow(row) && row.session.sessionId === sessionId);
     const next = snapshot ? selectionShowing({ roots, groups: groupedAll.groups }, selection, tab, sessionId, groupedAll.home, viewLists) : undefined;
     if (next === undefined) {
@@ -1178,40 +1154,6 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     return true;
   };
 
-  // Not needed now (W88): from a row's toggle or the view's actions menu. A mark is a toast with Undo,
-  // since the session has left Needs you, where it may not be in sight; a later one about the same
-  // session replaces it. Taking a mark away from the row needs no toast, as the toggle shows it, and
-  // the mark's toast goes, with nothing left to undo; from the menu, which has closed, it's a toast.
-  const undoFocus = useRef<string | undefined>(undefined);
-  const undoNotNeeded = useRef<(sessionId: string) => void>(() => {});
-  // The sessions whose mark's toast, with Undo, may still show: it goes once the mark goes by itself,
-  // as what the session needs changes or another tab takes it away, since Undo would have nothing to do.
-  const markToasts = useRef(new Set<string>());
-  const { dismiss: dismissToast } = toasts;
-  useEffect(() => {
-    for (const sessionId of markToasts.current) {
-      if (marks.has(sessionId)) continue;
-      markToasts.current.delete(sessionId);
-      dismissToast(notNeededKey(sessionId));
-    }
-  }, [marks, dismissToast]);
-  const setNotNeeded = (session: SessionSummary, on: boolean, from: 'row' | 'menu') => {
-    const key = notNeededKey(session.sessionId);
-    if (!on) {
-      markToasts.current.delete(session.sessionId);
-      notNeeded.unmark(session.sessionId);
-      if (from === 'menu') toasts.show({ tone: 'success', key, message: putBackText(session.name) });
-      else toasts.dismiss(key);
-      return;
-    }
-    // Only one the index says needs you: the toggle and the menu item are on no other.
-    if (!indexNeedsYou(session)) return;
-    notNeeded.mark(session);
-    markToasts.current.add(session.sessionId);
-    const stays = prNeeding(session, work);
-    const message = stays === undefined ? notNeededText(session.name) : notNeededStaysText(session.name, stays.number);
-    toasts.show({ tone: 'success', key, message, action: { label: UNDO_NOT_NEEDED, onAction: () => undoNotNeeded.current(session.sessionId) } });
-  };
   // Flag, "It doesn't need me" (W153): from a row's flag toggle or the view's actions menu. The server
   // keeps it, so the snapshot says it's flagged as soon as it is; the toast says what came of asking
   // the session, with Undo. Taking it away from the row needs no toast, as the toggle shows it.
@@ -1237,23 +1179,59 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       toasts.show({ tone, key, message, action: { label: UNDO_FLAG, onAction: () => setFlag(session, false, 'row') } });
     });
   };
-  // Undo takes its toast away, so focus it had goes to the session's toggle, back in the list and
-  // unpressed, or where focusList() puts it when the list doesn't show it or the view covers it.
-  // Focus that wasn't in the toast, as after a click that doesn't focus, stays where it is.
-  undoNotNeeded.current = (sessionId) => {
-    const active = document.activeElement;
-    markToasts.current.delete(sessionId);
-    notNeeded.unmark(sessionId);
-    if (active instanceof Element && active.closest('.toasts') !== null) undoFocus.current = sessionId;
+  // Snooze (W154): from a row's snooze menu or the view's actions menu. The server keeps it, so the
+  // snapshot says it's snoozed as soon as it is; the toast says until when, with Undo. Taking it off
+  // from the row needs no toast, as the toggle shows it; from the menu, which has closed, it's a toast.
+  // A snooze's toast goes once the snooze ends by itself, since Undo would have nothing to do.
+  const snoozeToasts = useRef(new Map<string, string>());
+  const { dismiss: dismissToast } = toasts;
+  useEffect(() => {
+    for (const [sessionId, at] of snoozeToasts.current) {
+      const ended = everySession.find((session) => session.sessionId === sessionId)?.snoozeEnded;
+      if (ended === undefined || Date.parse(ended.at) < Date.parse(at)) continue;
+      snoozeToasts.current.delete(sessionId);
+      dismissToast(snoozeKey(sessionId));
+    }
+  }, [everySession, dismissToast]);
+  // Undo from the toast puts focus, which the toast took with it, on the session's snooze menu, back
+  // in the list, once the snapshot says it's woken, or where focusList() puts it when the list doesn't
+  // show it or the view covers it. Focus that wasn't in the toast stays where it is.
+  const [wakeFocus, setWakeFocus] = useState<string | undefined>(undefined);
+  const setSnooze = (session: SessionSummary, until: Date | undefined | false, from: 'row' | 'menu' | 'toast') => {
+    if (!api) return;
+    const { sessionId } = session;
+    const key = snoozeKey(sessionId);
+    if (until === false) {
+      snoozeToasts.current.delete(sessionId);
+      const active = document.activeElement;
+      const inToast = from === 'toast' && active instanceof Element && active.closest('.toasts') !== null;
+      void unsnoozeSession(api, sessionId).then((error) => {
+        if (error !== undefined) toasts.show({ tone: 'error', key, message: error });
+        else if (from === 'menu') toasts.show({ tone: 'success', key, message: wokenText(session.name) });
+        else toasts.dismiss(key);
+        if (error === undefined && inToast) setWakeFocus(sessionId);
+      });
+      return;
+    }
+    void snoozeSession(api, sessionId, until).then((outcome) => {
+      if (outcome.kind === 'failed') {
+        toasts.show({ tone: 'error', key, message: outcome.error });
+        return;
+      }
+      snoozeToasts.current.set(sessionId, outcome.snoozed.at);
+      const message = snoozedToast(session.name, outcome.snoozed, new Date(), prNeeding(session, work)?.number);
+      toasts.show({ tone: 'success', key, message, action: { label: UNDO_SNOOZE, onAction: () => setSnooze(session, false, 'toast') } });
+    });
   };
   useEffect(() => {
-    const sessionId = undoFocus.current;
-    if (sessionId === undefined) return;
-    undoFocus.current = undefined;
+    if (wakeFocus === undefined) return;
+    // The snapshot hasn't said it's woken yet: its row isn't back.
+    if (everySession.find((session) => session.sessionId === wakeFocus)?.snoozed !== undefined) return;
+    setWakeFocus(undefined);
     const toggle = overlaid
       ? undefined
-      : [...(app.current?.querySelectorAll<HTMLElement>('.session-list [data-not-needed-session]') ?? [])].find(
-          (button) => button.dataset.notNeededSession === sessionId && !button.closest('[hidden]'),
+      : [...(app.current?.querySelectorAll<HTMLElement>('.session-list [data-snooze-session]') ?? [])].find(
+          (button) => button.dataset.snoozeSession === wakeFocus && !button.closest('[hidden]'),
         );
     if (toggle) toggle.focus();
     else focusList();
@@ -1518,7 +1496,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     tabRows > 0 &&
     !((scope.kind === 'needs-you' || scope.kind === 'starred' || scope.kind === 'prs') && total === 0) &&
     (scope.kind !== 'prs' || prsListed);
-  const summaryAttention = listed.current.filter((row) => rowNeedsYou(row, marks, work)).length;
+  const summaryAttention = listed.current.filter((row) => rowNeedsYou(row, work)).length;
   // The Pull requests view's Clear filters: its text and its chips, and focus in its field, since the button goes.
   const clearPrFilters = () => {
     setPrFilter('');
@@ -1720,7 +1698,6 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       hidden={{ groups: shownHidden, open: hidden.open, onToggle: () => hidden.setOpen(!hidden.open), onUnhide: unhide }}
       tab={tab}
       starred={starred.set}
-      notNeeded={marks}
       prs={repoListPrs}
       work={work}
       supervisor={
@@ -1773,7 +1750,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         prompts.current.set(session.sessionId, open);
       }}
       star={{ starred: starred.set.has(session.sessionId), onStar: starred.star }}
-      notNeeded={{ entries: marks, onChange: (changed, on) => setNotNeeded(changed, on, 'menu') }}
+      onSnooze={api ? (changed, until) => setSnooze(changed, until, 'menu') : undefined}
       onFlag={api ? (changed, on) => setFlag(changed, on, 'menu') : undefined}
       backgroundTab={backgroundTab}
       stepped={hiddenIn === undefined && stepped.current === session.sessionId}
@@ -1830,7 +1807,6 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         missing={prMissing}
         sessions={sessionsFor(shownPr, everyListed)}
         ownerId={work.ownerOf.get(prOpen)?.sessionId}
-        notNeeded={marks}
         onStart={snapshot && prMissing === undefined && work.ownerOf.get(prOpen) === undefined ? startPr : undefined}
         onOpenSession={openSessionFromPr}
         onClose={closePr}
@@ -1894,7 +1870,6 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
           drafts.current.set(SUPERVISOR_DRAFT_ID, has);
         }}
         sessions={supervisorSessions}
-        notNeeded={notNeeded.entries}
         onOpenSession={openSessionFromPr}
         prs={prList?.prs}
         onOpenPr={openPrView}
@@ -1968,7 +1943,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         tabs={
           tab === undefined
             ? undefined
-            : { tabs: roots.map((root) => ({ root, attention: tabAttention(groups, root, marks, work) })), active: tab, onSelect: switchTab, panelId, tabId }
+            : { tabs: roots.map((root) => ({ root, attention: tabAttention(groups, root, work) })), active: tab, onSelect: switchTab, panelId, tabId }
         }
       />
 
@@ -2020,8 +1995,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             openSessionId={openId}
             starred={starred.set}
             onStar={starred.star}
-            notNeeded={marks}
-            onNotNeeded={(changed, on) => setNotNeeded(changed, on, 'row')}
+            onSnooze={api ? (changed, until) => setSnooze(changed, until, 'row') : undefined}
             onFlag={api ? (changed, on) => setFlag(changed, on, 'row') : undefined}
             inert={overlaid}
             older={olderCount > 0 ? { count: olderCount, shown: showOlder, onToggle: toggleOlder } : undefined}

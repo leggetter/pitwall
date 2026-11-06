@@ -113,7 +113,7 @@ describe('sessions.ts', () => {
     expect(needsAttention(review)).toBe(true);
     expect(needsAttention(flagged)).toBe(false);
     expect(isFlagged(flagged)).toBe(true);
-    expect(statusBadge(flagged)).toMatchObject({ status: 'blocked', look: 'outline', notNeeded: true });
+    expect(statusBadge(flagged)).toMatchObject({ status: 'blocked', look: 'outline', setAside: true });
     expect([review, docs, gone, idle, flagged].map(canFlag)).toEqual([true, true, false, false, false]);
   });
 });
@@ -144,7 +144,7 @@ describe('the flag toggle on a row', () => {
     expect(flagToggle('docs')).not.toBeNull();
     expect(flagToggle('idle')).toBeNull();
     expect(flagToggle('gone')).toBeNull();
-    // Before the Not needed now toggle, at the end of line 2.
+    // Before the snooze menu, at the end of line 2.
     const line2 = row('review').querySelector('.session-line-2')!;
     expect([...line2.querySelectorAll('button')].map((button) => button.className.includes('flag-toggle'))).toEqual([true, false]);
   });
@@ -179,9 +179,9 @@ describe('the flag toggle on a row', () => {
   it('stays in All sessions, quietly: the badge outlined, "You flagged this" on line 2, the toggle pressed', () => {
     renderDashboard(snap(sessions(true)), fakeServer(), '?view=all');
     const flagged = row('review');
-    expect(flagged.className).toContain('not-needed');
-    expect(flagged.querySelector('.session-not-needed')?.textContent).toBe(FLAGGED_TEXT);
-    expect(flagged.querySelector('.badge[data-status]')?.className).toContain('state-not-needed');
+    expect(flagged.className).toContain('set-aside');
+    expect(flagged.querySelector('.session-set-aside')?.textContent).toBe(FLAGGED_TEXT);
+    expect(flagged.querySelector('.badge[data-status]')?.className).toContain('state-set-aside');
     expect(flagToggle('review')?.getAttribute('aria-pressed')).toBe('true');
   });
 });
@@ -208,7 +208,7 @@ describe("the session view's actions menu", () => {
     expect(posts(fetch)).toEqual([[flagPath(id(1)), { reason: 'claude-code', from: 'view' }]]);
     again(snap(sessions(true)));
     await settle();
-    expect(view()!.querySelector('.session-view-not-needed')?.textContent).toBe(FLAGGED_TEXT);
+    expect(view()!.querySelector('.session-view-set-aside')?.textContent).toBe(FLAGGED_TEXT);
     expect(menuLabels()).toContain(UNFLAG_ITEM);
     fireEvent.click(within(view()!).getByRole('button', { name: 'Session actions' }));
     fireEvent.click(screen.getByRole('menuitem', { name: UNFLAG_ITEM }));

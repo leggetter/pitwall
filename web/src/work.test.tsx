@@ -102,11 +102,11 @@ describe('a finished session that owns an open PR', () => {
 
   it('is listed with the rest, not in Finished, until the PR closes', () => {
     expect([isDone(gone, work), isDone(done, work)]).toEqual([false, true]);
-    const { current, finished } = listWork([demo], { kind: 'group', group: demo }, 'urgency', undefined, undefined, work);
+    const { current, finished } = listWork([demo], { kind: 'group', group: demo }, 'urgency', undefined, work);
     expect(named(current)).toEqual(['live', 'gone']);
     expect(named(finished)).toEqual(['done']);
     const closed = composeWork([live, gone, done], []);
-    expect(named(listWork([demo], { kind: 'all' }, 'urgency', undefined, undefined, closed).finished)).toEqual(['done', 'gone']);
+    expect(named(listWork([demo], { kind: 'all' }, 'urgency', undefined, closed).finished)).toEqual(['done', 'gone']);
   });
 
   it('stays in the ended sessions’ window, however old, and a group of its finished work alone is no longer muted', () => {
@@ -158,8 +158,8 @@ describe('where a PR no session owns is listed', () => {
     const failingOld = { ...pr({ number: 9, checks: 'failing' }, 200 * DAY), place: notCloned };
     const withFailing = composeWork([worker], [...prs, failingOld], { now: NOW });
     const [olderRow] = olderPrRows(groups, withFailing).filter(({ pr: each }) => each.number === 9);
-    expect([olderRow?.group.notCloned, rowNeedsYou(olderRow!, undefined, withFailing)]).toEqual([true, false]);
-    expect(countNeeds(withPrRows([demo], withFailing), undefined, withFailing)).toBe(countNeeds(groups, undefined, work));
+    expect([olderRow?.group.notCloned, rowNeedsYou(olderRow!, withFailing)]).toEqual([true, false]);
+    expect(countNeeds(withPrRows([demo], withFailing), withFailing)).toBe(countNeeds(groups, work));
     // Under another root's tab, none; and a now that isn't a time, as before the first fetch, hides nothing.
     expect(olderPrRows(groups, work, '/Users/example/oss')).toEqual([]);
     expect(composeWork([worker], prs).older).toEqual([]);
@@ -175,9 +175,9 @@ describe('where a PR no session owns is listed', () => {
   });
 
   it('is a row in its group, All sessions and Pull requests; never Starred', () => {
-    expect(named(listWork(groups, { kind: 'group', group: groups[1]! }, 'urgency', undefined, undefined, work).current)).toEqual(['#3']);
-    expect(named(listWork(groups, { kind: 'all' }, 'recent', undefined, undefined, work).current)).toEqual(['worker', '#2', '#3', '#4']);
-    expect(named(listWork(groups, { kind: 'starred', ids: new Set([worker.sessionId]) }, 'urgency', undefined, undefined, work).current)).toEqual(['worker']);
+    expect(named(listWork(groups, { kind: 'group', group: groups[1]! }, 'urgency', undefined, work).current)).toEqual(['#3']);
+    expect(named(listWork(groups, { kind: 'all' }, 'recent', undefined, work).current)).toEqual(['worker', '#2', '#3', '#4']);
+    expect(named(listWork(groups, { kind: 'starred', ids: new Set([worker.sessionId]) }, 'urgency', undefined, work).current)).toEqual(['worker']);
     expect([countRows(groups), countRows([groups[0]!])]).toEqual([4, 2]);
   });
 });
@@ -196,29 +196,28 @@ describe('Needs you, through a PR', () => {
   const groups = withPrRows([demo], work);
 
   it('counts a session whose PR needs attention, and a PR row that does; never a mention', () => {
-    expect([sessionNeedsYou(owner, undefined, work), sessionNeedsYou(idle, undefined, work), sessionNeedsYou(waiting, undefined, work)]).toEqual([true, false, true]);
+    expect([sessionNeedsYou(owner, work), sessionNeedsYou(idle, work), sessionNeedsYou(waiting, work)]).toEqual([true, false, true]);
     expect(prNeeding(owner, work)?.number).toBe(128);
     // owner, waiting, #9 and #57: not idle, nor the mention with its author's failing checks.
-    expect(countNeeds(groups, undefined, work)).toBe(4);
-    expect(tabAttention(groups, ROOT, undefined, work)).toBe(4);
+    expect(countNeeds(groups, work)).toBe(4);
+    expect(tabAttention(groups, ROOT, work)).toBe(4);
     // Without who owns what, only the session that needs you itself and the PR rows the groups carry.
     expect(tabAttention(groups, ROOT)).toBe(3);
-    expect(named(listWork(groups, { kind: 'needs-you' }, 'urgency', undefined, undefined, work).current)).toEqual(['waiting', 'owner', '#9', '#57']);
+    expect(named(listWork(groups, { kind: 'needs-you' }, 'urgency', undefined, work).current)).toEqual(['waiting', 'owner', '#9', '#57']);
   });
 
-  it('counts an ended session through its PR, and one marked not needed now still needs you through its PR', () => {
+  it('counts an ended session through its PR, and one snoozed still needs you through its PR (W154)', () => {
     const work2 = composeWork([gone], [failing]);
-    expect(sessionNeedsYou(gone, undefined, work2)).toBe(true);
-    const marked = new Map([[waiting.sessionId, 'x']]) as unknown as Parameters<typeof sessionNeedsYou>[1];
-    const ownsAndWaits = session({ name: 'both', status: 'waiting', waitingFor: 'permission prompt', prLinks: [prLink('opened', failing)] });
+    expect(sessionNeedsYou(gone, work2)).toBe(true);
+    const ownsAndWaits = session({ name: 'both', status: 'waiting', waitingFor: 'permission prompt', prLinks: [prLink('opened', failing)], snoozed: { at: '2026-11-06T10:00:00.000Z' } });
     const work3 = composeWork([ownsAndWaits], [failing]);
-    expect(sessionNeedsYou(ownsAndWaits, marked, work3)).toBe(true);
+    expect(sessionNeedsYou(ownsAndWaits, work3)).toBe(true);
   });
 
   it('counts the Pull requests item: the rows with an open PR, and those that need you through one', () => {
     // owner and the three PR rows; owner, #9 and #57 need you through a PR, waiting doesn't count.
     expect(prRowCounts(groups, work)).toEqual({ count: 4, attention: 3 });
-    expect(named(listWork(groups, { kind: 'prs' }, 'name', undefined, undefined, work).current)).toEqual(['owner', '#9', '#57', '#23']);
+    expect(named(listWork(groups, { kind: 'prs' }, 'name', undefined, work).current)).toEqual(['owner', '#9', '#57', '#23']);
   });
 });
 
@@ -232,12 +231,12 @@ describe('how the rows sort and filter', () => {
   const demo = group({ key: DEMO, sessions: [busy, idle, stale] });
   const work: Work = composeWork([busy, idle, stale], [failing, quiet, ownedPr]);
   const [groupOf] = withPrRows([demo], work);
-  const rows = listWork([groupOf!], { kind: 'group', group: groupOf! }, 'urgency', undefined, undefined, work).current;
+  const rows = listWork([groupOf!], { kind: 'group', group: groupOf! }, 'urgency', undefined, work).current;
 
   it('sorts by Urgency as sessions do, a PR that needs you first, a PR row by its update, stale ones last', () => {
     expect(named(rows)).toEqual(['#3', 'busy', '#4', 'idle', 'stale']);
-    expect(named([...rows].sort(rowOrder('recent', undefined, work)))).toEqual(['stale', '#4', 'idle', 'busy', '#3']);
-    expect(named([...rows].sort(rowOrder('name', undefined, work)))).toEqual(['#3', 'busy', 'idle', 'stale', '#4']);
+    expect(named([...rows].sort(rowOrder('recent', work)))).toEqual(['stale', '#4', 'idle', 'busy', '#3']);
+    expect(named([...rows].sort(rowOrder('name', work)))).toEqual(['#3', 'busy', 'idle', 'stale', '#4']);
     expect(rowKey(rows[0]!)).toBe(`pr:${prKey(failing)}`);
   });
 
@@ -247,10 +246,10 @@ describe('how the rows sort and filter', () => {
     const staleOwner = session({ name: 'stale-owner', kind: 'background', shortId: 'b7', status: undefined, state: 'blocked', stale: true, needsYou: undefined, lastActivityAt: minutesAgo(8 * DAY), prLinks: [prLink('opened', failingPr)] });
     const owned = composeWork([calm, staleOwner], [failingPr]);
     const group0 = group({ key: DEMO, sessions: [calm, staleOwner] });
-    expect(sessionNeedsYou(staleOwner, undefined, owned)).toBe(true);
-    expect(named(listWork([group0], { kind: 'all' }, 'urgency', undefined, undefined, owned).current)).toEqual(['stale-owner', 'calm']);
+    expect(sessionNeedsYou(staleOwner, owned)).toBe(true);
+    expect(named(listWork([group0], { kind: 'all' }, 'urgency', undefined, owned).current)).toEqual(['stale-owner', 'calm']);
     // Without the PR it's stale and calm: after the others, as before.
-    expect(named(listWork([group0], { kind: 'all' }, 'urgency', undefined, undefined, composeWork([calm, staleOwner], [])).current)).toEqual(['calm', 'stale-owner']);
+    expect(named(listWork([group0], { kind: 'all' }, 'urgency', undefined, composeWork([calm, staleOwner], [])).current)).toEqual(['calm', 'stale-owner']);
   });
 
   it('keeps PR rows out of a kind chip, and Has PR keeps the rows with a PR', () => {
