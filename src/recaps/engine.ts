@@ -614,12 +614,12 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     if (closed) return;
     const throughMs = Math.max(Number.isNaN(startedActivity) ? 0 : startedActivity, collector.newestMs ?? 0);
 
-    if (update && collector.count === 0) {
+    if (update && collector.turns === 0) {
       // New activity, but no turn the input would show: the recap still holds, through it.
       keep(job.sessionId, { ...previous, throughAt: new Date(throughMs).toISOString() });
       return changed();
     }
-    if (!update && collector.count === 0 && read.firstPrompt === undefined) {
+    if (!update && collector.turns === 0 && read.firstPrompt === undefined) {
       return fail(job.sessionId, throughMs, 'This session has nothing pitwall can recap yet.', 'quiet');
     }
     const prs = prsOf(session);
@@ -750,7 +750,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
       return { kind: 'made', status };
     };
     // Nothing to read: no plan, without a call.
-    if (collector.count === 0 && read.firstPrompt === undefined && read.compaction === undefined) return keep({ found: false });
+    if (collector.turns === 0 && read.firstPrompt === undefined && read.compaction === undefined) return keep({ found: false });
     const prs = prsOf(session);
     const input = planStatusInput(
       {

@@ -191,6 +191,19 @@ describe('TurnCollector, for an update, keeps your lines past the cap (W152)', (
     ]);
   });
 
+  it("keeps the relay's unverified messages past the cap, which after a restart are yours, and counts no marker as a turn", () => {
+    const relay = { name: 'pitwall-relay', sent: () => false };
+    const answer = entry('cross-session', 'Yes, go ahead.', 0, { at: atS(5), from: 'pitwall-relay', msgId: 'before-a-restart' });
+    const lines = collect([answer, ...Array.from({ length: 12 }, (_, i) => handBack(40 + i))], { after: atS(0), relay }).text().split('\n');
+    expect(lines[0]).toBe('[10-28 15:00] Message from session pitwall-relay (unverified): Yes, go ahead.');
+    expect(lines[1]).toMatch(/^\[… \d+ other turns left out …\]$/);
+
+    const unread = new TurnCollector({ after: atS(0) });
+    unread.finish(true);
+    expect(unread.count).toBe(1);
+    expect(unread.turns).toBe(0);
+  });
+
   it('says older turns were not read when your lines pass their cap, or the reading stops early', () => {
     const yours = Array.from({ length: 30 }, (_, i) => entry('user', `answer ${i} ${'y'.repeat(900)}`, 0, { at: atS(1 + i) }));
     const text = collect(yours, { after: atS(0) }).text();

@@ -108,10 +108,10 @@ export interface RelayMessages {
 }
 
 /** What an entry says, as its line's speaker and text, or undefined for one a recap leaves out. */
-function speakerOf(entry: ConversationEntry, relay: RelayMessages | undefined): { speaker: string; text: string } | undefined {
+function speakerOf(entry: ConversationEntry, relay: RelayMessages | undefined): { speaker: string; text: string; yours?: true } | undefined {
   switch (entry.kind) {
     case 'user':
-      return { speaker: 'User', text: entry.text };
+      return { speaker: 'User', text: entry.text, yours: true };
     case 'assistant':
       return { speaker: 'Claude', text: entry.text };
     case 'to-pitwall':
@@ -124,8 +124,10 @@ function speakerOf(entry: ConversationEntry, relay: RelayMessages | undefined): 
       const from = entry.from === undefined ? '' : plainLine(entry.from, NAME_MAX);
       if (relay !== undefined && entry.from === relay.name) {
         // Yours only when this pitwall's relay sent it.
-        if (entry.msgId !== undefined && relay.sent(entry.msgId)) return { speaker: 'User', text: entry.text };
-        return { speaker: `Message from session ${from} (unverified)`, text: entry.text };
+        if (entry.msgId !== undefined && relay.sent(entry.msgId)) return { speaker: 'User', text: entry.text, yours: true };
+        // Kept past an update's cap too (W152): after a restart, your earlier messages read as
+        // unverified, and one may be your answer. Still under RECAP_USER_LINES_CAP, still labelled.
+        return { speaker: `Message from session ${from} (unverified)`, text: entry.text, yours: true };
       }
       return { speaker: from === '' ? 'Message from another session' : `Message from session ${from}`, text: entry.text };
     }
@@ -136,7 +138,7 @@ function speakerOf(entry: ConversationEntry, relay: RelayMessages | undefined): 
         const answer = q.answer === undefined ? (entry.toolError === true ? ' (not answered)' : '') : ` (you answered: ${q.answer})`;
         return `${q.question}${answer}`;
       });
-      return { speaker: 'Claude asked', text: asked.join(' · ') };
+      return { speaker: 'Claude asked', text: asked.join(' · '), yours: true };
     }
     case 'tool':
       return undefined;
@@ -156,7 +158,8 @@ export const RECAP_USER_LINES_CAP = 8000;
  * previous recap's `throughAt`: an entry at or before it is covered, and ends the collection.
  *
  * An update (W152) doesn't stop at the cap: past it, it keeps reading back to the previous recap for
- * your own lines (`User:`, and `Claude asked` with what you answered), up to RECAP_USER_LINES_CAP more, and leaves the other turns out, so the
+ * your own lines (`User:`, `Claude asked` with what you answered, and the relay's unverified messages,
+ * which after a restart are yours too), up to RECAP_USER_LINES_CAP more, and leaves the other turns out, so the
  * other turns it keeps are the newest ones in a row. A line `[… N other turns left out …]` stands where
  * turns were left out, and `[… older turns since the previous recap not read …]` at the start says
  * your lines ran past their cap, or the reading stopped (finish(true)), before the previous recap.
@@ -175,6 +178,8 @@ export class TurnCollector {
   private skipped = 0;
   /** An update that stopped before the previous recap: your lines ran past their cap. */
   private userCut = false;
+  /** How many of the lines are markers. */
+  private markers = 0;
   /** The newest entry's time seen, in milliseconds, for the recap's `throughAt`. */
   newestMs: number | undefined;
 
@@ -208,7 +213,7 @@ export class TurnCollector {
     if (!this.flushTools()) return false;
     const said = speakerOf(entry, this.options.relay);
     if (said === undefined) return true;
-    return this.push(`${timeLabel(entry.at)}${said.speaker}: ${flat(said.text, ENTRY_MAX)}`, said.speaker === 'User' || entry.kind === 'question');
+    return this.push(`${timeLabel(entry.at)}${said.speaker}: ${flat(said.text, ENTRY_MAX)}`, said.yours === true);
   }
 
   /**
@@ -232,6 +237,11 @@ export class TurnCollector {
   /** How many lines it holds, the markers included. */
   get count(): number {
     return this.lines.length;
+  }
+
+  /** How many turn lines it holds, without the markers: none means there's nothing to recap (W152's review). */
+  get turns(): number {
+    return this.lines.length - this.markers;
   }
 
   /** An update's collection, which keeps your lines past the cap (W152). */
@@ -292,6 +302,7 @@ export class TurnCollector {
   /** A marker line, kept whatever the caps: there are at most one per line of yours and one more. */
   private mark(marker: string): void {
     this.keep(marker, marker.length + (this.lines.length === 0 ? 0 : 1));
+    this.markers++;
     this.skipped = 0;
   }
 }

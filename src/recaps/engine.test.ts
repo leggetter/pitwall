@@ -104,7 +104,7 @@ function harness(options: Partial<RecapEngineOptions> = {}) {
   let latest: IndexSnapshot | undefined;
   const listeners = new Set<(snapshot: IndexSnapshot) => void>();
   /** Entries a conversation page holds; all of them in one page by default. */
-  const paging: { size?: number } = {};
+  const paging: { size?: number; fail?: boolean } = {};
   const index: RecapIndex = {
     latest: () => latest,
     subscribe(listener) {
@@ -112,6 +112,7 @@ function harness(options: Partial<RecapEngineOptions> = {}) {
       return () => listeners.delete(listener);
     },
     async conversation(sessionId, before): Promise<ConversationPage | undefined> {
+      if (paging.fail === true) throw new Error('made-up read failure');
       const all = pages.get(sessionId) ?? [];
       if (paging.size === undefined) return { sessionId, entries: all };
       // Pages of paging.size entries, the cursor the index of the oldest entry handed back.
@@ -1291,6 +1292,14 @@ describe('an answer in a busy stretch (W152)', () => {
     expect(turns).toContain('Done: step 29.');
     expect(turns).not.toContain('not read');
     expect(h.calls[0]!.input).toContain(BUDGET);
+  });
+
+  it("makes no call when the turns can't be read, and keeps the recap (W152's review)", async () => {
+    const { h, a } = busy(8);
+    h.paging.fail = true;
+    await h.poll([a]);
+    expect(h.calls).toHaveLength(0);
+    expect(h.engine.recap(a)).toMatchObject({ todos: [{ text: BUDGET, owner: 'you' }] });
   });
 
   it('says older turns were not read when the stretch is longer than its pages', async () => {
