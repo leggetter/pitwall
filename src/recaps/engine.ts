@@ -229,7 +229,7 @@ export interface RecapEngineOptions {
   budgetStore?: BudgetStore;
   /** Where recaps are kept across restarts (W132). Default `recap-store/` beside `dir`, in pitwall's home (store.ts). */
   recapStore?: RecapStore;
-  /** How many conversation pages a recap reads at most. Default 8. */
+  /** How many conversation pages a recap reads at most. Default 8; a first recap twice it, an update four times (W152). */
   maxPages?: number;
   /** Default: console.error with a `pitwall: recaps:` prefix. Never given session content. */
   log?: (message: string) => void;
@@ -608,16 +608,18 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
       ...(update ? { after: previous.throughAt } : { cap: PLAN_TURNS_CAP }),
     });
     // A first recap reads a plan status's turns, three times an update's, so up to twice its pages.
-    await collectTurns(source, job.sessionId, collector, update ? maxPages : 2 * maxPages);
+    // An update reads back to the previous recap for your lines past its cap (W152), up to four times
+    // its pages; one with less since the previous recap stops there.
+    await collectTurns(source, job.sessionId, collector, update ? 4 * maxPages : 2 * maxPages);
     if (closed) return;
     const throughMs = Math.max(Number.isNaN(startedActivity) ? 0 : startedActivity, collector.newestMs ?? 0);
 
-    if (update && collector.count === 0) {
+    if (update && collector.turns === 0) {
       // New activity, but no turn the input would show: the recap still holds, through it.
       keep(job.sessionId, { ...previous, throughAt: new Date(throughMs).toISOString() });
       return changed();
     }
-    if (!update && collector.count === 0 && read.firstPrompt === undefined) {
+    if (!update && collector.turns === 0 && read.firstPrompt === undefined) {
       return fail(job.sessionId, throughMs, 'This session has nothing pitwall can recap yet.', 'quiet');
     }
     const prs = prsOf(session);
@@ -711,10 +713,14 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
       }
       if (read === undefined) break;
       for (let i = read.entries.length - 1; i >= 0; i--) if (!collector.add(read.entries[i]!)) break;
-      if (read.before === undefined) break;
+      if (read.before === undefined) {
+        collector.finish();
+        return;
+      }
       before = read.before;
     }
-    collector.finish();
+    // Out of pages, or a page that couldn't be read, with older turns left: an update marks it (W152).
+    collector.finish(true);
   }
 
   // ---------------------------------------------------------------- one plan status (W123)
@@ -744,7 +750,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
       return { kind: 'made', status };
     };
     // Nothing to read: no plan, without a call.
-    if (collector.count === 0 && read.firstPrompt === undefined && read.compaction === undefined) return keep({ found: false });
+    if (collector.turns === 0 && read.firstPrompt === undefined && read.compaction === undefined) return keep({ found: false });
     const prs = prsOf(session);
     const input = planStatusInput(
       {
