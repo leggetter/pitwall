@@ -105,6 +105,8 @@ export interface Records {
   /** Each DELETE of attachmentPath() (W82), by the id asked for, and the status it got: 204, 404 or 409. */
   deletes: Array<{ id: string; status: number }>;
   relays: Array<{ name: string; length: number }>;
+  /** Each flag and unflag the server answered (W153), by the session's name, with the flag's reason and where it came from. */
+  flags: Array<{ action: 'flag' | 'unflag'; name: string; reason?: string; from?: string }>;
   actions: Array<{ action: 'stop' | 'remove'; name: string }>;
   /** Each resume of an ended session the server answered (W67), by the session's name. */
   resumes: string[];
@@ -143,6 +145,7 @@ const emptyRecords = (): Records => ({
   spawns: [],
   workPosts: [],
   relays: [],
+  flags: [],
   actions: [],
   resumes: [],
   opens: [],
@@ -382,7 +385,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     const planMake = /^\/api\/sessions\/([^/]+)\/plan-status\/refresh$/.exec(url.pathname);
     if (planMake && method === 'POST') return makePlanStatus(req, res, decodeURIComponent(planMake[1]!));
 
-    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|stop|remove|resume|open|subagents|end|recap|plan-status)$/.exec(url.pathname);
+    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|flag|unflag|stop|remove|resume|open|subagents|end|recap|plan-status)$/.exec(url.pathname);
     if (!match) return end(res, 404);
     const session = world.session(decodeURIComponent(match[1]!));
     if (!session) return end(res, 404);
@@ -412,6 +415,22 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
         json(res, 200, { status: 'delivered' } satisfies RelayResult);
         broadcast();
       });
+    }
+    if (route === 'flag' && method === 'POST') {
+      // flagPath(id) (W153): flagged at once, and the ask delivered, as the real route says.
+      const body = await readJson(req);
+      if (!isRecord(body) || typeof body.reason !== 'string' || typeof body.from !== 'string') return json(res, 400, { ok: false, error: 'Made up: not a FlagRequest.' });
+      if (session.needsYou?.reason !== body.reason) return json(res, 409, { ok: false, error: 'What it needs you for has just changed. Look again before you flag it.' });
+      records.flags.push({ action: 'flag', name: session.name, reason: body.reason, from: body.from });
+      world.flag(session.sessionId, { at: new Date().toISOString() });
+      broadcast();
+      return json(res, 200, { ok: true, asked: { status: 'delivered' } });
+    }
+    if (route === 'unflag' && method === 'POST') {
+      records.flags.push({ action: 'unflag', name: session.name });
+      world.flag(session.sessionId, undefined);
+      broadcast();
+      return json(res, 200, { ok: true });
     }
     if ((route === 'stop' || route === 'remove') && method === 'POST') {
       if (session.kind !== 'background') return json(res, 409, { ok: false, error: 'Made up: background sessions only.' });

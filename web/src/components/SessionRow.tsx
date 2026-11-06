@@ -31,7 +31,9 @@ import type { NotNeeded } from '../notNeeded.js';
 import { prNeedText, sessionPrBadge } from '../prs.js';
 import { ENDED_RECAP_HINT, FINISHED_RECAP_HINT, finishedWaitingOnYou, quietWaitingOn, WAITING_ON_TEXT } from '../recap.js';
 import { elsewhereRepos } from '../groupBy.js';
-import { groupLabel, isNotNeeded, needsAttention, needsText, recapNeedsText, rowStatusBadge } from '../sessions.js';
+import { canFlag, groupLabel, isFlagged, isNotNeeded, needsAttention, needsText, recapNeedsText, rowStatusBadge } from '../sessions.js';
+import { FLAGGED_TEXT } from '../flags.js';
+import { FlagButton } from './FlagButton.js';
 import { runningText } from '../subagents.js';
 import { contextLevel } from '../context.js';
 import { Badge, StatusBadge } from './Badge.js';
@@ -172,6 +174,8 @@ export interface SessionRowProps {
   notNeeded?: NotNeeded | undefined;
   /** Marks it not needed now, or takes the mark away: its toggle, while it needs you, which there's none without. */
   onNotNeeded?: ((session: SessionSummary, on: boolean) => void) | undefined;
+  /** Flags it as not needing you, or takes the flag away (W153): its flag toggle, while it can be flagged or is, which there's none without. */
+  onFlag?: ((session: SessionSummary, on: boolean) => void) | undefined;
   /**
    * The open pull requests it owns (W106, work.ts), most urgent first: a badge before its status
    * badge for the first, "#128 CI failing", with "+2" for more, in subtle danger while that PR needs
@@ -185,9 +189,13 @@ export interface SessionRowProps {
   offerResume?: boolean;
 }
 
-export function SessionRow({ session, group, showGroup = false, onOpen, onStep, isOpen = false, starred = false, onStar, notNeeded, onNotNeeded, owned, offerResume = false }: SessionRowProps) {
+export function SessionRow({ session, group, showGroup = false, onOpen, onStep, isOpen = false, starred = false, onStar, notNeeded, onNotNeeded, onFlag, owned, offerResume = false }: SessionRowProps) {
   // Marked not needed now (W88): it still needs you, by the index, but has no bar, its badge is outlined, and line 2 says so.
   const marked = isNotNeeded(session, notNeeded);
+  // Flagged as not needing you (W153): quiet as a marked one is, and line 2 says "You flagged this".
+  const flagged = isFlagged(session);
+  const quiet = marked || flagged;
+  const quietText = flagged ? FLAGGED_TEXT : NOT_NEEDED_TEXT;
   // It needs you itself, or a PR it owns does (W106).
   const own = needsAttention(session, notNeeded);
   const prNeed = owned?.find(prNeedsAttention);
@@ -224,7 +232,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
     event.preventDefault();
     onStep(session.sessionId, event.key === 'ArrowDown' ? 1 : -1);
   };
-  const className = ['session', attention && 'attention', marked && 'not-needed', finished && 'finished', onOpen && 'openable', isOpen && 'open', onStar && starred && 'starred']
+  const className = ['session', attention && 'attention', quiet && 'not-needed', finished && 'finished', onOpen && 'openable', isOpen && 'open', onStar && starred && 'starred']
     .filter(Boolean)
     .join(' ');
   const badges = [
@@ -251,7 +259,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
   ].filter(Boolean);
 
   // Line 2, when there's anything to say (W88's toggle has a line 2 to itself when there isn't).
-  const line2 = (label !== undefined || wants || running || marked || waitingOn !== undefined || elsewhere !== undefined) && (
+  const line2 = (label !== undefined || wants || running || quiet || waitingOn !== undefined || elsewhere !== undefined) && (
     <Tooltip content={wants?.hint} relation="none" onlyIfCut>
       <p className="session-what">
         {/* What gives way, with an ellipsis, before the running count does. */}
@@ -261,7 +269,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
               <span className="session-group">
                 <Highlight text={label} />
               </span>
-              {(marked || wants || waitingOn !== undefined) && (
+              {(quiet || wants || waitingOn !== undefined) && (
                 <span className="session-what-sep" aria-hidden="true">
                   {' · '}
                 </span>
@@ -279,10 +287,10 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
               )}
             </>
           )}
-          {marked && (
+          {quiet && (
             // Quiet, as the group's label is, and before what it needs, so it's seen when that's cut short.
             <>
-              <span className="session-not-needed">{NOT_NEEDED_TEXT}</span>
+              <span className="session-not-needed">{quietText}</span>
               {wants && (
                 <span className="session-what-sep" aria-hidden="true">
                   {' · '}
@@ -295,7 +303,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
         {running !== undefined && (
           // Quiet, and never cut: "· 2 sub-agents running", after whatever is before it.
           <span className="session-running">
-            {(label !== undefined || wants || marked || waitingOn !== undefined) && (
+            {(label !== undefined || wants || quiet || waitingOn !== undefined) && (
               <span className="session-what-sep" aria-hidden="true">
                 {' · '}
               </span>
@@ -306,7 +314,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
         {elsewhere !== undefined && (
           // Quiet, as the count is, after it: "· also in phil-skills", "+1" for each more.
           <span className="session-elsewhere">
-            {(label !== undefined || wants || marked || waitingOn !== undefined || running !== undefined) && (
+            {(label !== undefined || wants || quiet || waitingOn !== undefined || running !== undefined) && (
               <span className="session-what-sep" aria-hidden="true">
                 {' · '}
               </span>
@@ -324,9 +332,19 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
     </Tooltip>
   );
   // While it needs you itself, or is marked not needed now (W88): a mark is for what the session needs, never its PRs'. Shown while it's marked, otherwise on hover and focus.
+  // W153's flag, before it: while it can be flagged, or is. Shown while it's flagged, otherwise on hover and focus.
+  const flag = onFlag && (canFlag(session) || flagged) && (
+    <FlagButton sessionId={session.sessionId} name={session.name} flagged={flagged} onChange={(on) => onFlag(session, on)} className="session-not-needed-toggle session-flag-toggle" />
+  );
+  const notNeededToggle = onNotNeeded && (own || marked) && (
+    <NotNeededButton sessionId={session.sessionId} name={session.name} marked={marked} onChange={(on) => onNotNeeded(session, on)} className="session-not-needed-toggle" />
+  );
   const toggle =
-    onNotNeeded && (own || marked) ? (
-      <NotNeededButton sessionId={session.sessionId} name={session.name} marked={marked} onChange={(on) => onNotNeeded(session, on)} className="session-not-needed-toggle" />
+    flag || notNeededToggle ? (
+      <>
+        {flag}
+        {notNeededToggle}
+      </>
     ) : (
       // Its place, on a finished session that owns an open PR (W107): it never needs you itself.
       offerResume && (owned?.length ?? 0) > 0 && canResumeFromRow(session) && <RowResume session={session} className="session-not-needed-toggle session-row-resume" />

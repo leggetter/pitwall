@@ -1863,6 +1863,15 @@ mark.match {
   transition: opacity var(--pw-duration-fast) var(--pw-ease-standard);
 }
 
+/* W153's flag toggle, before the Not needed now toggle when both show: the pair sits at the end, one gap apart. */
+.session-flag-toggle:not(:last-child) {
+  margin-inline-end: 0;
+}
+
+.session-flag-toggle + .session-not-needed-toggle {
+  margin-inline-start: 0;
+}
+
 @media (hover: hover) {
   .session-not-needed-toggle[aria-pressed='false'],
   .session-row-resume:not([aria-busy='true']) {

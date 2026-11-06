@@ -1209,6 +1209,17 @@ export class World {
     if (session) this.#sessions.set(sessionId, { ...session, ...change });
   }
 
+  /**
+   * Until the next reset, the session is flagged as not needing you (W153), or not. The real server
+   * drops a flag once what the session needs changes; need() leaves that to the part.
+   */
+  flag(sessionId: string, flagged: SessionSummary['flagged']): void {
+    const session = this.#sessions.get(sessionId);
+    if (!session) return;
+    const { flagged: _old, ...rest } = session;
+    this.#sessions.set(sessionId, flagged === undefined ? rest : { ...rest, flagged });
+  }
+
   /** What the index shows on a session's row after a relayed message: its latest exchange. */
   relayed(sessionId: string, exchange: RelayExchange): void {
     const session = this.#sessions.get(sessionId);

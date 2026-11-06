@@ -13,13 +13,41 @@ import { markedNow, type NotNeeded } from './notNeeded.js';
  * checked here too: a finished session's question still shows on its row, muted, but it isn't
  * counted anywhere. Nor an ended interactive session (W67), which is finished too, whatever it asked.
  *
- * With `notNeeded`, the viewer's marks (W88, notNeeded.ts), nor one marked not needed now that still
- * needs what it needed when it was marked: Needs you, every need-you count and the urgency sort leave
- * it out. Without them, as for what a row says it needs, whether the index says it needs you.
+ * Nor one you flagged as not needing you (W153, SessionSummary.flagged), which the server sets only
+ * while it still needs what it needed when you flagged it. With `notNeeded`, the viewer's marks (W88,
+ * notNeeded.ts), nor one marked not needed now that still needs what it needed when it was marked:
+ * Needs you, every need-you count and the urgency sort leave it out. For what a row says it needs,
+ * whether the index says it needs you, flagged or marked, is indexNeedsYou().
  */
 export function needsAttention(session: SessionSummary, notNeeded?: NotNeeded): boolean {
+  return indexNeedsYou(session) && session.flagged === undefined && !markedNow(session, notNeeded);
+}
+
+/**
+ * Whether the index says it needs you, whatever you flagged or marked: for what its row says it needs,
+ * its badge's status, and the controls that hide it (W88's mark, W153's flag). Never a stale, finished
+ * or ended one.
+ */
+export function indexNeedsYou(session: SessionSummary): boolean {
   if (session.stale || session.finished || session.ended) return false;
-  return session.needsYou !== undefined && !markedNow(session, notNeeded);
+  return session.needsYou !== undefined;
+}
+
+/**
+ * A session that needs you, by the index, but that you flagged as not needing you (W153), for what
+ * it needs now: the server sets `flagged` only while that holds. Its row keeps its badge, outlined,
+ * and says "You flagged this", with its flag toggle pressed.
+ */
+export function isFlagged(session: SessionSummary): boolean {
+  return indexNeedsYou(session) && session.flagged !== undefined;
+}
+
+/**
+ * Whether pitwall can flag it (W153): it needs you, isn't flagged, and is running, since the flag asks
+ * it what it needs. A finished background session would need a resume, which is the approval path's.
+ */
+export function canFlag(session: SessionSummary): boolean {
+  return indexNeedsYou(session) && session.flagged === undefined && session.alive && session.pid !== undefined;
 }
 
 /**
@@ -27,7 +55,7 @@ export function needsAttention(session: SessionSummary, notNeeded?: NotNeeded): 
  * row keeps its badge, outlined, and says "Not needed now", with its toggle pressed.
  */
 export function isNotNeeded(session: SessionSummary, notNeeded: NotNeeded | undefined): boolean {
-  return needsAttention(session) && markedNow(session, notNeeded);
+  return indexNeedsYou(session) && markedNow(session, notNeeded);
 }
 
 /**
@@ -61,7 +89,7 @@ export interface StatusBadge {
   look: BadgeLook;
   /** An 8 px status dot before the label: busy and working. */
   dot?: boolean;
-  /** Marked not needed now (W88): outlined, whatever its status, which it keeps, as its label does. */
+  /** Marked not needed now (W88), or flagged (W153): outlined, whatever its status, which it keeps, as its label does. */
   notNeeded?: true;
 }
 
@@ -86,13 +114,13 @@ export interface StatusBadge {
  */
 export function statusBadge(session: SessionSummary, notNeeded?: NotNeeded): StatusBadge {
   const badge = needsBadge(session);
-  return isNotNeeded(session, notNeeded) ? { ...badge, look: 'outline', notNeeded: true } : badge;
+  return isNotNeeded(session, notNeeded) || isFlagged(session) ? { ...badge, look: 'outline', notNeeded: true } : badge;
 }
 
 function needsBadge(session: SessionSummary): StatusBadge {
   if (session.ended) return { status: 'ended', label: 'Ended', look: 'subtle-neutral' };
   const reason = session.waitingFor ? `: ${session.waitingFor}` : '';
-  switch (needsAttention(session) ? session.needsYou?.reason : undefined) {
+  switch (indexNeedsYou(session) ? session.needsYou?.reason : undefined) {
     case 'prompt':
       return { status: 'waiting', label: `Waiting${reason}`, look: 'solid-warning' };
     case 'claude-code':
@@ -123,7 +151,7 @@ function needsBadge(session: SessionSummary): StatusBadge {
  * a question it asked would go: set only while it's why the session needs you ('claude-code').
  */
 export function needsText(session: SessionSummary): string | undefined {
-  if (!needsAttention(session) || session.needsYou?.reason !== 'claude-code') return undefined;
+  if (!indexNeedsYou(session) || session.needsYou?.reason !== 'claude-code') return undefined;
   const text = session.needsYou.text?.trim();
   return text === undefined || text === '' ? undefined : text;
 }
@@ -134,7 +162,7 @@ export function needsText(session: SessionSummary): string | undefined {
  * undefined, and line 2 says "Waiting on you" alone.
  */
 export function recapNeedsText(session: SessionSummary): string | undefined {
-  if (!needsAttention(session) || session.needsYou?.reason !== 'recap') return undefined;
+  if (!indexNeedsYou(session) || session.needsYou?.reason !== 'recap') return undefined;
   const text = (session.needsYou.text ?? session.recap?.next)?.trim();
   return text === undefined || text === '' ? undefined : text;
 }

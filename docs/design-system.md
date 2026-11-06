@@ -563,7 +563,7 @@ CSS custom properties don't work in media queries, so these are constants. Use t
   - **Licence files:** both are SIL OFL 1.1, reproduced in full in the root `THIRD_PARTY_NOTICES.md`. The web build copies that file into `dist/web` as `THIRD_PARTY_NOTICES.txt`, so the licences ship with the font files.
 - **Icons:** Material Symbols Rounded, bundled as SVG path data, never as a font or from a CDN.
   - Style: fill 0, weight 400, grade 0. Each size draws its own optical size, which sets the stroke weight for that size: 16 px draws the 20 px design (there's no 16 px one), and 24 px draws the 24 px design.
-    - **Two exceptions, `starred` and `not-needed-on`** (W53, W88). `starred` is the same glyph as `star`, at fill 1, the filled style Material Symbols draws for a toggle that's on. A star toggle reads by its fill everywhere people star things, and no fill 0 glyph draws a filled star. `scripts/extract-icons.ts` takes the style with the glyph (`['star', 'fill1']`), and fetches `star_fill1_20px.svg` and `_24px.svg` from the same commit. `not-needed-on` is `snooze` at fill 1 in the same way, for the [Not needed now](#not-needed-now) toggle while it's on.
+    - **Three exceptions, `starred`, `not-needed-on` and `flag-on`** (W53, W88, W153). `starred` is the same glyph as `star`, at fill 1, the filled style Material Symbols draws for a toggle that's on. A star toggle reads by its fill everywhere people star things, and no fill 0 glyph draws a filled star. `scripts/extract-icons.ts` takes the style with the glyph (`['star', 'fill1']`), and fetches `star_fill1_20px.svg` and `_24px.svg` from the same commit. `not-needed-on` is `snooze` at fill 1 in the same way, for the [Not needed now](#not-needed-now) toggle while it's on.
     - The 48 px design, the only one in the `@material-symbols/svg-400` package, is too thin at 16 px: about 1.0 px strokes, against 1.2 px for the 20 px design.
   - Vendor only the glyphs pitwall uses, from a pinned upstream commit at least 14 days old, as the repo's dependency rule asks. Keep the path data in `web/src/icons/paths.ts`, one path per size, keyed by the semantic names below.
     - Today's source is `google/material-design-icons` at commit `737e3324305806514d7909874fa1818ae1808232` (2026-10-02): `symbols/web/<glyph>/materialsymbolsrounded/<glyph>_20px.svg` and `_24px.svg`, or `<glyph>_fill1_20px.svg` and `_24px.svg` for the filled style. Nothing is installed.
@@ -604,7 +604,8 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 | `checked` | check | The chosen option in a menu's radio group (W42). The same glyph as `copied`, for another meaning |
 | `star` / `starred` | star / star at fill 1 | A session's [star toggle](#starred-sessions), off and on (W53): outlined while it isn't starred, filled while it is |
 | `not-needed` / `not-needed-on` | snooze / snooze at fill 1 | A session's [Not needed now](#not-needed-now) toggle, off and on (W88), as the star's two states are, and the actions menu's Mark not needed now. Snooze is "not now"; it comes back by itself |
-| `undo` | undo | The actions menu's Put back in Needs you (W88), which undoes Mark not needed now |
+| `flag` / `flag-on` | flag / flag at fill 1 | A session's [flag toggle](#flag-it-doesnt-need-me), off and on (W153), as the star's two states are, and the actions menu's It doesn't need me. A flag on Needs you's call: it got it wrong |
+| `undo` | undo | The actions menu's Put back in Needs you (W88), which undoes Mark not needed now, and Undo flag (W153) |
 | `subagents` | account_tree | The session view's [Sub-agents tab](#sub-agents) (W77): a session and the sub-agents it started, some started by another. A hierarchy is what it means here, where it read wrongly for a repo |
 | `supervisor` | support_agent | The repo list's [Supervisor item](#supervisor) and its view's heading (W114): a headset, the pit wall's race engineer on the radio to every car |
 | `attach` | attach_file | New session's Attach files, and its drop target (W82; see [Dialogs](#dialogs)); the supervisor's Attach file (W135, [Supervisor](#supervisor)) |
@@ -1269,6 +1270,19 @@ A session in Needs you that's really waiting on someone else can be marked not n
   - **Read with validation:** a value that isn't version 1's shape marks nothing, an entry that isn't an id of 1 to 256 characters and a 16-digit hash is skipped, and an id listed twice keeps its last mark. When storage is missing or throws, nothing starts marked, marking still works for the page's life, and nothing throws.
   - Storage is per origin too, so a pitwall on a fallback port starts with nothing marked.
 - **Known limit:** the mark is keyed on `sessionId`, as stars and drafts are.
+
+### Flag: It doesn't need me
+
+A session in Needs you that doesn't need you can be flagged (W153; Phil, 2026-11-06, after W152's case): Needs you's call was wrong. A snooze (W154) is the other action, for a call that's right but not now; they're two controls, not one with two outcomes.
+
+- **What a click does:** the server keeps the flag (`src/server/flags.ts`), so every page and the supervisor's tools see it; it logs it, for counting the false flags; and it asks the session, through the relay, what, if anything, it needs, in a fixed message with what pitwall says it needs filled in, so the session can say "Open questions: None" or what exactly. Each ask starts a turn in that session, so it's sent only on the click, and once per need.
+- **What it leaves:** everything a mark leaves (see [Not needed now](#not-needed-now)): Needs you, the need-you badges and counts, the root tabs' badges, the document title's count and the Urgency sort's first rank. A PR it owns that needs you still does, as with a mark.
+- **When it comes back:** as soon as a snapshot says it needs something else, as a mark does, and for Needs you's recap reason, at the next recap even with the same to-do: the session's answer to the ask starts a turn, and the recap after it is its answer. A "None" keeps it out; a real need comes back as a to-do.
+- **Offered** on a session that needs you, for every reason, while it's running: a finished one would need a resume, which is the approval path's.
+- **The toggle:** `FlagButton` (`web/src/components/FlagButton.tsx`), a ghost sm [icon button](#icon-buttons) with `aria-pressed`, `flag` outlined while it isn't flagged and `flag-on` filled while it is, named by its tooltip "Flag *session*: it doesn't need me" in both states. At the end of line 2, before the Not needed now toggle when both show; shown while it's on, otherwise on the row's hover and focus, as the Not needed now toggle is. It never selects or opens the session.
+- **A flagged row:** as a marked one, with "You flagged this" on line 2 in place of "Not needed now", and its flag toggle pressed. Pressing it again takes the flag away; nothing is sent to the session.
+- **The session view:** "You flagged this" after the outlined badge, and the actions menu's It doesn't need me (`flag`), or Undo flag (`undo`) while it's flagged, after Not needed now's item.
+- **Toasts:** a flag is a success toast with Undo, "Flagged *session*: it's out of Needs you, and pitwall asked it what, if anything, it needs.", or an error toast when the ask failed, with why: the flag stays either way. A refused flag, as when what it needs has just changed, is an error toast with pitwall's reason. Undo flag from the menu is "Took the flag off *session*: it's back in Needs you."
 
 ### Finished section
 

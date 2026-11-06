@@ -95,6 +95,9 @@ const ICONS: Readonly<Record<string, string | readonly [glyph: string, style: ty
   'not-needed': 'snooze',
   'not-needed-on': ['snooze', FILLED],
   undo: 'undo',
+  // A session's flag, "It doesn't need me" (W153), off and on: a flag on Needs you's call, outlined, then filled.
+  flag: 'flag',
+  'flag-on': ['flag', FILLED],
   // The session view's Sub-agents tab (W77): a session and the sub-agents it started, some of them by another.
   subagents: 'account_tree',
   // The repo list's Supervisor item and its view (W114): a headset, the pit wall's race engineer on the radio.
