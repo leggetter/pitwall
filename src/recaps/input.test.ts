@@ -22,6 +22,7 @@ import {
   NO_LONGER_OPEN,
   planStatusInput,
   newFrameId,
+  RECAP_USER_LINES_CAP,
   sessionPrs,
   startAndEnd,
   timeLabel,
@@ -143,6 +144,83 @@ describe('TurnCollector', () => {
     expect(collect([question]).text()).toBe('[10-28 15:07] Claude asked: Which branch? (you answered: main) · Squash?');
     expect(collect([{ kind: 'user', text: 'no time' }]).text()).toBe('User: no time');
     expect(timeLabel('not a time')).toBe('');
+  });
+});
+
+describe('TurnCollector, for an update, keeps your lines past the cap (W152)', () => {
+  // Seconds after 15:00, so a busy stretch can have hundreds of turns in one minute's labels.
+  const atS = (second: number) => new Date(Date.UTC(2026, 9, 28, 15, 0, second)).toISOString();
+  const handBack = (second: number) => entry('cross-session', `Done: step ${second}. ${'x'.repeat(900)}`, 0, { at: atS(second), subagent: { description: 'review a step' } as ConversationEntry['subagent'] });
+  const tool = (second: number) => entry('tool', `Bash: gh run watch ${second}`, 0, { at: atS(second) });
+
+  it('keeps your answer from the start of a busy stretch, with the newest other turns in a row', () => {
+    // The reproduction: a question the previous recap carries, your answer just after it, then far
+    // more than RECAP_TURNS_CAP of sub-agents' hand-backs and tool calls before the next update.
+    const entries = [
+      entry('user', 'Yes, a budget of 40 a day is fine.', 0, { at: atS(10) }),
+      entry('assistant', 'Agreed: 40 a day. Starting the runs.', 0, { at: atS(11) }),
+      ...Array.from({ length: 30 }, (_, i) => [tool(20 + 2 * i), handBack(21 + 2 * i)]).flat(),
+    ];
+    // Collected as before W152, stopping at the cap (as a first recap's collection still does): the answer is cut.
+    const before = collect(entries);
+    expect(before.text()).not.toContain('40 a day is fine');
+    const collector = collect(entries, { after: atS(0) });
+    const lines = collector.text().split('\n');
+    expect(lines[0]).toBe('[10-28 15:00] User: Yes, a budget of 40 a day is fine.');
+    expect(lines[1]).toMatch(/^\[… \d+ other turns left out …\]$/);
+    // The other turns kept are the newest, in a row, up to the cap.
+    expect(lines.at(-1)).toContain('Done: step 79.');
+    expect(lines.slice(2).join('\n').length).toBeLessThanOrEqual(RECAP_TURNS_CAP);
+    expect(lines.slice(2).every((line) => !line.startsWith('[…'))).toBe(true);
+    const leftOut = Number(/\d+/.exec(lines[1]!)![0]);
+    // 61 other lines: Claude's reply, and 30 tool lines and 30 hand-backs.
+    expect(leftOut + lines.length - 2).toBe(61);
+    expect(collector.done).toBe(true);
+  });
+
+  it('keeps your lines among the left-out turns, each with the count before it, and a question you answered', () => {
+    const question = entry('question', 'Which branch?', 0, { at: atS(30), questions: [{ question: 'Which branch?', options: [{ label: 'main' }], answer: 'main' }] });
+    const entries = [handBack(5), entry('user', 'first answer', 0, { at: atS(6) }), handBack(7), handBack(8), question, ...Array.from({ length: 12 }, (_, i) => handBack(40 + i))];
+    const lines = collect(entries, { after: atS(0) }).text().split('\n');
+    expect(lines.slice(0, 5)).toEqual([
+      '[… 1 other turn left out …]',
+      '[10-28 15:00] User: first answer',
+      '[… 2 other turns left out …]',
+      '[10-28 15:00] Claude asked: Which branch? (you answered: main)',
+      '[… 4 other turns left out …]',
+    ]);
+  });
+
+  it("keeps the relay's unverified messages past the cap, which after a restart are yours, and counts no marker as a turn", () => {
+    const relay = { name: 'pitwall-relay', sent: () => false };
+    const answer = entry('cross-session', 'Yes, go ahead.', 0, { at: atS(5), from: 'pitwall-relay', msgId: 'before-a-restart' });
+    const lines = collect([answer, ...Array.from({ length: 12 }, (_, i) => handBack(40 + i))], { after: atS(0), relay }).text().split('\n');
+    expect(lines[0]).toBe('[10-28 15:00] Message from session pitwall-relay (unverified): Yes, go ahead.');
+    expect(lines[1]).toMatch(/^\[… \d+ other turns left out …\]$/);
+
+    const unread = new TurnCollector({ after: atS(0) });
+    unread.finish(true);
+    expect(unread.count).toBe(1);
+    expect(unread.turns).toBe(0);
+  });
+
+  it('says older turns were not read when your lines pass their cap, or the reading stops early', () => {
+    const yours = Array.from({ length: 30 }, (_, i) => entry('user', `answer ${i} ${'y'.repeat(900)}`, 0, { at: atS(1 + i) }));
+    const text = collect(yours, { after: atS(0) }).text();
+    expect(text.split('\n')[0]).toBe('[… older turns since the previous recap not read …]');
+    expect(text).toContain('answer 29 ');
+    expect(text).not.toContain('answer 0 ');
+    expect(text.length).toBeLessThanOrEqual(RECAP_TURNS_CAP + RECAP_USER_LINES_CAP + 200);
+
+    const early = new TurnCollector({ after: atS(0) });
+    early.add(entry('assistant', 'newest', 0, { at: atS(9) }));
+    early.finish(true);
+    expect(early.text().split('\n')).toEqual(['[… older turns since the previous recap not read …]', '[10-28 15:00] Claude: newest']);
+    // A first recap's or a plan status's collection has no markers.
+    const plan = new TurnCollector();
+    plan.add(entry('assistant', 'newest', 0, { at: atS(9) }));
+    plan.finish(true);
+    expect(plan.text()).toBe('[10-28 15:00] Claude: newest');
   });
 });
 
