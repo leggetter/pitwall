@@ -89,6 +89,8 @@ export interface SessionListProps {
   notNeeded?: NotNeeded | undefined;
   /** Marks a session not needed now from its row, or takes the mark away. Rows have no Not needed now toggle without it. */
   onNotNeeded?: ((session: SessionSummary, on: boolean) => void) | undefined;
+  /** Flags a session as not needing you from its row, or takes the flag away (W153). Rows have no flag toggle without it. */
+  onFlag?: ((session: SessionSummary, on: boolean) => void) | undefined;
   /** Covered by the session view over the list: nothing in it can take focus or a click (Dashboard.tsx). */
   inert?: boolean;
   /**
@@ -283,6 +285,7 @@ export function SessionList({
   onStar,
   notNeeded,
   onNotNeeded,
+  onFlag,
   inert = false,
   older,
   owned,
@@ -405,6 +408,7 @@ export function SessionList({
                   onStar={onStar}
                   notNeeded={notNeeded}
                   onNotNeeded={onNotNeeded}
+                  onFlag={onFlag}
                   owned={owned?.get(row.session.sessionId)}
                   offerResume={offerResume}
                 />

@@ -40,19 +40,39 @@ export function withRecaps(snapshot: IndexSnapshot, engine: Pick<RecapEngine, 'd
  * engine, made when it subscribes and dropped when it unsubscribes.
  */
 export function createRecapView(indexer: Pick<Indexer, 'latest' | 'subscribe'>, engine: Pick<RecapEngine, 'decorate' | 'health' | 'version' | 'subscribe'>): SnapshotView {
+  return createDecoratedView(indexer, { decorate: (snapshot) => withRecaps(snapshot, engine), version: () => engine.version(), subscribe: (listener) => engine.subscribe(listener) });
+}
+
+/** What decorates a snapshot source: recaps (W110), or flags (W153). */
+export interface SnapshotDecorator {
+  /** The source's snapshot, decorated. A copy. */
+  decorate: (snapshot: IndexSnapshot) => IndexSnapshot;
+  /** Changes whenever decorate() could give something new for the same snapshot. */
+  version: () => number;
+  /** Called when the version changed. Returns the unsubscribe. */
+  subscribe: (listener: () => void) => () => void;
+}
+
+/**
+ * `source`'s snapshots, decorated: every one passed on, and the snapshot again when the decorator
+ * changes what it carries, never a heartbeat for one that doesn't. Each listener has its own
+ * subscriptions to the source and the decorator, made when it subscribes and dropped when it
+ * unsubscribes.
+ */
+export function createDecoratedView(source: Pick<Indexer, 'latest' | 'subscribe'>, decorator: SnapshotDecorator): SnapshotView {
   let cached: { snapshot: IndexSnapshot; version: number; view: IndexSnapshot } | undefined;
   const active = new Set<() => void>();
 
   function viewOf(snapshot: IndexSnapshot): IndexSnapshot {
-    const version = engine.version();
+    const version = decorator.version();
     if (cached !== undefined && cached.snapshot === snapshot && cached.version === version) return cached.view;
-    const view = withRecaps(snapshot, engine);
-    cached = { snapshot, version: engine.version(), view };
+    const view = decorator.decorate(snapshot);
+    cached = { snapshot, version: decorator.version(), view };
     return view;
   }
 
   function latest(): IndexSnapshot | undefined {
-    const snapshot = indexer.latest();
+    const snapshot = source.latest();
     return snapshot === undefined ? undefined : viewOf(snapshot);
   }
 
@@ -65,16 +85,16 @@ export function createRecapView(indexer: Pick<Indexer, 'latest' | 'subscribe'>, 
         told = snapshotContent(view);
         listener(view);
       };
-      // Every poll, changed or not, as the index tells: the WebSocket sends a heartbeat for one that isn't.
-      const offIndex = indexer.subscribe((snapshot) => pass(viewOf(snapshot)));
-      // A recap landed, a call failed or the day turned: the snapshot again, only when what it carries changed.
-      const offEngine = engine.subscribe(() => {
+      // Every poll, changed or not, as the source tells: the WebSocket sends a heartbeat for one that isn't.
+      const offSource = source.subscribe((snapshot) => pass(viewOf(snapshot)));
+      // The decorator changed: the snapshot again, only when what it carries changed.
+      const offDecorator = decorator.subscribe(() => {
         const view = latest();
         if (view !== undefined && told !== undefined && snapshotContent(view) !== told) pass(view);
       });
       const unsubscribe = () => {
-        offIndex();
-        offEngine();
+        offSource();
+        offDecorator();
         active.delete(unsubscribe);
       };
       active.add(unsubscribe);

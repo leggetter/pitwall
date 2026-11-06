@@ -137,6 +137,8 @@ web/src/test/            test helpers and fixtures shared across the web UI's te
 scripts/dev.ts           runs the two watchers behind `npm run dev`
 scripts/usage-report.ts  npx tsx scripts/usage-report.ts [--days 14] [--json]: aggregate token usage from every
                          repo's transcripts, read-only, totals only, to test the efficiency rules (W131)
+scripts/flag-report.ts   npx tsx scripts/flag-report.ts [--days 30] [--json]: counts and texts from the flag log,
+                         ~/.pitwall/flags.jsonl (W153), read-only; the texts are session content, so it stays local
 scripts/extract-icons.ts regenerates web/src/icons/paths.ts from a pinned Material Symbols commit
 scripts/readme-screenshot.ts
                          writes <outDir>/hero-<theme>.png from made-up sessions on the app check's fake

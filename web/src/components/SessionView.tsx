@@ -74,7 +74,8 @@ import { PANEL_MENU_STEP, PANEL_MIN, panelLimits, panelReset, shownPanel, type P
 import type { NotNeeded } from '../notNeeded.js';
 import { replyInConversation } from '../relay.js';
 import { finishedWaitingOnYou, WAITING_ON_TEXT } from '../recap.js';
-import { attachCommand, isNotNeeded, needsAttention, resumeCommand, statusBadge } from '../sessions.js';
+import { attachCommand, canFlag, indexNeedsYou, isFlagged, isNotNeeded, needsAttention, resumeCommand, statusBadge } from '../sessions.js';
+import { FLAG_ITEM, FLAGGED_TEXT, UNFLAG_ITEM } from '../flags.js';
 import { SHORTCUT_KEYS } from '../shortcuts.js';
 import { moveTabFocus } from '../tabs.js';
 import { turnMode, WORKING_POLL_MS, workingLineState } from '../working.js';
@@ -368,6 +369,11 @@ export interface SessionViewProps {
    */
   notNeeded?: { entries: NotNeeded; onChange: (session: SessionSummary, on: boolean) => void } | undefined;
   /**
+   * Flags it as not needing you, or takes the flag away (W153): the actions menu has It doesn't need
+   * me while it can be flagged, and Undo flag while it's flagged.
+   */
+  onFlag?: ((session: SessionSummary, on: boolean) => void) | undefined;
+  /**
    * The tab a running background session's view opens on (W54), Preferences' Open running
    * background sessions on, read as the view is first shown. Left out, as the gallery's specimens and
    * the tests of a view alone do, it opens on Conversation. The Dashboard always gives it.
@@ -433,6 +439,7 @@ export function SessionView({
   hidden = false,
   star,
   notNeeded,
+  onFlag,
   backgroundTab = 'conversation',
   stepped = false,
   openedBy,
@@ -721,6 +728,8 @@ export function SessionView({
   const badge = statusBadge(session, notNeeded?.entries);
   // Marked not needed now (W88): its badge is outlined, with "Not needed now" after it.
   const marked = isNotNeeded(session, notNeeded?.entries);
+  // Flagged as not needing you (W153): the same, with "You flagged this".
+  const flagged = isFlagged(session);
   const name = plainText(session.name);
   const title = session.title ? plainText(session.title) : '';
   const cwd = plainText(session.cwd);
@@ -791,7 +800,7 @@ export function SessionView({
   // Not needed now (W88), while it needs you and is listed, after the copies: Mark not needed now, or
   // Put back in Needs you once it's marked.
   const notNeededEntries: MenuEntry[] =
-    notNeeded && listed && needsAttention(session)
+    notNeeded && listed && indexNeedsYou(session)
       ? [
           { kind: 'separator', id: 'not-needed-separator' },
           {
@@ -802,11 +811,20 @@ export function SessionView({
           },
         ]
       : [];
+  // W153's flag, while it can be flagged or is, and listed: It doesn't need me, or Undo flag.
+  const flagEntries: MenuEntry[] =
+    onFlag && listed && (canFlag(session) || flagged)
+      ? [
+          ...(notNeededEntries.length > 0 ? [] : [{ kind: 'separator' as const, id: 'flag-separator' }]),
+          { id: 'flag', label: flagged ? UNFLAG_ITEM : FLAG_ITEM, icon: flagged ? ('undo' as const) : ('flag' as const), onSelect: () => onFlag(session, !flagged) },
+        ]
+      : [];
   const entries: MenuEntry[] = [
     { id: 'copy-id', label: 'Copy session ID', icon: 'copy', onSelect: () => copy('Session ID', sessionId) },
     ...(command ? [{ id: 'copy-attach', label: 'Copy attach command', icon: 'terminal' as const, onSelect: () => copy('Attach command', command) }] : []),
     ...(resumeCopy ? [{ id: 'copy-resume', label: COPY_RESUME_COMMAND, icon: 'terminal' as const, onSelect: () => copy('Resume command', resumeCopy) }] : []),
     ...notNeededEntries,
+    ...flagEntries,
     ...editorEntries,
     ...widthEntries,
     // An ended session can be resumed, never stopped or removed: it has no process (W67).
@@ -942,7 +960,7 @@ export function SessionView({
         <div className="session-view-meta">
           {/* Idle shows here, though not in the list. */}
           <StatusBadge badge={badge} />
-          {marked && <span className="session-view-not-needed">{NOT_NEEDED_TEXT}</span>}
+          {(marked || flagged) && <span className="session-view-not-needed">{flagged ? FLAGGED_TEXT : NOT_NEEDED_TEXT}</span>}
           {/*
             The row's other badges, each with an info button after it, so its explanation, which is a
             hover-only tooltip in the row, is reachable here by keyboard and screen readers.

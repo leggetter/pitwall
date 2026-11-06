@@ -162,6 +162,13 @@ export interface SessionSummary {
    */
   needsYou?: NeedsYou;
   /**
+   * You flagged that it doesn't need you (W153), and it still needs what it needed then: the same
+   * NeedsYou reason and text, question, prompt and, for 'recap', the same recap. `needsYou` stays
+   * set; the web UI leaves a flagged session out of Needs you and every count, as it does one marked
+   * not needed now (W88). Gone once what it needs changes, or you undo the flag.
+   */
+  flagged?: SessionFlag;
+  /**
    * The session's recap, as the list needs it (M5, RecapSummary). Absent until one is made, and
    * with `--no-recaps`. Sub-agents and pitwall's own sessions are never listed, so never have one.
    * pitwall recaps an ended or finished session only when you ask (recapRefreshPath()), but one
@@ -869,6 +876,45 @@ export interface RelayResult {
 /** Relay a message to an interactive session, through pitwall's headless relay session (D8). */
 export function relayPath(sessionId: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/relay`;
+}
+
+/** A flag you put on a session in Needs you (W153): it doesn't need you. */
+export interface SessionFlag {
+  /** When you flagged it, ISO 8601. */
+  at: string;
+}
+
+/** Where a flag was asked from, for the flag log's counts (W153). */
+export type FlagFrom = 'row' | 'view';
+
+/**
+ * Body of a POST to flagPath() (W153). `reason` is the NeedsYou reason the page showed: the server
+ * refuses the flag when the session no longer needs you for it, so a flag never lands on a need you
+ * didn't see.
+ */
+export interface FlagRequest {
+  reason: NeedsYou['reason'];
+  from: FlagFrom;
+}
+
+/**
+ * The answer to a POST to flagPath() or unflagPath() (W153). On a flag, `asked` is the relay's
+ * outcome for the message asking the session what it needs, absent when nothing was sent: the
+ * session was already flagged for this need, or, for unflagPath(), always.
+ */
+export type FlagResult = { ok: true; asked?: RelayResult } | { ok: false; error: string };
+
+/**
+ * Flag a session in Needs you as not needing you (W153): pitwall logs it, leaves it out of Needs
+ * you until what it needs changes, and asks the session, through the relay, what it needs.
+ */
+export function flagPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/flag`;
+}
+
+/** Undo a flag (W153): logged, and the session is back in Needs you. Nothing is sent to the session. */
+export function unflagPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/unflag`;
 }
 
 /** Body of a POST to SPAWN_PATH (W12). */

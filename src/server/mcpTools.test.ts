@@ -239,6 +239,15 @@ describe('list_sessions', () => {
     });
   });
 
+  it('says flagged: true on a session the user flagged as not needing them, in slim and detailed rows (W153)', async () => {
+    const one = session('a', { needsYou: { reason: 'claude-code', text: 'Needs a decision' }, flagged: { at: new Date(NOW).toISOString() } });
+    const made = tools({ sessions: [one, session('b', { needsYou: { reason: 'claude-code', text: 'Other' } })] });
+    const slim = (await call(made.list_sessions!)).json.sessions as Record<string, unknown>[];
+    expect(slim.map((row) => row.flagged)).toEqual([true, undefined]);
+    const detailed = (await call(made.list_sessions!, { detail: true })).json.sessions as Record<string, unknown>[];
+    expect(detailed.map((row) => row.flagged)).toEqual([true, undefined]);
+  });
+
   it('keeps slim rows within LIST_SLIM_MAX_CHARS, saying it cut them and how to narrow it (W124)', async () => {
     const many = Array.from({ length: 300 }, (_, index) => session(`s${index}`, { needsYou: { reason: 'claude-code', text: 'y'.repeat(500) } }));
     const { text, json } = await call(tools({ sessions: many, recaps: new Map(many.map((each) => [each.sessionId, { ...RECAP, summary: 'w'.repeat(1000) }])) }).list_sessions!);

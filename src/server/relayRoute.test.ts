@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import type { Indexer } from '../index/index.js';
-import { relayPath, WS_PATH, type IndexSnapshot, type RelayResult, type ServerMessage, type SessionSummary } from '../shared/protocol.js';
+import { flagPath, relayPath, unflagPath, WS_PATH, type IndexSnapshot, type RelayResult, type ServerMessage, type SessionSummary } from '../shared/protocol.js';
 import type { RunningServer } from './index.js';
 import type { RelayManager, RelaySendOutcome, RelayTarget } from './relay.js';
 import { MAX_RELAY_TEXT_LENGTH, validateRelayRequest } from './relayRoute.js';
@@ -369,5 +369,38 @@ describe('validateRelayRequest', () => {
   it('refuses anything else', () => {
     expect(validateRelayRequest(null).ok).toBe(false);
     expect(validateRelayRequest('text').ok).toBe(false);
+  });
+});
+
+describe('the flag routes (W153) through the server', () => {
+  const needing = () => {
+    const snap = snapshot();
+    snap.groups[0]!.sessions[0] = { ...snap.groups[0]!.sessions[0]!, needsYou: { reason: 'claude-code', text: 'Pick a port' } };
+    return snap;
+  };
+
+  it('refuses the raw token, and the apiKey from another Origin, asking nothing', async () => {
+    const started = await start(fakeRelay(), fakeIndexer(needing()));
+    const body = JSON.stringify({ reason: 'claude-code', from: 'row' });
+    const raw = await post(started.server.port, flagPath(INTERACTIVE_ID), body, { authorization: `Bearer ${TOKEN}`, origin: origin(started.server.port), 'content-type': 'application/json' });
+    expect(raw.status).toBe(403);
+    const elsewhere = await post(started.server.port, flagPath(INTERACTIVE_ID), body, { authorization: `Bearer ${started.apiKey}`, origin: 'http://evil.example', 'content-type': 'application/json' });
+    expect(elsewhere.status).toBe(403);
+    const undo = await post(started.server.port, unflagPath(INTERACTIVE_ID), undefined, { authorization: `Bearer ${TOKEN}`, origin: origin(started.server.port) });
+    expect(undo.status).toBe(403);
+    expect(started.relay.sends).toEqual([]);
+  });
+
+  it('flags as the page does, asks the session through the relay, and a background one too', async () => {
+    const snap = needing();
+    snap.groups[0]!.sessions[1] = { ...snap.groups[0]!.sessions[1]!, needsYou: { reason: 'blocked' } };
+    const started = await start(fakeRelay(), fakeIndexer(snap));
+    const res = await postAsPage(started, flagPath(INTERACTIVE_ID), { reason: 'claude-code', from: 'row' });
+    expect(res.status).toBe(200);
+    expect(res.json).toEqual({ ok: true, asked: { status: 'delivered' } });
+    const bg = await postAsPage(started, flagPath(BG_ID), { reason: 'blocked', from: 'view' });
+    expect(bg.status).toBe(200);
+    expect(started.relay.sends.map((send) => send.target.sessionId)).toEqual([INTERACTIVE_ID, BG_ID]);
+    expect(started.relay.sends[0]!.text).toContain('"Pick a port"');
   });
 });

@@ -110,7 +110,9 @@
 // title; Needs you says they're there, with a way to open the view. While it's held or has failed, the
 // app strip says so, with Open.
 
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ApiContext } from '../api.js';
+import { flaggedText, flagSession, UNDO_FLAG, unflaggedText, unflagSession } from '../flags.js';
 import type { PullRequestRelation, PullRequestSummary, SessionSummary } from '../../../src/shared/protocol.js';
 import {
   composeWork,
@@ -175,8 +177,8 @@ import {
   FILTER_CHIPS,
   filterNeedle,
   groupLabel,
+  indexNeedsYou,
   isOlderEnded,
-  needsAttention,
   NO_FILTERS,
   noMatchText,
   sessionsIn,
@@ -1203,12 +1205,37 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       return;
     }
     // Only one the index says needs you: the toggle and the menu item are on no other.
-    if (!needsAttention(session)) return;
+    if (!indexNeedsYou(session)) return;
     notNeeded.mark(session);
     markToasts.current.add(session.sessionId);
     const stays = prNeeding(session, work);
     const message = stays === undefined ? notNeededText(session.name) : notNeededStaysText(session.name, stays.number);
     toasts.show({ tone: 'success', key, message, action: { label: UNDO_NOT_NEEDED, onAction: () => undoNotNeeded.current(session.sessionId) } });
+  };
+  // Flag, "It doesn't need me" (W153): from a row's flag toggle or the view's actions menu. The server
+  // keeps it, so the snapshot says it's flagged as soon as it is; the toast says what came of asking
+  // the session, with Undo. Taking it away from the row needs no toast, as the toggle shows it.
+  const api = useContext(ApiContext);
+  const flagKey = (sessionId: string) => `flag:${sessionId}`;
+  const setFlag = (session: SessionSummary, on: boolean, from: 'row' | 'menu') => {
+    if (!api) return;
+    const key = flagKey(session.sessionId);
+    if (!on) {
+      void unflagSession(api, session.sessionId).then((error) => {
+        if (error !== undefined) toasts.show({ tone: 'error', key, message: error });
+        else if (from === 'menu') toasts.show({ tone: 'success', key, message: unflaggedText(session.name) });
+        else toasts.dismiss(key);
+      });
+      return;
+    }
+    void flagSession(api, session, from === 'menu' ? 'view' : 'row').then((outcome) => {
+      if (outcome.kind === 'failed') {
+        toasts.show({ tone: 'error', key, message: outcome.error });
+        return;
+      }
+      const { tone, message } = flaggedText(session.name, outcome.asked);
+      toasts.show({ tone, key, message, action: { label: UNDO_FLAG, onAction: () => setFlag(session, false, 'row') } });
+    });
   };
   // Undo takes its toast away, so focus it had goes to the session's toggle, back in the list and
   // unpressed, or where focusList() puts it when the list doesn't show it or the view covers it.
@@ -1747,6 +1774,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       }}
       star={{ starred: starred.set.has(session.sessionId), onStar: starred.star }}
       notNeeded={{ entries: marks, onChange: (changed, on) => setNotNeeded(changed, on, 'menu') }}
+      onFlag={api ? (changed, on) => setFlag(changed, on, 'menu') : undefined}
       backgroundTab={backgroundTab}
       stepped={hiddenIn === undefined && stepped.current === session.sessionId}
       openedBy={hiddenIn === undefined && opener.current?.sessionId === session.sessionId ? opener.current.gesture : undefined}
@@ -1994,6 +2022,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             onStar={starred.star}
             notNeeded={marks}
             onNotNeeded={(changed, on) => setNotNeeded(changed, on, 'row')}
+            onFlag={api ? (changed, on) => setFlag(changed, on, 'row') : undefined}
             inert={overlaid}
             older={olderCount > 0 ? { count: olderCount, shown: showOlder, onToggle: toggleOlder } : undefined}
             owned={work.owned}
