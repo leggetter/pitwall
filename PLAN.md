@@ -471,6 +471,12 @@ M5.1's own items start at W131, the evidence the rest of it needs; the others fo
   - A read-only `get_usage` tool: the week's percentages, the pace, the heaviest sessions and those with a large context. With it the supervisor answers "can I start another build today?" and suggests a hand-off, a lighter profile or pausing a background session; you act (D4).
   - Its new-session cards show the pace beside the profile.
   - Status: Planned.
+- **W161, Needs you says what the session wants, not its PR's state, while it works** (`m5.1/needs-you-busy-pr`, S). After W154, before W155.
+  - Phil, 2026-11-06: a busy background session, reviewing a PR that asks his review, was in Needs you as "Needs you for <repo>#<n>: review requested", and "given the UI of scrolling updates it's impossible to see what it needs me for".
+  - Why (the coordinator's reading of the code, not reproduced): a PR that needs you puts its session in Needs you whatever the session is doing (`attention = own || prNeed`, `web/src/components/SessionRow.tsx`), and line 2 shows the PR's state whenever the session's own reason is absent. The session was doing that review, so the PR's state said nothing new; its real asks were the recap's three "For you" items. Claude Code also flipped it between `busy/working` and `busy/blocked` as it ran, so its own reason came and went.
+  - Fix: (1) a busy session's PR doesn't put the session in Needs you; the PR keeps its badge in Pull requests, and the session comes back when it stops if the PR still needs you. (2) When a session's recap has a "For you" item, Needs you's line shows that, not the PR's state.
+  - Checks: the row's and the view's tests, the needs-you counts in `web/src/sessions.ts`'s tests, the app check's `lists` part.
+  - Status: Planned.
 
 ## Open questions
 
