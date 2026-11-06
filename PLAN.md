@@ -194,9 +194,9 @@ In the order they'll be built. Each starts when the one before it has merged int
 
 Phil, 2026-11-02: "My plan is to build pitwall with pitwall... I'd like this guidance applied to pitwall." The week's usage ran at about twice the rate the weekend needs: every agent on Opus, long contexts re-read every turn, and no view of the run rate until Phil checked. The working rules are in AGENTS.md's "Efficiency" section; this milestone builds them into pitwall:
 
-- **Work profiles** (extends W119; W154, W155): named profiles in the config file, each a session's launch settings, its model, effort and sub-agent default model, plus an optional skill it starts with. The instructions stay in skills, but a profile can't be one: a skill's `model` and `effort` last one turn only. Build (Opus 5.5, high), Review (Sonnet, high), Security review (Opus 5.5, xhigh) and Docs (Sonnet, medium) are built in; New session and the supervisor's `spawn_session` pick one.
-- **Usage you can see** (W153, W156, W157): a Usage view with tokens per session, repo, model and day, from the transcripts' own usage records (internal, behind the adapter, failing soft), and a run rate from the plan's own five-hour and weekly percentages, which Claude Code documents in the status line's `rate_limits`, against a weekend reserve you set. The context badge on sessions with a very large context is done (W133).
-- **The supervisor applies it** (W155, W158): it proposes new sessions with a profile, and reads the run rate when you ask, always through Phil's approval. It runs only on your messages (D4), so the warning that the week is ahead of pace is pitwall's own code, not the supervisor watching.
+- **Work profiles** (extends W119; W155, W156): named profiles in the config file, each a session's launch settings, its model, effort and sub-agent default model, plus an optional skill it starts with. The instructions stay in skills, but a profile can't be one: a skill's `model` and `effort` last one turn only. Build (Opus 5.5, high), Review (Sonnet, high), Security review (Opus 5.5, xhigh) and Docs (Sonnet, medium) are built in; New session and the supervisor's `spawn_session` pick one.
+- **Usage you can see** (W157, W158, W159): a Usage view with tokens per session, repo, model and day, from the transcripts' own usage records (internal, behind the adapter, failing soft), and a run rate from the plan's own five-hour and weekly percentages, which Claude Code documents in the status line's `rate_limits`, against a weekend reserve you set. The context badge on sessions with a very large context is done (W133).
+- **The supervisor applies it** (W156, W160): it proposes new sessions with a profile, and reads the run rate when you ask, always through Phil's approval. It runs only on your messages (D4), so the warning that the week is ahead of pace is pitwall's own code, not the supervisor watching.
 
 ### M6 - Triage
 
@@ -400,50 +400,50 @@ M5.1's own items start at W131, the evidence the rest of it needs; the others fo
     - The session's own latest "Open questions:" line as evidence: at most a prompt hint, since W146's session had dropped a question that was still open.
   - Done when: the reproduction's update drops the answered to-do, W146's tests still pass, and Refresh's 8,000-character limit (W146's Limits) is either covered by the same fix or recorded as left.
   - Status: Planned.
-- **W154, Work profiles** (`m5.1/work-profiles`, M). First of the six (Phil, 2026-11-06: profiles first).
+- **W155, Work profiles** (`m5.1/work-profiles`, M). First of the six (Phil, 2026-11-06: profiles first).
   - Why: W131's usage, 14 days to 11-02: sub-agents were 58% of all tokens, nearly all on Opus. A smaller default model for a session's reviewers is the biggest lever there is. Extends W119's `work` block (src/config.ts, src/server/work.ts).
   - What: named profiles in the config file, each a session's launch settings: `model`, `effort` and the sub-agent default model, plus an optional skill the session starts with, such as `agent-roles:role-reviewer`, put at the start of its first prompt. The instructions stay in skills; pitwall keeps no prompts of its own.
   - Built in (Phil, 2026-11-06): Build (Opus 5.5, high, sub-agents Sonnet), Review (Sonnet, high, sub-agents Sonnet), Security review (Opus 5.5, xhigh, sub-agents Opus 5.5) and Docs (Sonnet, medium, sub-agents Sonnet). New session starts on Build. A profile in the config file with a built-in's name replaces it.
   - Why not skills (Phil asked, 2026-11-06): a skill's `model` and `effort` apply "for the rest of the current turn", and "the session model resumes when you send your next prompt" ([skills](https://code.claude.com/docs/en/skills)), so a skill can't hold a session's launch settings. A skill reaches sessions started from a terminal, which a profile can't, so instructions belong there.
-  - The sub-agent model: since Claude Code v2.1.251, an Agent call's own `model` and a sub-agent definition's `model` beat `CLAUDE_CODE_SUBAGENT_MODEL`, which W119 sets, so it is a default; `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` (v2.1.257) makes it win. From the research agent's reading of [sub-agents](https://code.claude.com/docs/en/sub-agents), not checked by the coordinator. A default only, not forced (Phil, 2026-11-06), so a deliberate choice, such as a security review on Opus 5.5 or a plugin's Haiku agent, still wins; revisit with W156's figures for sub-agents by model in Build sessions.
+  - The sub-agent model: since Claude Code v2.1.251, an Agent call's own `model` and a sub-agent definition's `model` beat `CLAUDE_CODE_SUBAGENT_MODEL`, which W119 sets, so it is a default; `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` (v2.1.257) makes it win. From the research agent's reading of [sub-agents](https://code.claude.com/docs/en/sub-agents), not checked by the coordinator. A default only, not forced (Phil, 2026-11-06), so a deliberate choice, such as a security review on Opus 5.5 or a plugin's Haiku agent, still wins; revisit with W158's figures for sub-agents by model in Build sessions.
   - New session: a Profile picker that fills the model and effort; changing either after picking shows "Custom". Preferences' overrides for the run (W119) keep working.
   - To check first: that a skill named at the start of `claude --bg`'s prompt runs as it does typed.
   - Security: a profile's skill is a name checked against a strict pattern (letters, digits and hyphens, with one optional `plugin:` part), never free text on the command line; its model and effort are checked as W119's are.
   - Checks: the config file's tests, New session's tests, the app check's `new-session` part.
   - Status: Planned.
-- **W155, The supervisor proposes sessions with a profile** (`m5.1/supervisor-profiles`, S). After W154.
+- **W156, The supervisor proposes sessions with a profile** (`m5.1/supervisor-profiles`, S). After W155.
   - `spawn_session` and the resume tool take a profile's name, checked against the profiles; the card shows the profile, and you can change it before you approve. The supervisor's prompt says which profile fits which work.
   - The prompt goes to version 7, so the supervisor's next start begins a new conversation.
   - Checks: `supervisorActions` tests, the app check's `supervisor` part.
   - Status: Planned.
-- **W153, Spike 013: reading the plan's percentages without changing your settings** (`spike/013-rate-limits`, S). After W155.
+- **W157, Spike 013: reading the plan's percentages without changing your settings** (`spike/013-rate-limits`, S). After W156.
   - Found (research agent, 2026-11-06, checked by the coordinator against [status line](https://code.claude.com/docs/en/statusline)): the status line's input has `rate_limits.five_hour` and `rate_limits.seven_day`, each with `used_percentage` (0 to 100) and `resets_at` (Unix seconds), for Pro, Max and Ultra subscribers, after a session's first API response; either window may be absent. It's the server's figure, so it counts other devices and claude.ai too. This reverses M5.1's first plan, which said Claude Code doesn't expose the plan's percentage.
   - Try, cheapest first, in a `pitwall-test-*` session: (a) the `rate_limit_event` (`status`, `resetsAt`, `utilization`) in the stream of the `claude -p` calls pitwall already makes for recaps and the supervisor: on every call, or only near a limit? (b) a status line pitwall passes with `--settings` only to the sessions it starts, writing `rate_limits` to a 0600 file under `$PITWALL_HOME`: does a background session run one? (c) `/usage` sent to `claude -p`, whose structured `usage_report` the Agent SDK documents: does it spend a model call?
   - Not: a status line in `~/.claude/settings.json`, which would reach every session.
   - If none works: the run rate uses the stand-in cost, set once against what `/usage` shows (Phil, 2026-11-06).
   - Whatever it reads goes behind the adapter and fails soft, to "unavailable".
   - Status: Planned.
-- **W156, The Usage view** (`m5.1/usage-view`, L). After W153.
+- **W158, The Usage view** (`m5.1/usage-view`, L). After W157.
   - Prior art (research agent, 2026-11-06; ccusage, Claude Code's `/usage`, Anthropic's and OpenAI's usage APIs, GitHub Copilot, Vercel, AWS Cost Explorer), what recurs: a window aligned to the reset, with the reset time shown; a 24-hour and 7-day toggle; grouping by model, project and sub-agent; cache reads and writes in their own columns, never summed into one total (97.7% of tokens are cache reads, W131); an attribution view, what's using the week; cost labelled as an estimate.
-  - What: this week by default, from `seven_day.resets_at` (W153), or the last 7 days without it; also 14 and 30 days. Tokens by day, or by hour for 24 hours; by repo and by session, ranked by stand-in cost; by model; and main sessions against sub-agents. Reuses `src/usage/` (W131).
+  - What: this week by default, from `seven_day.resets_at` (W157), or the last 7 days without it; also 14 and 30 days. Tokens by day, or by hour for 24 hours; by repo and by session, ranked by stand-in cost; by model; and main sessions against sub-agents. Reuses `src/usage/` (W131).
   - Cost: an incremental scan, each transcript read on from where the last read stopped, not every transcript on each request.
   - History: Claude Code deletes transcripts after `cleanupPeriodDays`, 30 by default ([.claude directory](https://code.claude.com/docs/en/claude-directory), research agent), so pitwall keeps daily totals, numbers only, at 0600 under `$PITWALL_HOME`. New storage, so a security review.
   - Checks: `src/usage/` tests, the view's tests, a new app check part, `usage`.
   - Status: Planned.
-- **W157, The run rate against a weekend reserve** (`m5.1/run-rate`, M). After W156.
-  - The header shows the week's and the five hours' percentages (W153), amber at 70% and red at 90%, and the pace against a target line: a weekend reserve, at most a set share of the week by a set time, 80% by Friday 18:00 unless the config file says otherwise (Phil, 2026-11-06).
+- **W159, The run rate against a weekend reserve** (`m5.1/run-rate`, M). After W158.
+  - The header shows the week's and the five hours' percentages (W157), amber at 70% and red at 90%, and the pace against a target line: a weekend reserve, at most a set share of the week by a set time, 80% by Friday 18:00 unless the config file says otherwise (Phil, 2026-11-06).
   - A projection, "at this rate, Saturday 14:00", only once there's enough history, and as a range: a straight line overstates after a burst and understates after a quiet spell (research agent; AWS Cost Explorer shows none with thin history).
   - Ahead of pace is pitwall's own code, with no model call: the header's badge, and possibly a Needs you item.
   - Status: Planned.
-- **W158, The supervisor reads the run rate** (`m5.1/supervisor-usage`, S). After W157.
-  - The supervisor runs only on your messages (D4), and waking it to watch would spend Opus tokens to save tokens, so it doesn't watch; W157 warns.
+- **W160, The supervisor reads the run rate** (`m5.1/supervisor-usage`, S). After W159.
+  - The supervisor runs only on your messages (D4), and waking it to watch would spend Opus tokens to save tokens, so it doesn't watch; W159 warns.
   - A read-only `get_usage` tool: the week's percentages, the pace, the heaviest sessions and those with a large context. With it the supervisor answers "can I start another build today?" and suggests a hand-off, a lighter profile or pausing a background session; you act (D4).
   - Its new-session cards show the pace beside the profile.
   - Status: Planned.
 
 ## Open questions
 
-- **Profiles set the sub-agent model as a default, or force it?** A default (Phil, 2026-11-06, W154): since Claude Code v2.1.251, an Agent call's own `model` beats `CLAUDE_CODE_SUBAGENT_MODEL`, and forcing it with `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` would quietly put a security review on Sonnet and a Haiku agent up to Sonnet. 11-02's sub-agents named no model, so a default covers them. Revisit if W156 shows Build sessions' sub-agents still mostly on Opus.
+- **Profiles set the sub-agent model as a default, or force it?** A default (Phil, 2026-11-06, W155): since Claude Code v2.1.251, an Agent call's own `model` beats `CLAUDE_CODE_SUBAGENT_MODEL`, and forcing it with `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` would quietly put a security review on Sonnet and a Haiku agent up to Sonnet. 11-02's sub-agents named no model, so a default covers them. Revisit if W158 shows Build sessions' sub-agents still mostly on Opus.
 - **Is pitwall open-sourced, and how?** Decided (Phil, 2026-10-28): it goes public, under Apache-2.0 (D21).
 - **The supervisor survives pitwall restarts** (Phil, 2026-11-02, yes, as built in W113): it stops with pitwall, and pitwall resumes its conversation by session id on the next run (spike 009), starting a new one only when the system prompt's version changes.
 - **Peers ([#99](https://github.com/leggetter/pitwall/issues/99) (Agent conversations: show top-level sessions talking to each other)):** show only, part of M6 (Phil, 2026-11-02, option A; "Considering: Peers"). The name is settled: Peers, not agent conversations (Phil, 2026-10-29).
