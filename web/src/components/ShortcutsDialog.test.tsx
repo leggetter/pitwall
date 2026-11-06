@@ -59,7 +59,7 @@ function dialogRows() {
 describe('the keyboard shortcuts dialog', () => {
   it("lists every row of 6.2's keyboard map, and no other", () => {
     const rows = docRows();
-    expect(rows.length).toBe(22);
+    expect(rows.length).toBe(23);
     const listed = keyboardMap(true).flatMap((group) => group.rows.map((row) => row.doc));
     expect(listed).toHaveLength(rows.length);
     expect(new Set(listed.map((row) => `${row.key} | ${row.where}`))).toEqual(new Set(rows.map((row) => `${row.key} | ${row.where}`)));
@@ -68,7 +68,7 @@ describe('the keyboard shortcuts dialog', () => {
   it('shows each row with its key caps, read out in words', () => {
     renderDialog();
     const rows = dialogRows();
-    expect(rows).toHaveLength(22);
+    expect(rows).toHaveLength(23);
     const byWhat = new Map(rows.map((row) => [row.what, row]));
     expect(byWhat.get('Focus the filter field')).toEqual({ what: 'Focus the filter field', caps: '/', heard: 'Slash' });
     expect(byWhat.get('Open the New session dialog')?.caps).toBe('n');
@@ -86,8 +86,20 @@ describe('the keyboard shortcuts dialog', () => {
 
   it("lists Shift ↵ under Session view, after F6, the terminal's other key (W41)", () => {
     const session = keyboardMap(true).find((group) => group.title === 'Session view');
-    expect(session?.rows.filter((row) => row.doc.where === 'The terminal').map((row) => row.doc.key)).toEqual(['F6', 'Shift + Enter']);
-    expect(session?.rows.at(-1)?.keys).toEqual([[{ keys: ['Shift', '↵'], label: 'Shift Enter' }]]);
+    expect(session?.rows.filter((row) => row.doc.where === 'The terminal').map((row) => row.doc.key)).toEqual(['F6', 'Shift + Enter', '⌘ + Backspace, ⌘ + ← / →']);
+    expect(session?.rows.find((row) => row.doc.key === 'Shift + Enter')?.keys).toEqual([[{ keys: ['Shift', '↵'], label: 'Shift Enter' }]]);
+  });
+
+  it("lists the terminal's ⌘ line-editing keys on Apple platforms only (W151)", () => {
+    const terminalKeys = (command: boolean) =>
+      keyboardMap(command)
+        .flatMap((group) => group.rows)
+        .filter((row) => row.doc.where === 'The terminal')
+        .map((row) => row.doc.key);
+    expect(terminalKeys(true)).toContain('⌘ + Backspace, ⌘ + ← / →');
+    expect(terminalKeys(false)).toEqual(['F6', 'Shift + Enter']);
+    renderDialog();
+    expect(dialogRows().find((row) => row.what === 'In the terminal: delete to the start of the line, or go to its start or end')).toMatchObject({ caps: '⌘ ⌫ ⌘ ← ⌘ →' });
   });
 
   it('shows ⌘ on Apple platforms and Ctrl elsewhere', () => {

@@ -47,6 +47,7 @@ class FakeTerminal implements TerminalHandle {
   }
   write() {}
   onData() {}
+  paste() {}
   fit() {}
   focus() {
     this.screen.focus();

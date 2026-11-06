@@ -26,6 +26,7 @@ class QuietTerminal implements TerminalHandle {
   rows = 24;
   write() {}
   onData() {}
+  paste() {}
   fit() {}
   focus() {}
   dispose() {}
