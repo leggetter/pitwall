@@ -480,3 +480,8 @@
   padding: var(--pw-space-3) var(--pw-space-4);
   border-bottom: 1px solid var(--pw-border);
 }
+
+/* Attach file (W135), first on the message box's help line: a ghost sm button, its 24 px box overlapping the 20 px line. */
+.supervisor-attach {
+  margin-block: calc(-1 * var(--pw-space-0-5));
+}
