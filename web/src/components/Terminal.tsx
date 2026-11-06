@@ -19,8 +19,8 @@
 //
 // Focus shows as the focus ring around the screen (Terminal.css), since Claude Code seems to draw its
 // own cursor, so xterm.js's unfocused outline cursor doesn't show. A paste while the terminal is attached
-// and focus is in the session view but not in a field, or nowhere, goes to the terminal and gives it
-// focus, so a paste never just vanishes (W151).
+// and focus is in the session view but not in a field, or nowhere after a click in the view, goes to
+// the terminal and gives it focus, so a paste never just vanishes; not while a modal dialog is open (W151).
 //
 // A session that isn't running asks first, as an inline confirmation under the bar (W24): Cancel
 // takes focus, and goes back to the conversation; "Restart and attach" stays busy until the attach
@@ -175,15 +175,20 @@ function isEditable(element: Element): boolean {
 
 /**
  * Whether a paste with focus on `active` goes to the terminal in `screen` (W151): only when the screen
- * is shown, not in a hidden root tab's view; and focus is nowhere (the page's body), or in the same
- * session view, but not in the screen, whose own paste xterm.js handles, nor in a field, which keeps
- * its own. Focus anywhere else, such as the session list, the supervisor or a dialog, keeps its paste.
+ * is shown, not in a hidden root tab's view, and no modal dialog or the repo drawer is open (the rule
+ * the dashboard's shortcuts follow); and focus is in the same session view, but not in the screen,
+ * whose own paste xterm.js handles, in a field, which keeps its own, or in the message box's footer,
+ * whose paste is the message box's; or focus is nowhere (the page's body) and the last click wasn't
+ * outside the view (`clickedOutside`), since a click on text in the session list or the supervisor
+ * leaves focus nowhere too. Focus anywhere else, such as the session list or the supervisor, keeps its
+ * paste.
  */
-export function pasteGoesToTerminal(active: Element | null, screen: HTMLElement): boolean {
+export function pasteGoesToTerminal(active: Element | null, screen: HTMLElement, clickedOutside = false): boolean {
   if (!screen.isConnected || screen.closest('[hidden]') !== null) return false;
   const doc = screen.ownerDocument;
-  if (active === null || active === doc.body || active === doc.documentElement) return true;
-  if (screen.contains(active) || isEditable(active)) return false;
+  if (doc.querySelector('[aria-modal="true"]') !== null) return false;
+  if (active === null || active === doc.body || active === doc.documentElement) return !clickedOutside;
+  if (screen.contains(active) || isEditable(active) || active.closest('.session-view-foot') !== null) return false;
   const view = screen.closest('.session-view');
   return view !== null && view.contains(active);
 }
@@ -408,18 +413,28 @@ export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, on
   const attached = status.kind === 'attached';
   useEffect(() => {
     if (!attached) return;
+    // Where the last click since the attach was: outside the session view, a paste with focus nowhere stays there.
+    let clickedOutside = false;
+    const onPointer = (event: PointerEvent) => {
+      const view = container.current?.closest('.session-view');
+      clickedOutside = !(event.target instanceof Node && view?.contains(event.target));
+    };
     const onPaste = (event: ClipboardEvent) => {
       const element = container.current;
       const terminal = screenTerminal.current;
-      if (event.defaultPrevented || !element || !terminal || !pasteGoesToTerminal(document.activeElement, element)) return;
+      if (event.defaultPrevented || !element || !terminal || !pasteGoesToTerminal(document.activeElement, element, clickedOutside)) return;
       const text = event.clipboardData?.getData('text/plain') ?? '';
       if (text === '') return;
       event.preventDefault();
       terminal.paste(text);
       terminal.focus();
     };
+    document.addEventListener('pointerdown', onPointer, true);
     document.addEventListener('paste', onPaste);
-    return () => document.removeEventListener('paste', onPaste);
+    return () => {
+      document.removeEventListener('pointerdown', onPointer, true);
+      document.removeEventListener('paste', onPaste);
+    };
   }, [attached]);
 
   const ended = status.kind === 'ended';

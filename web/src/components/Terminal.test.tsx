@@ -19,7 +19,7 @@ import { descriptionOf } from '../test/tooltips.js';
 import { BACKGROUND_TAB_KEY } from '../backgroundTab.js';
 import { TOKEN_STORAGE_KEY } from '../token.js';
 import { Dashboard } from './Dashboard.js';
-import { LINE_EDIT_KEYS, NEW_LINE, type TerminalHandle } from './Terminal.js';
+import { LINE_EDIT_KEYS, NEW_LINE, pasteGoesToTerminal, type TerminalHandle } from './Terminal.js';
 
 // Made-up sessions only. xterm.js is replaced by FakeTerminal, through the
 // module the view loads it from, and ResizeObserver by one the tests trigger.
@@ -938,6 +938,51 @@ describe('SessionView: a paste with focus outside the screen goes to the termina
     elsewhere.remove();
     expect(terminal.pasted).toEqual([]);
     expect(socket.sent.length).toBe(from);
+  });
+
+  it('with a modal dialog open, or the view hidden behind another root tab, the paste stays there', async () => {
+    const { view, socket, terminal, from } = await attached();
+    (document.activeElement as HTMLElement).blur();
+    // A dialog's card, as Dialog and the repo drawer mark it, with focus left on the page by a click on its text.
+    const modal = document.body.appendChild(document.createElement('div'));
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    expect(paste(document.body)).toBe(true);
+    modal.remove();
+    view.hidden = true;
+    expect(paste(document.body)).toBe(true);
+    view.hidden = false;
+    expect(terminal.pasted).toEqual([]);
+    expect(socket.sent.length).toBe(from);
+    expect(paste(document.body)).toBe(false);
+    expect(terminal.pasted).toEqual(['pasted text']);
+  });
+
+  it('with focus nowhere after a click outside the view, the paste stays there, until a click in the view', async () => {
+    const { view, terminal } = await attached();
+    // Text in the session list or the supervisor: a click there leaves focus on the page.
+    const text = document.body.appendChild(document.createElement('p'));
+    fireEvent.pointerDown(text);
+    (document.activeElement as HTMLElement).blur();
+    expect(paste(document.body)).toBe(true);
+    expect(terminal.pasted).toEqual([]);
+    fireEvent.pointerDown(within(view).getByRole('heading', { level: 2 }));
+    expect(paste(document.body)).toBe(false);
+    expect(terminal.pasted).toEqual(['pasted text']);
+    text.remove();
+  });
+
+  it("pasteGoesToTerminal: the message box's footer keeps its paste, its buttons included", () => {
+    const view = document.body.appendChild(document.createElement('section'));
+    view.className = 'session-view';
+    view.innerHTML = '<h2 tabindex="-1">demo</h2><div class="screen"><textarea></textarea></div><footer class="session-view-foot"><button>Send</button></footer>';
+    const screenBox = view.querySelector<HTMLElement>('.screen')!;
+    expect(pasteGoesToTerminal(view.querySelector('h2'), screenBox)).toBe(true);
+    expect(pasteGoesToTerminal(view.querySelector('footer button'), screenBox)).toBe(false);
+    expect(pasteGoesToTerminal(view.querySelector('textarea'), screenBox)).toBe(false);
+    expect(pasteGoesToTerminal(document.body, screenBox)).toBe(true);
+    expect(pasteGoesToTerminal(document.body, screenBox, true)).toBe(false);
+    view.remove();
   });
 
   it('an empty paste, or one before the attach or after it ended, goes nowhere', async () => {
