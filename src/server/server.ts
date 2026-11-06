@@ -113,6 +113,7 @@ import { registerSupervisor } from './supervisorRoutes.js';
 import type { Supervisor } from '../supervisor/supervisor.js';
 import { createRelayManager } from './relay.js';
 import { registerRelay } from './relayRoute.js';
+import { createFlagView, FlagStore, registerFlags } from './flags.js';
 import {
   bearerToken,
   identifyCredential,
@@ -265,12 +266,15 @@ export async function startServerWithInternals(
   const recaps = options.recaps;
   // With recaps, each session's recap, its title and Needs you's 'recap' reason, under W105's view.
   const recapped = recaps === undefined ? undefined : createRecapView(indexer, recaps);
+  // Flags, "It doesn't need me" (W153): each flagged session's `flagged`, over recaps, since a 'recap' flag is for its recap.
+  const flags = new FlagStore(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
+  const flagged = createFlagView(recapped ?? indexer, flags);
   // The supervisor (M5, W113), or off. Started only when the page asks, stopped on close().
   const supervisor = options.supervisor;
   // With it, the snapshot carries its state, under W105's view.
-  const supervised = supervisor === undefined ? undefined : createSupervisorView(recapped ?? indexer, supervisor);
+  const supervised = supervisor === undefined ? undefined : createSupervisorView(flagged, supervisor);
   // The snapshot clients get: each session's PR links cut to those matching a PR in the list (D14, W105).
-  const snapshots = createSnapshotView(supervised ?? recapped ?? indexer, prs);
+  const snapshots = createSnapshotView(supervised ?? flagged, prs);
   // Every session this pitwall started or resumed, for its run: only those resume with the defaults for sessions (W119's review).
   const started = new Set<string>();
   // New sessions, from the spawn route and the supervisor's spawn_session (W115): one set of limits.
@@ -345,6 +349,7 @@ export async function startServerWithInternals(
     });
     registerRelay(app, indexer, relay);
     registerRecaps(app, indexer, recaps);
+    registerFlags(app, { snapshots: flagged, store: flags, relay, recaps });
     registerSupervisor(app, supervisor, supervisorActions);
     registerMcp(app, mcp);
     registerWork(app, work, async (dir) => {
@@ -438,6 +443,7 @@ export async function startServerWithInternals(
       prs.stop();
       snapshots.stop();
       supervised?.stop();
+      flagged.stop();
       recapped?.stop();
       closed ??= Promise.all([
         closeAll(server, wss, () => {
