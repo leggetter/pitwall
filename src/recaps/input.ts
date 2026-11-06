@@ -144,9 +144,22 @@ function speakerOf(entry: ConversationEntry, relay: RelayMessages | undefined): 
 }
 
 /**
+ * The most characters of your own lines an update keeps beyond RECAP_TURNS_CAP (W152): your lines
+ * older than the newest RECAP_TURNS_CAP of turns since the previous recap, so an answer to a
+ * question it carried can't drop out of a busy stretch.
+ */
+export const RECAP_USER_LINES_CAP = 8000;
+
+/**
  * Collects the latest turns, newest first, until RECAP_TURNS_CAP characters of lines: hand it a
  * page's entries newest first with add(), which says when it's full. For an update, `after` is the
  * previous recap's `throughAt`: an entry at or before it is covered, and ends the collection.
+ *
+ * An update (W152) doesn't stop at the cap: past it, it keeps reading back to the previous recap for
+ * your own lines (`User:`, and `Claude asked` with what you answered), up to RECAP_USER_LINES_CAP more, and leaves the other turns out, so the
+ * other turns it keeps are the newest ones in a row. A line `[… N other turns left out …]` stands where
+ * turns were left out, and `[… older turns since the previous recap not read …]` at the start says
+ * your lines ran past their cap, or the reading stopped (finish(true)), before the previous recap.
  */
 export class TurnCollector {
   /** Newest first. */
@@ -156,11 +169,17 @@ export class TurnCollector {
   private tools: ConversationEntry[] = [];
   private stopped = false;
   private readonly afterMs: number | undefined;
+  /** An update past the cap: only your own lines are kept from here on (W152). */
+  private othersFull = false;
+  /** Lines left out since the last line kept, for the next `[… N other turns left out …]`. */
+  private skipped = 0;
+  /** An update that stopped before the previous recap: your lines ran past their cap. */
+  private userCut = false;
   /** The newest entry's time seen, in milliseconds, for the recap's `throughAt`. */
   newestMs: number | undefined;
 
   constructor(
-    private readonly options: { relay?: RelayMessages; after?: string; cap?: number } = {},
+    private readonly options: { relay?: RelayMessages; after?: string; cap?: number; userCap?: number } = {},
   ) {
     const after = options.after === undefined ? NaN : Date.parse(options.after);
     this.afterMs = Number.isFinite(after) ? after : undefined;
@@ -189,14 +208,20 @@ export class TurnCollector {
     if (!this.flushTools()) return false;
     const said = speakerOf(entry, this.options.relay);
     if (said === undefined) return true;
-    return this.push(`${timeLabel(entry.at)}${said.speaker}: ${flat(said.text, ENTRY_MAX)}`);
+    return this.push(`${timeLabel(entry.at)}${said.speaker}: ${flat(said.text, ENTRY_MAX)}`, said.speaker === 'User' || entry.kind === 'question');
   }
 
-  /** Ends the collection: what's waiting is folded in, if it fits. */
-  finish(): void {
+  /**
+   * Ends the collection: what's waiting is folded in, if it fits. `more` says the reading stopped
+   * with older turns not read, which an update marks (W152).
+   */
+  finish(more = false): void {
     if (this.stopped) return;
     this.flushTools();
     this.stopped = true;
+    if (!this.updating) return;
+    if (this.skipped > 0) this.mark(leftOut(this.skipped));
+    if (this.userCut || more) this.mark(NOT_READ);
   }
 
   /** The lines, oldest first, one per line. */
@@ -204,9 +229,14 @@ export class TurnCollector {
     return [...this.lines].reverse().join('\n');
   }
 
-  /** How many lines it holds. */
+  /** How many lines it holds, the markers included. */
   get count(): number {
     return this.lines.length;
+  }
+
+  /** An update's collection, which keeps your lines past the cap (W152). */
+  private get updating(): boolean {
+    return this.afterMs !== undefined;
   }
 
   private flushTools(): boolean {
@@ -217,21 +247,62 @@ export class TurnCollector {
     const summaries = calls.map((call) => plainLine(call.text, TOOLS_LINE_MAX)).filter((text) => text !== '');
     if (summaries.length === 0) return true;
     const line = `${timeLabel(calls[0]!.at)}Tools: ${summaries.join(' · ')}`;
-    return this.push(plainLine(line, TOOLS_LINE_MAX));
+    return this.push(plainLine(line, TOOLS_LINE_MAX), false);
   }
 
-  private push(line: string): boolean {
+  private push(line: string, user: boolean): boolean {
+    const cap = this.options.cap ?? RECAP_TURNS_CAP;
     const cost = line.length + (this.lines.length === 0 ? 0 : 1);
-    if (this.used + cost > (this.options.cap ?? RECAP_TURNS_CAP)) {
-      this.tools = [];
-      this.stopped = true;
+    if (!this.updating) {
+      if (this.used + cost > cap) {
+        this.tools = [];
+        this.stopped = true;
+        return false;
+      }
+      this.keep(line, cost);
+      return true;
+    }
+    if (!this.othersFull && this.used + cost <= cap) {
+      this.keep(line, cost);
+      return true;
+    }
+    // Past the cap: other turns are left out, and your lines are kept up to their own cap.
+    this.othersFull = true;
+    if (!user) {
+      this.skipped++;
+      return true;
+    }
+    const marker = this.skipped > 0 ? leftOut(this.skipped) : undefined;
+    const markerCost = marker === undefined ? 0 : marker.length + 1;
+    if (this.used + markerCost + cost > cap + (this.options.userCap ?? RECAP_USER_LINES_CAP)) {
+      this.userCut = true;
+      this.finish();
       return false;
     }
-    this.lines.push(line);
-    this.used += cost;
+    if (marker !== undefined) this.mark(marker);
+    this.keep(line, line.length + 1);
     return true;
   }
+
+  private keep(line: string, cost: number): void {
+    this.lines.push(line);
+    this.used += cost;
+  }
+
+  /** A marker line, kept whatever the caps: there are at most one per line of yours and one more. */
+  private mark(marker: string): void {
+    this.keep(marker, marker.length + (this.lines.length === 0 ? 0 : 1));
+    this.skipped = 0;
+  }
 }
+
+/** Where an update left other turns out to keep your lines (W152). */
+function leftOut(count: number): string {
+  return `[… ${count} other ${count === 1 ? 'turn' : 'turns'} left out …]`;
+}
+
+/** At the start of an update's turns that stopped before the previous recap (W152). */
+const NOT_READ = '[… older turns since the previous recap not read …]';
 
 /**
  * One of a session's PRs, as a recap's or a plan status's input names it (W150): open, as the PR list

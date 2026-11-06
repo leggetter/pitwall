@@ -103,14 +103,21 @@ function harness(options: Partial<RecapEngineOptions> = {}) {
   const facts = new Map<string, SessionFacts>();
   let latest: IndexSnapshot | undefined;
   const listeners = new Set<(snapshot: IndexSnapshot) => void>();
+  /** Entries a conversation page holds; all of them in one page by default. */
+  const paging: { size?: number } = {};
   const index: RecapIndex = {
     latest: () => latest,
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    async conversation(sessionId): Promise<ConversationPage | undefined> {
-      return { sessionId, entries: pages.get(sessionId) ?? [] };
+    async conversation(sessionId, before): Promise<ConversationPage | undefined> {
+      const all = pages.get(sessionId) ?? [];
+      if (paging.size === undefined) return { sessionId, entries: all };
+      // Pages of paging.size entries, the cursor the index of the oldest entry handed back.
+      const end = before === undefined ? all.length : Number(before);
+      const start = Math.max(0, end - paging.size);
+      return { sessionId, entries: all.slice(start, end), ...(start > 0 ? { before: String(start) } : {}) };
     },
   };
   const reader: RecapSourceReader = {
@@ -171,6 +178,7 @@ function harness(options: Partial<RecapEngineOptions> = {}) {
     clock,
     calls,
     pages,
+    paging,
     sources,
     facts,
     logs,
@@ -1245,5 +1253,52 @@ describe("the picture and the session's PRs (W150)", () => {
     expect(h.calls[3]!.input).not.toContain('<pull-requests');
     await h.reply(h.calls[3], envelope({ found: false }));
     await plain;
+  });
+});
+
+describe('an answer in a busy stretch (W152)', () => {
+  const ID = '00000000-0000-4000-8000-0000000000d1';
+  const clock = Date.parse('2026-10-29T12:00:00.000Z');
+  const BUDGET = 'Approve a recap budget of 40 a day?';
+
+  /** A recap carrying your question, then your answer and a busy stretch of `busy` tool calls and hand-backs. */
+  function busy(maxPages: number, busy = 30) {
+    const kept: SessionRecap = { ...answer({ todos: [{ text: BUDGET, owner: 'you' }] }), at: new Date(clock).toISOString(), throughAt: new Date(clock - 6 * MINUTE).toISOString(), source: 'pitwall' } as SessionRecap;
+    const h = harness({ recapStore: memoryRecapStore(new Map([[ID, kept]])), maxPages });
+    h.paging.size = 10;
+    h.start();
+    let a = h.add(ID);
+    const after = (seconds: number) => new Date(clock + seconds * 1000).toISOString();
+    h.pages.get(ID)!.push({ kind: 'user', text: 'Yes, 40 a day is fine.', at: after(10) });
+    for (let i = 0; i < busy; i++) {
+      h.pages.get(ID)!.push({ kind: 'tool', text: `Bash: gh run watch ${i}`, at: after(20 + 2 * i) });
+      h.pages.get(ID)!.push({ kind: 'cross-session', text: `Done: step ${i}. ${'x'.repeat(900)}`, at: after(21 + 2 * i), subagent: { description: 'review a step' } as ConversationEntry['subagent'] });
+    }
+    // Past the update's 15 minutes after the last activity.
+    h.clock.now += 18 * MINUTE;
+    a = { ...a, lastActivityAt: after(21 + 2 * (busy - 1)) };
+    return { h, a };
+  }
+
+  it("keeps your answer in the update's input, however many turns came after it", async () => {
+    const { h, a } = busy(8);
+    await h.poll([a]);
+    expect(h.calls).toHaveLength(1);
+    const turns = /<turns-since-previous-recap>\n([\s\S]*)\n<\/turns-since-previous-recap>/.exec(h.calls[0]!.input!)![1]!;
+    const lines = turns.split('\n');
+    expect(lines[0]).toBe('[10-29 12:00] User: Yes, 40 a day is fine.');
+    expect(lines[1]).toMatch(/^\[… \d+ other turns left out …\]$/);
+    expect(turns).toContain('Done: step 29.');
+    expect(turns).not.toContain('not read');
+    expect(h.calls[0]!.input).toContain(BUDGET);
+  });
+
+  it('says older turns were not read when the stretch is longer than its pages', async () => {
+    // One page of 10 a recap, so an update reads 4: 40 of 61 entries.
+    const { h, a } = busy(1);
+    await h.poll([a]);
+    const turns = /<turns-since-previous-recap>\n([\s\S]*)\n<\/turns-since-previous-recap>/.exec(h.calls[0]!.input!)![1]!;
+    expect(turns.split('\n')[0]).toBe('[… older turns since the previous recap not read …]');
+    expect(turns).not.toContain('40 a day is fine');
   });
 });
