@@ -412,7 +412,29 @@ M5.1's own items start at W131, the evidence the rest of it needs; the others fo
   - Tests: `input.test.ts` (the reproduction: an answer then 61 other lines, cut before W152, kept now; markers; the caps) and `engine.test.ts` (an update's input with the answer, through a paged conversation; "not read" when the stretch is longer than the pages; both fail on the old code).
   - Live check (made-up session, Haiku 5.5, 5 pairs, about $0.001 a call): on the old input, the update kept the answered budget question as yours, waiting on you, in 2 of 5; on the new, in 0 of 5. With the agreed figure quoted in the session's last turn, both dropped it.
   - Left: past 8,000 characters of your own lines in one stretch (about four long pastes), the oldest are the ones dropped, and `throughAt` moves past them, so an answer among them is lost as before; a first recap instead wouldn't reach them either. Refresh with nothing new makes a first recap from the latest turns (24,000 characters since W150), so a carried question older than them can still drop out (W146's Limits). Not checked against Phil's own session: its earlier recaps aren't kept.
-  - Status: Built, on `m5.1/recap-answered-todo`. Reviewed fresh: approve with fixes, made by the coordinator: a failed read no longer costs a call (markers don't count as turns, `TurnCollector.turns`); the relay's unverified messages kept past the cap; the prompt says your lines are kept, each shortened if long.
+  - Status: Merged ([#180](https://github.com/leggetter/pitwall/pull/180)). Reviewed fresh: approve with fixes, made by the coordinator: a failed read no longer costs a call (markers don't count as turns, `TurnCollector.turns`); the relay's unverified messages kept past the cap; the prompt says your lines are kept, each shortened if long.
+- **W153, Flag: "It doesn't need me" logs the false flag and asks the session** (`m5.1/flag-not-me`, M). After W152; its log is W152's evidence.
+  - Phil, 2026-11-06, after W152's case: a way to say "this doesn't need me", counted so the false flags can be analysed, and told to the session, "in case there is something it just hasn't correctly called out. It should have the opportunity to say, 'Yeah, you're right, I don't need you,' or 'No, I do need you. This is what I need you for.'"
+  - A flag says the assessment is wrong; a snooze (W154) says it's right, but not now. They're two actions, not one control with two outcomes (Phil, 2026-11-06).
+  - Offered on a session in Needs you, for every reason (`NeedsYou.reason`), in its row and the session view's actions menu, and only while the session is running. A finished background session would need a resume, which is the approval path's job.
+  - On a click, it does three things:
+    - **Hides:** the session leaves everything `needsAttention()` drives until what it needs changes, as W88's mark does today. Its badge stays in All sessions and its group, outlined, with "You flagged this" and an undo.
+    - **Logs:** a line in a 0600 file under `PITWALL_HOME`, capped like the recap store: the time, the session id, the reason, its text (the to-do or Claude Code's line), the recap's `at` and `throughAt`, and its source. On the server, since the browser holds no session content (D14).
+    - **Asks:** a message to the session through the relay, M2's send path, so it reads as yours. The text is fixed, with the to-do filled in, and says to reply "Open questions: None" if nothing is needed, or what exactly is. A busy session gets it mid-turn.
+  - The reply closes the loop: it's in the newest turns, so the next recap update reads it. A "None" keeps the session out of Needs you; a real need comes back as a new to-do, so it's back by itself.
+  - Cost: each click starts a turn in that session, which re-reads its whole context. Never sent without the click.
+  - A way to read the log: counts by reason and source, and the texts, through a script under `scripts/`, like the usage report; a view later, if it's worth one.
+  - Status: Planned.
+- **W154, Snooze: later, or for a time, until the session is woken** (`m5.1/snooze`, M). Replaces W88's (Not needed now) mark.
+  - Phil, 2026-11-06: "'later' means I actually don't want to prioritize this now, which is really a snooze." Snoozes can be woken by an update to the session, or set to a timer.
+  - The choices: 1 hour, 3 hours, tomorrow, next week, and Later, with no timer. A timed snooze comes back when its time is up, or sooner if the session is woken. Later comes back only when the session is woken: it wakes itself (a background task finishing, a scheduled wake-up), or the supervisor or another agent messages it.
+  - Settled with Phil, 2026-11-06, on the coordinator's leans:
+    - **Woken means a new turn you didn't start,** whatever started it. The transcript marks another session's message, but a finished background task is a notification, not a sender, so the sources aren't told apart. A turn you started doesn't count: you've been there. Not W88's rule, where a change in what it needs brings it back, since a recap rewording the same to-do would wake every Later.
+    - **Snoozes are kept on the server,** not in the browser as W88's marks are (`web/src/notNeeded.ts`, `pitwall.not-needed.v1`), so they hold in every browser, a timer runs out with the page closed, and the supervisor can see them. A 0600 file under `PITWALL_HOME`: each session's id, when it was snoozed, until when, never session content.
+  - A session that comes back says why, on its row's line 2: "Snooze ended" or "Woken: a new turn". Otherwise it's another "why is this flagged?".
+  - The supervisor's read-only tools (W112) say which sessions are snoozed and until when, so it doesn't bring one up while it's snoozed.
+  - W88's marks: read once and dropped, or left to expire; the build decides, and says which.
+  - Status: Planned.
 
 ## Open questions
 
