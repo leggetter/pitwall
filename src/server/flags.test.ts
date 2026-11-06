@@ -145,6 +145,21 @@ describe('FlagStore', () => {
     expect(sessionsOf(second.decorate(snapshotOf(session(), other))).map((s) => s.flagged !== undefined)).toEqual([true, false]);
   });
 
+  it('logs a flag that ends by itself, so a restart doesn’t bring it back for the same need later (W153’s review)', () => {
+    const prompt = session({ needsYou: { reason: 'prompt' }, waitingFor: 'permission prompt', lastActivityAt: '2026-11-06T10:00:00.000Z' });
+    const first = new FlagStore({ home });
+    first.logFlag(prompt, first.flag(prompt)!, 'row', undefined, 'delivered');
+    first.decorate(snapshotOf(session({ needsYou: undefined })));
+    expect(logLines().map((line) => line.kind)).toEqual(['flag', 'end']);
+    expect(sessionsOf(new FlagStore({ home }).decorate(snapshotOf(prompt)))[0]!.flagged).toBeUndefined();
+  });
+
+  it('tells one wait at a prompt from the next by its last activity', () => {
+    const at = (time: string) => session({ needsYou: { reason: 'prompt' }, waitingFor: 'permission prompt', lastActivityAt: time });
+    expect(needKey(at('2026-11-06T10:00:00.000Z'))).not.toBe(needKey(at('2026-11-06T11:00:00.000Z')));
+    expect(needKey(at('2026-11-06T10:00:00.000Z'))).toBe(needKey(at('2026-11-06T10:00:00.000Z')));
+  });
+
   it('ignores a log that is a link, or writable by others, and lines that don’t check out', () => {
     const file = join(home, FLAG_LOG_NAME);
     const good = JSON.stringify({ v: 1, kind: 'flag', at: '2026-11-06T10:05:00.000Z', sessionId: ID, need: needKey(session()) });
@@ -290,6 +305,30 @@ describe('the flag routes', () => {
     expect((await flag(ID, { reason: 'recap', from: 'row' }, 'text/plain')).status).toBe(415);
     expect((await flag(ID, 'x'.repeat(5000))).status).toBe(413);
     expect(sends).toEqual([]);
+  });
+
+  it('an undo while the ask is out stays undone after a restart (W153’s review)', async () => {
+    const store = new FlagStore({ home });
+    let release: (() => void) | undefined;
+    const view = createFlagView({ latest: () => snapshotOf(session()), subscribe: () => () => {} }, store);
+    const app = new Hono();
+    registerFlags(app, { snapshots: view, store, relay: { send: () => new Promise((resolve) => (release = () => resolve({ status: 'delivered' }))) } });
+    const pending = app.request(flagPath(ID), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: 'recap', from: 'row' }) });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect((await app.request(unflagPath(ID), { method: 'POST' })).status).toBe(200);
+    release!();
+    expect((await pending).status).toBe(200);
+    expect(logLines().map((line) => line.kind)).toEqual(['undo', 'flag', 'end']);
+    expect(sessionsOf(new FlagStore({ home }).decorate(snapshotOf(session())))[0]!.flagged).toBeUndefined();
+  });
+
+  it('flags nothing, and answers 429, when the relay is too busy to take the ask', async () => {
+    const { flag, view } = setup([session()], { status: 'failed', detail: 'busy', retryAfterSeconds: 3 });
+    const res = await flag(ID, { reason: 'recap', from: 'row' });
+    expect(res.status).toBe(429);
+    expect(res.headers.get('retry-after')).toBe('3');
+    expect(((await res.json()) as FlagResult).ok).toBe(false);
+    expect(sessionsOf(view.latest()!)[0]!.flagged).toBeUndefined();
   });
 
   it('undoes a flag, logged, sending nothing', async () => {

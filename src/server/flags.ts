@@ -14,7 +14,8 @@
 //      and the recap after it is its answer.
 //   2. Logs: one JSON line in $PITWALL_HOME/flags.jsonl, 0600: when, the session id, the reason, its
 //      text (the to-do, Claude Code's line, the question or the prompt), the recap's `at`, `throughAt`
-//      and source, where you clicked, and what came of the ask. An undo is a line too. Only here,
+//      and source, where you clicked, and what came of the ask. An undo is a line too, and so is a
+//      flag's end by itself, so a restart replays only the flags still holding. Only here,
 //      since the browser keeps no session content (D14). Past FLAG_LOG_MAX_BYTES the newest half is
 //      kept. scripts/flag-report.ts reads it.
 //   3. Asks: a fixed message to the session through the relay (D8), so it reads as yours, with what
@@ -31,6 +32,7 @@
 //          running (an ended or finished session would need a resume, which is the approval path's)
 //     413  the body is over FLAG_BODY_MAX_BYTES
 //     415  the body isn't `Content-Type: application/json`
+//     429  the relay was too busy to take the ask: nothing sent, nothing flagged. Retry-After is set
 //
 //   POST unflagPath(id)  no body                                        answers: FlagResult
 //     200  { ok: true }: the flag is gone, and an undo logged if there was one. Nothing is sent
@@ -83,7 +85,8 @@ const RELAY_STATUSES: readonly RelayStatus[] = ['delivered', 'held', 'refused', 
 /** One line of the log. */
 export interface FlagLogLine {
   v: 1;
-  kind: 'flag' | 'undo';
+  /** 'end': the flag ended by itself, as what the session needs changed, or was undone while its ask was out. */
+  kind: 'flag' | 'undo' | 'end';
   at: string;
   sessionId: string;
   /** For a flag: needKey() when it was flagged. */
@@ -107,7 +110,9 @@ export interface FlagLogLine {
 export function needKey(session: SessionSummary): string | undefined {
   const need = session.needsYou;
   if (need === undefined) return undefined;
-  const parts = [need.reason, need.text ?? null, session.askedYou?.excerpt ?? null, session.waitingFor ?? null, need.reason === 'recap' ? (session.recap?.at ?? null) : null];
+  // A reason without text of its own is the same every time ('permission prompt', 'blocked'), so its last activity tells one wait from the next.
+  const episode = need.reason === 'recap' ? (session.recap?.at ?? null) : need.reason === 'prompt' || need.reason === 'blocked' || need.reason === 'restarted' ? (session.lastActivityAt ?? null) : null;
+  const parts = [need.reason, need.text ?? null, session.askedYou?.excerpt ?? null, session.waitingFor ?? null, episode];
   return createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 32);
 }
 
@@ -178,7 +183,7 @@ export class FlagStore {
     this.#file = this.#home === undefined ? undefined : path.join(this.#home, FLAG_LOG_NAME);
     this.#now = options.now ?? (() => new Date());
     for (const line of this.#read()) {
-      if (line.kind === 'undo') this.#held.delete(line.sessionId);
+      if (line.kind !== 'flag') this.#held.delete(line.sessionId);
       else if (line.need !== undefined) this.#hold(line.sessionId, { need: line.need, at: line.at });
     }
   }
@@ -220,6 +225,15 @@ export class FlagStore {
       from,
       ...(asked === undefined ? {} : { asked }),
     });
+    // Undone, or ended, while the ask was out: its undo is logged already, before this line, so say it ended after it.
+    if (this.#held.get(session.sessionId) !== held) this.#append({ v: 1, kind: 'end', at: this.#now().toISOString(), sessionId: session.sessionId });
+  }
+
+  /** Takes back a flag made by flag() whose ask pitwall never sent, without logging it. */
+  drop(session: SessionSummary, held: Held): void {
+    if (this.#held.get(session.sessionId) !== held) return;
+    this.#held.delete(session.sessionId);
+    this.#changed();
   }
 
   /** Takes `sessionId`'s flag away, and logs the undo. False when it had none. */
@@ -238,6 +252,7 @@ export class FlagStore {
   decorate(snapshot: IndexSnapshot): IndexSnapshot {
     if (this.#held.size === 0) return snapshot;
     let changed = false;
+    const ended: string[] = [];
     const groups = snapshot.groups.map((group) => {
       let groupChanged = false;
       const sessions = group.sessions.map((session) => {
@@ -246,6 +261,7 @@ export class FlagStore {
         if (held.need !== needKey(session)) {
           // Not #changed(): this view already leaves it out, and the next one has nothing to add.
           this.#held.delete(session.sessionId);
+          ended.push(session.sessionId);
           return session;
         }
         groupChanged = true;
@@ -255,6 +271,8 @@ export class FlagStore {
       changed = true;
       return { ...group, sessions };
     });
+    // Logged, so a restart doesn't bring back a flag that has done its job.
+    for (const sessionId of ended) this.#append({ v: 1, kind: 'end', at: this.#now().toISOString(), sessionId });
     return changed ? { ...snapshot, groups } : snapshot;
   }
 
@@ -291,7 +309,7 @@ export class FlagStore {
     let fd: number | undefined;
     try {
       ensureLaunchDir(this.#home);
-      fd = openSync(this.#file, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
+      fd = openSync(this.#file, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
       const stat = fstatSync(fd);
       const uid = process.getuid?.();
       if (!stat.isFile() || (uid !== undefined && stat.uid !== uid) || (stat.mode & 0o077) !== 0) return;
@@ -344,7 +362,7 @@ export class FlagStore {
 export function readFlagLog(file: string): FlagLogLine[] {
   let fd: number | undefined;
   try {
-    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const stat = fstatSync(fd);
     const uid = process.getuid?.();
     if (!stat.isFile() || (uid !== undefined && stat.uid !== uid) || (stat.mode & 0o022) !== 0 || stat.size > FLAG_LOG_MAX_BYTES * 2) return [];
@@ -380,10 +398,10 @@ export function parseLine(raw: string): FlagLogLine | undefined {
   } catch {
     return undefined;
   }
-  if (!isRecord(value) || value.v !== 1 || (value.kind !== 'flag' && value.kind !== 'undo')) return undefined;
+  if (!isRecord(value) || value.v !== 1 || (value.kind !== 'flag' && value.kind !== 'undo' && value.kind !== 'end')) return undefined;
   if (!isTime(value.at) || typeof value.sessionId !== 'string' || !isSafeSessionId(value.sessionId)) return undefined;
   const line: FlagLogLine = { v: 1, kind: value.kind, at: value.at, sessionId: value.sessionId };
-  if (value.kind === 'undo') return line;
+  if (value.kind !== 'flag') return line;
   if (typeof value.need !== 'string' || !/^[0-9a-f]{32}$/.test(value.need)) return undefined;
   line.need = value.need;
   if (REASONS.includes(value.reason as NeedsYou['reason'])) line.reason = value.reason as NeedsYou['reason'];
@@ -430,7 +448,7 @@ export interface FlagRouteSources {
 
 /** Adds the flag routes. Call it after the /api/* checks and before the /api/* catch-all. */
 export function registerFlags(app: Hono, sources: FlagRouteSources): void {
-  const answer = (c: Context, result: FlagResult, status: 200 | 400 | 404 | 409 | 413 | 415 | 503) => {
+  const answer = (c: Context, result: FlagResult, status: 200 | 400 | 404 | 409 | 413 | 415 | 429 | 503) => {
     c.header('Cache-Control', 'no-store');
     return c.json(result, status);
   };
@@ -468,6 +486,12 @@ export function registerFlags(app: Hono, sources: FlagRouteSources): void {
         session.needsYou.reason !== 'recap' ? undefined : { ...(session.recap === undefined ? {} : { at: session.recap.at, source: session.recap.source }), ...(recap === undefined ? {} : { throughAt: recap.throughAt }) };
       // From the resolved summary, never the request.
       const outcome = await sources.relay.send({ sessionId: session.sessionId, name: session.name, pid: session.pid, cwd: session.cwd }, askText(session));
+      // The relay was too busy to take it, so nothing was sent: no flag either, so a click later asks.
+      if (outcome.retryAfterSeconds !== undefined) {
+        sources.store.drop(session, held);
+        c.header('Retry-After', String(outcome.retryAfterSeconds));
+        return answer(c, { ok: false, error: "pitwall's relay is busy, so it didn't flag it or ask it. Try again in a moment." }, 429);
+      }
       sources.store.logFlag(session, held, request.from, recapFacts, outcome.status);
       return answer(c, { ok: true, asked: { status: outcome.status, ...(outcome.detail === undefined ? {} : { detail: outcome.detail }) } }, 200);
     },
