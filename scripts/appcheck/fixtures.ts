@@ -234,6 +234,13 @@ export const RECAP_CALL_MS = 600;
 /** How long a made-up plan status call takes (W123), so Plan status shows its spinner. */
 export const PLAN_CALL_MS = 700;
 
+/** The picture of RECAPPED.you's recap (W150): the goal, what it's on and why, and the plan's line. */
+export const RECAP_PICTURE = {
+  goal: 'Give the made-up API a health route that the load balancer can check.',
+  workingOn: '#51: the health route and its test, which the load balancer needs before the old ping can go.',
+  plan: 'The made-up API plan: #51, then the load balancer, then retiring the ping; on #51 now',
+} as const;
+
 /** The sessions whose made-up transcript shows no plan (W123): the rest work through PLANNED's. */
 export const NO_PLAN = NAMES.finished;
 
@@ -846,7 +853,8 @@ export class World {
       },
     });
     return [
-      made(RECAPPED.you, {}),
+      // W150's picture: the goal, what it's on and why, and the plan's line.
+      made(RECAPPED.you, { ...RECAP_PICTURE }),
       made(RECAPPED.stale, {
         summary: 'You asked it to review the made-up retry change. It reviewed it and asked whether to retry the failed batch now.',
         todos: [{ text: 'Say whether to retry the made-up failed batch now, or wait for tonight', owner: 'you' }],
@@ -859,6 +867,10 @@ export class World {
         todos: [{ text: 'Approve #19', owner: 'someone else' }],
         waitingOn: 'someone else',
         title: 'Tidy both made-up services',
+        // A picture with no plan (W150).
+        goal: 'Tidy both made-up services so they share one config loader.',
+        workingOn: '#19: the shared loader, which both services need before the old one can go.',
+        plan: '',
       }),
       made(RECAPPED.anotherSession, {
         summary: 'You asked it to add a made-up route. Its sub-agents are drafting the route and its tests.',

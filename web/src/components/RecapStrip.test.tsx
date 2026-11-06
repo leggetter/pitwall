@@ -1,15 +1,16 @@
 // The recap strip (M5, W111, W121; docs/design-system.md, 4: Recap strip): when it shows, what it
 // fetches and when, the one request for a new recap as a view opens on a stale recap or none, never in
 // a loop, the summary and the to-dos under it, collapsed and open, Refresh and its answers, and its
-// loading and failed states; and Plan status (W123). Made-up sessions, recaps and plans only.
+// loading and failed states; Plan status (W123); and the picture (W150): the goal, what it's working
+// on, the plan with Show plan, and only your to-dos. Made-up sessions, recaps and plans only.
 
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { planStatusPath, planStatusRefreshPath, RECAP_DAILY_BUDGET, recapPath, recapRefreshPath, type PlanStatus, type RecapHealth, type RecapSummary, type SessionRecap, type SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext, type ApiClient, type ApiResult } from '../api.js';
-import { RECAP_COLLAPSED_KEY, RECAP_WAIT_MS, RECAPS_OFF_TEXT, budgetText, refreshRecapFailedText } from '../recap.js';
+import { NO_PLAN_LINE, RECAP_COLLAPSED_KEY, RECAP_WAIT_MS, RECAPS_OFF_TEXT, budgetText, parseRecap, refreshRecapFailedText } from '../recap.js';
 import { minutesAgo, session } from '../test/fixtures.js';
-import { NO_PLAN_TEXT, PLAN_FULL_TEXT, PLAN_NO_TRANSCRIPT_TEXT, PLAN_OFF_TEXT, PLAN_STATUS_BUSY, PLAN_STATUS_READY, parsePlanStatus, planFailedText } from '../planStatus.js';
+import { NO_PLAN_TEXT, PLAN_FULL_TEXT, PLAN_STATUS_LABEL, PLAN_NO_TRANSCRIPT_TEXT, PLAN_OFF_TEXT, PLAN_STATUS_BUSY, PLAN_STATUS_READY, parsePlanStatus, planFailedText } from '../planStatus.js';
 import { RecapStrip, STALE_LABEL } from './RecapStrip.js';
 import { SessionView } from './SessionView.js';
 import { ToastContext, type ShowToast } from './Toast.js';
@@ -325,6 +326,8 @@ describe('asking for a new recap as the view opens', () => {
     expect(server.post).not.toHaveBeenCalled();
     expect(strip()?.dataset.recap).toBe('none');
     expect(strip()?.textContent).toContain(`No recap yet. ${budgetText(RECAP_DAILY_BUDGET)}`);
+    // Plan status needs no recap, so it's still there (W150's review).
+    expect(strip()?.querySelector('.recap-plan-action [data-plan-status]')?.textContent).toBe(PLAN_STATUS_LABEL);
   });
 
   it('asks for nothing for a view only passed through, closed before the wait was up', async () => {
@@ -399,13 +402,14 @@ describe('the summary and the to-dos', () => {
     expect(document.querySelector('.recap-body')).toBeNull();
   });
 
-  it('says a stale recap may be out of date, on line 1 beside its age, so the summary keeps its width', async () => {
+  it('says a stale recap may be out of date, on line 1 after its age and Refresh, so the summary keeps its width', async () => {
     const stale = full({ stale: true });
     const server = fakeApi({ recap: stale, posts: ['pending'] });
     renderStrip({ session: target(stale) }, server.api);
     await settle();
     expect(document.querySelector('.recap-head .recap-stale')?.textContent).toBe(STALE_LABEL);
-    expect(document.querySelector('.recap-age + .recap-stale')).not.toBeNull();
+    // Refresh right after the age, as the recap's own, then May be out of date (W150).
+    expect(document.querySelector('.recap-head .recap-age + .recap-refresh + .recap-stale')).not.toBeNull();
     expect(summaryText()).toBe(SUMMARY);
   });
 
@@ -663,6 +667,10 @@ describe('loading and failing', () => {
     renderStrip({ session: target(recap) }, fakeApi({ recap: ok({ ...recap, waitingOn: 'the moon' }) }).api);
     await settle();
     expect(strip()?.dataset.recap).toBe('failed');
+    // Plan status needs no recap, so it's there, and its panel is the one it controls (W150's reviews).
+    const button = strip()!.querySelector<HTMLButtonElement>('.recap-plan-action [data-plan-status]')!;
+    expect(button.textContent).toBe(PLAN_STATUS_LABEL);
+    expect(document.getElementById(button.getAttribute('aria-controls')!)).not.toBeNull();
   });
 });
 
@@ -702,17 +710,21 @@ describe('Plan status (W123)', () => {
   const panel = () => document.querySelector<HTMLElement>('.recap-plan');
   const items = () => [...document.querySelectorAll('.recap-plan-item')].map((li) => [li.querySelector('.recap-plan-item-text')?.textContent, li.querySelector('.recap-plan-state')?.textContent]);
   const panelNote = () => document.querySelector('.recap-plan .recap-note')?.textContent;
+  // The button is in the strip's body, which shows once the recap is there (W150).
   const press = async () => {
+    await settle();
     fireEvent.click(button()!);
     await settle();
   };
 
-  it('is a button named Plan status beside Refresh, which fetches and makes nothing until it is pressed', async () => {
+  it('is a button named Plan status in the body, after the to-dos, never on line 1, which fetches and makes nothing until it is pressed (W150)', async () => {
     const server = planApi();
     renderStrip({ session: target(full()) }, server.api);
     await pastAskDelay();
     expect(button()?.textContent).toBe('Plan status');
-    expect(button()?.closest('.recap-actions')?.querySelector('[data-recap-refresh]')).not.toBeNull();
+    expect(button()?.closest('.recap-body')).not.toBeNull();
+    expect(button()?.closest('.recap-head')).toBeNull();
+    expect(document.querySelector('.recap-body .recap-todos + .recap-plan-action [data-plan-status]')).toBe(button());
     expect(button()?.getAttribute('aria-expanded')).toBe('false');
     expect(panel()?.hidden).toBe(true);
     expect(server.planPosts()).toBe(0);
@@ -824,6 +836,8 @@ describe('Plan status (W123)', () => {
     let finish: (result: ApiResult) => void = () => undefined;
     const server = planApi({ stored: PLAN, posts: [new Promise<ApiResult>((resolve) => (finish = resolve))] });
     const view = renderStrip({ session: target(full()) }, server.api);
+    // There, empty, once the recap and its button are, before anything is pressed.
+    await settle();
     const region = document.querySelector<HTMLElement>('.recap-plan [role="status"]')!;
     expect(region.textContent).toBe('');
     await press();
@@ -862,5 +876,118 @@ describe('Plan status (W123)', () => {
     expect(parsePlanStatus({ found: false, items: [], at: PLAN.at, throughAt: PLAN.throughAt })).toEqual({ found: false, items: [], at: PLAN.at, throughAt: PLAN.throughAt });
     expect(parsePlanStatus({ found: false, plan: 'x', items: [], at: PLAN.at, throughAt: PLAN.throughAt })).toBeUndefined();
     expect(parsePlanStatus({ ...PLAN, at: 'not a time' })).toBeUndefined();
+  });
+});
+
+describe('the picture (W150)', () => {
+  const PICTURE = {
+    goal: 'Make the made-up export work on files over 2 GB.',
+    workingOn: '#42: the 32-bit size field fix, which the large-file goal needs before the archive job can reuse it.',
+    plan: 'The made-up export plan: #42, then the archive job, on #42 now',
+  };
+  const pictured = (extra: Partial<SessionRecap> = {}) => full({ ...PICTURE, ...extra });
+  const line = (name: string) => document.querySelector<HTMLElement>(`.recap-line[data-line="${name}"]`);
+  const text = (name: string) => line(name)?.textContent;
+
+  it('shows the goal, what it is working on, the plan with Show plan, and only your to-dos, with no tags and no summary', async () => {
+    const recap = pictured();
+    renderStrip({ session: target(recap) }, fakeApi({ recap }).api);
+    await settle();
+    expect(strip()?.dataset.picture).toBe('');
+    expect(text('goal')).toBe(`Goal: ${PICTURE.goal}`);
+    expect(text('working-on')).toBe(`Working on: ${PICTURE.workingOn}`);
+    expect(line('plan')?.querySelector('.recap-line-text')?.textContent).toBe(PICTURE.plan);
+    expect(line('plan')?.querySelector('[data-plan-status]')?.textContent).toBe('Show plan');
+    expect(line('for-you')?.querySelector('.recap-label')?.textContent).toBe('For you (2):');
+    expect(todos()).toEqual([
+      ['Say whether to mark #42 ready', undefined],
+      ['Say whether to close #40', undefined],
+    ]);
+    expect(screen.getByRole('list', { name: 'For you' }).tagName).toBe('OL');
+    // The session's, CI's and someone else's to-dos are the conversation's, and the summary is for recaps without the picture.
+    expect(strip()?.textContent).not.toContain('Open a backport PR');
+    expect(strip()?.textContent).not.toContain('Review #42');
+    expect(summaryText()).toBeUndefined();
+    // In order: goal, working on, plan, for you.
+    const order = [...document.querySelectorAll('.recap-line')].map((each) => (each as HTMLElement).dataset.line);
+    expect(order).toEqual(['goal', 'working-on', 'plan', 'for-you']);
+    // Waiting on you: no quiet line, the to-dos say it.
+    expect(document.querySelector('.recap-waiting')).toBeNull();
+  });
+
+  it('says quietly what else it waits on, says when nothing is left, and names no plan when the recap has none', async () => {
+    const ci = pictured({ waitingOn: 'CI', todos: [{ text: 'Finish the checks on #42', owner: 'CI' }], plan: '' });
+    const view = renderStrip({ session: target(ci) }, fakeApi({ recap: ci }).api);
+    await settle();
+    expect(document.querySelector('.recap-waiting')?.textContent).toBe('Waiting on CI.');
+    expect(line('for-you')).toBeNull();
+    expect(note()).toBe('Waiting on CI.');
+    expect(line('plan')?.querySelector('.recap-line-text')?.textContent).toBe(NO_PLAN_LINE);
+    expect(line('plan')?.querySelector('[data-plan-status]')).not.toBeNull();
+    view.unmount();
+    const done = pictured({ waitingOn: 'nothing', todos: [] });
+    renderStrip({ session: target(done) }, fakeApi({ recap: done }).api);
+    await settle();
+    expect(document.querySelector('.recap-body .recap-note')?.textContent).toBe('Nothing left to do.');
+    expect(document.querySelector('.recap-waiting')).toBeNull();
+  });
+
+  it('collapsed, keeps Working on, on one line, and how many to-dos are yours; the goal and the rest are hidden', async () => {
+    window.localStorage.setItem(RECAP_COLLAPSED_KEY, 'true');
+    const recap = pictured();
+    renderStrip({ session: target(recap) }, fakeApi({ recap }).api);
+    await settle();
+    const button = toggle()!;
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    const controlled = button.getAttribute('aria-controls')!.split(' ').map((id) => document.getElementById(id));
+    expect(controlled).toHaveLength(2);
+    expect(controlled.every((each) => each?.hidden === true)).toBe(true);
+    expect(controlled[0]).toBe(line('goal'));
+    expect(line('working-on')?.hidden).toBe(false);
+    expect(line('working-on')?.querySelector('.recap-for-you')?.textContent).toBe('2 for you');
+    fireEvent.click(button);
+    expect(controlled.every((each) => each?.hidden === false)).toBe(true);
+    expect(line('working-on')?.querySelector('.recap-for-you')).toBeNull();
+  });
+
+  it('Show plan opens the plan status panel under the Plan line, making one when there is none', async () => {
+    const recap = pictured();
+    const server = fakeApi({ recap, posts: [] });
+    const post = vi.fn<ApiClient['post']>(async (path) => (path === planStatusRefreshPath(SID) ? ok({ ok: true, status: { found: true, plan: 'M2', items: [{ text: 'W1', state: 'now' }], at: minutesAgo(0), throughAt: minutesAgo(1) } }) : status(404)));
+    renderStrip({ session: target(recap) }, { ...server.api, post });
+    await settle();
+    const show = line('plan')!.querySelector<HTMLButtonElement>('[data-plan-status]')!;
+    expect(show.getAttribute('aria-expanded')).toBe('false');
+    const panel = document.getElementById(show.getAttribute('aria-controls')!)!;
+    expect(panel.hidden).toBe(true);
+    // Right under the Plan line, before your to-dos.
+    expect(line('plan')!.nextElementSibling).toBe(panel);
+    fireEvent.click(show);
+    await settle();
+    expect(post.mock.calls.filter(([path]) => path === planStatusRefreshPath(SID))).toHaveLength(1);
+    expect(show.getAttribute('aria-expanded')).toBe('true');
+    expect(panel.hidden).toBe(false);
+    expect(panel.querySelector('.recap-plan-line')?.textContent).toBe('M2');
+    fireEvent.click(panel.querySelector<HTMLButtonElement>('.recap-plan-close')!);
+    await settle();
+    expect(document.activeElement).toBe(show);
+  });
+
+  it("shows a recap without the picture, and Claude Code's, as their summary, Plan status under Claude Code's", async () => {
+    const claude = full({ source: 'claude-code', todos: [], title: '', waitingOn: 'nothing', summary: 'The made-up fix is in #42.', ...PICTURE });
+    renderStrip({ session: target(claude) }, fakeApi({ recap: claude }).api);
+    await settle();
+    expect(strip()?.dataset.picture).toBeUndefined();
+    expect(summaryText()).toBe('The made-up fix is in #42.');
+    expect(document.querySelector('.recap-summary + .recap-plan-action [data-plan-status]')?.textContent).toBe('Plan status');
+    expect(document.querySelector('.recap-line')).toBeNull();
+  });
+
+  it('reads the picture defensively: all three as text, or none', () => {
+    const body = { ...full(), ...PICTURE };
+    expect(parseRecap(body)).toMatchObject(PICTURE);
+    expect(parseRecap({ ...body, plan: undefined })).not.toHaveProperty('goal');
+    expect(parseRecap({ ...body, goal: 3 })).toBeUndefined();
+    expect(parseRecap({ ...body, workingOn: 'x'.repeat(500) })?.workingOn?.length).toBeLessThanOrEqual(400);
   });
 });

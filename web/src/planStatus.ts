@@ -1,12 +1,13 @@
 // Plan status in the web UI (M5, W123; docs/design-system.md, 4: Recap strip). Phil, 2026-11-02: "I
 // want it to be clear that work is done as part of a plan... we're working our way through that
-// plan. That plan can change." A button on the recap strip, beside Refresh, that shows where the
-// session is in its bigger plan: the plan in one line, its items in order, each Done, Now, Next or
+// plan. That plan can change." A button on the recap strip, Show plan on the recap's Plan line since
+// W150 (the recap strip gives the picture), or Plan status in the strip's body for a recap without
+// one, that shows where the session is in its bigger plan: the plan in one line, its items in order, each Done, Now, Next or
 // Dropped, and how the plan changed, read from the transcript. Nothing is sent to the session.
 //
 // What this module decides, for the strip (RecapStrip.tsx):
 //
-// - **Pressed, it opens the panel** under the summary and the to-dos, and shows the newest plan
+// - **Pressed, it opens the panel** under its button, and shows the newest plan
 //   status: fetched with planStatusPath() when the snapshot says there's one (SessionSummary.
 //   planStatusAt, D14), else made with planStatusRefreshPath(), which answers once the call has
 //   finished. Pressed again, or the panel's Close, closes it. Nothing is fetched or made until then.
@@ -41,6 +42,10 @@ import type { BadgeLook } from './sessions.js';
 
 /** The button's name, which Phil chose (2026-11-02), and the panel's heading. */
 export const PLAN_STATUS_LABEL = 'Plan status';
+/** The button on the recap's Plan line (W150), a disclosure for the same panel. */
+export const SHOW_PLAN_LABEL = 'Show plan';
+/** Both buttons' tooltip, a description. */
+export const PLAN_STATUS_HINT = 'Where this session is in its plan, read from its transcript.';
 /** The button's tooltip while a plan status is made, and the panel's note meanwhile. */
 export const PLAN_STATUS_BUSY = "Reading the session's plan from its transcript. It takes a few seconds.";
 /** The panel's note when the transcript shows no plan. */

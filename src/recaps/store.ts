@@ -4,10 +4,12 @@
 //
 //   $PITWALL_HOME/recap-store/<session uuid>.json   0600
 //   {"version":1,"sessionId":"<uuid>","at":"<ISO>","throughAt":"<ISO>",
-//    "recap":{"summary":"…","todos":[{"text":"…","owner":"you"}],"waitingOn":"you","title":"…"}}
+//    "recap":{"summary":"…","todos":[{"text":"…","owner":"you"}],"waitingOn":"you","title":"…",
+//             "goal":"…","workingOn":"…","plan":"…"}}
 //
 // What's kept is the recap as the page shows it and nothing more: its summary, to-dos, what it waits
-// on and its title, as the model answered and pitwall's strict reading kept them; when it was made;
+// on and its title, and since W150 (the recap strip gives the picture) its goal, working on and plan,
+// as the model answered and pitwall's strict reading kept them; when it was made;
 // and `throughAt`, the newest transcript entry it covers, which says whether the session has moved on
 // since. No transcript excerpt, prompt, name, directory, token or cost.
 //
@@ -16,7 +18,9 @@
 // (ensureLaunchDir()), each file a regular file of this user's, not a link, not writable by group or
 // others, at most MAX_BYTES, with exactly these fields, this version, the session id its name says,
 // canonical times, and a recap that readRecapAnswer() (prompt.ts), the check a model's answer gets,
-// takes back unchanged. Anything else is ignored and counted, never a crash, and never shown.
+// takes back unchanged. A recap kept before W150, without the three, still loads, at the same
+// version: a version 2 would gain nothing, since a pitwall from before W150 ignores a file with the
+// three either way, as it would one of another version, and makes that session's recap again. Anything else is ignored and counted, never a crash, and never shown.
 //
 // A file is removed when its session leaves the list for good (the engine's call, remove()), and at
 // load once both its times are older than RECAP_KEEP_MS. Writing fails soft: the recap in memory
@@ -45,10 +49,11 @@ export const RECAP_STORE_VERSION = 1;
 export const RECAP_KEEP_MS = ENDED_LISTED_DAYS * 24 * 60 * 60 * 1000;
 
 /**
- * The most read of a file. A real one is under 4 KiB: a summary, up to 6 to-dos and a title, each at
- * most RECAP_FIELD_MAX (400) characters, are about 2,900 characters, 11.6 KB at 4 bytes a character.
+ * The most read of a file. A real one is under 6 KiB: a summary, up to 6 to-dos, a goal, a working on
+ * and a plan line, each at most RECAP_FIELD_MAX (400) characters, and a title of at most 120, are
+ * about 4,120 characters, 16.5 KB at 4 bytes a character, so W150's three fields raised it from 16 KiB.
  */
-export const RECAP_STORE_MAX_BYTES = 16 * 1024;
+export const RECAP_STORE_MAX_BYTES = 24 * 1024;
 
 /** The most files read at load: pitwall lists at most ENDED_LISTED_MAX ended sessions, plus those running. */
 export const RECAP_STORE_MAX_FILES = 1000;
@@ -115,14 +120,16 @@ export function memoryRecapStore(initial: ReadonlyMap<string, SessionRecap> = ne
   };
 }
 
-/** The file's text for a recap: these fields alone, in this order. */
+/** The file's text for a recap: these fields alone, in this order; the goal, working on and plan only when it has all three (W150). */
 export function storedText(sessionId: string, recap: SessionRecap): string {
+  const { goal, workingOn, plan } = recap;
+  const picture = goal === undefined || workingOn === undefined || plan === undefined ? {} : { goal, workingOn, plan };
   return `${JSON.stringify({
     version: RECAP_STORE_VERSION,
     sessionId,
     at: recap.at,
     throughAt: recap.throughAt,
-    recap: { summary: recap.summary, todos: recap.todos.map(({ text, owner }) => ({ text, owner })), waitingOn: recap.waitingOn, title: recap.title },
+    recap: { summary: recap.summary, todos: recap.todos.map(({ text, owner }) => ({ text, owner })), waitingOn: recap.waitingOn, title: recap.title, ...picture },
   })}\n`;
 }
 
@@ -163,10 +170,11 @@ export function parseStoredRecap(text: string, sessionId: string, nowMs: number,
   if (!isRecord(raw) || !Array.isArray(raw.todos)) return undefined;
   // The check a model's answer gets, and it must take the recap back exactly: one pitwall wrote was
   // already read that way, so anything it would cut, make plain or repair wasn't written by pitwall.
-  const reading = readRecapAnswer(JSON.stringify(raw));
+  const reading = readRecapAnswer(JSON.stringify(raw), { stored: true });
   if (!reading.ok || reading.repaired.length > 0) return undefined;
   const { answer } = reading;
   if (answer.summary !== raw.summary || answer.title !== raw.title || answer.waitingOn !== raw.waitingOn) return undefined;
+  if (answer.goal !== raw.goal || answer.workingOn !== raw.workingOn || answer.plan !== raw.plan) return undefined;
   if (answer.todos.length !== raw.todos.length) return undefined;
   for (let i = 0; i < answer.todos.length; i++) {
     const kept = raw.todos[i] as Record<string, unknown>;
