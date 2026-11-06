@@ -614,6 +614,100 @@ describe('its message box', () => {
   });
 });
 
+describe('attaching a file (W135)', () => {
+  const attachInput = () => view()!.querySelector<HTMLInputElement>('input[type="file"]')!;
+  async function choose(file: File) {
+    await act(async () => {
+      fireEvent.change(attachInput(), { target: { files: [file] } });
+    });
+    await settle();
+  }
+
+  it('is a button that opens the file picker, which takes any type', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [] }), { search: '?view=all&supervisor' });
+    await settle();
+    const click = vi.spyOn(attachInput(), 'click');
+    fireEvent.click(viewOf().getByRole('button', { name: 'Attach file' }));
+    expect(click).toHaveBeenCalledOnce();
+    expect(attachInput().hasAttribute('accept')).toBe(false);
+    expect(attachInput().tabIndex).toBe(-1);
+  });
+
+  it('puts a text file in the box under its name, after what’s there, keeps the draft, and gives the box focus', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [] }), { search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.change(box(), { target: { value: 'What do you make of this brief?' } });
+    await choose(new File(['# Brief\n\nMade-up plan.\n'], 'brief.md', { type: 'text/markdown' }));
+    const expected = 'What do you make of this brief?\n\nFile: brief.md\n```\n# Brief\n\nMade-up plan.\n```\n\n';
+    expect(box().value).toBe(expected);
+    expect(document.activeElement).toBe(box());
+    expect(box().selectionStart).toBe(expected.length);
+    expect(view()!.querySelector('.supervisor-box [role="status"]')?.textContent).toBe('Attached brief.md to your message.');
+    expect(viewOf().queryByRole('alert')).toBeNull();
+    expect(JSON.parse(window.sessionStorage.getItem(draftKey(SUPERVISOR_DRAFT_ID)) ?? '{}').text).toBe(expected);
+  });
+
+  it('goes in at the caret, keeping the text on either side', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [] }), { search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.change(box(), { target: { value: 'Read this:\nThen tell me.' } });
+    box().focus();
+    box().setSelectionRange(11, 11);
+    fireEvent.select(box());
+    await choose(new File(['notes'], 'n.txt', { type: 'text/plain' }));
+    expect(box().value).toBe('Read this:\n\nFile: n.txt\n```\nnotes\n```\n\nThen tell me.');
+  });
+
+  it('refuses a file that isn’t UTF-8 text, or has NUL bytes, saying so, and leaves the box as it was', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [] }), { search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.change(box(), { target: { value: 'Keep me' } });
+    await choose(new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff])], 'diagram.png', { type: 'image/png' }));
+    expect(viewOf().getByRole('alert').textContent).toBe("Couldn't attach diagram.png. It isn't UTF-8 text: only text files can be attached.");
+    expect(box().value).toBe('Keep me');
+    await choose(new File(['a\u0000b'], 'odd.txt', { type: 'text/plain' }));
+    expect(viewOf().getByRole('alert').textContent).toBe("Couldn't attach odd.txt. It has NUL bytes, so it isn't text: only text files can be attached.");
+    expect(box().value).toBe('Keep me');
+  });
+
+  it('refuses a file that wouldn’t fit the limit with what’s in the box', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [] }), { search: '?view=all&supervisor' });
+    await settle();
+    const draft = 'y'.repeat(SUPERVISOR_MESSAGE_MAX - 100);
+    fireEvent.change(box(), { target: { value: draft } });
+    await choose(new File(['x'.repeat(200)], 'log.txt', { type: 'text/plain' }));
+    expect(viewOf().getByRole('alert').textContent).toBe("Couldn't attach log.txt. With it, the message would be 124 characters over the 100,000 limit.");
+    expect(box().value).toBe(draft);
+  });
+  it('holds Send while a file is read, and refuses the file if the box changed meanwhile', async () => {
+    const fetch = fakeServer();
+    renderDashboard(snap({ status: 'idle', approvals: [] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.change(box(), { target: { value: 'hello' } });
+    let finish: (buffer: ArrayBuffer) => void = () => {};
+    const slow = new File(['notes'], 'slow.txt', { type: 'text/plain' });
+    Object.defineProperty(slow, 'arrayBuffer', { value: () => new Promise<ArrayBuffer>((resolve) => (finish = resolve)) });
+    await act(async () => {
+      fireEvent.change(attachInput(), { target: { files: [slow] } });
+    });
+    expect(box().readOnly).toBe(true);
+    fireEvent.click(sendButton());
+    fireEvent.keyDown(box(), { key: 'Enter', metaKey: true });
+    await settle();
+    expect(posts(fetch)).toEqual([]);
+    // As a suggested question or a send would, the text changes before the read ends.
+    box().readOnly = false;
+    fireEvent.change(box(), { target: { value: 'something else' } });
+    await act(async () => {
+      finish(new TextEncoder().encode('notes').buffer as ArrayBuffer);
+    });
+    await settle();
+    expect(box().value).toBe('something else');
+    expect(viewOf().getByRole('alert').textContent).toBe("Couldn't attach slow.txt. The message changed while the file was read: attach it again.");
+    expect(box().readOnly).toBe(false);
+  });
+});
+
 describe('its draft cards', () => {
   const cards = () => [...view()!.querySelectorAll<HTMLElement>('li.approval-card')];
 

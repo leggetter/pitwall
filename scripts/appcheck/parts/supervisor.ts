@@ -10,13 +10,16 @@
 // confirmed and refused, and a draft's text up to half the window (W136), with its buttons in the band
 // at 600 to 1000 px tall (W143); pitwall's line under a
 // message draft and its editor, and a session's reply to the supervisor, To pitwall-supervisor, with
-// Claude Code's refusal in pitwall's words (W138); and none with --no-supervisor. Made-up example/*
-// content only.
+// Claude Code's refusal in pitwall's words (W138); Attach file, a text file read in the page into the
+// box under its name, then sent, and a file that isn't UTF-8, has a NUL or is too big refused (W135);
+// and none with --no-supervisor. Made-up example/* content only.
 
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { REFUSED_TO_SUPERVISOR_NOTICE } from '../../../src/index/conversation.js';
 import { SUPERVISOR_MESSAGE_FOOTER } from '../../../src/shared/protocol.js';
 import { CODE, DEMO_APP, NAMES, OSS, SUPERVISOR_APPROVALS, SUPERVISOR_RACE_REFUSAL } from '../fixtures.js';
-import type { Part } from '../runner.js';
+import type { Case, Part } from '../runner.js';
 import { focused, listHeading, openFromRow, openRepoList, repoLabels, selectedRepo, VIEW, viewClose, viewName } from './_dom.js';
 
 const q = JSON.stringify;
@@ -44,6 +47,27 @@ const NEEDS_YOU = `Number([...document.querySelectorAll('nav[aria-label="Repos"]
 const TITLE_COUNT = `Number(/^\\((\\d+)\\)/.exec(document.title)?.[1] ?? 0)`;
 /** The view's box against the window's: inside it, and full width at 600 px and narrower. */
 const placed = `(() => { const r = ${SVIEW}.getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width, top: r.top, bottom: r.bottom }; })()`;
+
+/** Attach file's made-up files (W135): a brief with a fence of its own and some non-ASCII, and three it refuses. */
+const BRIEF = `# Made-up brief\n\nRun:\n\`\`\`sh\nnpm test\n\`\`\`\n\nCafé ✓\n${'A line of made-up text for the app check.\n'.repeat(1_000)}`;
+const ATTACH_FILES = {
+  brief: { name: 'pitwall-test-brief.md', bytes: Buffer.from(BRIEF, 'utf8') },
+  latin1: { name: 'pitwall-test-latin1.txt', bytes: Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x0a]) },
+  nul: { name: 'pitwall-test-nul.txt', bytes: Buffer.from('made\u0000up\n', 'utf8') },
+  huge: { name: 'pitwall-test-huge.log', bytes: Buffer.alloc(400_000, 0x78) },
+};
+
+/** Writes `file` into the run's output folder and chooses it in Attach file's input, as the system's picker would (DOM.setFileInputFiles). */
+async function attach(t: Case, file: { name: string; bytes: Buffer }): Promise<void> {
+  const dir = resolve(join(t.out, 'files', 'supervisor'));
+  await mkdir(dir, { recursive: true });
+  const path = join(dir, file.name);
+  await writeFile(path, file.bytes);
+  const { result } = await t.page.send<{ result: { objectId?: string } }>('Runtime.evaluate', { expression: `${SVIEW}?.querySelector('.supervisor-box input[type="file"]')` });
+  if (!result.objectId) throw new Error('the message box has no file input for Attach file');
+  await t.page.send('DOM.setFileInputFiles', { files: [path], objectId: result.objectId });
+  await t.page.settle();
+}
 
 const part: Part = {
   name: 'supervisor',
@@ -148,6 +172,51 @@ const part: Part = {
       await fill(0);
       await page.waitFor('the box empty', `${BOX}.value === '' && ${COUNT} === null`);
       t.expectEqual(records.supervisorMessages.length, 1, 'nothing more sent');
+    });
+
+    await t.step('Attach file (W135): a text file read into the box under its name, after what’s typed, then sent; one not UTF-8, with a NUL, or too big, refused', async () => {
+      const ATTACH = `${SVIEW}.querySelector('.supervisor-box .supervisor-attach')`;
+      const ALERT = `(${SVIEW}.querySelector('.supervisor-box [role="alert"]')?.textContent ?? null)`;
+      const SAID = `(${SVIEW}.querySelector('.supervisor-box p[role="status"]')?.textContent ?? null)`;
+      t.expectEqual(await page.evaluate(`${ATTACH}?.textContent.trim() ?? null`), 'Attach file', 'Attach file, on the help line');
+      t.expect(
+        await page.evaluate<boolean>(`(() => { const a = ${ATTACH}.getBoundingClientRect(); const b = ${BOX}.getBoundingClientRect(); return a.top >= b.bottom && a.left >= b.left - 0.5 && a.right <= innerWidth; })()`),
+        'under the text box, inside the window',
+      );
+      const prefix = 'What do you make of this brief?';
+      await page.evaluate(`(() => {
+        const box = ${BOX};
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(box, ${q(prefix)});
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      })()`);
+      await attach(t, ATTACH_FILES.brief);
+      const expected = `${prefix}\n\nFile: pitwall-test-brief.md\n\`\`\`\`\n${BRIEF.slice(0, -1)}\n\`\`\`\`\n\n`;
+      await page.waitFor('the file in the box', `${BOX}.value.includes('File: pitwall-test-brief.md')`);
+      t.expect(await page.evaluate<boolean>(`${BOX}.value === ${q(expected)}`), 'after what’s typed, under its name, in a fence longer than its own', await page.evaluate(`${BOX}.value.slice(0, 120)`));
+      t.expect(await page.evaluate<boolean>(`document.activeElement === ${BOX} && ${BOX}.selectionStart === ${BOX}.value.length`), 'focus in the box, the caret after the file', await page.evaluate(focused));
+      t.expect(await page.evaluate<boolean>(`${BOX}.scrollTop + ${BOX}.clientHeight >= ${BOX}.scrollHeight - 1`), 'the box scrolled to its end, where the caret is');
+      t.expectEqual(await page.evaluate(SAID), 'Attached pitwall-test-brief.md to your message.', 'said to a screen reader');
+      await t.shot('attached');
+
+      const typed = await page.evaluate<string>(`${BOX}.value`);
+      await attach(t, ATTACH_FILES.latin1);
+      await page.waitFor('the refusal', `${ALERT} !== null`);
+      t.expectEqual(await page.evaluate(ALERT), "Couldn't attach pitwall-test-latin1.txt. It isn't UTF-8 text: only text files can be attached.", 'not UTF-8: refused, in pitwall’s words');
+      await t.shot('attach-refused');
+      await attach(t, ATTACH_FILES.nul);
+      await page.waitFor('the NUL refusal', `${ALERT}?.includes('pitwall-test-nul.txt') ?? false`);
+      t.expectEqual(await page.evaluate(ALERT), "Couldn't attach pitwall-test-nul.txt. It has NUL bytes, so it isn't text: only text files can be attached.", 'a NUL: refused');
+      await attach(t, ATTACH_FILES.huge);
+      await page.waitFor('the size refusal', `${ALERT}?.includes('pitwall-test-huge.log') ?? false`);
+      t.expect((await page.evaluate<string>(ALERT)).includes('characters left in this message: the limit is 100,000.'), 'too big with what’s in the box: refused by its size', await page.evaluate(ALERT));
+      t.expectEqual(await page.evaluate<string>(`${BOX}.value`), typed, 'the box as it was');
+
+      const before = records.supervisorMessages.length;
+      await page.click('Send', SEND);
+      await page.waitFor('the message sent', `${BOX}.value === ''`, 8_000);
+      t.expectEqual(records.supervisorMessages.slice(before), [{ length: expected.trimEnd().length, status: 200 }], 'sent whole, as the box had it');
+      await page.waitFor('it to be idle', `${STATUS} === 'idle' && !${SVIEW}.querySelector('.working-line')`, 15_000);
     });
 
     await t.step('Close gives focus back to the item, or the list’s heading where the repo list is a shut drawer', async () => {

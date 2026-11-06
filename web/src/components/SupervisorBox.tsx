@@ -13,14 +13,18 @@
 // - The empty state's suggested questions fill it (`suggestion`), and focus moves to it; they never send.
 // - Escape never discards a draft: the box tells the view when there is one, and the view then
 //   ignores Escape.
+// - Attach file (W135, supervisorAttach.ts) reads a text file in the page and puts its contents in
+//   the box at the caret, under its name, for you to add to, edit and send. The server never sees a
+//   path. A file that isn't UTF-8 text, or wouldn't fit the limit, is refused in the box's alert.
 
-import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type RefObject } from 'react';
+import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type RefObject } from 'react';
 import { SUPERVISOR_MODEL, type SupervisorStatus } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { useAutoGrow } from '../autoGrow.js';
 import { DraftStorageContext, readDraft, writeDraft, type UnsureSend } from '../drafts.js';
 import { plainText } from '../format.js';
 import { characterCount, outgoingText } from '../relay.js';
+import { ATTACH_FILE_TEXT, attachFile, fileLabel } from '../supervisorAttach.js';
 import { CHECK_ITS_CONVERSATION, interruptSupervisor, modelName, sendToSupervisor, SUPERVISOR_DRAFT_ID, SUPERVISOR_TEXT_MAX } from '../supervisor.js';
 import { Alert, Detail } from './Alert.js';
 import { Button } from './Button.js';
@@ -61,7 +65,7 @@ function UnsureNote({ send }: { send: UnsureSend }) {
 }
 
 /** What the box shows after a send or a Stop. */
-type Shown = { tone: 'warning' | 'danger'; text: string } | { tone: 'queued' } | { tone: 'sent' };
+type Shown = { tone: 'warning' | 'danger'; text: string } | { tone: 'queued' } | { tone: 'sent' } | { tone: 'attached'; name: string };
 
 export interface SupervisorBoxProps {
   /** Its status, from the snapshot: Stop shows while it works, and nothing can be sent while it's held. */
@@ -92,6 +96,16 @@ export function SupervisorBox({ status, suggestion, onDraftChange, onSent, field
   const [shown, setShown] = useState<Shown>();
   // Stop: out, then waiting for the snapshot to say the turn has stopped, for at most STOP_WAIT_MS.
   const [stopping, setStopping] = useState(false);
+  // Attach file: its hidden input, the read under way, and the caret's last place in the box, which
+  // stays undefined until the box has focus, so a file goes at the end of a restored draft.
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [reading, setReading] = useState(false);
+  const caret = useRef<number | undefined>(undefined);
+  const placeCaret = useRef<number | undefined>(undefined);
+  // The box's text as of the last render, so a read that ends after a send or a suggested question
+  // can tell the text it read against has gone.
+  const latest = useRef(text);
+  latest.current = text;
 
   const keep = (next: string, send?: UnsureSend) => writeDraft(SUPERVISOR_DRAFT_ID, next === '' ? undefined : { text: next, send }, drafts);
   const edit = (next: string) => {
@@ -136,6 +150,23 @@ export function SupervisorBox({ status, suggestion, onDraftChange, onSent, field
 
   useAutoGrow(field, text);
 
+  // After a file goes in: focus in the box, with the caret after the file, once the box has its text.
+  useLayoutEffect(() => {
+    const at = placeCaret.current;
+    const element = field.current;
+    if (at === undefined || !element) return;
+    placeCaret.current = undefined;
+    element.focus();
+    try {
+      element.setSelectionRange(at, at);
+    } catch {
+      // A field that can't place the caret keeps it where the browser put it.
+    }
+    // The browser doesn't scroll a box to a caret placed this way: at the end, as it usually is, show the end.
+    if (at >= element.value.length) element.scrollTop = element.scrollHeight;
+    caret.current = at;
+  }, [text]);
+
   // Stop stays busy until the snapshot says the turn has stopped, or STOP_WAIT_MS passes.
   const working = status === 'working';
   useEffect(() => {
@@ -161,7 +192,7 @@ export function SupervisorBox({ status, suggestion, onDraftChange, onSent, field
   const held = status === 'held';
   const length = outgoingText(text).length;
   const tooLong = length > SUPERVISOR_TEXT_MAX;
-  const canSend = !held && !sending && text.trim() !== '' && !tooLong && api !== undefined;
+  const canSend = !held && !sending && !reading && text.trim() !== '' && !tooLong && api !== undefined;
   const count = characterCount(length, SUPERVISOR_TEXT_MAX);
   const sendOff = sending
     ? undefined
@@ -201,6 +232,7 @@ export function SupervisorBox({ status, suggestion, onDraftChange, onSent, field
     setShown(queued ? { tone: 'queued' } : { tone: 'sent' });
     setText('');
     keep('');
+    caret.current = undefined;
     onSent?.();
   };
 
@@ -216,6 +248,35 @@ export function SupervisorBox({ status, suggestion, onDraftChange, onSent, field
     } else if (outcome.kind === 'unauthorized') {
       setStopping(false);
     }
+  };
+
+  const chooseFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    // Emptied, so choosing the same file again is a change too.
+    event.target.value = '';
+    if (!file || reading || sending) return;
+    setReading(true);
+    setShown(undefined);
+    const before = text;
+    let outcome: Awaited<ReturnType<typeof attachFile>>;
+    try {
+      outcome = await attachFile(file, before, caret.current);
+    } catch {
+      outcome = { ok: false, error: `${ATTACH_FILE_TEXT.couldNot(fileLabel(file.name))} ${ATTACH_FILE_TEXT.unreadable}` };
+    } finally {
+      if (alive.current) setReading(false);
+    }
+    if (!alive.current) return;
+    if (outcome.ok && latest.current !== before) {
+      outcome = { ok: false, error: `${ATTACH_FILE_TEXT.couldNot(fileLabel(file.name))} ${ATTACH_FILE_TEXT.changed}` };
+    }
+    if (!outcome.ok) {
+      setShown({ tone: 'danger', text: outcome.error });
+      return;
+    }
+    placeCaret.current = outcome.caret;
+    edit(outcome.text);
+    setShown({ tone: 'attached', name: fileLabel(file.name) });
   };
 
   const onSubmit = (event: FormEvent) => {
@@ -253,9 +314,9 @@ export function SupervisorBox({ status, suggestion, onDraftChange, onSent, field
           {QUEUED_TEXT}
         </Alert>
       )}
-      {/* Sent, with nothing more to say on screen: the message shows in the conversation. Said once, to a screen reader. */}
+      {/* Sent, or a file attached, with nothing more to say on screen: the message shows in the conversation, the file in the box. Said once, to a screen reader. */}
       <p className="visually-hidden" role="status">
-        {shown?.tone === 'sent' ? 'Sent to the supervisor.' : ''}
+        {shown?.tone === 'sent' ? 'Sent to the supervisor.' : shown?.tone === 'attached' ? ATTACH_FILE_TEXT.attached(shown.name) : ''}
       </p>
       {(shown?.tone === 'warning' || shown?.tone === 'danger') && (
         <Alert tone={shown.tone} role="alert" className="relay-result">
@@ -275,7 +336,10 @@ export function SupervisorBox({ status, suggestion, onDraftChange, onSent, field
             value={text}
             onChange={(event) => edit(event.target.value)}
             onKeyDown={onKeyDown}
-            readOnly={sending}
+            onSelect={(event) => {
+              caret.current = event.currentTarget.selectionEnd;
+            }}
+            readOnly={sending || reading}
             aria-describedby={describedBy}
             aria-invalid={tooLong || undefined}
             spellCheck
@@ -307,6 +371,22 @@ export function SupervisorBox({ status, suggestion, onDraftChange, onSent, field
           </Tooltip>
         </div>
         <div className="relay-help">
+          <Tooltip content={ATTACH_FILE_TEXT.hint} relation="description">
+            <Button
+              size="sm"
+              variant="ghost"
+              icon="attach"
+              className="supervisor-attach"
+              disabled={sending}
+              busy={reading}
+              busyLabel="Reading…"
+              onClick={() => fileInput.current?.click()}
+            >
+              {ATTACH_FILE_TEXT.button}
+            </Button>
+          </Tooltip>
+          {/* No accept: a picker filtering by type would hide source files with no type of their own, such as a Go file. */}
+          <input ref={fileInput} type="file" hidden tabIndex={-1} onChange={(event) => void chooseFile(event)} data-supervisor-attach-input="" />
           <p className="relay-help-keys" id={ids.keys}>
             <KeyCaps keys={keys.keys} label={keys.label} /> to send
             <InfoTip text={SUPERVISOR_BOX_NOTE} className="relay-info" />
