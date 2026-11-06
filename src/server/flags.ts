@@ -279,33 +279,9 @@ export class FlagStore {
     for (const listener of [...this.#listeners]) listener();
   }
 
-  /** The log's lines that check out, oldest first; none when there's no log or it can't be trusted. */
+  /** The log's lines that check out, oldest first. */
   #read(): FlagLogLine[] {
-    if (this.#file === undefined) return [];
-    let fd: number | undefined;
-    try {
-      fd = openSync(this.#file, constants.O_RDONLY | constants.O_NOFOLLOW);
-      const stat = fstatSync(fd);
-      const uid = process.getuid?.();
-      if (!stat.isFile() || (uid !== undefined && stat.uid !== uid) || (stat.mode & 0o022) !== 0 || stat.size > FLAG_LOG_MAX_BYTES * 2) return [];
-      const buffer = Buffer.alloc(stat.size);
-      let read = 0;
-      while (read < buffer.length) {
-        const count = readSync(fd, buffer, read, buffer.length - read, read);
-        if (count === 0) break;
-        read += count;
-      }
-      return buffer
-        .subarray(0, read)
-        .toString('utf8')
-        .split('\n')
-        .map(parseLine)
-        .filter((line): line is FlagLogLine => line !== undefined);
-    } catch {
-      return [];
-    } finally {
-      if (fd !== undefined) closeSync(fd);
-    }
+    return this.#file === undefined ? [] : readFlagLog(this.#file);
   }
 
   /** Appends `line`; past FLAG_LOG_MAX_BYTES, rewrites the log with its newest half first. Fails soft. */
@@ -357,6 +333,38 @@ export class FlagStore {
       }
       throw error;
     }
+  }
+}
+
+/**
+ * The lines of the log at `file` that check out, oldest first; none when there's no log or it can't
+ * be trusted: not a regular file of this user's, a link, writable by group or others, or over
+ * FLAG_LOG_MAX_BYTES * 2. For the store, and scripts/flag-report.ts.
+ */
+export function readFlagLog(file: string): FlagLogLine[] {
+  let fd: number | undefined;
+  try {
+    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const stat = fstatSync(fd);
+    const uid = process.getuid?.();
+    if (!stat.isFile() || (uid !== undefined && stat.uid !== uid) || (stat.mode & 0o022) !== 0 || stat.size > FLAG_LOG_MAX_BYTES * 2) return [];
+    const buffer = Buffer.alloc(stat.size);
+    let read = 0;
+    while (read < buffer.length) {
+      const count = readSync(fd, buffer, read, buffer.length - read, read);
+      if (count === 0) break;
+      read += count;
+    }
+    return buffer
+      .subarray(0, read)
+      .toString('utf8')
+      .split('\n')
+      .map(parseLine)
+      .filter((line): line is FlagLogLine => line !== undefined);
+  } catch {
+    return [];
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }
 
