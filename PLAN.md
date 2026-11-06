@@ -398,7 +398,17 @@ M5.1's own items start at W131, the evidence the rest of it needs; the others fo
   - **Paste:** while attached, a paste with focus in the session view but not in a field (the Terminal tab after F6, the bar's buttons), or nowhere after a click in the view, goes to the terminal through xterm.js's `paste()`, bracketed when asked, and the terminal takes focus (`pasteGoesToTerminal()`). Left alone: a field, the screen itself, the message box's footer, anything outside the view, a hidden root tab's view, focus nowhere after a click outside the view, any paste while a modal dialog or the repo drawer is open, an empty paste. Safari may fire no paste event without a field focused (not checked).
   - The review (fresh, approve with fixes): its blocking finding, a paste with a dialog open went to the terminal behind it and took focus out of the dialog, and its others, focus nowhere after a click on the list's or the supervisor's text, the footer's buttons, and the hidden-view test, fixed by the coordinator.
   - **Checks:** `Terminal.test.tsx` (keys, paste) and `ShortcutsDialog.test.tsx`; the app check's `terminal` part: the ring with focus and without, the three keys and a plain Backspace through the real xterm.js, and a paste on the Terminal tab.
-  - Status: In review.
+  - Status: Merged ([#178](https://github.com/leggetter/pitwall/pull/178)).
+- **W152, A question you've answered doesn't keep a session under Needs you** (`m5.1/recap-answered-todo`, S to M). Must fix (Phil, 2026-11-06: "it wastes the user's (my) time clicking into sessions that don't need me").
+  - Phil, 2026-11-06: a background session showed "Waiting on you", and he didn't know why. Claude Code had flagged nothing: the session was busy only because a background shell was watching CI runs, and its last turn had ended with "Open questions: None". Its recap's lead to-do, marked yours, was a budget question the session asked the day before. Phil had answered it 5 minutes after it was asked, and the session later quoted the agreed figure back.
+  - So, unlike W146's case, the question was answered, not dropped. The recap was current (made after the session's newest activity), so nothing else stopped the 'recap' reason.
+  - Likely cause, not yet verified (the store keeps only the newest recap): an update sees the previous recap and only the newest `RECAP_TURNS_CAP` (8,000) characters of the turns since. The answer came in a busy stretch, with many sub-agent hand-backs, so it was probably cut from the update that would have dropped the to-do. W146's prompt rule then keeps it: a question stays until answered or dismissed, even when later turns don't mention it. Once carried, no later update sees the answer.
+  - First, reproduce it from a made-up transcript, not the real one (public repo): a question, your answer, then more than 8,000 characters of other turns before the next update. A unit test checks the input; one live recap call, on its own `PITWALL_HOME`, checks the outcome.
+  - Fix, to design from what the reproduction shows. The leading idea: an update keeps every `User:` line since the previous recap, whatever the cap, and fills the rest with the newest other turns, so an answer can't drop out. Also to weigh:
+    - W146's Later, a time on each to-do: a `you` to-do with a `User:` line after it was asked goes back to the model to check.
+    - The session's own latest "Open questions:" line as evidence: at most a prompt hint, since W146's session had dropped a question that was still open.
+  - Done when: the reproduction's update drops the answered to-do, W146's tests still pass, and Refresh's 8,000-character limit (W146's Limits) is either covered by the same fix or recorded as left.
+  - Status: Planned.
 
 ## Open questions
 
