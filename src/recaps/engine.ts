@@ -9,8 +9,9 @@
 //                   W69 reads it, SessionFacts.turnEnded; Claude Code's status when the transcript
 //                   has none) and it's been idle since activity newer than its last recap's
 //                   `throughAt`: RECAP_DEBOUNCE_MS for its first recap, RECAP_UPDATE_DEBOUNCE_MS for
-//                   an update (W132). pitwall's own sessions (the relay, recap calls) are never
-//                   listed, and sub-agents aren't sessions in the snapshot
+//                   an update (W132), or RECAP_DEBOUNCE_MS for an update too when it's a background
+//                   job whose state is `done` with its process alive (W162). pitwall's own sessions
+//                   (the relay, recap calls) are never listed, and sub-agents aren't sessions in the snapshot
 //   for its PR      a listed session that has finished or ended, isn't stale, has a readable
 //                   transcript and owns an open PR that needs you (prOwner(), prNeedsAttention(), as
 //                   the page's Needs you counts it, W106), by the PR list start() is given (W128):
@@ -470,10 +471,21 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     // A finished session gets no new activity, so a call that keeps failing would retry every
     // RETRY_AFTER_FAILURE_MS all day (#130's review): for one, a failure waits for new activity, or a refresh.
     if (failed !== undefined && failed.throughMs >= activity && (forPr || nowMs - failed.atMs < RETRY_AFTER_FAILURE_MS)) return false;
-    // A first recap 5 minutes after the turn ends; an update, which a recap stands in for meanwhile, 15 (W132).
-    if (nowMs - activity < (previous === undefined ? debounceMs : updateDebounceMs)) return false;
+    // A first recap 5 minutes after the turn ends; an update, which a recap stands in for meanwhile, 15 (W132),
+    // unless the job says it's done (W162): it won't take another turn until you prompt it, so 5.
+    if (nowMs - activity < (previous === undefined || jobDone(session) ? debounceMs : updateDebounceMs)) return false;
     // A finished session has no turn running, whatever its transcript's last mark says.
     return forPr || turnOver(session);
+  }
+
+  /**
+   * A background job that says `done` while its process is alive (W162); due() checks its turn has ended.
+   * A finished job's last message often asks you to act, and the out-of-date recap can't say so
+   * (needsYouOf()), so its update shouldn't wait for the 15 minutes meant for sessions that take a
+   * turn every few minutes. A `working` or `blocked` job keeps the long wait.
+   */
+  function jobDone(session: SessionSummary): boolean {
+    return session.kind === 'background' && session.state === 'done' && session.alive;
   }
 
   /** The turn has ended: by the transcript's mark, or, when it has none, by Claude Code's status. */

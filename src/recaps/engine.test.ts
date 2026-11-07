@@ -542,7 +542,7 @@ describe('the two waits after a turn ends (W132)', () => {
     expect(RECAP_UPDATE_DEBOUNCE_MS).toBe(15 * MINUTE);
     const h = harness();
     h.start();
-    let a = h.add('a', { lastActivityAt: new Date(h.clock.now - RECAP_DEBOUNCE_MS + 1000).toISOString() });
+    let a = h.add('a', { state: 'working', lastActivityAt: new Date(h.clock.now - RECAP_DEBOUNCE_MS + 1000).toISOString() });
     await h.poll([a]);
     expect(h.calls).toHaveLength(0);
     h.clock.now += 1000;
@@ -581,6 +581,81 @@ describe('the two waits after a turn ends (W132)', () => {
   it(`allows ${RECAP_DAILY_BUDGET} calls a day`, () => {
     expect(RECAP_DAILY_BUDGET).toBe(500);
     expect(harness().engine.health()).toMatchObject({ budget: 500 });
+  });
+});
+
+describe('a finished background job is updated after the short wait (W162)', () => {
+  /** A first recap made, then new activity at the turn's end; the clock moves on `after` ms and the engine polls. Returns the calls made since the first. */
+  async function update(overrides: Partial<SessionSummary>, fact: SessionFacts, after: number) {
+    const { h } = await updated(overrides, fact, after);
+    return h.calls.length - 1;
+  }
+
+  /** As update(), returning the harness and the session, to go on from there. */
+  async function updated(overrides: Partial<SessionSummary>, fact: SessionFacts, after: number) {
+    const h = harness();
+    h.start();
+    let a = h.add('a', { state: 'working', lastActivityAt: new Date(h.clock.now - RECAP_DEBOUNCE_MS).toISOString() });
+    await h.poll([a]);
+    expect(h.calls).toHaveLength(1);
+    await h.reply(h.calls[0], envelope(answer()));
+    const turnEnd = new Date(h.clock.now).toISOString();
+    h.pages.get('a')!.push({ kind: 'user', text: 'Go on.', at: turnEnd }, { kind: 'assistant', text: 'Done. Mark it ready before you post.', at: turnEnd });
+    h.facts.set('a', { file: '/made-up/projects/a.jsonl', ...fact });
+    a = { ...a, ...overrides, lastActivityAt: turnEnd };
+    h.clock.now += after;
+    await h.poll([a]);
+    return { h, a };
+  }
+
+  it('waits the short debounce for an update when the job says done, its process is alive and its turn has ended', async () => {
+    expect(await update({ state: 'done' }, { turnEnded: true }, RECAP_DEBOUNCE_MS - 1000)).toBe(0);
+    expect(await update({ state: 'done' }, { turnEnded: true }, RECAP_DEBOUNCE_MS)).toBe(1);
+  });
+
+  it('keeps the long wait for a job that is working or blocked', async () => {
+    for (const state of ['working', 'blocked'] as const) {
+      expect(await update({ state }, { turnEnded: true }, RECAP_DEBOUNCE_MS)).toBe(0);
+      expect(await update({ state }, { turnEnded: true }, RECAP_UPDATE_DEBOUNCE_MS)).toBe(1);
+    }
+  });
+
+  it('makes none while the turn has not ended, whatever the wait', async () => {
+    expect(await update({ state: 'done' }, { turnEnded: false }, RECAP_UPDATE_DEBOUNCE_MS)).toBe(0);
+  });
+
+  it('makes no second call once the update has landed', async () => {
+    const { h, a } = await updated({ state: 'done' }, { turnEnded: true }, RECAP_DEBOUNCE_MS);
+    expect(h.calls).toHaveLength(2);
+    await h.reply(h.calls[1], envelope(answer()));
+    h.clock.now += RECAP_UPDATE_DEBOUNCE_MS;
+    await h.poll([a]);
+    expect(h.calls).toHaveLength(2);
+  });
+
+  it('waits RETRY_AFTER_FAILURE_MS after a failed update, not the short wait again', async () => {
+    const { h, a } = await updated({ state: 'done' }, { turnEnded: true }, RECAP_DEBOUNCE_MS);
+    expect(h.calls).toHaveLength(2);
+    await h.reply(h.calls[1], envelope('Sure! Here is your recap.'));
+    h.clock.now += RETRY_AFTER_FAILURE_MS - 1000;
+    await h.poll([a]);
+    expect(h.calls).toHaveLength(2);
+    h.clock.now += 1000;
+    await h.poll([a]);
+    expect(h.calls).toHaveLength(3);
+  });
+
+  it('uses Claude Code\'s status for the turn when the transcript has no mark', async () => {
+    expect(await update({ state: 'done', status: 'idle' }, {}, RECAP_DEBOUNCE_MS)).toBe(1);
+    expect(await update({ state: 'done', status: 'busy' }, {}, RECAP_UPDATE_DEBOUNCE_MS)).toBe(0);
+  });
+
+  it('keeps the long wait for an interactive session, which has no job state', async () => {
+    expect(await update({ kind: 'interactive', state: undefined }, { turnEnded: true }, RECAP_DEBOUNCE_MS)).toBe(0);
+  });
+
+  it('makes no automatic update for a done job whose process is gone, however long the wait', async () => {
+    expect(await update({ state: 'done', alive: false, pid: undefined, finished: true }, { turnEnded: true }, RECAP_UPDATE_DEBOUNCE_MS)).toBe(0);
   });
 });
 
