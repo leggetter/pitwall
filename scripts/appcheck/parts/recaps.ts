@@ -334,7 +334,14 @@ const part: Part = {
       );
       t.expectEqual(shown.changes, `Changes: ${PLANNED.changes}`, 'how the plan changed');
       t.expectEqual(shown.age, 'just now', 'its age');
-      t.expectEqual(shown.said, PLAN_STATUS_READY, 'its live region says it is ready, once');
+      // The live region's text comes from an effect, a commit after the panel first shows, so wait for it
+      // rather than read it from the same snapshot (it raced at 900 px, 2026-11-07); a timeout still fails.
+      const said = await page.waitFor<string>(
+        'its live region to say something',
+        `(() => { const s = (${plan})?.said; return s ? s : null; })()`,
+        2_000,
+      );
+      t.expectEqual(said, PLAN_STATUS_READY, 'its live region says it is ready, once');
       t.expect(shown.panelInside && shown.noOverflow, 'the panel inside the strip, nothing wider than it', shown);
       t.expectEqual(server.records.planMakes, [{ name: NAMES.conversation, status: 200 }], 'one made');
       await t.shot('plan');
