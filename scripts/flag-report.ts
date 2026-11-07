@@ -9,6 +9,7 @@
 import path from 'node:path';
 import { FLAG_LOG_NAME, readFlagLog, type FlagLogLine } from '../src/server/flags.js';
 import { pitwallHome } from '../src/server/launch.js';
+import { plainLine } from '../src/index/text.js';
 
 function usage(message: string): never {
   process.stderr.write(`${message}\nUsage: npx tsx scripts/flag-report.ts [--days <n>] [--json]\n`);
@@ -56,7 +57,8 @@ const report = {
   byRecapSource: countBy((flag) => (flag.reason === 'recap' ? (flag.recapSource ?? 'unknown') : undefined)),
   byFrom: countBy((flag) => flag.from),
   byAsked: countBy((flag) => flag.asked),
-  texts: kept.map((flag) => ({ at: flag.at, session: flag.sessionId.slice(0, 8), reason: flag.reason ?? 'unknown', text: (flag.text ?? '').replace(/\s+/g, ' ').slice(0, 160) })),
+  // Session content: made plain, so a control sequence in it never runs in your terminal (W164, F4).
+  texts: kept.map((flag) => ({ at: plainLine(flag.at, 40), session: plainLine(flag.sessionId, 8), reason: flag.reason ?? 'unknown', text: plainLine(flag.text ?? '', 160) })),
 };
 
 if (json) {

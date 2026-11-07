@@ -126,23 +126,32 @@ export function needText(session: SessionSummary): string | undefined {
   return undefined;
 }
 
-/** What pitwall says the session needs, in the ask's words. */
+/**
+ * What pitwall says the session needs, in pitwall's own words alone (W164, F1). Never the need's
+ * text: that's the session's, a recap's or Claude Code's, and the relay sends the ask as yours, so a
+ * to-do or question that quoted an instruction would reach the session as your instruction (D25's
+ * rule: what pitwall sends as you is pitwall's words). The session knows its own question.
+ */
 function askedFor(session: SessionSummary): string {
-  const reason = session.needsYou?.reason;
-  const text = needText(session)?.replace(/\s+/g, ' ').trim();
-  switch (reason) {
+  switch (session.needsYou?.reason) {
     case 'prompt':
-      return `a prompt on your screen${text === undefined ? '' : ` (${text})`}`;
+      return 'the prompt on your screen';
+    case 'asked':
+      return 'the question at the end of your last message';
+    case 'claude-code':
+      return 'what Claude Code says you need from me';
+    case 'recap':
+      return "the next step pitwall's recap of you gives as mine";
     case 'restarted':
       return 'my next prompt, since I resumed or restarted you';
     case 'blocked':
       return 'you, since Claude Code says you are blocked';
     default:
-      return text === undefined || text === '' ? 'something it could not name' : `"${text}"`;
+      return 'something it could not name';
   }
 }
 
-/** The fixed message a flag sends the session, with what pitwall says it needs filled in. Written as yours, since the relay sends it as yours. */
+/** The fixed message a flag sends the session, naming the kind of need in pitwall's words. Written as yours, since the relay sends it as yours. */
 export function askText(session: SessionSummary): string {
   return [
     `pitwall lists you as needing me for: ${askedFor(session)}. I don't think you need me for that.`,

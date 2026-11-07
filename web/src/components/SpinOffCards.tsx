@@ -18,9 +18,9 @@ import { plainText } from '../format.js';
 import { checkSpinOff, SPIN_OFF_NOTE, SPIN_OFF_UNREADABLE, SPIN_OFF_UNREADABLE_NEXT, spinOffTitle, type ListedSpinOff } from '../spinOff.js';
 import { typedPromptNotes } from '../supervisor.js';
 import { Alert } from './Alert.js';
-import { ExactText, hiddenNote } from './ApprovalCards.js';
+import { ExactText, hiddenNote, lengthNote } from './ApprovalCards.js';
 import { Button } from './Button.js';
-import { ScrollBox } from './ScrollBox.js';
+import { ScrollBox, useOverflowing } from './ScrollBox.js';
 import { Timestamp } from './Timestamp.js';
 import '../supervisor.css';
 import './SpinOffCards.css';
@@ -67,6 +67,10 @@ function SpinOffCard({ item, onStart, onDismiss, onOpen }: { item: ListedSpinOff
   const ids = { heading: useId(), text: useId(), notes: useId() };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  // A prompt longer than its box says so, as the supervisor's cards do: it's the session's text, and
+  // an instruction below the fold is the one to read (W164, F3).
+  const [textBox, setTextBox] = useState<HTMLElement | null>(null);
+  const overflowing = useOverflowing(textBox);
   const { session, spinOff } = item;
   const from = plainText(session.name);
 
@@ -84,7 +88,7 @@ function SpinOffCard({ item, onStart, onDismiss, onOpen }: { item: ListedSpinOff
   };
 
   const parts = spinOff.kind === 'proposal' ? visibleParts(spinOff.prompt) : [];
-  const notes = spinOff.kind === 'proposal' ? [hiddenNote(parts), ...typedPromptNotes(spinOff.prompt)].filter((note) => note !== undefined) : [];
+  const notes = spinOff.kind === 'proposal' ? [overflowing ? lengthNote(spinOff.prompt) : undefined, hiddenNote(parts), ...typedPromptNotes(spinOff.prompt)].filter((note) => note !== undefined) : [];
   return (
     <li className="approval-card spin-off-card" data-session={session.sessionId} data-kind={spinOff.kind} aria-labelledby={ids.heading} aria-busy={busy || undefined}>
       <h4 className="approval-title" id={ids.heading}>
@@ -112,7 +116,7 @@ function SpinOffCard({ item, onStart, onDismiss, onOpen }: { item: ListedSpinOff
             <p className="approval-label" id={ids.text}>
               First prompt
             </p>
-            <ScrollBox as="p" className="approval-text" label="First prompt" aria-describedby={notes.length > 0 ? ids.notes : undefined}>
+            <ScrollBox ref={setTextBox} as="p" className="approval-text" label="First prompt" aria-describedby={notes.length > 0 ? ids.notes : undefined}>
               <bdi>
                 <ExactText parts={parts} />
               </bdi>
