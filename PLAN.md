@@ -499,7 +499,7 @@ M5.1's own items start at W131, the evidence the rest of it needs; the others fo
   - Then: its blocking findings fixed, the others recorded here; M5.1 into `main` in one PR whose description says "Fixes #139" and "Fixes #140", so GitHub closes them, which fixes merged into `m5.1/integration` don't.
   - Status: done (2026-11-07): approve once one blocking fix lands. Fixed on `m5.1/security-review`, by the coordinator:
     - **F1 (Medium, blocking):** W153's ask quoted what the session needed (a recap's to-do, its question, Claude Code's line, the prompt) and the relay sent it as yours, unseen, so a to-do could break out of its quotes as your instruction. Now it names the kind of need in pitwall's words alone (`askedFor()`, `src/server/flags.ts`), D25's rule.
-    - **F2 (Low-Medium):** spin-off's opening-fence regex was quadratic: 2.5 s on a 64 KiB line of spaces, on the server's event loop. Now linear, with a timing test.
+    - **F2 (Low-Medium):** spin-off's opening-fence regex was quadratic: 2.5 s on a 64 KiB line of spaces, and 18 s on one of tildes (found by the fixes' review), on the server's event loop. Now linear, the fence's run matched atomically, with timing tests for both.
     - **F3 (Low):** the spin-off card says when its prompt overflows its box, as the supervisor's cards do.
     - **F4 (Low):** `scripts/flag-report.ts` printed the logged texts raw, so a control sequence in one ran in your terminal. Now `plainLine()`.
     - **I1, I2, I3:** `pitwall.spinOffs.v1` in Security's `localStorage` list; README says a linked skill follows the clone's checkout, and to copy it if you check out others' work; Security's `sessionStorage` line names an attached file's text.

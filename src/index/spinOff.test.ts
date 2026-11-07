@@ -133,6 +133,11 @@ describe('detectSpinOff', () => {
     // A fence line of 64 KiB of spaces with two words after them: seconds with the old opening regex (W164, F2).
     read(`\`\`\`${' '.repeat(65_000)}a b`);
     read(`\`\`\`spin-off${' '.repeat(65_000)}a b`);
+    // And of tildes, which an info string could take back from the run (W164's re-review).
+    read(`${'~'.repeat(65_000)} a b`);
+    read(`${'~'.repeat(65_000)}\``);
+    read(`${'`'.repeat(65_000)} a b`);
+    read(`${' '.repeat(65_000)}x`);
     expect(performance.now() - started).toBeLessThan(500);
   });
 });

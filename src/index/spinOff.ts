@@ -35,9 +35,11 @@ import { SPAWN_PROMPT_MAX, SPIN_OFF_FOLDER_MAX, SPIN_OFF_NAME_MAX, type SpinOff 
 /** The fenced block's info string, which the skill writes. */
 export const SPIN_OFF_INFO = 'spin-off';
 
-// Linear: the optional info string can't share its spaces with the run before it (W164, F2: the
-// old `\s*([^\s`]*)\s*` took seconds on a 64 KiB line of spaces).
-const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})[ \t]*(?:([^\s`]+)[ \t]*)?$/;
+// Linear (W164, F2): the fence's run is matched atomically, a lookahead captured then matched by its
+// backreference, so the info string can never take back part of it, and the optional info string
+// can't share its spaces with the run before it. The old `\s*([^\s`]*)\s*` took 2.5 s on a 64 KiB
+// line of spaces, and a plain `(~{3,})` 18 s on one of tildes.
+const FENCE_OPEN = /^( {0,3})(?=(`{3,}|~{3,}))\2[ \t]*(?:([^\s`]+)[ \t]*)?$/;
 const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})\s*$/;
 const FIELD = /^(folder|name|prompt)\s*:\s?(.*)$/i;
 
