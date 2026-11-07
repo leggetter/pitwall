@@ -9,7 +9,7 @@
 
 import { CODE, DEMO_APP, NAMES, PRS } from '../fixtures.js';
 import type { Part } from '../runner.js';
-import { DIALOG, dialogButton, dialogName, openRepoList, repoLabels, row, toasts } from './_dom.js';
+import { DIALOG, dialogButton, dialogName, openRepoList, repoLabels, row, shortPath, toasts } from './_dom.js';
 
 const q = JSON.stringify;
 const MAIN = `document.querySelector('main.session-list')`;
@@ -18,8 +18,9 @@ const prRow = (key: string) => `${MAIN}?.querySelector(${q(`li[data-pr="${key}"]
 const startOf = (key: string) => `${prRow(key)}?.querySelector('[data-start-pr]')`;
 /** A control's name: its aria-label, or the tooltip that labels it. */
 const nameOf = (el: string) => `(() => { const b = ${el}; return b?.getAttribute('aria-label') ?? document.getElementById(b?.getAttribute('aria-labelledby') ?? '')?.textContent ?? null; })()`;
-const field = (label: 'Name' | 'First prompt') => `[...(${DIALOG}?.querySelectorAll('input, textarea') ?? [])].find((el) => el.labels?.[0]?.textContent.startsWith(${q(label)}))`;
-const directory = `${DIALOG}?.querySelector('select')?.value`;
+const field = (label: 'Name' | 'First prompt' | 'Directory') => `[...(${DIALOG}?.querySelectorAll('input, textarea') ?? [])].find((el) => el.labels?.[0]?.textContent.trim().startsWith(${q(label)}))`;
+/** The Directory combobox's value, as it reads: under ~ for a path in the home folder (W140). */
+const directory = `${field('Directory')}?.value`;
 const PR_VIEW = `document.getElementById('pr-view')`;
 const SDK_DOCS = `${CODE}/sdk-docs`;
 const url = (key: string) => `https://github.com/${key.split('/').slice(0, 2).join('/')}/pull/${key.split('/').pop()}`;
@@ -62,7 +63,7 @@ const part: Part = {
     await t.step('New session opens prefilled in the clone: its directory, pr-57, and a prompt that asks for the review by its URL', async () => {
       await page.click('New session for #57', startOf(PRS.review));
       await page.waitFor('New session', `${dialogName} === 'New session'`);
-      t.expectEqual(await page.evaluate(directory), DEMO_APP, 'the clone');
+      t.expectEqual(await page.evaluate(directory), shortPath(DEMO_APP), 'the clone');
       t.expectEqual(await page.evaluate(`${field('Name')}?.value`), 'pr-57', 'the name');
       t.expect((await page.evaluate<string>(`${field('First prompt')}?.value`)).startsWith(`Review ${url(PRS.review)}.`), 'the prompt', await page.evaluate(`${field('First prompt')}?.value`));
       t.expect(!(await page.evaluate<boolean>(`!!${PR_VIEW}`)), "the PR's view didn't open");
@@ -94,7 +95,7 @@ const part: Part = {
     });
 
     await t.step('then New session opens in the new clone, saying how to trust it, and the repo list lists the clone', async () => {
-      t.expectEqual(await page.evaluate(directory), SDK_DOCS, 'the new clone, chosen');
+      t.expectEqual(await page.evaluate(directory), shortPath(SDK_DOCS), 'the new clone, chosen');
       t.expectEqual(await page.evaluate(`${DIALOG}.querySelector('.cloned-notice .inline-alert-title')?.textContent`), 'Cloned example/sdk-docs into ~/code/sdk-docs.', 'what was cloned');
       t.expectEqual(await page.evaluate(`${DIALOG}.querySelector('.cloned-notice .command-chip')?.textContent`), `cd ${SDK_DOCS} && claude`, 'the command that trusts it');
       t.expect(

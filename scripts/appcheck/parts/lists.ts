@@ -410,6 +410,13 @@ const part: Part = {
     await t.step("a group keeps the open session only if it lists it: another group's closes the view to Select a session, and Back brings it back", async () => {
       await openFromRow(t, NAMES.inApi);
       const sessionId = await page.evaluate<string>(`new URLSearchParams(location.search).get('session')`);
+      // From 900 to 999 px the view over the list reaches into the repo list, which is inert while it's
+      // open and has no drawer to reach it by (docs/design-system.md, Session view), so no group can be
+      // chosen with a session open there: the step checks that, as shell's does, and ends.
+      if (t.layout === 'sidebar' && t.viewport.width < 1000) {
+        t.expect(await page.evaluate<boolean>(`!!document.querySelector('.columns > nav.repo-list')?.closest('[inert]')`), 'below 1,000 px the repo list under the view is inert, so no group can be chosen');
+        return;
+      }
       await chooseInRepoList(t, 'api-server');
       t.expectEqual(await page.evaluate(viewName), NAMES.inApi, 'its own group keeps it open');
       t.expectEqual(await page.evaluate('location.search'), `?repo=${API_SERVER}&session=${sessionId}`, 'the URL keeps it');
