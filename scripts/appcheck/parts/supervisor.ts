@@ -368,15 +368,18 @@ const part: Part = {
        * the band leaves it, when that's less (W143).
        */
       const measure = (which: string, box = '.approval-text') =>
-        page.evaluate<{ height: number; content: number; eight: number; half: number; room: number }>(
-          `(() => { const card = ${which}; const box = card.querySelector(${q(box)}); const s = getComputedStyle(box); const eight = 8 * parseFloat(s.lineHeight) + parseFloat(s.paddingTop) + parseFloat(s.paddingBottom); const room = parseFloat(box.style.maxHeight) || Infinity; return { height: box.getBoundingClientRect().height, content: box.scrollHeight, eight, half: innerHeight / 2, room }; })()`,
+        page.evaluate<{ height: number; content: number; eight: number; half: number; room: number | null }>(
+          `(() => { const card = ${which}; const box = card.querySelector(${q(box)}); const s = getComputedStyle(box); const eight = 8 * parseFloat(s.lineHeight) + parseFloat(s.paddingTop) + parseFloat(s.paddingBottom); const room = parseFloat(box.style.maxHeight) || null; return { height: box.getBoundingClientRect().height, content: box.scrollHeight, eight, half: innerHeight / 2, room }; })()`,
         );
-      // 14 lines: taller than the 8 lines a box had before W136. Where they fit, as at 1,200 px, no length
-      // note; where they wrap past half the window, as at 375 px, the note: exactly when it scrolls.
+      // 14 lines: taller than the 8 lines a box had before W136. Where they fit, as at 1,440 px, no length
+      // note; where they wrap past half the window, as at 375 px, or the band leaves them less room, as at
+      // 1,200 px, whose narrower column wraps pitwall's line (W138) to three lines, the note: exactly when
+      // it scrolls.
       const first = await measure(card);
       const scrolls = first.content > first.height + 1;
-      t.expect(first.height > first.eight + 1 || first.height >= first.room - 1, 'the box taller than 8 lines, or as tall as the band leaves it room for', first);
-      if (!t.compact) t.expect(!scrolls, '14 lines shown whole on a wide, tall window', first);
+      t.expect(first.height > first.eight + 1 || first.height >= (first.room ?? Infinity) - 1, 'the box taller than 8 lines, or as tall as the band leaves it room for', first);
+      if (!t.compact) t.expect(Math.abs(first.height - Math.min(first.content, first.half, first.room ?? Infinity)) <= 2, 'the box as tall as its 14 lines, or as half the window or the band’s room where those are less', first);
+      if (t.viewport.width >= 1440) t.expect(!scrolls, '14 lines shown whole on a wide, tall window', first);
       const codeNote = "Drawn as their codes, since they don't show as themselves: U+00A0 NO-BREAK SPACE.";
       t.expectEqual(
         await page.evaluate(`${card}.querySelector('.approval-length')?.textContent ?? null`),
@@ -386,7 +389,7 @@ const part: Part = {
       t.expectEqual(await page.evaluate(`[...${card}.querySelectorAll('.approval-hidden')].map((each) => each.textContent)`), ['U+00A0'], 'the no-break space as its code');
       // 60 lines: the box at half the window, or the room the band leaves it (W143), then it scrolls, saying how long it is.
       const second = await measure(longer);
-      t.expect(Math.abs(second.height - Math.min(second.half, second.room)) <= 2 && second.content > second.height + 1, 'the box at half the window or the band’s room, the text scrolling in it', second);
+      t.expect(Math.abs(second.height - Math.min(second.half, second.room ?? Infinity)) <= 2 && second.content > second.height + 1, 'the box at half the window or the band’s room, the text scrolling in it', second);
       t.expect(/^60 lines, [\d,]+ characters: scroll to read it all before you send it\.$/.test(await page.evaluate<string>(`${longer}.querySelector('.approval-length')?.textContent ?? ''`)), 'its length said under it');
       t.expect(await page.evaluate<boolean>(`${longer}.querySelector('.approval-text').getAttribute('role') === 'region'`), 'a Tab stop while it scrolls');
       // The band grows past the 40% it was, up to 70% of the view, so the long card is read in it; and
@@ -409,7 +412,7 @@ const part: Part = {
       await page.waitFor('the editor', `!!${longer}.querySelector('.approval-editor')`);
       await page.settle(50);
       const editor = await measure(longer, '.approval-editor');
-      t.expect(Math.abs(editor.height - Math.min(editor.half, editor.room)) <= 2, 'the editor as tall as half the window, or the band’s room', editor);
+      t.expect(Math.abs(editor.height - Math.min(editor.half, editor.room ?? Infinity)) <= 2, 'the editor as tall as half the window, or the band’s room', editor);
       await page.click('Cancel', cardButton(1, 'Cancel'));
       t.expectEqual(records.decisions, [], 'nothing decided');
     });
@@ -423,13 +426,18 @@ const part: Part = {
       const LIST = `${SVIEW}.querySelector('.supervisor-approvals-scroll')`;
       /** Scrolls the band's list so card `index` is the first in view, then where its button `label` is against the list and the message box. */
       const reach = (index: number, label: string) =>
-        page.evaluate<{ inBand: boolean; whole: boolean; aboveBox: boolean; readable: boolean; twoLines: boolean; button: number[]; band: number[]; box: number }>(`(() => {
+        page.evaluate<{ inBand: boolean; whole: boolean; aboveBox: boolean; readable: boolean; twoLines: boolean; button: number[]; band: number[]; box: number; card: number[]; cramped: boolean; fitsAtTwo: boolean }>(`(() => {
           const list = ${LIST}; const card = ${CARDS}[${index}];
           list.scrollTop += card.getBoundingClientRect().top - list.getBoundingClientRect().top - parseFloat(getComputedStyle(list).paddingTop);
           const b = ${cardButton(index, label)}.getBoundingClientRect(); const l = list.getBoundingClientRect();
           const f = ${SVIEW}.querySelector('.supervisor-foot').getBoundingClientRect();
           const text = card.querySelector('.approval-editor') ?? card.querySelector('.approval-text'); const s = getComputedStyle(text);
           const scrolls = text.scrollHeight > text.clientHeight + 1;
+          // Whether the card fits the list's room with its text at two lines, measured here, apart from
+          // the page's own fit: its height less the text box's, plus two lines and the box's padding and edges.
+          const ls = getComputedStyle(list); const px = (v) => parseFloat(v) || 0;
+          const two = 2 * px(s.lineHeight) + px(s.paddingTop) + px(s.paddingBottom) + px(s.borderTopWidth) + px(s.borderBottomWidth);
+          const fitsAtTwo = card.getBoundingClientRect().height - text.getBoundingClientRect().height + two <= list.clientHeight - px(ls.paddingTop) - px(ls.paddingBottom) + 0.5;
           return {
             inBand: b.top >= l.top - 0.5 && b.bottom <= l.bottom + 0.5,
             whole: card.getBoundingClientRect().bottom <= l.bottom + 0.5,
@@ -438,6 +446,8 @@ const part: Part = {
             readable: !scrolls || text.tagName === 'TEXTAREA' || text.getAttribute('role') === 'region',
             twoLines: text.clientHeight >= Math.min(text.scrollHeight, 2 * parseFloat(s.lineHeight)) - 1,
             button: [Math.round(b.top), Math.round(b.bottom)], band: [Math.round(l.top), Math.round(l.bottom)], box: Math.round(f.top),
+            card: [Math.round(card.getBoundingClientRect().top), Math.round(card.getBoundingClientRect().bottom)], cramped: card.hasAttribute('data-cramped'),
+            fitsAtTwo,
           };
         })()`);
       for (const height of [600, 680, 760, 800, 900, 1000]) {
@@ -446,16 +456,21 @@ const part: Part = {
         for (const index of [0, 1]) {
           const shown = await reach(index, 'Send');
           t.expect(shown.inBand && shown.aboveBox && shown.readable && shown.twoLines, `at ${height} px, card ${index + 1}'s Send inside the band, above the box, and its text readable`, shown);
-          // On a wide window the whole card fits, its notes and pitwall's line too, the text giving way;
-          // at 375 px, short of room, its buttons stick to the band's bottom edge over the rest.
-          if (!t.compact) t.expect(shown.whole, `at ${height} px, card ${index + 1} whole in the band`, shown);
+          // Where the card fits at two lines, the whole card is in the band, its notes and pitwall's line
+          // too, the text giving way; at 1,440 px the whole card is always in the band. Where it doesn't, as at 375 px, or 1,200 px
+          // and 600 px tall, whose narrower column wraps pitwall's line (W138) to three lines, its buttons
+          // stick to the band's bottom edge over the rest (data-cramped), which the check above covers.
+          if (!t.compact) t.expect(shown.whole || !shown.fitsAtTwo, `at ${height} px, card ${index + 1} whole in the band, where it fits at two lines`, shown);
+          t.expectEqual(shown.cramped, !shown.fitsAtTwo, `at ${height} px, card ${index + 1}'s buttons stick to the band's bottom only where it can't fit at two lines`);
+          if (t.viewport.width >= 1440) t.expect(shown.whole, `at ${height} px on a wide window, card ${index + 1} whole in the band`, shown);
           if (index === 1 && (height === 600 || height === 1000)) await t.shot(`draft-in-reach-${height}`);
           await page.click('Edit', cardButton(index, 'Edit'));
           await page.waitFor('the editor', `!!${CARDS}[${index}].querySelector('.approval-editor')`);
           await page.settle(50);
           const editing = await reach(index, 'Send edit');
           t.expect(editing.inBand && editing.aboveBox && editing.twoLines, `at ${height} px, card ${index + 1}'s Send edit inside the band and above the box`, editing);
-          if (!t.compact) t.expect(editing.whole, `at ${height} px, card ${index + 1} whole in the band while editing`, editing);
+          if (!t.compact) t.expect(editing.whole || !editing.fitsAtTwo, `at ${height} px, card ${index + 1} whole in the band while editing, where it fits at two lines`, editing);
+          if (t.viewport.width >= 1440) t.expect(editing.whole, `at ${height} px on a wide window, card ${index + 1} whole in the band while editing`, editing);
           await page.click('Cancel', cardButton(index, 'Cancel'));
           await page.waitFor('the text again', `!!${CARDS}[${index}].querySelector('.approval-text')`);
         }
