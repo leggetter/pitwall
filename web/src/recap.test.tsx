@@ -20,6 +20,7 @@ import {
   parseRecap,
   quietWaitingOn,
   readRecapCollapsed,
+  recapForYou,
   RECAP_COLLAPSED_KEY,
   recapsStripText,
   TODO_OWNER_TEXT,
@@ -28,7 +29,7 @@ import {
   writeRecapCollapsed,
 } from './recap.js';
 import { countAttention, needsAttention, rowStatusBadge, statusBadge } from './sessions.js';
-import { group, minutesAgo, session, snapshot } from './test/fixtures.js';
+import { group, minutesAgo, pr, session, snapshot } from './test/fixtures.js';
 
 const NEXT = 'Say whether to mark #42 ready';
 const RECAP: SessionRecap = {
@@ -237,6 +238,44 @@ describe('what an idle session waits on, when it isn’t you', () => {
   it('is said for a finished job whose recap waits on CI', () => {
     const done = idle('CI', { kind: 'background', shortId: 'pt111b', status: undefined, state: 'done', alive: false, pid: undefined, finished: true });
     expect(quietWaitingOn(done, false)).toBe('Waiting on CI');
+  });
+});
+
+describe('your first to-do, for a row that needs you through a PR (W161)', () => {
+  it('is the current recap’s first For you item, with how many there are', () => {
+    expect(recapForYou(session({ recap: summary({ waitingOn: 'CI', forYou: 3, next: ` ${NEXT} ` }) }))).toEqual({ next: NEXT, count: 3 });
+  });
+
+  it('is none without a recap, a to-do of yours or its text, nor from a stale recap or Claude Code’s', () => {
+    expect(recapForYou(session())).toBeUndefined();
+    expect(recapForYou(session({ recap: summary({ forYou: 0 }) }))).toBeUndefined();
+    expect(recapForYou(session({ recap: summary({ next: '  ' }) }))).toBeUndefined();
+    expect(recapForYou(session({ recap: summary({ next: NEXT, stale: true }) }))).toBeUndefined();
+    expect(recapForYou(session({ recap: summary({ next: NEXT, source: 'claude-code' }) }))).toBeUndefined();
+  });
+
+  it('is line 2 of a row that needs you through its PR, in place of the PR’s state, while you haven’t set it aside', () => {
+    const review = pr({ number: 57, relation: 'review-requested', reviewRequest: { via: 'direct' } }, 20);
+    const line2 = (s: SessionSummary) => {
+      const shown = group({ sessions: [s] });
+      const { unmount } = render(
+        <ul>
+          <SessionRow session={s} group={shown} owned={[review]} />
+        </ul>,
+      );
+      const row = document.querySelector<HTMLElement>('li.session')!;
+      const what = [row.classList.contains('attention'), row.querySelector('.session-what-text')?.textContent];
+      unmount();
+      return what;
+    };
+    const recap = summary({ waitingOn: 'someone else', forYou: 3, next: NEXT });
+    expect(line2(session({ status: 'idle', recap, lastUserPrompt: 'Review #57.' }))).toEqual([true, `For you (3): ${NEXT}`]);
+    expect(line2(session({ status: 'idle', lastUserPrompt: 'Review #57.' }))).toEqual([true, 'Needs you for example/demo-app#57: review requested']);
+    // Busy: no bar, and what it was asked, whatever the PR or the recap says.
+    expect(line2(session({ status: 'busy', recap, lastUserPrompt: 'Review #57.' }))).toEqual([false, 'You: Review #57.']);
+    // Snoozed: only its PR keeps it in Needs you, so that's what line 2 says.
+    const snoozed = session({ status: 'waiting', waitingFor: 'permission prompt', recap, snoozed: { at: minutesAgo(1) } });
+    expect(line2(snoozed)).toEqual([true, "Snoozed until it's woken · Needs you for example/demo-app#57: review requested"]);
   });
 });
 

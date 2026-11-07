@@ -60,7 +60,7 @@
 // restart) are W24's; the tooltips, toasts and copy buttons are W25's.
 
 import { Fragment, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
-import { prNeedsAttention, type Editor, type EditorId, type PullRequestSummary, type RecapHealth, type SessionSummary } from '../../../src/shared/protocol.js';
+import type { Editor, EditorId, PullRequestSummary, RecapHealth, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { AttachContext, type AttachStatus } from '../attach.js';
 import type { BackgroundTab } from '../backgroundTab.js';
@@ -74,6 +74,7 @@ import { formatRoots, plainText, shortenHome } from '../format.js';
 import { PANEL_MENU_STEP, PANEL_MIN, panelLimits, panelReset, shownPanel, type PanelWidthStore } from '../panelWidth.js';
 import { replyInConversation } from '../relay.js';
 import { finishedWaitingOnYou, WAITING_ON_TEXT } from '../recap.js';
+import { prNeedOf } from '../work.js';
 import { attachCommand, canFlag, canSnooze, isFlagged, isSnoozed, needsAttention, resumeCommand, statusBadge } from '../sessions.js';
 import { SNOOZE_CHOICES, WAKE_ITEM } from '../snooze.js';
 import { FLAG_ITEM, UNFLAG_ITEM } from '../flags.js';
@@ -921,8 +922,8 @@ export function SessionView({
 
   // The Pull requests tab shows once the session owns an open PR or is strongly linked to one (W106). Then it stays, as Sub-agents does.
   const ownedPrs = prs?.owned ?? [];
-  // Why it needs you, when that's a PR it owns and not the session itself (W128), as its row says it.
-  const prNeed = needsAttention(session) ? undefined : ownedPrs.find(prNeedsAttention);
+  // Why it needs you, when that's a PR it owns and not the session itself (W128), as its row says it: never while it's busy (W161).
+  const prNeed = needsAttention(session) ? undefined : prNeedOf(session, ownedPrs);
   const linkedPrs = prs?.linked ?? [];
   const hasPrs = ownedPrs.length > 0 || linkedPrs.length > 0;
   const [prsRevealed, setPrsRevealed] = useState(false);

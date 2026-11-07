@@ -8,7 +8,7 @@ import type { PullRequestPlace, PullRequestSummary, SessionGroup } from '../../s
 import { groupSessions } from './groupBy.js';
 import { prKey } from './prs.js';
 import { tabAttention } from './rootTabs.js';
-import { isOlderEnded, withoutOlderEnded } from './sessions.js';
+import { isBusy, isOlderEnded, withoutOlderEnded } from './sessions.js';
 import { group, minutesAgo, NOW, pr, prLink, session } from './test/fixtures.js';
 import {
   allDone,
@@ -212,6 +212,35 @@ describe('Needs you, through a PR', () => {
     const ownsAndWaits = session({ name: 'both', status: 'waiting', waitingFor: 'permission prompt', prLinks: [prLink('opened', failing)], snoozed: { at: '2026-11-06T10:00:00.000Z' } });
     const work3 = composeWork([ownsAndWaits], [failing]);
     expect(sessionNeedsYou(ownsAndWaits, work3)).toBe(true);
+  });
+
+  it("leaves a busy session out while its PR needs you, in every count, the Pull requests item's too, and has it back once it stops (W161)", () => {
+    const busy = session({ name: 'reviewer', kind: 'background', shortId: 'r57', status: 'busy', state: 'working', prLinks: [prLink('prompted', asked)] });
+    const blocked = { ...busy, state: 'blocked' as const };
+    const stopped = { ...busy, status: 'idle' as const, state: 'done' as const };
+    const at = (each: typeof busy) => {
+      const owned = composeWork([each], [asked]);
+      return { owned, groups: withPrRows([group({ key: DEMO, sessions: [each] })], owned) };
+    };
+    for (const each of [busy, blocked]) {
+      const { owned, groups: listed } = at(each);
+      expect([sessionNeedsYou(each, owned), prNeeding(each, owned)]).toEqual([false, undefined]);
+      expect(countNeeds(listed, owned)).toBe(0);
+      expect(named(listWork(listed, { kind: 'needs-you' }, 'urgency', undefined, owned).current)).toEqual([]);
+      expect(prRowCounts(listed, owned)).toEqual({ count: 1, attention: 0 });
+    }
+    const { owned, groups: listed } = at(stopped);
+    expect([sessionNeedsYou(stopped, owned), prNeeding(stopped, owned)?.number]).toEqual([true, 57]);
+    expect(countNeeds(listed, owned)).toBe(1);
+    expect(prRowCounts(listed, owned)).toEqual({ count: 1, attention: 1 });
+    expect(named(listWork(listed, { kind: 'needs-you' }, 'urgency', undefined, owned).current)).toEqual(['reviewer']);
+    // A busy session that needs you itself still does.
+    const asks = { ...blocked, needsYou: { reason: 'blocked' as const } };
+    expect(isBusy(asks)).toBe(true);
+    expect([sessionNeedsYou(asks, composeWork([asks], [asked])), prNeeding(asks, composeWork([asks], [asked]))]).toEqual([true, undefined]);
+    // Held at busy by a plugin's monitor after its turn has ended, it's back through its PR.
+    const held = { ...busy, turnEnded: true as const };
+    expect([sessionNeedsYou(held, at(held).owned), prNeeding(held, at(held).owned)?.number]).toEqual([true, 57]);
   });
 
   it('counts the Pull requests item: the rows with an open PR, and those that need you through one', () => {

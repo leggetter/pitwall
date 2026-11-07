@@ -231,6 +231,13 @@ describe('toSessionSummary', () => {
     });
   });
 
+  it('sets turnEnded only when the transcript says the turn has ended (W161)', () => {
+    const base: TranscriptInfo = { transcript: 'ok', lastActivityAt: iso(NOW - 1000) };
+    expect(toSessionSummary(row({ status: 'busy' }), { ...base, turnEnded: true }, NOW).turnEnded).toBe(true);
+    expect(toSessionSummary(row({ status: 'busy' }), { ...base, turnEnded: false }, NOW)).not.toHaveProperty('turnEnded');
+    expect(toSessionSummary(row({ status: 'idle' }), base, NOW)).not.toHaveProperty('turnEnded');
+  });
+
   describe('askedYou', () => {
     const asked: AskedYou = { reason: 'question', excerpt: 'Should I push it?' };
     const transcript: TranscriptInfo = { transcript: 'ok', lastActivityAt: iso(NOW - 1000), askedYou: asked };

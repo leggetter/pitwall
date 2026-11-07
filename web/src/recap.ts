@@ -278,6 +278,18 @@ export function quietWaitingOn(session: SessionSummary, needsYou: boolean): stri
 }
 
 /**
+ * The first of your to-dos in a session's current recap, pitwall's, and how many it has (W161): what a
+ * row that needs you through a PR alone says on line 2, "For you (3): …", rather than the PR's state.
+ * None from a recap older than its latest turn, which may have been answered since.
+ */
+export function recapForYou(session: SessionSummary): { next: string; count: number } | undefined {
+  const recap = session.recap;
+  if (!recap || recap.stale || recap.source !== 'pitwall' || recap.forYou < 1) return undefined;
+  const next = recap.next?.trim();
+  return next === undefined || next === '' ? undefined : { next, count: recap.forYou };
+}
+
+/**
  * Whether a finished or ended session's current recap, pitwall's, says it's waiting on you (W111's
  * review): its row and view show an outline "Waiting on you", as a finished session's Asked you is,
  * with FINISHED_RECAP_HINT or ENDED_RECAP_HINT, and it never counts as needing you, since the index
