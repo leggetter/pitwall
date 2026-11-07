@@ -823,6 +823,40 @@ describe('createTranscriptReader', () => {
     });
   });
 
+  describe('spinOff (W163)', () => {
+    const proposal = 'Done.\n\n```spin-off\nfolder: /tmp/pitwall-test-x\nname: pitwall-test-spin\nprompt:\nTidy the README.\n```';
+
+    it('is set when the newest assistant text ends with a spin-off block and no prompt came since', async () => {
+      await writeFile(file, jsonl(user('go'), assistant([text(proposal)]), turnDuration()));
+      expect((await reader().read(SID, [CWD])).spinOff).toEqual({
+        kind: 'proposal',
+        key: expect.any(String),
+        folder: '/tmp/pitwall-test-x',
+        name: 'pitwall-test-spin',
+        prompt: 'Tidy the README.',
+      });
+    });
+
+    it('is cleared by a prompt after it, or a newer message without a block', async () => {
+      await writeFile(file, jsonl(user('go'), assistant([text(proposal)]), turnDuration(), user('not now')));
+      expect((await reader().read(SID, [CWD])).spinOff).toBeUndefined();
+      await writeFile(file, jsonl(user('go'), assistant([text(proposal)]), turnDuration(), user('more'), assistant([text('Done again.')]), turnDuration()));
+      expect((await reader().read(SID, [CWD])).spinOff).toBeUndefined();
+    });
+
+    it('is read from the message\'s end, past the 64 KiB the head keeps', async () => {
+      const long = `${'Notes. '.repeat(ASSISTANT_TEXT_KEEP / 7 + 10)}\n\n${proposal}`;
+      await writeFile(file, jsonl(user('go'), assistant([text(long)]), turnDuration()));
+      expect((await reader().read(SID, [CWD])).spinOff).toMatchObject({ kind: 'proposal', prompt: 'Tidy the README.' });
+    });
+
+    it('is read from the end when a long message is written in text blocks on separate lines', async () => {
+      const head = 'n'.repeat(ASSISTANT_TEXT_KEEP + 100);
+      await writeFile(file, jsonl(user('go'), assistant([text(head)], 'm1'), assistant([text(proposal)], 'm1'), turnDuration()));
+      expect((await reader().read(SID, [CWD])).spinOff).toMatchObject({ kind: 'proposal', folder: '/tmp/pitwall-test-x' });
+    });
+  });
+
   describe('askedYou', () => {
     const crossSession = () =>
       user('Another Claude session sent a message:\n<cross-session-message from="x">status?</cross-session-message>', {

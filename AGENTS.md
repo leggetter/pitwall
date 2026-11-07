@@ -83,6 +83,9 @@ NOW.md                   where the work stands and what is next; every session r
 PLAN.md                  the living design: architecture, security, open milestones, open questions
 docs/plan-archive.md     history: M0 to M5 work breakdowns, findings and decisions
 .claude/skills/handoff/  the handoff skill: update NOW.md, commit, /clear
+skills/spin-off/         the spin-off skill (W163), for the sessions pitwall watches, installed once as a personal
+                         skill (README): a session ends its turn with a `spin-off` block that proposes a new session.
+                         Outside .claude/, so it isn't one of this repo's project skills
 .claude/settings.json    pitwall's own project settings, checked in: the hand-off hook and disableClaudeAiConnectors.
                          .claude/settings.local.json, untracked, is a person's own (Efficiency)
 .claude/hooks/           handoffNudge.mjs, a Stop hook that tells a session past 200K tokens of context, and again

@@ -143,6 +143,8 @@ export interface RepoListProps {
    * and a way to open it. No item when it's undefined, as with `--no-supervisor`.
    */
   supervisor?: RepoListSupervisor | undefined;
+  /** How many proposals for new sessions wait on you under the open tab (W163): Needs you counts them, as its cards. */
+  spinOffs?: number;
 }
 
 export interface RepoListSupervisor {
@@ -159,19 +161,19 @@ const SUPERVISOR_ITEM = 'supervisor';
 /** Where focus was in the list, to hand it on if what had it goes. */
 type FocusedPart = { zone: 'items'; index: number } | { zone: 'hidden'; part: 'link' | 'unhide'; index: number };
 
-export function RepoList({ groups, roots, selection, onSelect, autoFocus = false, skeletons = false, inert = false, hidden, tab, starred, prs, work = NO_WORK, supervisor }: RepoListProps) {
+export function RepoList({ groups, roots, selection, onSelect, autoFocus = false, skeletons = false, inert = false, hidden, tab, starred, prs, work = NO_WORK, supervisor, spinOffs = 0 }: RepoListProps) {
   const hiddenId = useId();
   const nav = useRef<HTMLElement>(null);
   // Each session once, though in Every repo it worked in it may be in several groups (W42).
   const sessions = sessionsIn(groups ?? []);
   const starredSessions = starred ? sessions.filter((session) => starred.has(session.sessionId)) : [];
   const views: Item[] = [
-    // The supervisor's drafts count here too, in every root tab: each waits on you (W114).
+    // The supervisor's drafts count here too, in every root tab: each waits on you (W114). So do the proposals (W163).
     {
       id: 'view:needs-you',
       selection: viewIn('needs-you', tab),
       label: VIEW_NAMES['needs-you'],
-      attention: countNeeds(groups ?? [], work) + (supervisor?.approvals ?? 0),
+      attention: countNeeds(groups ?? [], work) + (supervisor?.approvals ?? 0) + spinOffs,
       count: undefined,
       muted: false,
     },

@@ -20,6 +20,7 @@ Claude Code has two kinds of session, and pitwall handles both. Interactive sess
 - **Lets you steer it:** send an interactive session a message, or drive a background session in a terminal in the page, permission prompts and dialogs included.
 - **Starts new sessions** in any directory under a root, with files attached to the first prompt. It also stops and removes background sessions, ends a running interactive session, leaving its terminal at the shell, and brings an ended interactive session back in the background.
 - **Opens a session's directory** in VS Code or Cursor.
+- **Takes a session's proposal for a new session:** with the [`spin-off` skill](#the-spin-off-skill), a session can end its turn proposing a separate session, for work whose result it doesn't need back. The proposal waits in Needs you, and you start it, after reading and changing it if you like.
 
 **Status:** in daily use by its author, on macOS only so far, and still changing quickly. It runs from a clone of this repo and isn't published to npm. The [roadmap](#roadmap) says what's next.
 
@@ -58,7 +59,7 @@ node dist/cli.js ~/code
 
 - **It reads, and changes nothing:**
   - `claude agents --json --all`, every 5 seconds, for the list of sessions.
-  - Each session's transcript in `~/.claude/projects/`, its sub-agents' transcripts beside it, and a background job's state in `~/.claude/jobs/`, for what it's doing, whether it needs you, how big its context is, which repos it worked in, and the pull requests it opened, pushed to, was linked to by Claude Code, was given in a prompt or named in Claude's replies.
+  - Each session's transcript in `~/.claude/projects/`, its sub-agents' transcripts beside it, and a background job's state in `~/.claude/jobs/`, for what it's doing, whether it needs you, a new session it proposes, how big its context is, which repos it worked in, and the pull requests it opened, pushed to, was linked to by Claude Code, was given in a prompt or named in Claude's replies.
   - To find ended sessions, the start and end of every transcript in `~/.claude/projects/` changed in the last 30 days, whatever its directory, kept in memory. Only those under your roots are listed.
   - `ps` for when a session's process started, and, before End session, its command name and the parent pids, never a command line; `claude --version` before its relay starts; and `/Applications` and `~/Applications` for VS Code and Cursor.
   - Read-only `git` in the repos under your roots, to group sessions and find the repos each one worked in, and the directories under each root, for New session's list.
@@ -169,11 +170,23 @@ With `--config <path>`, pitwall reads that file, which must exist. Without it, p
 - **Mistakes:** a bad value stops pitwall with a message naming the key and the file, as a bad flag does. An unknown key is a warning, so an older pitwall can read a newer file.
 - **Security** ([D24](docs/decisions.md#d24---a-config-file-beside-the-flags)): the file decides which directories pitwall reads, so on macOS and Linux it must be yours and not writable by group or others, or pitwall refuses it. It never holds a token: a key named like one, or a GitHub token anywhere in it, is an error, since `PITWALL_TOKEN` comes from the environment only and GitHub's stays in `gh`. No message quotes a value from the file. Nothing in it can turn off the token, the `Host` and `Origin` checks or listening on 127.0.0.1 alone, and pitwall reads no config file from inside a repo.
 
+### The spin-off skill
+
+pitwall ships a skill, `skills/spin-off/SKILL.md`, that teaches a session to propose a new one: it ends its turn with a fenced `spin-off` block naming a folder, a name and the first prompt. Install it once, as a personal skill, so it works in every repo. From the clone:
+
+```
+mkdir -p ~/.claude/skills
+ln -s "$PWD/skills/spin-off" ~/.claude/skills/spin-off
+```
+
+A link keeps it in step with the clone; copying the folder works too. Then ask a session to spin off a piece of work, or let it propose one when it finds separate work. The block is the session's text, so pitwall treats it as untrusted: it shows nothing that doesn't show as itself, checks the folder is under a root, and starts nothing until you click Start session.
+
 ### In the page
 
 - **Three columns:** repos, then the selected repo's sessions, then the open session. Needs you, All sessions and Starred head the repo list. On a narrower window the session view lies over the list, and the repo list becomes a drawer.
 - **A session's view** has its conversation, a Terminal tab for a background session, and a Sub-agents tab once it has any. An interactive session's view ends with a message box, where ⌘↵ (Ctrl+Enter elsewhere) sends and Enter adds a line. Its actions menu stops or removes a background session, ends a running interactive one, opens the directory in an editor and copies the session's commands. With a session open, New session starts in its directory, which you can change. An ended session's view offers Resume in background.
 - **The supervisor** is first in the repo list: its view, in the third column, is your conversation with it, with questions to start from, a message box with Stop, and its status and cost. Opening it starts nothing; Start or a message does. It answers first and drafts a message to a session, a new session, or a message to a finished session that pitwall resumes to take it, only when you ask; each waits as a card for you to send, edit or not send, and counts in Needs you. It never sees a session's reply: Sent and started lists each session it messaged, started or resumed, with its state, whether it needs you, and Open, so you carry on in the session.
+- **Proposed sessions** are cards at the top of Needs you, one for each session that proposed one with the [`spin-off` skill](#the-spin-off-skill), naming that session, with the folder, the name and the whole prompt, and counted in Needs you. Start checks the proposal, then opens New session filled in with it, to change before you start it. Dismiss, or starting it, takes the card away; so does the session's next turn, if it proposes nothing.
 - **Finished and ended sessions** sit in a Finished section at the end of each list. A snooze takes a session that needs you out of Needs you for an hour, three hours, until tomorrow or next week, or until it's woken by a turn you didn't start, such as another session's message or a background task finishing. Its flag, "It doesn't need me", says Needs you got it wrong: pitwall logs it for counting the false calls, takes the session out of Needs you, and asks the session what, if anything, it needs (`npx tsx scripts/flag-report.ts` reads the log).
 - **Pull requests** are listed with the session that worked on them last, or as rows of their own, under their repos. A pull request with no session has a New session button on its row and in its view, which opens New session in its clone, named `pr-<number>`, with a first prompt that names the pull request and why it needs you, all of which you can change; the new session then owns it. For a repo you haven't cloned, Clone and start says where it will clone it first, then opens New session there. A finished or ended session that owns an open pull request stays in the list, with Resume on its row.
 - **Keyboard:** `/` filters, `n` starts a session, `j` and `k` step to the next or previous session, `s` stars the open session and `?` lists every shortcut. F6 leaves the terminal. The shortcuts dialog can turn the single-key ones off.

@@ -25,6 +25,7 @@ import type {
   SessionRecap,
   SessionSummary,
   SpawnRequest,
+  SpinOff,
   SubagentList,
   SubagentSummary,
   SupervisorApproval,
@@ -45,6 +46,17 @@ export const BLOG = `${OSS}/blog`;
 export const DOCS_SITE = `${CODE}/docs-site`;
 /** A directory no session has worked in, which New session's autocomplete offers (W70). */
 export const DEMO_APP_WEB = `${DEMO_APP}/web`;
+/**
+ * A made-up proposal for a new session (W163), which a part puts on NAMES.conversation with
+ * world.spinOff(): in demo-app/web, named, with a prompt of twelve lines, so its card's box scrolls.
+ */
+export const SPIN_OFF_PROMPT = [
+  'Rework the made-up web app’s settings page so each section saves on its own.',
+  '',
+  ...Array.from({ length: 9 }, (_, index) => `- Step ${index + 1}: a made-up step for the app check.`),
+  'Run npm test in web/ when it’s done, and tell me what changed.',
+].join('\n');
+export const SPIN_OFF: SpinOff = { kind: 'proposal', key: '5f1a0c7e9b3d2a41', folder: DEMO_APP_WEB, name: 'pitwall-test-spin-off', prompt: SPIN_OFF_PROMPT };
 /** A cloned repo with no session (W106): the server places its PRs under it, so the page builds its group. */
 export const EVENT_RELAY = `${CODE}/event-relay`;
 
@@ -1219,6 +1231,14 @@ export class World {
     if (!session) return;
     const { snoozed: _old, snoozeEnded: _end, ...rest } = session;
     this.#sessions.set(sessionId, { ...rest, ...(snoozed === undefined ? {} : { snoozed }), ...(ended === undefined ? {} : { snoozeEnded: ended }) });
+  }
+
+  /** Until the next reset, the session proposes a new session (W163), or proposes nothing. */
+  spinOff(sessionId: string, spinOff: SessionSummary['spinOff']): void {
+    const session = this.#sessions.get(sessionId);
+    if (!session) return;
+    const { spinOff: _old, ...rest } = session;
+    this.#sessions.set(sessionId, spinOff === undefined ? rest : { ...rest, spinOff });
   }
 
   flag(sessionId: string, flagged: SessionSummary['flagged']): void {

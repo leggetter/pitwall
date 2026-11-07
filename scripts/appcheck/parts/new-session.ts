@@ -7,13 +7,14 @@
 // asks the server to remove a kept one, an upload that's slow, one that fails, a start that sends
 // their ids, and a close that asks the server to remove them; Cancel closes it. + New session and `n`
 // start in the repo or directory selected in the repo list, never the open session's, and from a view
-// with no directory chosen (W147, D27). W63's switch to the new session's group and tab is its own
+// with no directory chosen (W147, D27). A session's proposal's Start (W163) opens it filled in with
+// the proposal, once the server has checked it, and a refused check says why on the card. W63's switch to the new session's group and tab is its own
 // part, new-session-selected.
 
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { crc32, deflateSync } from 'node:zlib';
-import { API_SERVER, CODE, DEMO_APP, DEMO_APP_WEB, NAMES } from '../fixtures.js';
+import { API_SERVER, CODE, DEMO_APP, DEMO_APP_WEB, NAMES, SPIN_OFF, SPIN_OFF_PROMPT } from '../fixtures.js';
 import type { Case, Part } from '../runner.js';
 import { FAIL_UPLOAD, SLOW_UPLOAD, STALLED_UPLOAD, UNAVAILABLE_UPLOAD } from '../server.js';
 import { chooseDirectory, chooseOption, DIALOG, dialogBox, dialogButton, dialogName, focused, headerButton, openDialog, openFromRow, shortPath, toasts, viewName } from './_dom.js';
@@ -507,6 +508,52 @@ const part: Part = {
       await page.click('Start session', dialogButton('Start session'));
       await page.waitFor('the dialog to close', `!${DIALOG}`);
       t.expectEqual(server.records.spawns.map((spawn) => spawn.cwd), [API_SERVER], 'the start sent the repo');
+    });
+
+    await t.step("Start on a proposal's card checks it, then opens New session filled in with it; nothing starts until Start session (W163)", async () => {
+      const card = `document.querySelector('.session-list li.spin-off-card')`;
+      const button = (label: string) => `[...(${card}?.querySelectorAll('.approval-actions button') ?? [])].find((b) => b.textContent.trim() === ${q(label)})`;
+      await t.fresh({ search: '?view=needs-you' });
+      const id = server.world.byName(NAMES.conversation).sessionId;
+      server.world.spinOff(id, SPIN_OFF);
+      server.broadcast();
+      await page.waitFor('the card', `!!${card}`);
+      server.clearRecords();
+      await page.click('Start…', button('Start…'));
+      await page.waitFor('the dialog', `${dialogName} === 'New session'`);
+      t.expectEqual(server.records.spinOffChecks, [{ name: NAMES.conversation, key: SPIN_OFF.key, status: 200 }], 'the server checked it, by its key');
+      t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), shortPath(DEMO_APP_WEB), 'its folder chosen');
+      t.expectEqual(await page.evaluate(`${field('Name')}.value`), 'pitwall-test-spin-off', 'its name');
+      t.expectEqual(await page.evaluate(`${PROMPT}.value`), SPIN_OFF_PROMPT, 'its whole prompt');
+      t.expect((await page.evaluate<string>(`${DIALOG}.textContent`)).includes(`as ${NAMES.conversation} proposed`), 'the subtitle names the session that proposed it');
+      const box = await page.evaluate<{ left: number; right: number; top: number; bottom: number }>(dialogBox);
+      t.expect(box.left >= 0 && box.right <= t.viewport.width && box.top >= 0 && box.bottom <= t.viewport.height, 'inside the window', box);
+      t.expectEqual(server.records.spawns, [], 'nothing was started');
+      await t.shot('spin-off-start');
+      await page.click('Cancel', dialogButton('Cancel'));
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+      t.expect(await page.evaluate(`!!${card}`), 'the card stays after Cancel');
+      await page.click('Start…', button('Start…'));
+      await page.waitFor('the dialog', `${dialogName} === 'New session'`);
+      await page.click('Start session', dialogButton('Start session'));
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+      t.expectEqual(server.records.spawns, [{ cwd: DEMO_APP_WEB, name: 'pitwall-test-spin-off', promptLength: SPIN_OFF_PROMPT.length }], 'Start session started it, as filled in');
+      await page.waitFor('the card to go', `!${card}`);
+    });
+
+    await t.step("a proposal the server refuses says why on its card, and opens nothing (W163)", async () => {
+      const card = `document.querySelector('.session-list li.spin-off-card')`;
+      await t.fresh({ search: '?view=needs-you' });
+      const id = server.world.byName(NAMES.conversation).sessionId;
+      t.allow(new RegExp(`/api/sessions/${id}/spin-off$`), 'the refused check this step asks for');
+      server.world.spinOff(id, { kind: 'proposal', key: '0a1b2c3d4e5f6071', folder: '/Users/example/elsewhere', prompt: SPIN_OFF_PROMPT });
+      server.broadcast();
+      await page.waitFor('the card', `!!${card}`);
+      await page.click('Start…', `[...${card}.querySelectorAll('.approval-actions button')].find((b) => b.textContent.trim() === 'Start…')`);
+      await page.waitFor('its alert', `!!${card}?.querySelector('[role="alert"]')`);
+      t.expectEqual(await page.evaluate(`${card}.querySelector('[role="alert"]').textContent`), "The directory /Users/example/elsewhere isn't under one of your roots.", "the server's reason");
+      t.expect(await page.evaluate(`!${DIALOG}`), 'no dialog opened');
+      await t.shot('spin-off-refused');
     });
 
     await t.step('with a view selected and a session open, no directory is chosen, and Start session asks for one', async () => {

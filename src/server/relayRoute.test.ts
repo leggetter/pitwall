@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import type { Indexer } from '../index/index.js';
-import { flagPath, relayPath, snoozePath, unflagPath, unsnoozePath, WS_PATH, type IndexSnapshot, type RelayResult, type ServerMessage, type SessionSummary } from '../shared/protocol.js';
+import { flagPath, relayPath, snoozePath, spinOffPath, unflagPath, unsnoozePath, WS_PATH, type IndexSnapshot, type RelayResult, type ServerMessage, type SessionSummary } from '../shared/protocol.js';
 import type { RunningServer } from './index.js';
 import type { RelayManager, RelaySendOutcome, RelayTarget } from './relay.js';
 import { MAX_RELAY_TEXT_LENGTH, validateRelayRequest } from './relayRoute.js';
@@ -429,6 +429,31 @@ describe('the snooze routes (W154) through the server', () => {
     expect(res.json).toMatchObject({ ok: true, snoozed: { at: expect.any(String) } });
     const undo = await postAsPage(started, unsnoozePath(INTERACTIVE_ID), {});
     expect(undo.status).toBe(200);
+    expect(started.relay.sends).toEqual([]);
+  });
+});
+
+describe('the spin-off check (W163) through the server', () => {
+  const proposing = () => {
+    const snap = snapshot();
+    snap.groups[0]!.sessions[0] = { ...snap.groups[0]!.sessions[0]!, spinOff: { kind: 'proposal', key: '0123456789abcdef', folder: '/pitwall-test-missing', prompt: 'Tidy the README.' } };
+    return snap;
+  };
+  const body = JSON.stringify({ key: '0123456789abcdef' });
+
+  it('refuses the raw token, and the apiKey from another Origin', async () => {
+    const started = await start(fakeRelay(), fakeIndexer(proposing()));
+    const raw = await post(started.server.port, spinOffPath(INTERACTIVE_ID), body, { authorization: `Bearer ${TOKEN}`, origin: origin(started.server.port), 'content-type': 'application/json' });
+    expect(raw.status).toBe(403);
+    const elsewhere = await post(started.server.port, spinOffPath(INTERACTIVE_ID), body, { authorization: `Bearer ${started.apiKey}`, origin: 'http://evil.example', 'content-type': 'application/json' });
+    expect(elsewhere.status).toBe(403);
+  });
+
+  it('checks as the page asks, refusing a folder under no root and sending nothing to the session', async () => {
+    const started = await start(fakeRelay(), fakeIndexer(proposing()));
+    const res = await postAsPage(started, spinOffPath(INTERACTIVE_ID), { key: '0123456789abcdef' });
+    expect(res.status).toBe(409);
+    expect(res.json).toMatchObject({ ok: false, error: expect.any(String) });
     expect(started.relay.sends).toEqual([]);
   });
 });

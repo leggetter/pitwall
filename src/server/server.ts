@@ -115,6 +115,7 @@ import { createRelayManager } from './relay.js';
 import { registerRelay } from './relayRoute.js';
 import { createFlagView, FlagStore, registerFlags } from './flags.js';
 import { createSnoozeView, registerSnoozes, SnoozeStore } from './snoozes.js';
+import { registerSpinOffs } from './spinOffRoutes.js';
 import {
   bearerToken,
   identifyCredential,
@@ -355,6 +356,7 @@ export async function startServerWithInternals(
     registerRecaps(app, indexer, recaps);
     registerFlags(app, { snapshots: flagged, store: flags, relay, recaps });
     registerSnoozes(app, { snapshots: snoozed, store: snoozes });
+    registerSpinOffs(app, { snapshots: indexer });
     registerSupervisor(app, supervisor, supervisorActions);
     registerMcp(app, mcp);
     registerWork(app, work, async (dir) => {

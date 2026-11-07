@@ -38,6 +38,43 @@ export interface AskedYou {
 }
 
 /**
+ * A new session a session proposes (W163, spin-off proposals): the newest assistant message ended its
+ * turn with a fenced block whose info string is `spin-off` (the `spin-off` skill, skills/spin-off/ in
+ * pitwall's repo), naming a folder, an optional name and the first prompt. Untrusted session text,
+ * read by the index (src/index/spinOff.ts) behind the transcript adapter and bounded there: each
+ * field at most its limit below, and no character that doesn't show as itself (hiddenTextProblem()).
+ * Nothing starts from it: the card in Needs you opens New session filled in, after the server checks
+ * it as the supervisor's spawn_session is checked (spinOffPath()).
+ * - 'proposal': the block as read. `folder` is absolute, `~` expanded to the home folder.
+ * - 'unreadable': a block pitwall found but won't show, with why, in pitwall's own words, never the
+ *   session's text: a field over its limit, a hidden character, a line it doesn't know, no folder or
+ *   no prompt.
+ * `key` tells one proposal from the next, for the page's Dismiss: a hash of the block's text.
+ */
+export type SpinOff =
+  | { kind: 'proposal'; key: string; folder: string; name?: string; prompt: string }
+  | { kind: 'unreadable'; key: string; problem: string };
+
+/** The longest folder a spin-off block names (W163). */
+export const SPIN_OFF_FOLDER_MAX = 1024;
+/** The longest name a spin-off block gives, as New session's names are at most 64 (NAME_PATTERN). */
+export const SPIN_OFF_NAME_MAX = 64;
+
+/** The answer to a POST to spinOffPath() (W163): the proposal as checked, to fill New session in with, or why it can't start. */
+export type SpinOffCheck = { ok: true; cwd: string; name?: string; prompt: string } | { ok: false; error: string };
+
+/**
+ * Check a session's spin-off proposal before New session opens with it (W163): the server takes the
+ * session's proposal from its own snapshot, never from the request, and runs spawn_session's checks
+ * (checkSpawn()): the folder an existing directory under a root, by its real path; the name New
+ * session's; the prompt not blank, at most SPAWN_PROMPT_MAX, not just a claude command; no hidden
+ * character. Nothing starts and nothing is sent to the session. A POST, so the apiKey and Origin checks hold.
+ */
+export function spinOffPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/spin-off`;
+}
+
+/**
  * Why a session needs you, judged from its context rather than from Claude
  * Code's state alone (spike 007; Phil, 2026-10-27). The first reason that
  * holds, in this order:
@@ -152,6 +189,12 @@ export interface SessionSummary {
    * busy. Never while a prompt is on screen, or on a stale session.
    */
   askedYou?: AskedYou;
+  /**
+   * A new session it proposes (W163), from a `spin-off` block in its newest assistant message, held as
+   * askedYou is: once its turn has ended, with no prompt since, never while a prompt is on screen or on
+   * a stale session. A newer message without one clears it. Finished and ended sessions keep theirs.
+   */
+  spinOff?: SpinOff;
   /**
    * Set when the transcript says the session's last turn has ended (W69's rule,
    * spike 007, finding 4), whatever Claude Code's status, which a plugin's

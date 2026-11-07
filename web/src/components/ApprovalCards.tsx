@@ -88,7 +88,7 @@ export function hiddenNote(parts: readonly VisiblePart[]): string | undefined {
 }
 
 /** The text as it goes, each character that wouldn't show as itself drawn as its code. */
-function ExactText({ parts }: { parts: readonly VisiblePart[] }) {
+export function ExactText({ parts }: { parts: readonly VisiblePart[] }) {
   return (
     <>
       {parts.map((part, index) =>
