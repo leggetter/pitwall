@@ -35,7 +35,9 @@ import { SPAWN_PROMPT_MAX, SPIN_OFF_FOLDER_MAX, SPIN_OFF_NAME_MAX, type SpinOff 
 /** The fenced block's info string, which the skill writes. */
 export const SPIN_OFF_INFO = 'spin-off';
 
-const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})\s*([^\s`]*)\s*$/;
+// Linear: the optional info string can't share its spaces with the run before it (W164, F2: the
+// old `\s*([^\s`]*)\s*` took seconds on a 64 KiB line of spaces).
+const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})[ \t]*(?:([^\s`]+)[ \t]*)?$/;
 const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})\s*$/;
 const FIELD = /^(folder|name|prompt)\s*:\s?(.*)$/i;
 
@@ -143,7 +145,7 @@ function lastBlock(text: string): Block | undefined {
     const opening = FENCE_OPEN.exec(line);
     // Also any other fence, as markFences() has it, so a spin-off block quoted inside one isn't read.
     const other = /^\s*(`{3,}|~{3,})(.*)$/.exec(line);
-    if (opening !== null && opening[3]!.toLowerCase() === SPIN_OFF_INFO) {
+    if (opening !== null && (opening[3] ?? '').toLowerCase() === SPIN_OFF_INFO) {
       open = { marker: opening[2]!, block: { body: [], indent: opening[1]!.length, closed: false }, blankSince: true };
       continue;
     }

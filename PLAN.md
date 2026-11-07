@@ -114,14 +114,15 @@ A local web UI that can type into agents running in auto mode is a local remote-
 - Generate a random token per run, unless `PITWALL_TOKEN` sets a fixed one (W40), pass it to the browser through the launch file (D7), and require it on every API request and WebSocket. The page's own static files need none (M1's rule), only the `Host` check.
 - Check `Host` and `Origin` on every request, to block DNS rebinding.
 - No CORS.
-- **`localStorage` holds no token, and no session content but session ids.** The token is in `sessionStorage` (M2), and so is each conversation's unsent draft (W44); the browser keeps `sessionStorage` in its profile on disk (W48's F10).
+- **`localStorage` holds no token, and no session content but session ids.** The token is in `sessionStorage` (M2), and so is each conversation's unsent draft (W44), the supervisor's included, with the text of any file you attach to it (W135; W164's I3); the browser keeps `sessionStorage` in its profile on disk (W48's F10).
   - `localStorage` holds UI state under `pitwall.*.v1` keys:
     - preferences (theme, sort, shortcuts, panel width, group-by, the tab a running background session opens on and whether the terminal takes the keyboard);
     - filesystem paths of roots and repos, in `pitwall.view.v1`, `pitwall.finished.v1`, `pitwall.root-tab.v1` and `pitwall.hidden.v1:<root>`;
     - starred sessions' ids and nothing else, in `pitwall.starred.v1` (W53);
     - until W154 replaced it with snoozes kept on the server, the sessions marked Not needed now, each one's id and a 64-bit hash of what it needed, in `pitwall.not-needed.v1` (W88), which the page now removes once as it loads;
     - and, until W106 replaced its list, the PR list's collapsed repo headings, each repo's 64-bit hash, never its name, in `pitwall.pr-repos.v1` (M4, W95), no longer read or written;
-    - and whether the recap strip is collapsed, `true` or `false` alone, in `pitwall.recap-collapsed.v1` (M5, W111).
+    - and whether the recap strip is collapsed, `true` or `false` alone, in `pitwall.recap-collapsed.v1` (M5, W111);
+    - and the spin-off proposals you dismissed or started, each its session's id and a 64-bit hash of the block, never its text, in `pitwall.spinOffs.v1` (W163; W164's I1).
   - A repo that isn't cloned (W106) is never stored, as the selection or as hidden: its key is its GitHub name. M1's `pitwall.groups.v1` is no longer read or written. D14 has the detail.
 - **One call off the machine: `gh api graphql` to github.com** (M4, W93).
   - The PR poller runs it with the user's own `gh` login, for their open pull requests, and since W101 the open ones that ask their review or mention them, three searches, one call per page of 25 (W105): at start, every 3 minutes, and on Refresh, but not within a minute of the last (W100).
@@ -431,7 +432,7 @@ M5.1's own items start at W131, the evidence the rest of it needs; the others fo
   - On a click, it does three things:
     - **Hides:** the session leaves everything `needsAttention()` drives until what it needs changes, as W88's mark does today. Its badge stays in All sessions and its group, outlined, with "You flagged this" and an undo.
     - **Logs:** a line in a 0600 file under `PITWALL_HOME`, capped like the recap store: the time, the session id, the reason, its text (the to-do or Claude Code's line), the recap's `at` and `throughAt`, and its source. On the server, since the browser holds no session content (D14).
-    - **Asks:** a message to the session through the relay, M2's send path, so it reads as yours. The text is fixed, with the to-do filled in, and says to reply "Open questions: None" if nothing is needed, or what exactly is. A busy session gets it mid-turn.
+    - **Asks:** a message to the session through the relay, M2's send path, so it reads as yours. The text is fixed, naming the kind of need in pitwall's own words, never its text, since W164's F1 (the to-do, question or prompt is untrusted, and the relay sends the ask as yours), and says to reply "Open questions: None" if nothing is needed, or what exactly is. A busy session gets it mid-turn.
   - The reply closes the loop: it's in the newest turns, so the next recap update reads it. A "None" keeps the session out of Needs you; a real need comes back as a new to-do, so it's back by itself.
   - Cost: each click starts a turn in that session, which re-reads its whole context. Never sent without the click.
   - A way to read the log: counts by reason and source, and the texts, through a script under `scripts/`, like the usage report; a view later, if it's worth one.
@@ -496,7 +497,16 @@ M5.1's own items start at W131, the evidence the rest of it needs; the others fo
 - **W164, M5.1's security review** (`m5.1/security-review`, M). After W163; then M5.1 merges into `main` (Phil, 2026-11-07).
   - What: a fresh sub-agent at xhigh effort reviews W130 to W163, the diff from `main`, against "Security": the new 0600 stores (`snoozes.json`, `flags.jsonl`, the kept recaps of W132), W153's ask to a session through the relay, W135's attached file, W150's recap input from transcripts and PR state, W163's spin-off block read from a transcript into New session, and the hand-off hook in `.claude/settings.json`.
   - Then: its blocking findings fixed, the others recorded here; M5.1 into `main` in one PR whose description says "Fixes #139" and "Fixes #140", so GitHub closes them, which fixes merged into `m5.1/integration` don't.
-  - Status: Planned.
+  - Status: done (2026-11-07): approve once one blocking fix lands. Fixed on `m5.1/security-review`, by the coordinator:
+    - **F1 (Medium, blocking):** W153's ask quoted what the session needed (a recap's to-do, its question, Claude Code's line, the prompt) and the relay sent it as yours, unseen, so a to-do could break out of its quotes as your instruction. Now it names the kind of need in pitwall's words alone (`askedFor()`, `src/server/flags.ts`), D25's rule.
+    - **F2 (Low-Medium):** spin-off's opening-fence regex was quadratic: 2.5 s on a 64 KiB line of spaces, on the server's event loop. Now linear, with a timing test.
+    - **F3 (Low):** the spin-off card says when its prompt overflows its box, as the supervisor's cards do.
+    - **F4 (Low):** `scripts/flag-report.ts` printed the logged texts raw, so a control sequence in one ran in your terminal. Now `plainLine()`.
+    - **I1, I2, I3:** `pitwall.spinOffs.v1` in Security's `localStorage` list; README says a linked skill follows the clone's checkout, and to copy it if you check out others' work; Security's `sessionStorage` line names an attached file's text.
+  - Left, non-blocking:
+    - **F5 (Low):** a snooze counts a message as yours, so ended quietly rather than woken, by its sender's name, `pitwall-relay`, not the relay's own msg_ids as recaps do (`src/index/transcripts.ts`, `arrivedFrom`); any local session with that name could end one quietly. Needs the index to keep the arrival's msg_id for the server to check.
+    - **F1's race:** the flag request names only the reason, so the ask names whatever kind the snapshot holds at the click; harmless now that it carries no text.
+    - **I3:** an attached file's characters that don't show as themselves aren't noted in the box. **I4:** a ⌘V with focus nowhere in the session view goes to its terminal, by design (W151).
 
 ## M5.2 work breakdown
 

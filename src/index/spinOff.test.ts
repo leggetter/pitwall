@@ -130,6 +130,9 @@ describe('detectSpinOff', () => {
     const started = performance.now();
     read(many);
     read(block('folder: /tmp/x', 'prompt:', `${' '.repeat(60_000)}x`));
+    // A fence line of 64 KiB of spaces with two words after them: seconds with the old opening regex (W164, F2).
+    read(`\`\`\`${' '.repeat(65_000)}a b`);
+    read(`\`\`\`spin-off${' '.repeat(65_000)}a b`);
     expect(performance.now() - started).toBeLessThan(500);
   });
 });

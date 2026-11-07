@@ -180,7 +180,7 @@ mkdir -p ~/.claude/skills
 ln -s "$PWD/skills/spin-off" ~/.claude/skills/spin-off
 ```
 
-A link keeps it in step with the clone; copying the folder works too. Then ask a session to spin off a piece of work, or let it propose one when it finds separate work. The block is the session's text, so pitwall treats it as untrusted: it shows nothing that doesn't show as itself, checks the folder is under a root, and starts nothing until you click Start session.
+A link keeps it in step with the clone, so every session on the machine follows whatever that clone has checked out, a branch or someone's pull request included. If you check out others' work there, copy the folder instead, `cp -R skills/spin-off ~/.claude/skills/`, and copy it again after an update. Then ask a session to spin off a piece of work, or let it propose one when it finds separate work. The block is the session's text, so pitwall treats it as untrusted: it shows nothing that doesn't show as itself, checks the folder is under a root, and starts nothing until you click Start session.
 
 ### In the page
 

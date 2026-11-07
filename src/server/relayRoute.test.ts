@@ -401,7 +401,9 @@ describe('the flag routes (W153) through the server', () => {
     const bg = await postAsPage(started, flagPath(BG_ID), { reason: 'blocked', from: 'view' });
     expect(bg.status).toBe(200);
     expect(started.relay.sends.map((send) => send.target.sessionId)).toEqual([INTERACTIVE_ID, BG_ID]);
-    expect(started.relay.sends[0]!.text).toContain('"Pick a port"');
+    // pitwall's words for the kind of need, never its text (W164, F1).
+    expect(started.relay.sends[0]!.text).toContain('what Claude Code says you need from me');
+    expect(started.relay.sends[0]!.text).not.toContain('Pick a port');
   });
 });
 
