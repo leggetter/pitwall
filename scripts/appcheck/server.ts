@@ -109,6 +109,8 @@ export interface Records {
   flags: Array<{ action: 'flag' | 'unflag'; name: string; reason?: string; from?: string }>;
   /** Each snooze and unsnooze the server answered (W154), by the session's name, with its `until`, if any. */
   snoozes: Array<{ action: 'snooze' | 'unsnooze'; name: string; until?: string }>;
+  /** Each spin-off check the server answered (W163), by the asking session's name, with the key asked for and the status. */
+  spinOffChecks: Array<{ name: string; key: unknown; status: number }>;
   actions: Array<{ action: 'stop' | 'remove'; name: string }>;
   /** Each resume of an ended session the server answered (W67), by the session's name. */
   resumes: string[];
@@ -149,6 +151,7 @@ const emptyRecords = (): Records => ({
   relays: [],
   flags: [],
   snoozes: [],
+  spinOffChecks: [],
   actions: [],
   resumes: [],
   opens: [],
@@ -388,7 +391,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     const planMake = /^\/api\/sessions\/([^/]+)\/plan-status\/refresh$/.exec(url.pathname);
     if (planMake && method === 'POST') return makePlanStatus(req, res, decodeURIComponent(planMake[1]!));
 
-    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|flag|unflag|snooze|unsnooze|stop|remove|resume|open|subagents|end|recap|plan-status)$/.exec(url.pathname);
+    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|flag|unflag|snooze|unsnooze|spin-off|stop|remove|resume|open|subagents|end|recap|plan-status)$/.exec(url.pathname);
     if (!match) return end(res, 404);
     const session = world.session(decodeURIComponent(match[1]!));
     if (!session) return end(res, 404);
@@ -434,6 +437,22 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       world.flag(session.sessionId, undefined);
       broadcast();
       return json(res, 200, { ok: true });
+    }
+    if (route === 'spin-off' && method === 'POST') {
+      // spinOffPath(id) (W163): the session's own proposal, by its key, checked as the real route does,
+      // here only that the folder is under a root; never the request's text.
+      const body = await readJson(req);
+      const key = isRecord(body) ? body.key : undefined;
+      const answer = (status: number, result: Record<string, unknown>) => {
+        records.spinOffChecks.push({ name: session.name, key, status });
+        return json(res, status, result);
+      };
+      const proposal = session.spinOff;
+      if (typeof key !== 'string') return answer(400, { ok: false, error: 'The body must be { key }, the proposal’s key.' });
+      if (proposal === undefined || proposal.key !== key) return answer(409, { ok: false, error: 'That session has proposed something else since. Read its new proposal first.' });
+      if (proposal.kind !== 'proposal') return answer(409, { ok: false, error: proposal.problem });
+      if (world.rootFor(proposal.folder) === undefined) return answer(409, { ok: false, error: `The directory ${proposal.folder} isn't under one of your roots.` });
+      return answer(200, { ok: true, cwd: proposal.folder, prompt: proposal.prompt, ...(proposal.name === undefined ? {} : { name: proposal.name }) });
     }
     if (route === 'snooze' && method === 'POST') {
       // snoozePath(id) (W154): snoozed at once, as the real route says, with `until` or Later.

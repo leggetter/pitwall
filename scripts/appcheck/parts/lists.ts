@@ -4,9 +4,10 @@
 // Clear filters as an icon button and the bar's lines at each window (W91); a group that keeps the
 // open session only if it lists it (W139); a session started in a directory in no repo that worked
 // in one repo, listed under that repo (W145); and, with two roots, a tab per root, a session that
-// changed another root's repo most kept in its own root's tab, its row "also in" that repo (W149).
+// changed another root's repo most kept in its own root's tab, its row "also in" that repo (W149);
+// and a session's proposal for a new session, a card over Needs you's rows, counted there (W163).
 
-import { API_SERVER, CODE, DEMO_APP, DOCS_SITE, NAMES, OSS, SDK_CLI } from '../fixtures.js';
+import { API_SERVER, CODE, DEMO_APP, DEMO_APP_WEB, DOCS_SITE, NAMES, OSS, SDK_CLI, SPIN_OFF, SPIN_OFF_PROMPT } from '../fixtures.js';
 import type { Part } from '../runner.js';
 import { chooseInRepoList, focused, listHeading, openFromRow, openRepoList, repoItem, repoLabels, row, rowNames, selectedRepo, viewName, VIEW } from './_dom.js';
 
@@ -130,6 +131,50 @@ const part: Part = {
       // W69: every reason ranks alike, so it's by activity: waiting 3 minutes ago, asked 6, the job 21.
       t.expectEqual(names, [NAMES.waiting, NAMES.asked, NAMES.prompting], 'by their last activity');
       t.expect(await page.evaluate(`[...document.querySelectorAll('.session-list li.session')].every((li) => li.dataset.attention === 'true')`), 'each row is marked as needing you');
+    });
+
+    await t.step("a session's proposal for a new session is a card over Needs you's rows, counted in Needs you and the title, until dismissed (W163)", async () => {
+      const card = `document.querySelector('.session-list li.spin-off-card')`;
+      const titleCount = `Number(/^\\((\\d+)\\)/.exec(document.title)?.[1] ?? 0)`;
+      const before = await page.evaluate<number>(titleCount);
+      const rowsBefore = await page.evaluate<string[]>(rowNames);
+      t.server.world.spinOff(t.server.world.byName(NAMES.conversation).sessionId, SPIN_OFF);
+      t.server.broadcast();
+      await page.waitFor('the card', `!!${card}`);
+      const look = await page.evaluate<{ heading: string; where: string; prompt: string; buttons: string[]; overRows: boolean; left: number; right: number; textHeight: number; textScrolls: boolean; listScrollsSideways: boolean }>(`(() => {
+        const li = ${card};
+        const r = li.getBoundingClientRect();
+        const text = li.querySelector('.approval-text');
+        const list = document.querySelector('.session-list');
+        const firstRow = document.querySelector('.session-list li.session');
+        return {
+          heading: li.querySelector('h4').textContent,
+          where: li.querySelector('.approval-where').textContent,
+          prompt: text.textContent,
+          buttons: [...li.querySelectorAll('.approval-actions button')].map((b) => b.textContent.trim()),
+          overRows: !firstRow || r.bottom <= firstRow.getBoundingClientRect().top + 0.5,
+          left: r.left,
+          right: r.right,
+          textHeight: text.getBoundingClientRect().height,
+          textScrolls: text.scrollHeight > text.clientHeight,
+          listScrollsSideways: list.scrollWidth > list.clientWidth + 0.5,
+        };
+      })()`);
+      t.expectEqual(look.heading, `${NAMES.conversation} proposes a new session`, 'it names the session that asked');
+      t.expectEqual(look.where, `In ${DEMO_APP_WEB}, named pitwall-test-spin-off.`, 'the folder, whole, and the name');
+      t.expectEqual(look.prompt, SPIN_OFF_PROMPT, 'the whole prompt, as text');
+      t.expectEqual(look.buttons, ['Start…', 'Open session', 'Dismiss'], 'Start, Open session and Dismiss');
+      t.expect(look.overRows, 'over the rows', look);
+      t.expect(look.left >= 0 && look.right <= t.viewport.width, 'inside the window', look);
+      t.expect(look.textScrolls, 'a long prompt scrolls in its box', look);
+      t.expect(!look.listScrollsSideways, "the list doesn't scroll sideways", look);
+      t.expectEqual(await page.evaluate(rowNames), rowsBefore, 'the rows are as they were');
+      t.expectEqual(await page.evaluate(titleCount), before + 1, "the page title's count has it");
+      if (t.layout !== 'drawer') t.expectEqual(await page.evaluate(`${repoItem('Needs you')}.querySelector('.badge-attention')?.textContent`), `${before + 1} need you`, "Needs you's badge has it");
+      await t.shot('spin-off');
+      await page.click('Dismiss', `${card}.querySelector('.approval-actions button:last-child')`);
+      await page.waitFor('the card to go', `!${card}`);
+      t.expectEqual(await page.evaluate(titleCount), before, 'and leaves the count when dismissed');
     });
 
     await t.step('rows are two lines: name, title and status; then where and what', async () => {

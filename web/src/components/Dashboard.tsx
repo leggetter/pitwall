@@ -155,6 +155,7 @@ import { pendingLink, prPrefill, withPendingLinks, type PendingLinks } from '../
 import { createPanelWidthStore } from '../panelWidth.js';
 import { relayAlertText } from '../relay.js';
 import { tabAttention, tabGroups, writeStoredTab } from '../rootTabs.js';
+import { openSpinOffs, useDismissedSpinOffs } from '../spinOff.js';
 import {
   browserNavigation,
   findGroup,
@@ -203,6 +204,7 @@ import { HighlightContext } from './Highlight.js';
 import { closeMenus } from './Menu.js';
 import { ClonedNotice, CloneDialog } from './CloneDialog.js';
 import { NewSessionDialog } from './NewSessionDialog.js';
+import { SpinOffCards, type CheckedSpinOff } from './SpinOffCards.js';
 import { NO_RELATION, PrListFilters, PrListFoot, PrNotices, prSourceBody, RefreshAction } from './PrList.js';
 import { PrView, UnlistedPrView, WaitingPrView, type PrMissing } from './PrView.js';
 import { PreferencesDialog } from './Preferences.js';
@@ -311,6 +313,13 @@ type PrStart = { pr: PullRequestSummary; step: 'clone' } | { pr: PullRequestSumm
 const prSubtitle = (pr: PullRequestSummary) => (
   <>
     Starts a background session for <bdi>{plainText(prName(pr))}</bdi> with <code>claude --bg</code>. Its prompt names the pull request, so the session owns it until another acts on it.
+  </>
+);
+
+/** New session's subtitle for a spin-off proposal (W163): which session proposed it. */
+const spinOffSubtitle = (from: string) => (
+  <>
+    Starts a background session with <code>claude --bg</code>, as <bdi>{from}</bdi> proposed. Read the prompt and change anything before you start it.
   </>
 );
 
@@ -479,6 +488,13 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   useEffect(() => dropOldMarks(storage), [storage]);
   // Every root's rows that need you, a PR's included (W106): the page title's count.
   const attention = countNeeds(groups, work);
+  // The proposals for new sessions that wait on you (W163), every root's for the title and the root
+  // tabs, and the open tab's for Needs you, its cards and its count. Dismissed ones are the browser's.
+  const dismissedSpinOffs = useDismissedSpinOffs(storage);
+  const spinOffs = useMemo(() => openSpinOffs(groups, dismissedSpinOffs.set), [groups, dismissedSpinOffs.set]);
+  const tabSpinOffs = useMemo(() => openSpinOffs(shownGroups, dismissedSpinOffs.set), [shownGroups, dismissedSpinOffs.set]);
+  // Start on a proposal, once the server has checked it: New session, filled in with it.
+  const [spinOffStart, setSpinOffStart] = useState<CheckedSpinOff>();
   const selectedGroup = findGroup(groups, selection);
   // Groups hidden from the repo list, under these roots, whether or not they're in the snapshot (W35).
   // The repo list shows the open tab's.
@@ -1047,8 +1063,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
 
   // The count is every root's, each session once, so what needs you under a tab that isn't open shows
   // in the browser's tab too; with root tabs, the open one's root follows the name (W38).
-  // The supervisor's drafts count too (W114): each waits on you.
-  const titleCount = attention + approvals;
+  // The supervisor's drafts count too (W114): each waits on you. So does each proposal (W163).
+  const titleCount = attention + approvals + spinOffs.length;
   useEffect(() => {
     document.title = `${titleCount > 0 ? `(${titleCount}) ` : ''}pitwall${tab === undefined ? '' : ` · ${plainText(shortenHome(tab))}`}`;
     return () => {
@@ -1446,6 +1462,15 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     </div>
   );
 
+  // Needs you's notices: each proposal's card (W163), then the supervisor's notice.
+  const needsYouNotices =
+    tabSpinOffs.length > 0 || approvals > 0 ? (
+      <>
+        <SpinOffCards items={tabSpinOffs} onStart={setSpinOffStart} onDismiss={dismissedSpinOffs.dismiss} onOpen={(sessionId) => openSession(sessionId)} />
+        {approvals > 0 && supervisorNotice}
+      </>
+    ) : undefined;
+
   const name = selectionName(groups, selection, roots);
   const heading: SessionListHeading =
     'view' in selection
@@ -1631,7 +1656,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     empty = (
       <EmptyState
         icon="success"
-        title={approvals > 0 ? 'Nothing else needs you right now' : 'Nothing needs you right now'}
+        title={approvals > 0 || tabSpinOffs.length > 0 ? 'Nothing else needs you right now' : 'Nothing needs you right now'}
         sentence="Sessions that are waiting for you, or asked you something, show here."
         actions={showAll}
       />
@@ -1700,6 +1725,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       starred={starred.set}
       prs={repoListPrs}
       work={work}
+      spinOffs={tabSpinOffs.length}
       supervisor={
         supervisor && {
           status: supervisor.status,
@@ -1943,7 +1969,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         tabs={
           tab === undefined
             ? undefined
-            : { tabs: roots.map((root) => ({ root, attention: tabAttention(groups, root, work) })), active: tab, onSelect: switchTab, panelId, tabId }
+            : { tabs: roots.map((root) => ({ root, attention: tabAttention(groups, root, work) + openSpinOffs(tabGroups(groups, root), dismissedSpinOffs.set).length })), active: tab, onSelect: switchTab, panelId, tabId }
         }
       />
 
@@ -1979,7 +2005,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
                 )
               )
             }
-            notices={prsSelected ? <PrNotices list={prList} /> : scope?.kind === 'needs-you' && approvals > 0 ? supervisorNotice : undefined}
+            notices={prsSelected ? <PrNotices list={prList} /> : scope?.kind === 'needs-you' ? needsYouNotices : undefined}
             foot={prsSelected ? prsFoot : undefined}
             className={prsSelected ? 'pr-list' : undefined}
             current={current}
@@ -2045,6 +2071,24 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             const link = pendingLink(prStart.pr, request.prompt, new Date().toISOString());
             if (link) setPendingLinks((current) => new Map(current).set(session.shortId, link));
             setPrStart(undefined);
+            started.wait(session);
+            toasts.show({ tone: 'success', key: startedKey(session.shortId), message: startedText(session.name) });
+          }}
+        />
+      )}
+
+      {spinOffStart && snapshot && (
+        <NewSessionDialog
+          key={`spin-off:${spinOffStart.sessionId}:${spinOffStart.key}`}
+          snapshot={dialogSnapshot ?? snapshot}
+          tab={tab}
+          prefill={{ cwd: spinOffStart.cwd, prompt: spinOffStart.prompt, ...(spinOffStart.name === undefined ? {} : { name: spinOffStart.name }) }}
+          subtitle={spinOffSubtitle(spinOffStart.from)}
+          onClose={() => setSpinOffStart(undefined)}
+          onStarted={(session) => {
+            // Started: its card goes, as a dismissed one does.
+            dismissedSpinOffs.dismiss(spinOffStart.sessionId, spinOffStart.key);
+            setSpinOffStart(undefined);
             started.wait(session);
             toasts.show({ tone: 'success', key: startedKey(session.shortId), message: startedText(session.name) });
           }}

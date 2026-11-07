@@ -823,6 +823,28 @@ describe('createTranscriptReader', () => {
     });
   });
 
+  describe('spinOff (W163)', () => {
+    const proposal = 'Done.\n\n```spin-off\nfolder: /tmp/pitwall-test-x\nname: pitwall-test-spin\nprompt:\nTidy the README.\n```';
+
+    it('is set when the newest assistant text ends with a spin-off block and no prompt came since', async () => {
+      await writeFile(file, jsonl(user('go'), assistant([text(proposal)]), turnDuration()));
+      expect((await reader().read(SID, [CWD])).spinOff).toEqual({
+        kind: 'proposal',
+        key: expect.any(String),
+        folder: '/tmp/pitwall-test-x',
+        name: 'pitwall-test-spin',
+        prompt: 'Tidy the README.',
+      });
+    });
+
+    it('is cleared by a prompt after it, or a newer message without a block', async () => {
+      await writeFile(file, jsonl(user('go'), assistant([text(proposal)]), turnDuration(), user('not now')));
+      expect((await reader().read(SID, [CWD])).spinOff).toBeUndefined();
+      await writeFile(file, jsonl(user('go'), assistant([text(proposal)]), turnDuration(), user('more'), assistant([text('Done again.')]), turnDuration()));
+      expect((await reader().read(SID, [CWD])).spinOff).toBeUndefined();
+    });
+  });
+
   describe('askedYou', () => {
     const crossSession = () =>
       user('Another Claude session sent a message:\n<cross-session-message from="x">status?</cross-session-message>', {

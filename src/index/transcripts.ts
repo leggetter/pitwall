@@ -5,9 +5,10 @@
 import { open, readdir, stat, type FileHandle } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { RELAY_NAME, type AskedYou, type TranscriptStatus } from '../shared/protocol.js';
+import { RELAY_NAME, type AskedYou, type SpinOff, type TranscriptStatus } from '../shared/protocol.js';
 import { detectAskedYou } from './asked.js';
 import { isRecord } from './guards.js';
+import { detectSpinOff } from './spinOff.js';
 import { cap, truncate } from './text.js';
 
 export interface TranscriptInfo {
@@ -22,6 +23,11 @@ export interface TranscriptInfo {
    * session's status when the transcript marks no turn's end.
    */
   askedYou?: AskedYou;
+  /**
+   * A new session the newest assistant text proposes (W163, spinOff.ts), with no prompt since: a
+   * `spin-off` block that ends it. Whether its turn is over is `toSessionSummary`'s, as for askedYou.
+   */
+  spinOff?: SpinOff;
   /**
    * The newest title Claude Code generated for the session (an `ai-title`
    * entry), on one line, at most 120 characters. Internal and undocumented.
@@ -381,6 +387,7 @@ interface FileState {
 interface Derived {
   source: string;
   askedYou: AskedYou | undefined;
+  spinOff: SpinOff | undefined;
 }
 
 async function readWindow(
@@ -957,6 +964,7 @@ function toInfo(state: FileState): TranscriptInfo {
   if (fields.assistantText !== undefined) {
     const derived = derive(state, fields.assistantText);
     if (derived.askedYou !== undefined && fields.promptAfterText !== true) info.askedYou = derived.askedYou;
+    if (derived.spinOff !== undefined && fields.promptAfterText !== true) info.spinOff = derived.spinOff;
   }
   if (fields.userPrompt !== undefined) info.lastUserPrompt = fields.userPrompt;
   if (fields.aiTitle !== undefined) info.aiTitle = fields.aiTitle;
@@ -973,7 +981,7 @@ function toInfo(state: FileState): TranscriptInfo {
 /** Checks the assistant text once per change, not on every poll. */
 function derive(state: FileState, source: string): Derived {
   if (state.derived?.source !== source) {
-    state.derived = { source, askedYou: detectAskedYou(source) };
+    state.derived = { source, askedYou: detectAskedYou(source), spinOff: detectSpinOff(source, os.homedir()) };
   }
   return state.derived;
 }
