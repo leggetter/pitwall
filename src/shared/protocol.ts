@@ -38,27 +38,6 @@ export interface AskedYou {
 }
 
 /**
- * Why a session needs you, judged from its context rather than from Claude
- * Code's state alone (spike 007; Phil, 2026-10-27). The first reason that
- * holds, in this order:
- * - 'prompt': Claude Code is showing a prompt: status 'waiting', and
- *   waitingFor says which.
- * - 'claude-code': a background job's own line on what it needs, in `text`,
- *   from the job's `state.json`. Not its start placeholder, "send a prompt to
- *   start", which a resumed session shows though it asked nothing.
- * - 'asked': its last turn ended by asking you something (askedYou).
- * - 'recap': its recap (M5, SessionSummary.recap) says it's waiting on you, and the recap is
- *   current: made after the session's newest activity. `text` is its first to-do for you. Phil,
- *   2026-10-29: sessions marked Done "whereas I'm sure there are open questions in them". The
- *   heuristics above still decide first; a recap only adds a reason, never removes one.
- * - 'restarted': you resumed it, or confirmed a restart of it, in this run of
- *   pitwall, and no prompt has been sent to it since.
- * - 'blocked': Claude Code says it's blocked, and pitwall couldn't read why:
- *   the job's `state.json` was missing, unreadable, malformed or another
- *   session's, or the row has no short id to find it by. Kept so that a
- *   question is never hidden.
- */
-/**
  * A new session a session proposes (W163, spin-off proposals): the newest assistant message ended its
  * turn with a fenced block whose info string is `spin-off` (the `spin-off` skill, skills/spin-off/ in
  * pitwall's repo), naming a folder, an optional name and the first prompt. Untrusted session text,
@@ -95,6 +74,27 @@ export function spinOffPath(sessionId: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/spin-off`;
 }
 
+/**
+ * Why a session needs you, judged from its context rather than from Claude
+ * Code's state alone (spike 007; Phil, 2026-10-27). The first reason that
+ * holds, in this order:
+ * - 'prompt': Claude Code is showing a prompt: status 'waiting', and
+ *   waitingFor says which.
+ * - 'claude-code': a background job's own line on what it needs, in `text`,
+ *   from the job's `state.json`. Not its start placeholder, "send a prompt to
+ *   start", which a resumed session shows though it asked nothing.
+ * - 'asked': its last turn ended by asking you something (askedYou).
+ * - 'recap': its recap (M5, SessionSummary.recap) says it's waiting on you, and the recap is
+ *   current: made after the session's newest activity. `text` is its first to-do for you. Phil,
+ *   2026-10-29: sessions marked Done "whereas I'm sure there are open questions in them". The
+ *   heuristics above still decide first; a recap only adds a reason, never removes one.
+ * - 'restarted': you resumed it, or confirmed a restart of it, in this run of
+ *   pitwall, and no prompt has been sent to it since.
+ * - 'blocked': Claude Code says it's blocked, and pitwall couldn't read why:
+ *   the job's `state.json` was missing, unreadable, malformed or another
+ *   session's, or the row has no short id to find it by. Kept so that a
+ *   question is never hidden.
+ */
 export interface NeedsYou {
   reason: 'prompt' | 'claude-code' | 'asked' | 'recap' | 'restarted' | 'blocked';
   /**

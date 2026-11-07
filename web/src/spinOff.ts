@@ -23,6 +23,7 @@ import type { ApiClient } from './api.js';
 import { browserStorage, type StorageSource } from './groupState.js';
 import { activityMs } from './sessions.js';
 import type { StarredEvents } from './starred.js';
+import { sessionNeedsYou, type Work } from './work.js';
 
 export const SPIN_OFFS_KEY = 'pitwall.spinOffs.v1';
 
@@ -125,6 +126,14 @@ export function openSpinOffs(groups: readonly Pick<SessionGroup, 'sessions'>[], 
     }
   }
   return listed.sort((a, b) => activityMs(b.session) - activityMs(a.session));
+}
+
+/**
+ * How many of `listed` add to a Needs you count: not a proposal whose session already counts there
+ * as a row that needs you, so each session counts once (W163). Its card still shows.
+ */
+export function spinOffCount(listed: readonly ListedSpinOff[], work: Work): number {
+  return listed.filter(({ session }) => !sessionNeedsYou(session, work)).length;
 }
 
 /** What a check came to: New session's prefill, or why not, in pitwall's words. */

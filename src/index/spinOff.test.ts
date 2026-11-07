@@ -79,6 +79,14 @@ describe('detectSpinOff', () => {
       expect(problem(lines('```spin-off', 'folder: /tmp/x', 'prompt: Go.'))).toMatch(/closing fence/);
     });
 
+    it('a fence in the prompt that closed the block early, three backticks around three', () => {
+      const early = lines('Done.', '', '```spin-off', 'folder: /tmp/x', 'prompt:', 'Run this:', '```bash', 'npm test', '```', 'Then fix it.', '```', '');
+      expect(problem(early)).toMatch(/close early/);
+      expect(problem(early.replace(/\n/g, '\r\n'))).toMatch(/close early/);
+      // A block quoted earlier, then a stray fence of another kind with text in it, isn't this case.
+      expect(read(lines(block('folder: /tmp/x', 'prompt: Go.'), 'More text.', '```', 'code'))).toBeUndefined();
+    });
+
     it('no folder, no prompt line, an empty prompt', () => {
       expect(problem(block('prompt: Go.'))).toMatch(/no folder/);
       expect(problem(block('folder: /tmp/x', 'Go.'))).toMatch(/before prompt:/);

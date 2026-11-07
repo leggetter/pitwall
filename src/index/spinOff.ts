@@ -46,7 +46,13 @@ interface Block {
   indent: number;
   /** Closed by a fence, rather than running to the end of the text. */
   closed: boolean;
+  /** Why the block can't be read, found while finding it, in pitwall's own words. */
+  problem?: string;
 }
+
+/** A fence in the prompt closed the block early: the message ends with the fence meant to close it. */
+const CLOSED_EARLY =
+  'The block seems to close early: a fence inside its prompt needs a longer fence around the block, four backticks around three.';
 
 /**
  * The spin-off proposal `text`, the newest assistant message's whole text, ends with, if any. `home`
@@ -57,6 +63,7 @@ export function detectSpinOff(text: string, home: string): SpinOff | undefined {
   if (block === undefined) return undefined;
   const key = createHash('sha256').update(block.body.join('\n')).digest('hex').slice(0, 16);
   const unreadable = (problem: string): SpinOff => ({ kind: 'unreadable', key, problem });
+  if (block.problem !== undefined) return unreadable(block.problem);
   if (!block.closed) return unreadable('The block has no closing fence.');
   const lines = block.body.map((line) => dedent(line, block.indent));
 
@@ -110,7 +117,9 @@ function lastBlock(text: string): Block | undefined {
   let last: Block | undefined;
   /** Where the newest block of any kind ended: a spin-off block counts only if nothing but blank lines comes after it. */
   let lastEnd = -1;
-  let open: { marker: string; block: Block | undefined } | undefined;
+  let open: { marker: string; block: Block | undefined; blankSince: boolean } | undefined;
+  /** The newest spin-off block that closed, ended by text or not, for a fence that closed it early. */
+  let lastSpinOff: Block | undefined;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]!;
     if (open !== undefined) {
@@ -119,6 +128,7 @@ function lastBlock(text: string): Block | undefined {
         if (open.block !== undefined) {
           open.block.closed = true;
           last = open.block;
+          lastSpinOff = open.block;
         } else {
           last = undefined;
         }
@@ -126,6 +136,7 @@ function lastBlock(text: string): Block | undefined {
         open = undefined;
       } else {
         open.block?.body.push(line);
+        if (line.trim() !== '') open.blankSince = false;
       }
       continue;
     }
@@ -133,17 +144,21 @@ function lastBlock(text: string): Block | undefined {
     // Also any other fence, as markFences() has it, so a spin-off block quoted inside one isn't read.
     const other = /^\s*(`{3,}|~{3,})(.*)$/.exec(line);
     if (opening !== null && opening[3]!.toLowerCase() === SPIN_OFF_INFO) {
-      open = { marker: opening[2]!, block: { body: [], indent: opening[1]!.length, closed: false } };
+      open = { marker: opening[2]!, block: { body: [], indent: opening[1]!.length, closed: false }, blankSince: true };
       continue;
     }
     if (other !== null && !(other[1]![0] === '`' && other[2]!.includes('`'))) {
-      open = { marker: other[1]!, block: undefined };
+      open = { marker: other[1]!, block: undefined, blankSince: other[2]!.trim() === '' };
       continue;
     }
     if (line.trim() !== '' && index > lastEnd) last = undefined;
   }
   // A block still open runs to the end of the text, as in CommonMark: unreadable, since it may be cut.
-  if (open !== undefined) return open.block;
+  if (open !== undefined && open.block !== undefined) return open.block;
+  // The message ends with a bare fence, after a spin-off block and more text: a fence in its prompt
+  // closed it early, and this one was meant to close it. Unreadable, with why, not dropped.
+  if (open !== undefined && open.blankSince && lastSpinOff !== undefined) return { ...lastSpinOff, problem: CLOSED_EARLY };
+  if (open !== undefined) return undefined;
   return last;
 }
 

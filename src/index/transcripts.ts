@@ -9,7 +9,7 @@ import { RELAY_NAME, type AskedYou, type SpinOff, type TranscriptStatus } from '
 import { detectAskedYou } from './asked.js';
 import { isRecord } from './guards.js';
 import { detectSpinOff } from './spinOff.js';
-import { cap, truncate } from './text.js';
+import { cap, tail, truncate } from './text.js';
 
 export interface TranscriptInfo {
   transcript: TranscriptStatus;
@@ -380,12 +380,13 @@ interface FileState {
   /** Drop bytes up to the next newline: the read started mid-line, or a line was too long to keep. */
   skipToNewline: boolean;
   fields: Fields;
-  /** What was worked out from `fields.assistantText`, kept until the text changes. */
+  /** What was worked out from `fields.assistantText` and `assistantTail`, kept until the text changes. */
   derived?: Derived;
 }
 
 interface Derived {
   source: string;
+  tailSource: string;
   askedYou: AskedYou | undefined;
   spinOff: SpinOff | undefined;
 }
@@ -475,6 +476,11 @@ export interface Fields {
   assistantMessageId?: string;
   /** The newest assistant message's raw text, its text blocks joined, capped at 64 KiB. */
   assistantText?: string;
+  /**
+   * The same text's last 64 KiB, which the spin-off check reads (W163), since its block ends the
+   * message: past 64 KiB, `assistantText` has lost it. The same string as `assistantText` until then.
+   */
+  assistantTail?: string;
   userPrompt?: string;
   /** True when a prompt came after the newest assistant text, in file order. */
   promptAfterText?: boolean;
@@ -610,8 +616,10 @@ export function applyEntry(fields: Fields, entry: unknown): void {
     const sameMessage =
       text.id !== undefined && text.id === fields.assistantMessageId && fields.assistantText !== undefined;
     const joined = sameMessage ? `${fields.assistantText}\n${text.text}` : text.text;
+    const joinedTail = sameMessage ? `${fields.assistantTail ?? fields.assistantText}\n${text.text}` : text.text;
     if (!sameMessage) fields.assistantMessageId = text.id;
     fields.assistantText = cap(joined, ASSISTANT_TEXT_KEEP);
+    fields.assistantTail = tail(joinedTail, ASSISTANT_TEXT_KEEP);
     fields.promptAfterText = false;
     return;
   }
@@ -962,7 +970,7 @@ function toInfo(state: FileState): TranscriptInfo {
   const info: TranscriptInfo = { transcript: 'ok' };
   if (fields.lastActivityMs !== undefined) info.lastActivityAt = new Date(fields.lastActivityMs).toISOString();
   if (fields.assistantText !== undefined) {
-    const derived = derive(state, fields.assistantText);
+    const derived = derive(state, fields.assistantText, fields.assistantTail ?? fields.assistantText);
     if (derived.askedYou !== undefined && fields.promptAfterText !== true) info.askedYou = derived.askedYou;
     if (derived.spinOff !== undefined && fields.promptAfterText !== true) info.spinOff = derived.spinOff;
   }
@@ -979,9 +987,15 @@ function toInfo(state: FileState): TranscriptInfo {
 }
 
 /** Checks the assistant text once per change, not on every poll. */
-function derive(state: FileState, source: string): Derived {
-  if (state.derived?.source !== source) {
-    state.derived = { source, askedYou: detectAskedYou(source), spinOff: detectSpinOff(source, os.homedir()) };
+function derive(state: FileState, source: string, tailSource: string): Derived {
+  const derived = state.derived;
+  if (derived === undefined || derived.source !== source || derived.tailSource !== tailSource) {
+    return (state.derived = {
+      source,
+      tailSource,
+      askedYou: derived?.source === source ? derived.askedYou : detectAskedYou(source),
+      spinOff: derived?.tailSource === tailSource ? derived.spinOff : detectSpinOff(tailSource, os.homedir()),
+    });
   }
-  return state.derived;
+  return derived;
 }

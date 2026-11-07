@@ -155,7 +155,7 @@ import { pendingLink, prPrefill, withPendingLinks, type PendingLinks } from '../
 import { createPanelWidthStore } from '../panelWidth.js';
 import { relayAlertText } from '../relay.js';
 import { tabAttention, tabGroups, writeStoredTab } from '../rootTabs.js';
-import { openSpinOffs, useDismissedSpinOffs } from '../spinOff.js';
+import { openSpinOffs, spinOffCount, useDismissedSpinOffs } from '../spinOff.js';
 import {
   browserNavigation,
   findGroup,
@@ -1063,8 +1063,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
 
   // The count is every root's, each session once, so what needs you under a tab that isn't open shows
   // in the browser's tab too; with root tabs, the open one's root follows the name (W38).
-  // The supervisor's drafts count too (W114): each waits on you. So does each proposal (W163).
-  const titleCount = attention + approvals + spinOffs.length;
+  // The supervisor's drafts count too (W114): each waits on you. So does each proposal (W163), but a
+  // session already counted as a row needing you counts once.
+  const titleCount = attention + approvals + spinOffCount(spinOffs, work);
   useEffect(() => {
     document.title = `${titleCount > 0 ? `(${titleCount}) ` : ''}pitwall${tab === undefined ? '' : ` · ${plainText(shortenHome(tab))}`}`;
     return () => {
@@ -1725,7 +1726,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       starred={starred.set}
       prs={repoListPrs}
       work={work}
-      spinOffs={tabSpinOffs.length}
+      spinOffs={spinOffCount(tabSpinOffs, work)}
       supervisor={
         supervisor && {
           status: supervisor.status,
@@ -1969,7 +1970,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         tabs={
           tab === undefined
             ? undefined
-            : { tabs: roots.map((root) => ({ root, attention: tabAttention(groups, root, work) + openSpinOffs(tabGroups(groups, root), dismissedSpinOffs.set).length })), active: tab, onSelect: switchTab, panelId, tabId }
+            : { tabs: roots.map((root) => ({ root, attention: tabAttention(groups, root, work) + spinOffCount(openSpinOffs(tabGroups(groups, root), dismissedSpinOffs.set), work) })), active: tab, onSelect: switchTab, panelId, tabId }
         }
       />
 

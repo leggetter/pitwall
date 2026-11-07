@@ -2,7 +2,8 @@
 import { describe, expect, it } from 'vitest';
 import type { SpinOff } from '../../src/shared/protocol.js';
 import type { StorageSource } from './groupState.js';
-import { openSpinOffs, readDismissed, SPIN_OFFS_CAP, SPIN_OFFS_KEY, spinOffId } from './spinOff.js';
+import { openSpinOffs, readDismissed, SPIN_OFFS_CAP, SPIN_OFFS_KEY, spinOffCount, spinOffId } from './spinOff.js';
+import { NO_WORK } from './work.js';
 import { group, minutesAgo, session } from './test/fixtures.js';
 
 const proposal = (key: string): SpinOff => ({ kind: 'proposal', key, folder: '/Users/example/code/demo-app', prompt: 'Go.' });
@@ -43,5 +44,18 @@ describe('openSpinOffs', () => {
     const groups = [group({ sessions: [older, dismissed, stale, none] }), group({ key: 'other', sessions: [newer, older] })];
     const listed = openSpinOffs(groups, new Set([spinOffId(dismissed.sessionId, '3333333333333333')]));
     expect(listed.map((item) => item.session.sessionId)).toEqual([newer.sessionId, older.sessionId]);
+  });
+});
+
+describe('spinOffCount', () => {
+  it('counts a proposal unless its session already counts as a row that needs you, so a session counts once', () => {
+    const quiet = session({ spinOff: proposal('5555555555555555') });
+    const asking = session({
+      spinOff: proposal('6666666666666666'),
+      needsYou: { reason: 'asked' },
+    });
+    const listed = openSpinOffs([group({ sessions: [quiet, asking] })], new Set());
+    expect(listed).toHaveLength(2);
+    expect(spinOffCount(listed, NO_WORK)).toBe(1);
   });
 });
