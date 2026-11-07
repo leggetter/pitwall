@@ -924,6 +924,8 @@ The ticked items of the plan's "Suggested actions" list, in the order they were 
 - [x] The README rewritten for newcomers, with diagrams and a roadmap, and the decisions moved to `docs/decisions.md` (2026-10-28)
 - [x] M4: my open pull requests (W92 to W117, built on `m4/integration`, approved by W96's and W108's security reviews and Phil's try-out; merged into `main` in [#117](https://github.com/leggetter/pitwall/pull/117), 2026-11-02)
 - [x] What arrives mid-turn, missing from the conversation: messages, sub-agent reports, task notices and prompts I typed while Claude worked (found in #99's research; W99, merged in [#100](https://github.com/leggetter/pitwall/pull/100))
+- [x] M5: supervisor (W109 to W129, merged into `main` in [#138](https://github.com/leggetter/pitwall/pull/138), 2026-11-02; moved here 2026-11-07)
+- [x] Model and effort for each kind of work (a session, its sub-agents, the supervisor, recaps, the relay): W119, the config file's `work` block with overrides in Preferences, merged with M5 in [#138](https://github.com/leggetter/pitwall/pull/138) ([#114](https://github.com/leggetter/pitwall/issues/114); moved here 2026-11-07)
 
 ## Design system: what each work item added
 
