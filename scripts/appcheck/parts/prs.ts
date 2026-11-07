@@ -6,7 +6,8 @@
 // sessions with the one that owns it first, Open on GitHub, which leaves for the PR's own page, and
 // Copy link; a session opened from it and the PR from the session's header, with the back button; the
 // session view's Pull requests tab; Has PR; Refresh, its spinner, its minute (W100) and a 429; each
-// source state; a ?pr= link; and `j` and `k` through session and PR rows. Made-up PRs only
+// source state; a ?pr= link; `j` and `k` through session and PR rows; and a busy session whose PR
+// needs you, left out of Needs you and its counts until it stops (W161). Made-up PRs only
 // (fixtures.ts, PRS).
 
 import { NAMES, PR_TEAM, PRS, PRS_ERRORS, PRS_SEARCH_ERRORS, type PrsState } from '../fixtures.js';
@@ -334,6 +335,33 @@ const part: Part = {
       await closeView();
       await page.click(`the snooze toggle on ${NAMES.asked}`, toggle);
       await page.waitFor('the snooze gone', `${toggle}?.getAttribute('aria-haspopup') === 'menu'`);
+    });
+
+    await t.step("a busy session's PR doesn't put it in Needs you, and keeps its badge; it's back once the session stops (W161)", async () => {
+      const id = server.world.byName(NAMES.asked).sessionId;
+      const { needsYou, askedYou, status, state, waitingFor } = server.world.byName(NAMES.asked);
+      server.world.need(id, { needsYou: undefined, askedYou: undefined, status: 'busy' });
+      server.broadcast();
+      await page.waitFor('it to leave Needs you', `!${rows}.includes(${q(NAMES.asked)})`);
+      t.expectEqual(await page.evaluate(rows), [NAMES.waiting, NAMES.prompting, n(PRS.review), n(PRS.teamReview)], 'the others stay');
+      await chooseInRepoList(t, 'Pull requests');
+      await page.waitFor('its row', `!!${row(NAMES.asked)}`);
+      const look = await page.evaluate<{ badge: string | null; bar: boolean }>(`(() => { const li = ${row(NAMES.asked)}.closest('li'); return { badge: li.querySelector('.pr-badge')?.textContent ?? null, bar: li.classList.contains('attention') }; })()`);
+      t.expectEqual(look, { badge: 'Pull request #612, conflicts, needs attention', bar: false }, 'its PR badge stays, with no bar');
+      t.expectEqual(await page.evaluate(summary), '10 sessions3 need you', "the view's summary leaves it out");
+      await openRepoList(t);
+      t.expectEqual(await page.evaluate(`${repoItem('Pull requests')}?.querySelector('.badge')?.textContent`), '3 need you', "and so does the item's count");
+      await closeDrawer();
+      await t.shot('busy-with-pr');
+      server.world.need(id, { status: 'idle' });
+      server.broadcast();
+      await chooseInRepoList(t, 'Needs you');
+      await page.waitFor('it back in Needs you', `${rows}.includes(${q(NAMES.asked)})`);
+      // Its recap is older than its latest turn, so line 2 says what the PR needs, not the recap's For you.
+      t.expectEqual(await page.evaluate(`${row(NAMES.asked)}?.closest('li').querySelector('.session-what-text')?.textContent`), 'demo-app · Needs you for example/event-relay#612: conflicts', 'line 2 says why, naming the PR');
+      server.world.need(id, { needsYou, askedYou, status, state, waitingFor });
+      server.broadcast();
+      await page.waitFor('it as it was', `${row(NAMES.asked)}?.closest('li').querySelector('.session-what-text')?.textContent.includes('Asked: ')`);
     });
 
     await t.step('Refresh fetches once, with its spinner, then is off for a minute', async () => {

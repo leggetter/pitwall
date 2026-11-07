@@ -198,6 +198,18 @@ export function rowStatusBadge(session: SessionSummary): StatusBadge | undefined
 }
 
 /**
+ * Whether it's at work (W161): Claude Code says it's busy, or its running background job is working,
+ * as quietWaitingOn() has it, and it hasn't finished or ended. Not when the transcript says its turn has
+ * ended (turnEnded), since a plugin's monitor can keep the status at busy (spike 007, finding 6), nor when
+ * it's stale, as a job blocked for days. A PR it owns doesn't put it in Needs you
+ * while it is (work.ts' prNeeding()): it may be doing what the PR needs, and its own needs still do.
+ */
+export function isBusy(session: SessionSummary): boolean {
+  if (session.finished || session.ended || session.stale === true || session.turnEnded === true) return false;
+  return session.status === 'busy' || (session.alive && session.state === 'working');
+}
+
+/**
  * The `claude attach` command for a background session, or undefined. The
  * short id is checked against a conservative pattern, because the command goes
  * to the clipboard and from there into a shell. It can't start with `-`, which

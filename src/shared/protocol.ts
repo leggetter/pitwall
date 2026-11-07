@@ -153,6 +153,14 @@ export interface SessionSummary {
    */
   askedYou?: AskedYou;
   /**
+   * Set when the transcript says the session's last turn has ended (W69's rule,
+   * spike 007, finding 4), whatever Claude Code's status, which a plugin's
+   * monitor or a restart can keep at busy (finding 6). Absent while a turn runs
+   * or when the transcript marks no turn's end. The web UI's isBusy() reads it,
+   * so a session held at busy still comes back to Needs you for its PR (W161).
+   */
+  turnEnded?: true;
+  /**
    * Set when the session needs you, with the reason (NeedsYou). The index sets
    * it on every snapshot, pitwall's first included, so after a restart Needs
    * you reflects each session's context: `state: 'blocked'` alone no longer

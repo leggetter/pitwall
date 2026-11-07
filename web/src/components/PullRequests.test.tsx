@@ -259,6 +259,49 @@ describe('rows', () => {
     expect(sessionView()!.querySelector('.session-view-pr-need')).toBeNull();
   });
 
+  it("keeps a busy session's PR out of Needs you, with its badge, until it stops; then says what its recap has for you, not the PR's state (W161)", async () => {
+    const base = snap();
+    const asked = placed(pr({ number: 57, title: 'Review the made-up retry budget', relation: 'review-requested', reviewRequest: { via: 'direct' } }, 20), cloned(`${ROOT}/demo-app`, 'demo-app'));
+    const working = { kind: 'background' as const, shortId: 'l57', status: 'busy' as const, state: 'working' as const, prLinks: [prLink('prompted', asked, 1)] };
+    const lambda = (overrides: Parameters<typeof session>[0] = {}) => session({ sessionId: 'pr-lambda', name: 'lambda', lastUserPrompt: 'Review the made-up PR', ...working, ...overrides });
+    const withLambda = (each: ReturnType<typeof session>): IndexSnapshot => ({ ...base, groups: [...base.groups, group({ key: `${ROOT}/more`, label: 'more', sessions: [each] })] });
+    const recap = { waitingOn: 'someone else' as const, title: 'Made-up review', forYou: 3, next: 'Say whether the made-up budget may go to 5', at: new Date(NOW).toISOString(), source: 'pitwall' as const };
+    const ui = (each: ReturnType<typeof session>, search = '?view=needs-you') => (
+      <Dashboard view={{ state: 'live', snapshot: withLambda(each), prs: prList([...PRS, asked]) }} navigation={memoryNavigation(search)} storage={memory().source} />
+    );
+    const { unmount } = render(ui(lambda({ recap })));
+    await settle();
+    // Busy: not in Needs you, nor its count, whatever its recap says; alpha and beta are, through their PRs.
+    expect(rows()).toEqual(['alpha', 'beta']);
+    expect(repoItem('Needs you')?.querySelector('.badge')?.textContent).toBe('2 need you');
+    // Nor in the Pull requests item's, as the view's summary counts: its PR keeps its badge on the row.
+    expect(prItem()?.querySelector('.badge')?.textContent).toBe('2 need you');
+    unmount();
+    const prs = render(ui(lambda(), '?view=prs&session=pr-lambda'));
+    await settle();
+    // Nor does its view say it needs you for the PR.
+    expect(sessionView()!.querySelector('.session-view-prs')).not.toBeNull();
+    expect(sessionView()!.querySelector('.session-view-pr-need')).toBeNull();
+    expect(sessionRow('lambda').querySelector('.pr-badge')?.textContent).toBe('Pull request #57, review requested, needs attention');
+    expect(sessionRow('lambda').classList.contains('attention')).toBe(false);
+    expect(sessionRow('lambda').querySelector('.session-what')?.textContent).toBe('more · You: Review the made-up PR');
+    prs.unmount();
+    // Busy and blocked, as Claude Code flips it, with nothing of its own: still not in Needs you.
+    const again = render(ui(lambda({ state: 'blocked', needsYou: undefined })));
+    await settle();
+    expect(rows()).toEqual(['alpha', 'beta']);
+    // Stopped: back in Needs you through its PR, saying so.
+    again.rerender(ui(lambda({ status: 'idle', state: 'done' })));
+    expect(rows()).toContain('lambda');
+    expect(sessionRow('lambda').classList.contains('attention')).toBe(true);
+    expect(sessionRow('lambda').querySelector('.session-what')?.textContent).toBe('more · Needs you for example/demo-app#57: review requested');
+    // With a recap that has something for you, that instead; a stale one doesn't.
+    again.rerender(ui(lambda({ status: 'idle', state: 'done', recap })));
+    expect(sessionRow('lambda').querySelector('.session-what')?.textContent).toBe('more · For you (3): Say whether the made-up budget may go to 5');
+    again.rerender(ui(lambda({ status: 'idle', state: 'done', recap: { ...recap, stale: true } })));
+    expect(sessionRow('lambda').querySelector('.session-what')?.textContent).toBe('more · Needs you for example/demo-app#57: review requested');
+  });
+
   it('moves a PR to the session that acted on it later, which takes its badge over', () => {
     const base = snap();
     const zeta = session({ sessionId: 'pr-zeta', name: 'zeta', prLinks: [prLink('pushed', approved, 1)] });

@@ -12,8 +12,9 @@
 //
 // A session is a piece of work (W106, work.ts): its row carries the open pull requests it owns, the
 // most urgent as a badge, "#128 CI failing", with "+2" for more. It needs you when the session does
-// or when one of those PRs needs attention, and then line 2 says so, "Needs you for example/demo-app#128:
-// CI failing" (W128), unless the session needs you itself, which comes first. A finished or ended session that owns an open PR
+// or when one of those PRs needs attention while the session isn't busy (W161), and then line 2 says
+// so, "Needs you for example/demo-app#128: CI failing" (W128), or its recap's first "For you" item
+// when it has one (W161), unless the session needs you itself, which comes first. A finished or ended session that owns an open PR
 // isn't finished work, so its row isn't muted; its badge still says Ended, and, where the list offers
 // it, its line 2 ends with Resume (W107, RowResume.tsx), where a session that needs you has its flag
 // and snooze controls: it resumes an ended interactive session, or a background one that isn't running.
@@ -26,13 +27,14 @@
 // its line 2, each with an info button whose name is its explanation, so the keyboard reaches it.
 
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
-import { prNeedsAttention, type PullRequestSummary, type SessionGroup, type SessionSummary } from '../../../src/shared/protocol.js';
+import type { PullRequestSummary, SessionGroup, SessionSummary } from '../../../src/shared/protocol.js';
 import { absoluteTime, plainText } from '../format.js';
 import { prNeedText, sessionPrBadge } from '../prs.js';
-import { ENDED_RECAP_HINT, FINISHED_RECAP_HINT, finishedWaitingOnYou, quietWaitingOn, WAITING_ON_TEXT } from '../recap.js';
+import { ENDED_RECAP_HINT, FINISHED_RECAP_HINT, finishedWaitingOnYou, forYouLabel, quietWaitingOn, recapForYou, WAITING_ON_TEXT } from '../recap.js';
 import { elsewhereRepos } from '../groupBy.js';
 import { canFlag, canSnooze, groupLabel, isFlagged, isSnoozed, needsAttention, needsText, recapNeedsText, rowStatusBadge, snoozeBack } from '../sessions.js';
 import { SNOOZE_BACK_TEXT, snoozedText } from '../snooze.js';
+import { prNeedOf } from '../work.js';
 import { FLAGGED_TEXT } from '../flags.js';
 import { FlagButton } from './FlagButton.js';
 import { runningText } from '../subagents.js';
@@ -103,6 +105,30 @@ const OWN_CLICK = 'a, button, input, select, textarea, label, summary, [role="bu
  * on you for (M5, W111), or what the session asked you, or else what you last asked it, or why the
  * transcript can't say.
  */
+/**
+ * Line 2 of a row that needs you through a PR it owns alone (W106, W128): its current recap's first
+ * "For you" item, "For you (3): …", when it has one (W161), since that's what the session waits on
+ * you for and the PR's badge already says the PR's state; or else "Needs you for example/demo-app#128:
+ * CI failing" (prNeedText()). Not the recap's while you've flagged or snoozed what the session needs
+ * (`aside`): only the PR keeps it in Needs you then.
+ */
+function prWants(session: SessionSummary, pr: PullRequestSummary, aside: boolean): { content: ReactNode; hint?: string } | undefined {
+  const yours = aside ? undefined : recapForYou(session);
+  if (yours !== undefined) {
+    const text = plainText(yours.next);
+    return {
+      content: (
+        <span className="asked for-you">
+          <span className="asked-label">{forYouLabel(yours.count)}</span> {text}
+        </span>
+      ),
+      hint: text,
+    };
+  }
+  const reason = prNeedText(pr);
+  return reason === undefined ? undefined : { content: <span className="asked pr-reason">{reason}</span>, hint: reason };
+}
+
 function whatItWants(session: SessionSummary): { content: ReactNode; hint?: string } | undefined {
   // Claude Code's line, from the job's file, not the transcript: shown whatever the transcript's state.
   const needs = needsText(session);
@@ -207,18 +233,17 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
   const quiet = snoozed || flagged;
   // That, or why it's back from a snooze, quietly, first on line 2 after the group's label.
   const aside = asideText(session);
-  // It needs you itself, or a PR it owns does (W106).
+  // It needs you itself, or a PR it owns does (W106), while it isn't busy (W161, prNeedOf()).
   const own = needsAttention(session);
-  const prNeed = owned?.find(prNeedsAttention);
+  const prNeed = prNeedOf(session, owned);
   const attention = own || prNeed !== undefined;
   // An ended or finished session that owns an open PR isn't finished work (W106).
   const finished = session.finished && (owned?.length ?? 0) === 0;
   const badge = rowStatusBadge(session);
   const name = plainText(session.name);
   const title = session.title ? plainText(session.title) : '';
-  const reason = !own && prNeed !== undefined ? prNeedText(prNeed) : undefined;
-  const wants: { content: ReactNode; hint?: string } | undefined =
-    reason !== undefined ? { content: <span className="asked pr-reason">{reason}</span>, hint: reason } : whatItWants(session);
+  // Through a PR alone: what its recap says is for you, first (W161), or why the PR needs you.
+  const wants: { content: ReactNode; hint?: string } | undefined = (!own && prNeed !== undefined ? prWants(session, prNeed, quiet) : undefined) ?? whatItWants(session);
   // What an idle session's recap says it waits on, when that isn't you (W111): quiet, first on line 2, never needing you.
   const waitingOn = quietWaitingOn(session, attention);
   const pr = sessionPrBadge(owned);

@@ -19,8 +19,10 @@
 // - Finished: a finished session that owns an open PR isn't finished work, so it stays in the main
 //   list, not in Finished, until the PR closes, and older ended ones like it stay in the window.
 // - Needs you: a session's row needs you when the session does (needsAttention()) or when a PR it
-//   owns needs attention (prNeedsAttention()); a PR row when its PR does. Both count wherever Needs
-//   you counts. A flag (W153) or a snooze (W154) is for what the session needs, never for its PRs.
+//   owns needs attention (prNeedsAttention()) while the session isn't busy (W161, isBusy()); a PR row
+//   when its PR does. Both count wherever Needs you counts, the Pull requests item's badge too. A busy
+//   session's PR keeps its badge on the row, and the session is back in Needs you when it stops, if
+//   the PR still needs you. A flag (W153) or a snooze (W154) is for what the session needs, never for its PRs.
 
 import { prNeedsAttention, prOwner, type PullRequestRelation, type PullRequestSummary, type SessionGroup, type SessionSummary } from '../../src/shared/protocol.js';
 import { plainText } from './format.js';
@@ -31,6 +33,7 @@ import {
   filterNeedle,
   groupId,
   groupLabel,
+  isBusy,
   listedOnce,
   needsAttention,
   sessionOrder,
@@ -140,14 +143,26 @@ export function isDone(session: SessionSummary, work: Work): boolean {
   return session.finished && !ownsPr(session, work);
 }
 
-/** The most urgent open PR a session owns that needs attention, or undefined: its row's line 2 says why (prReason()). */
-export function prNeeding(session: Pick<SessionSummary, 'sessionId'>, work: Work): PullRequestSummary | undefined {
-  return work.owned.get(session.sessionId)?.find(prNeedsAttention);
+/**
+ * The most urgent open PR a session owns that needs attention, or undefined: what puts its row in Needs
+ * you when the session itself doesn't (prNeedOf()).
+ */
+export function prNeeding(session: SessionSummary, work: Work): PullRequestSummary | undefined {
+  return prNeedOf(session, work.owned.get(session.sessionId));
+}
+
+/**
+ * The most urgent of `owned` that needs attention, or undefined while the session is busy (W161,
+ * isBusy()): Phil, 2026-11-06, saw a session at work on the PR that asks his review listed in Needs
+ * you for that review, which said nothing of what the session needed.
+ */
+export function prNeedOf(session: SessionSummary, owned: readonly PullRequestSummary[] | undefined): PullRequestSummary | undefined {
+  return isBusy(session) ? undefined : owned?.find(prNeedsAttention);
 }
 
 /**
  * Whether a session's row needs you (W106): the session does (needsAttention(), without what's flagged or
- * snoozed), or a PR it owns needs attention, whatever the session's state, ended included.
+ * snoozed), or a PR it owns needs attention while it isn't busy (prNeeding(), W161), ended included.
  */
 export function sessionNeedsYou(session: SessionSummary, work: Work): boolean {
   return needsAttention(session) || prNeeding(session, work) !== undefined;
@@ -208,7 +223,11 @@ export function countNeeds(groups: readonly ListGroup[], work: Work): number {
   return sessions + prRowsIn(groups).filter(({ pr }) => prNeedsAttention(pr)).length;
 }
 
-/** The rows with an open PR, and those that need you through one: the Pull requests item's count and badge (W106). */
+/**
+ * The rows with an open PR, and those that need you through one: the Pull requests item's count and
+ * badge (W106), as the view's summary counts them. Not a busy session's (W161), whose row keeps its PR
+ * badge but not the bar.
+ */
 export function prRowCounts(groups: readonly ListGroup[], work: Work): { count: number; attention: number } {
   const sessions = sessionsIn(groups).filter((session) => ownsPr(session, work));
   const rows = prRowsIn(groups);
