@@ -13,7 +13,8 @@
 //   only passed through with j or k is never recapped, as it's never attached (W54), and only when
 //   it's worth a call (W132, asksOnOpen()): when the session has no recap, or its recap is stale and
 //   its turn has ended. Not while it works, since its recap would be stale again at the turn's end,
-//   and the engine updates it 15 minutes after that (RECAP_UPDATE_DEBOUNCE_MS). Never again by
+//   and the engine updates it 15 minutes after that (RECAP_UPDATE_DEBOUNCE_MS; 5 for a background
+//   job that says it is done, W162). Never again by
 //   itself, whatever arrives: Refresh is there for the rest. Not while the day's budget is spent,
 //   which the snapshot says (RecapHealth).
 // - **No strip** with recaps off (no `recaps` on the snapshot, or a 409), and for a session the server
