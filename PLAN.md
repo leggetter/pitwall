@@ -7,9 +7,9 @@ The living design for pitwall: what it is, how it fits together, the security ru
 | | |
 | --- | --- |
 | **Decision** | Build pitwall: a local CLI and web UI that lists, groups and drives the Claude Code sessions already running on this machine, spawns new ones, and puts a supervisor session in front of them. |
-| **Status** | M0 to M5 are done and merged into `main`, the latest M5, the supervisor, in [#138](https://github.com/leggetter/pitwall/pull/138) (2026-11-02), each approved by Phil; their detail is in [`docs/plan-archive.md`](docs/plan-archive.md). M5.1, efficiency, is next, on `m5.1/integration`. The repo is public, under Apache-2.0 (D21). |
+| **Status** | M0 to M5 are done and merged into `main`, the latest M5, the supervisor, in [#138](https://github.com/leggetter/pitwall/pull/138) (2026-11-02), each approved by Phil; their detail is in [`docs/plan-archive.md`](docs/plan-archive.md). M5.1, the work after M5, is in progress on `m5.1/integration`, to W163 (spin-off proposals, first piece) and its security review (W164); M5.2, efficiency, follows. The repo is public, under Apache-2.0 (D21). |
 | **Risk** | Pitwall can reach an interactive session in Warp or Cursor only through cross-session messaging. That reaches the session's Claude as a message from another session, not as my prompt, so it can't approve anything, and the receiving session's own rules decide whether it acts at all (spike 002). Full control needs the session moved to the background with `/bg` (D2). |
-| **Next steps** | See [`NOW.md`](NOW.md): the current state, what is in review, what is next and the questions for Phil. After M5 comes M5.1, efficiency, then M6, triage. |
+| **Next steps** | See [`NOW.md`](NOW.md): the current state, what is in review, what is next and the questions for Phil. After M5 comes M5.1, the work after M5, then M5.2, efficiency, then M6, triage. |
 
 ## Who is this for
 
@@ -197,7 +197,11 @@ In the order they'll be built. Each starts when the one before it has merged int
 - **M4, my open pull requests (done).** W92 to W117, merged 2026-11-02, [#117](https://github.com/leggetter/pitwall/pull/117), after W96's and W108's security reviews and Phil's try-out. See "M4 - My open pull requests", "M4 redesign" and "M4 work breakdown" in the [archive](docs/plan-archive.md#m4---my-open-pull-requests-in-progress-on-m4integration).
 - **M5, the supervisor (done).** W109 to W129, merged 2026-11-02, [#138](https://github.com/leggetter/pitwall/pull/138), after W116's security review, the re-review of W124 to W128 (W129) and Phil's try-out. See "M5 - Supervisor", "M5 work breakdown", "M5 work breakdown, detail" and "M5 - Supervisor, detail" in the [archive](docs/plan-archive.md#m5---supervisor-done-merged-into-main-in-138-on-2026-11-02).
 
-### M5.1 - Efficiency (after M5)
+### M5.1 - After M5 (in progress)
+
+W130 to W163, on `m5.1/integration`: what daily use of pitwall turned up, mostly Needs you, navigation and the supervisor's panel, with the usage report (W131), recaps when they're worth it (W132), the context gauge and hand-off hook (W133) and longer supervisor messages (W134), and the first piece of spin-off proposals (W163, Phil, 2026-11-07: a priority). It began as the efficiency milestone, but its first 26 items were mostly fixes from use, so Phil split it on 2026-11-07 (the coordinator's lean): M5.1 ends at W163, has its security review (W164) and merges into `main`, so the review stays a size one reviewer can hold and #139 and #140 close; the efficiency features, W155 to W160, are M5.2.
+
+### M5.2 - Efficiency (after M5.1)
 
 Phil, 2026-11-02: "My plan is to build pitwall with pitwall... I'd like this guidance applied to pitwall." The week's usage ran at about twice the rate the weekend needs: every agent on Opus, long contexts re-read every turn, and no view of the run rate until Phil checked. The working rules are in AGENTS.md's "Efficiency" section; this milestone builds them into pitwall:
 
@@ -223,7 +227,7 @@ Urgency ranking with reasons (time-sensitive, waiting on a decision, housekeepin
     - **Evidence:** [CooperBench](https://arxiv.org/html/2601.13295) sorts the symptoms of coordination failures (GPT-5 categorised all failed cooperative runs; the paper doesn't state the base or the count): work overlap, 33.2%, and divergent architecture, 29.7%, where "Incompatible design decisions lead to semantic loss even under a clean merge." Splitting the work addresses the first, not the second. [MAST](https://arxiv.org/html/2503.13657v3) (Cemri et al., NeurIPS 2025, [poster](https://neurips.cc/virtual/2025/poster/121528)): 14 failure modes across 1,600+ annotated traces of multi-agent systems; its six inter-agent misalignment modes (2.2, 6.8, 7.4, 0.85, 1.9 and 13.2%) sum to about 32% of the failures, a total I added up, since the paper gives the per-mode shares and not their sum (and doesn't state their base).
   - **Never treat "idle for N minutes" as stuck.** A session at its usage limit looks the same. Gas Town's [gastownhall/gastown#4887](https://github.com/gastownhall/gastown/issues/4887) (Usage/session-limit block is indistinguishable from a hang in gt dog status), open and untriaged, reports that duration-based detection "literally destroys a healthy worker"; its [CHANGELOG](https://github.com/gastownhall/gastown/blob/main/CHANGELOG.md) removed the Deacon's kill authority in 0.2.3 and hung-session detection that "was killing healthy witnesses and refineries" in 0.11.0. A watcher flags and asks; it doesn't kill.
   - **The hub's cost is relaying content, not having a hub.** LangChain's [Benchmarking multi-agent architectures](https://www.langchain.com/blog/benchmarking-multi-agent-architectures): the swarm "slightly outperforms" the supervisor, which "consistently uses more tokens" because of its "translation" of what sub-agents say. The supervisor already doesn't relay (W124). Multi-agent work costs more either way: Anthropic's [multi-agent research system](https://www.anthropic.com/engineering/multi-agent-research-system) reports "about 15× more tokens than chats", and calls domains with "many dependencies between agents" a poor fit. Cognition's [Multi-Agents: What's Actually Working](https://cognition.com/blog/multi-agents-working) (2026-04-22): it works when "writes stay single-threaded and the additional agents contribute intelligence rather than actions".
-- **Spin-off proposals: a session proposes a new session, and you start it** (Phil, 2026-11-04; replaces the 2026-10-29 Suggested action, "A session asking the supervisor to spin off work"). For handing off separate work whose result shouldn't come back into the session's context, as a sub-agent's report would.
+- **Spin-off proposals: a session proposes a new session, and you start it** (its first piece is W163, in M5.1; Phil, 2026-11-04; replaces the 2026-10-29 Suggested action, "A session asking the supervisor to spin off work"). For handing off separate work whose result shouldn't come back into the session's context, as a sub-agent's report would.
   - **The proposal:** the session ends its turn with a marked, fenced block: a folder, a name and the prompt. Sessions learn the convention from a `spin-off` skill shipped in pitwall's repo, installed once, so it works in every repo. The index finds the block in the transcript, as it finds `askedYou`, behind the transcript adapter, failing soft.
   - **The card:** in Needs you, labelled with the session that asked, with the whole prompt, the folder and the work profile's model. Start opens New session filled in, to edit before it runs; nothing starts without your click. The text is untrusted: the checks `spawn_session` runs (`src/server/supervisorActions.ts`), such as the folder under a root and no invisible characters, are reused, not rewritten. The new session records which session proposed it; the proposer never gets its result.
   - **Overlap first, without a model:** the card lists sessions, live or ended, in the same repo or folder whose names or recaps share words with the proposal, each with "Send to this one instead" (a message, or a resume for an ended one, with its size where the index has it) beside Start new. Duplicate work costs the weekly usage and can clash in one repo; a dormant session may already hold the context. Resuming re-reads that session's whole context, so a large one can cost more than a fresh session with a good prompt.
@@ -250,7 +254,7 @@ The bullets (what already happens, the research, the leans) are in "Consideratio
 Phil, 2026-11-02, as New session from here was taken out (W130, D27): a future feature to consider. Fork this session would start a new session with a copy of the session's conversation, through Claude Code's `--resume <id> --fork-session`, which pitwall doesn't use yet. It's what New session from here's wording implied but never did.
 
 - **To check first:** that `--fork-session` is in Claude Code's documented CLI reference, and how it behaves for a background session that's still running.
-- **The trade-off:** the fork re-reads the whole copied context on every turn, which runs against M5.1's efficiency goal, so it suits trying another direction on the same work, not unrelated work, which is New session's.
+- **The trade-off:** the fork re-reads the whole copied context on every turn, which runs against M5.2's efficiency goal, so it suits trying another direction on the same work, not unrelated work, which is New session's.
 
 ## M5.1 work breakdown
 
@@ -438,7 +442,7 @@ M5.1's own items start at W131, the evidence the rest of it needs; the others fo
     - **The report** counts by reason, the recap's source, where you clicked and the ask's outcome, leaves out a flag undone within 10 minutes as a misclick, and lists the texts.
   - Tests: `src/server/flags.test.ts` (the store, the log and its checks, the cap, the view, the routes), `relayRoute.test.ts` (the routes through the server's checks, a background session asked too), `mcpTools.test.ts`, `web/src/components/Flag.test.tsx`; the app check's `flag` part.
   - Left: an ask that fails, other than a busy relay, keeps the flag, and the toast says so, but there's no retry; a flag on a session that has left the list can't be undone, and is held until 500 newer ones or its end; for a reason other than 'recap', a session that answers with the same need, word for word, stays flagged until it changes; the relay delivers as `@pitwall-relay`, not as you, so the session reads it as another session's message.
-  - Status: Built; reviewed fresh: approve with fixes, made by the coordinator: a flag that ends by itself is logged (`end`), so a restart doesn't revive it; an undo while the ask is out stays undone after a restart; a prompt, blocked or restarted need is told from the next one by its last activity; a busy relay flags nothing and answers 429; the log opens non-blocking, so a named pipe can't hang it. Waiting on Phil's OK of the PR text, in `NOW.md`.
+  - Status: Merged ([#182](https://github.com/leggetter/pitwall/pull/182)). Reviewed fresh: approve with fixes, made by the coordinator: a flag that ends by itself is logged (`end`), so a restart doesn't revive it; an undo while the ask is out stays undone after a restart; a prompt, blocked or restarted need is told from the next one by its last activity; a busy relay flags nothing and answers 429; the log opens non-blocking, so a named pipe can't hang it. Waiting on Phil's OK of the PR text, in `NOW.md`.
 - **W154, Snooze: later, or for a time, until the session is woken** (`m5.1/snooze`, M). Replaces W88's (Not needed now) mark.
   - Phil, 2026-11-06: "'later' means I actually don't want to prioritize this now, which is really a snooze." Snoozes can be woken by an update to the session, or set to a timer.
   - The choices: 1 hour, 3 hours, tomorrow, next week, and Later, with no timer. A timed snooze comes back when its time is up, or sooner if the session is woken. Later comes back only when the session is woken: it wakes itself (a background task finishing, a scheduled wake-up), or the supervisor or another agent messages it.
@@ -458,7 +462,38 @@ M5.1's own items start at W131, the evidence the rest of it needs; the others fo
   - Tests: `src/index/transcripts.test.ts` (the wake: what counts, the relay, mid-turn), `src/server/snoozes.test.ts` (the store, file, timer, view, routes), `relayRoute.test.ts` (the routes through the server's checks), `mcpTools.test.ts`, `web/src/components/Snooze.test.tsx`, `work.test.tsx`, `PullRequests.test.tsx`; the app check's `snooze` part, which replaced `not-needed`, and the `flag` and `prs` parts.
   - Left: a scheduled wake-up (`ScheduleWakeup`, a cron) isn't seen in a transcript yet, so it may not wake a Later; a message from a session that names itself `pitwall-relay` doesn't wake one either; the times say 9:00 whatever your locale's clock (the label; the row's time is the locale's); a toast's Undo after the snooze ended by itself is a no-op; two pitwalls on one `PITWALL_HOME` each write the whole file, so one's snooze is lost at the other's next change (AGENTS.md gives a try-out its own home); a timed snooze that runs out with no page or supervisor reading the snapshot ends, and starts its 12 hours of "Snooze ended", when one next reads it.
   - Status: Merged ([#184](https://github.com/leggetter/pitwall/pull/184)). Its fresh review approved with fixes; its two Should-fix findings (a snooze outlived your answer; a wake the page hadn't shown was missed) and three of its Nits, by the coordinator, before merge.
-- **W155, Work profiles** (`m5.1/work-profiles`, M). First of the six (Phil, 2026-11-06: profiles first).
+- **W161, Needs you says what the session wants, not its PR's state, while it works** (`m5.1/needs-you-busy-pr`, S). After W154, before W162.
+  - Phil, 2026-11-06: a busy background session, reviewing a PR that asks his review, was in Needs you as "Needs you for <repo>#<n>: review requested", and "given the UI of scrolling updates it's impossible to see what it needs me for".
+  - Why (the coordinator's reading of the code, not reproduced): a PR that needs you puts its session in Needs you whatever the session is doing (`attention = own || prNeed`, `web/src/components/SessionRow.tsx`), and line 2 shows the PR's state whenever the session's own reason is absent. The session was doing that review, so the PR's state said nothing new; its real asks were the recap's three "For you" items. Claude Code also flipped it between `busy/working` and `busy/blocked` as it ran, so its own reason came and went.
+  - Fix: (1) a busy session's PR doesn't put the session in Needs you; the PR keeps its badge in Pull requests, and the session comes back when it stops if the PR still needs you. (2) When a session's recap has a "For you" item, Needs you's line shows that, not the PR's state.
+  - Checks: the row's and the view's tests, the needs-you counts in `web/src/sessions.ts`'s tests, the app check's `lists` part.
+  - Status: Planned.
+- **W162, A finished background job's recap is updated sooner** (`m5.1/recap-done-sooner`, S). After W161, before W163.
+  - Phil, 2026-11-06: a background session "is clearly asking me to do something, yet it's marked as done". Its last turn ended with a message for Phil to copy and "mark it ready for review before you post".
+  - Why (the coordinator's reading of the code and of that session's files, 2026-11-06; not checked on the live page, whose API read was blocked): for about 11½ minutes after the turn ended, no reason held. Claude Code set the job's `state.json` to `done` with no `needs` line, so no 'claude-code'. The message had no Open questions section and its last line wasn't a question, so no 'asked'. The kept recap's `throughAt` was older than the newest activity, so it was out of date, and the 'recap' reason never comes from an out-of-date recap (`needsYouOf()`, `src/recaps/engine.ts`; kept that way for W152). An update waits for `RECAP_UPDATE_DEBOUNCE_MS`, 15 minutes idle (W132). The update, at 11½ minutes, said waiting on you, with three "For you" to-dos.
+  - Fix: a background session whose job says `done`, with a live process and its turn ended, waits `RECAP_DEBOUNCE_MS` (5 minutes) for an update, not 15. The longer wait is there for sessions that take a turn every few minutes, and a job that says it's done won't take another until you prompt it, so it's at most one more call per finished job. Not chosen: recap at once (a job resumed straight away wastes the call), trusting the out-of-date recap's waiting on you (W152's bug back), and reading "before you post" as a question (fragile).
+  - Checks: the engine's scheduling tests in `src/recaps/engine.test.ts`: `done` and alive waits the short debounce; `working`, `blocked`, or a turn not ended keeps the long one.
+  - Status: Planned.
+- **W163, Spin-off proposals, the first piece: a session proposes a new session, and you start it** (`m5.1/spin-off`, M). After W162, before W164 (Phil, 2026-11-07: a priority; asked through another session).
+  - Why: from a session doing other work, hand off a separate piece to a new top-level session, not a sub-agent, whose result shouldn't come back into this session's context. The design is "Spin-off proposals" under "M6 - Triage"; this is its first piece.
+  - The skill: `spin-off`, shipped in pitwall's repo and installed once, so it works in every repo. The session ends its turn with a marked, fenced block: a folder, a name and the prompt.
+  - The index finds the block in the transcript as it finds `askedYou` (`src/index/transcripts.ts`), behind the transcript adapter, failing soft.
+  - The card: in Needs you, naming the session that asked, with the whole prompt and the folder. Start opens New session filled in through `NewSessionPrefill` (`{ cwd, name?, prompt? }`, `web/src/components/NewSessionDialog.tsx`, as W107's `web/src/prStart.ts` does for a PR), to edit before it runs; nothing starts without your click.
+  - Security: the block is untrusted session text, so `checkSpawn`'s checks (`src/server/supervisorActions.ts`: the folder under a root, no invisible characters) are reused, not rewritten.
+  - Left for later, with M6: the overlap check ("Send to this one instead"), "Ask the supervisor" on the card, and the work profile's model on the card (M5.2's W155).
+  - After W161 on purpose: W161 changes Needs you, which the card goes into.
+  - Checks: the index's tests for the block, Needs you's and New session's tests, the app check's `lists` and `new-session` parts.
+  - Status: Planned.
+- **W164, M5.1's security review** (`m5.1/security-review`, M). After W163; then M5.1 merges into `main` (Phil, 2026-11-07).
+  - What: a fresh sub-agent at xhigh effort reviews W130 to W163, the diff from `main`, against "Security": the new 0600 stores (`snoozes.json`, `flags.jsonl`, the kept recaps of W132), W153's ask to a session through the relay, W135's attached file, W150's recap input from transcripts and PR state, W163's spin-off block read from a transcript into New session, and the hand-off hook in `.claude/settings.json`.
+  - Then: its blocking findings fixed, the others recorded here; M5.1 into `main` in one PR whose description says "Fixes #139" and "Fixes #140", so GitHub closes them, which fixes merged into `m5.1/integration` don't.
+  - Status: Planned.
+
+## M5.2 work breakdown
+
+On `m5.2/integration`, branched from `main` once M5.1 has merged (Phil, 2026-11-07). The six items, in order, are those planned with Phil on 2026-11-06.
+
+- **W155, Work profiles** (`m5.2/work-profiles`, M). First of the six (Phil, 2026-11-06: profiles first).
   - Why: W131's usage, 14 days to 11-02: sub-agents were 58% of all tokens, nearly all on Opus. A smaller default model for a session's reviewers is the biggest lever there is. Extends W119's `work` block (src/config.ts, src/server/work.ts).
   - What: named profiles in the config file, each a session's launch settings: `model`, `effort` and the sub-agent default model, plus an optional skill the session starts with, such as `agent-roles:role-reviewer`, put at the start of its first prompt. The instructions stay in skills; pitwall keeps no prompts of its own.
   - Built in (Phil, 2026-11-06): Build (Opus 5.5, high, sub-agents Sonnet), Review (Sonnet, high, sub-agents Sonnet), Security review (Opus 5.5, xhigh, sub-agents Opus 5.5) and Docs (Sonnet, medium, sub-agents Sonnet). New session starts on Build. A profile in the config file with a built-in's name replaces it.
@@ -469,7 +504,7 @@ M5.1's own items start at W131, the evidence the rest of it needs; the others fo
   - Security: a profile's skill is a name checked against a strict pattern (letters, digits and hyphens, with one optional `plugin:` part), never free text on the command line; its model and effort are checked as W119's are.
   - Checks: the config file's tests, New session's tests, the app check's `new-session` part.
   - Status: Planned.
-- **W156, The supervisor proposes sessions with a profile** (`m5.1/supervisor-profiles`, S). After W155.
+- **W156, The supervisor proposes sessions with a profile** (`m5.2/supervisor-profiles`, S). After W155.
   - `spawn_session` and the resume tool take a profile's name, checked against the profiles; the card shows the profile, and you can change it before you approve. The supervisor's prompt says which profile fits which work.
   - The prompt goes to version 7, so the supervisor's next start begins a new conversation.
   - Checks: `supervisorActions` tests, the app check's `supervisor` part.
@@ -481,34 +516,22 @@ M5.1's own items start at W131, the evidence the rest of it needs; the others fo
   - If none works: the run rate uses the stand-in cost, set once against what `/usage` shows (Phil, 2026-11-06).
   - Whatever it reads goes behind the adapter and fails soft, to "unavailable".
   - Status: Planned.
-- **W158, The Usage view** (`m5.1/usage-view`, L). After W157.
+- **W158, The Usage view** (`m5.2/usage-view`, L). After W157.
   - Prior art (research agent, 2026-11-06; ccusage, Claude Code's `/usage`, Anthropic's and OpenAI's usage APIs, GitHub Copilot, Vercel, AWS Cost Explorer), what recurs: a window aligned to the reset, with the reset time shown; a 24-hour and 7-day toggle; grouping by model, project and sub-agent; cache reads and writes in their own columns, never summed into one total (97.7% of tokens are cache reads, W131); an attribution view, what's using the week; cost labelled as an estimate.
   - What: this week by default, from `seven_day.resets_at` (W157), or the last 7 days without it; also 14 and 30 days. Tokens by day, or by hour for 24 hours; by repo and by session, ranked by stand-in cost; by model; and main sessions against sub-agents. Reuses `src/usage/` (W131).
   - Cost: an incremental scan, each transcript read on from where the last read stopped, not every transcript on each request.
   - History: Claude Code deletes transcripts after `cleanupPeriodDays`, 30 by default ([.claude directory](https://code.claude.com/docs/en/claude-directory), research agent), so pitwall keeps daily totals, numbers only, at 0600 under `$PITWALL_HOME`. New storage, so a security review.
   - Checks: `src/usage/` tests, the view's tests, a new app check part, `usage`.
   - Status: Planned.
-- **W159, The run rate against a weekend reserve** (`m5.1/run-rate`, M). After W158.
+- **W159, The run rate against a weekend reserve** (`m5.2/run-rate`, M). After W158.
   - The header shows the week's and the five hours' percentages (W157), amber at 70% and red at 90%, and the pace against a target line: a weekend reserve, at most a set share of the week by a set time, 80% by Friday 18:00 unless the config file says otherwise (Phil, 2026-11-06).
   - A projection, "at this rate, Saturday 14:00", only once there's enough history, and as a range: a straight line overstates after a burst and understates after a quiet spell (research agent; AWS Cost Explorer shows none with thin history).
   - Ahead of pace is pitwall's own code, with no model call: the header's badge, and possibly a Needs you item.
   - Status: Planned.
-- **W160, The supervisor reads the run rate** (`m5.1/supervisor-usage`, S). After W159.
+- **W160, The supervisor reads the run rate** (`m5.2/supervisor-usage`, S). After W159.
   - The supervisor runs only on your messages (D4), and waking it to watch would spend Opus tokens to save tokens, so it doesn't watch; W159 warns.
   - A read-only `get_usage` tool: the week's percentages, the pace, the heaviest sessions and those with a large context. With it the supervisor answers "can I start another build today?" and suggests a hand-off, a lighter profile or pausing a background session; you act (D4).
   - Its new-session cards show the pace beside the profile.
-  - Status: Planned.
-- **W161, Needs you says what the session wants, not its PR's state, while it works** (`m5.1/needs-you-busy-pr`, S). After W154, before W155.
-  - Phil, 2026-11-06: a busy background session, reviewing a PR that asks his review, was in Needs you as "Needs you for <repo>#<n>: review requested", and "given the UI of scrolling updates it's impossible to see what it needs me for".
-  - Why (the coordinator's reading of the code, not reproduced): a PR that needs you puts its session in Needs you whatever the session is doing (`attention = own || prNeed`, `web/src/components/SessionRow.tsx`), and line 2 shows the PR's state whenever the session's own reason is absent. The session was doing that review, so the PR's state said nothing new; its real asks were the recap's three "For you" items. Claude Code also flipped it between `busy/working` and `busy/blocked` as it ran, so its own reason came and went.
-  - Fix: (1) a busy session's PR doesn't put the session in Needs you; the PR keeps its badge in Pull requests, and the session comes back when it stops if the PR still needs you. (2) When a session's recap has a "For you" item, Needs you's line shows that, not the PR's state.
-  - Checks: the row's and the view's tests, the needs-you counts in `web/src/sessions.ts`'s tests, the app check's `lists` part.
-  - Status: Planned.
-- **W162, A finished background job's recap is updated sooner** (`m5.1/recap-done-sooner`, S). After W161, before W155.
-  - Phil, 2026-11-06: a background session "is clearly asking me to do something, yet it's marked as done". Its last turn ended with a message for Phil to copy and "mark it ready for review before you post".
-  - Why (the coordinator's reading of the code and of that session's files, 2026-11-06; not checked on the live page, whose API read was blocked): for about 11½ minutes after the turn ended, no reason held. Claude Code set the job's `state.json` to `done` with no `needs` line, so no 'claude-code'. The message had no Open questions section and its last line wasn't a question, so no 'asked'. The kept recap's `throughAt` was older than the newest activity, so it was out of date, and the 'recap' reason never comes from an out-of-date recap (`needsYouOf()`, `src/recaps/engine.ts`; kept that way for W152). An update waits for `RECAP_UPDATE_DEBOUNCE_MS`, 15 minutes idle (W132). The update, at 11½ minutes, said waiting on you, with three "For you" to-dos.
-  - Fix: a background session whose job says `done`, with a live process and its turn ended, waits `RECAP_DEBOUNCE_MS` (5 minutes) for an update, not 15. The longer wait is there for sessions that take a turn every few minutes, and a job that says it's done won't take another until you prompt it, so it's at most one more call per finished job. Not chosen: recap at once (a job resumed straight away wastes the call), trusting the out-of-date recap's waiting on you (W152's bug back), and reading "before you post" as a question (fragile).
-  - Checks: the engine's scheduling tests in `src/recaps/engine.test.ts`: `done` and alive waits the short debounce; `working`, `blocked`, or a turn not ended keeps the long one.
   - Status: Planned.
 
 ## Open questions
@@ -521,7 +544,7 @@ M5.1's own items start at W131, the evidence the rest of it needs; the others fo
 
 ## Nice to have, later
 
-Small improvements that aren't needed now, gathered from reviews and try-outs so they don't get lost (Phil, 2026-11-02). None is planned yet. Bigger items have their own issues: Peers ([#99](https://github.com/leggetter/pitwall/issues/99)), chatting with a session and hosted sessions ([#108](https://github.com/leggetter/pitwall/issues/108)), the rest of the config file ([#101](https://github.com/leggetter/pitwall/issues/101)) and model and effort per kind of work ([#114](https://github.com/leggetter/pitwall/issues/114)).
+Small improvements that aren't needed now, gathered from reviews and try-outs so they don't get lost (Phil, 2026-11-02). None is planned yet. Bigger items have their own issues: Peers ([#99](https://github.com/leggetter/pitwall/issues/99)), chatting with a session and hosted sessions ([#108](https://github.com/leggetter/pitwall/issues/108)), and the rest of the config file ([#101](https://github.com/leggetter/pitwall/issues/101)).
 
 - **Web UI**
   - **Code-split the web UI:** the main bundle is 571 KB (176 KB gzipped), over Vite's 500 kB warning; the supervisor panel, the PR views and Preferences could load on demand. Served from localhost, so it costs only parse time.
@@ -531,7 +554,6 @@ Small improvements that aren't needed now, gathered from reviews and try-outs so
   - **Open in Terminal on the "Workspace not trusted" card:** a button that opens a terminal in the directory with `claude` running, so you accept Claude Code's trust prompt without copying the command; pitwall still never trusts a directory for you (Phil, 2026-11-02: a UX nag, not for now).
   - **"Hand off" in Needs you** (W133's C; Phil, 2026-11-03: "I like the idea of C, too. But for later"): a session over the context limit shows in Needs you with a Hand off action.
   - **Plan status's live region at 375 wide** stays empty instead of saying "Plan status ready.": the app check's recaps part fails there, on `m5.1/integration` before W132 too (W132's build). It passed at 375 in both themes in W150's run, where the panel sits in the strip's body, so it may be fixed or only intermittent.
-  - **"Not needed" on Needs you:** hides a session's Needs you until it takes a new turn, so a wrong reason can be cleared without the model or stopping the session. The recap prompt's rule for a session you've said is done covers the case seen ([#140](https://github.com/leggetter/pitwall/issues/140)).
 - **Pull requests**
   - **Snooze a PR's attention,** by its key and a hash of its state, as W88's Not needed now did for sessions, so an abandoned PR of yours doesn't stay in Needs you (W106).
   - **Who asked for a review:** PR authors aren't fetched, so a row can't say (W101).
@@ -562,14 +584,13 @@ Small improvements that aren't needed now, gathered from reviews and try-outs so
 The finished ones are in [`docs/plan-archive.md`](docs/plan-archive.md), under "Suggested actions, finished".
 
 - [ ] The first paste into New session's prompt lost (W89, parked: Phil, 2026-11-02, "Don't worry about it"; he'll say if it happens again; Grammarly, which injects itself into the box, is suspected but not confirmed)
-- [ ] A config file beside the CLI's flags ([#101](https://github.com/leggetter/pitwall/issues/101)): the minimal one, the roots and each root's GitHub owners, is W103, in review in [#106](https://github.com/leggetter/pitwall/pull/106) (D24); the rest of #101 later (Phil, 2026-10-29)
-- [ ] M5: supervisor
+- [ ] A config file beside the CLI's flags ([#101](https://github.com/leggetter/pitwall/issues/101)): the minimal one, the roots and each root's GitHub owners, is W103, merged with M4 in [#106](https://github.com/leggetter/pitwall/pull/106) (D24); the rest of #101 later (Phil, 2026-10-29)
 - [ ] M6: triage
 - [ ] Peers, sessions talking to each other: show only, part of M6 ([#99](https://github.com/leggetter/pitwall/issues/99) (Agent conversations: show top-level sessions talking to each other))
 - [ ] Chatting with a session from the Conversation tab, and sessions pitwall hosts: later, after M5 ([#108](https://github.com/leggetter/pitwall/issues/108))
-- [ ] Spin-off proposals, a session proposing a new session as a card you start: part of M6, designed in "M6 - Triage" (Phil, 2026-11-04; first asked 2026-10-29 as "A session asking the supervisor to spin off work")
-- [ ] M5.1: efficiency, after M5 (work profiles, a Usage view with a run rate, the supervisor applying them; Phil, 2026-11-02)
-- [ ] Model and effort for each kind of work (a session, its sub-agents, the supervisor, recaps, the relay): defaults in the config file, overrides in the app's settings; after this round of work, M4's merge and M5 ([#114](https://github.com/leggetter/pitwall/issues/114); Phil, 2026-10-30, after the week's usage limit stopped three agents)
+- [ ] Spin-off proposals, a session proposing a new session as a card you start: the first piece is W163, in M5.1; the rest part of M6, designed in "M6 - Triage" (Phil, 2026-11-04; first asked 2026-10-29 as "A session asking the supervisor to spin off work")
+- [ ] M5.1: the work after M5, to W163 (spin-off proposals, first piece) and its security review (W164), then into `main` (Phil, 2026-11-07)
+- [ ] M5.2: efficiency, after M5.1 (work profiles, a Usage view with a run rate, the supervisor applying them; Phil, 2026-11-02)
 
 ---
 
