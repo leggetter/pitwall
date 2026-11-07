@@ -54,7 +54,9 @@ Last updated: 2026-11-07, on `docs/m5.1-split`: a check of where things stand (n
 
 ## Open questions for Phil
 
-- **[#114](https://github.com/leggetter/pitwall/issues/114) (Model and effort for each kind of work):** close it, with a comment that W119 built it and #138 merged it into `main`? Phil's answer, "On the 114 comment, sorry", wasn't clear; the coordinator's lean is yes.
+None.
+
+Answered (Phil, 2026-11-07): [#114](https://github.com/leggetter/pitwall/issues/114) (Model and effort for each kind of work) closed, with a comment that W119 built it and #138 merged it into `main`.
 
 Answered (Phil, 2026-11-07, "Yes to all"): M5.1 split at W162 (since extended to W163 and W164), the stale plan text fixed on a docs branch without showing its commit or PR text first, and the two finished sessions, "session 51808aa6 done-status mismatch" and "snooze behavior 9aa7492c", stopped. Spin-off proposals' first piece, W163, after W162 and before W164 (Phil, 2026-11-07, through another session: "a priority").
 
