@@ -504,6 +504,12 @@ M5.1's own items start at W131, the evidence the rest of it needs; the others fo
   - Fix: (1) a busy session's PR doesn't put the session in Needs you; the PR keeps its badge in Pull requests, and the session comes back when it stops if the PR still needs you. (2) When a session's recap has a "For you" item, Needs you's line shows that, not the PR's state.
   - Checks: the row's and the view's tests, the needs-you counts in `web/src/sessions.ts`'s tests, the app check's `lists` part.
   - Status: Planned.
+- **W162, A finished background job's recap is updated sooner** (`m5.1/recap-done-sooner`, S). After W161, before W155.
+  - Phil, 2026-11-06: a background session "is clearly asking me to do something, yet it's marked as done". Its last turn ended with a message for Phil to copy and "mark it ready for review before you post".
+  - Why (the coordinator's reading of the code and of that session's files, 2026-11-06; not checked on the live page, whose API read was blocked): for about 11½ minutes after the turn ended, no reason held. Claude Code set the job's `state.json` to `done` with no `needs` line, so no 'claude-code'. The message had no Open questions section and its last line wasn't a question, so no 'asked'. The kept recap's `throughAt` was older than the newest activity, so it was out of date, and the 'recap' reason never comes from an out-of-date recap (`needsYouOf()`, `src/recaps/engine.ts`; kept that way for W152). An update waits for `RECAP_UPDATE_DEBOUNCE_MS`, 15 minutes idle (W132). The update, at 11½ minutes, said waiting on you, with three "For you" to-dos.
+  - Fix: a background session whose job says `done`, with a live process and its turn ended, waits `RECAP_DEBOUNCE_MS` (5 minutes) for an update, not 15. The longer wait is there for sessions that take a turn every few minutes, and a job that says it's done won't take another until you prompt it, so it's at most one more call per finished job. Not chosen: recap at once (a job resumed straight away wastes the call), trusting the out-of-date recap's waiting on you (W152's bug back), and reading "before you post" as a question (fragile).
+  - Checks: the engine's scheduling tests in `src/recaps/engine.test.ts`: `done` and alive waits the short debounce; `working`, `blocked`, or a turn not ended keeps the long one.
+  - Status: Planned.
 
 ## Open questions
 
