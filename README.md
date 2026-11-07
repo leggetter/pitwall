@@ -265,8 +265,9 @@ sequenceDiagram
 
 ## Roadmap
 
-- **Now, pull requests with their sessions (M4):** your open pull requests, and the open ones that ask your review or mention you, with CI and review state. A session that worked on a pull request carries it on its row, and one no session has worked on is a row of its own under its repo, cloned or not. A row needs you when its pull request does: failing checks, conflicts or changes requested on your own, or a review requested of you. A session that ended with its pull request still open stays in the list until it closes.
-- **A supervisor (M5, built):** a Claude Code session that pitwall runs and shows in its own chat panel, which you talk to instead of visiting each session. It lists and summarises sessions, and messages or starts them once you approve. M5 also gives each session a recap, a summary of why it started and where it is now and its to-dos in order, each with who it waits on, shown in its view, and its title comes from the same recap. Recaps and their strip are built (W110, W111, and W121's summary and to-dos), and so are the supervisor with pitwall's MCP server (W112, W113), its panel (W114) and its approvals (W115); a security review is next.
+- **Built and in `main`, M1 to M5:** the read-only index (M1), interacting with sessions from the page (M2), the design system (M3), your open pull requests with their sessions, CI and review state (M4), and the supervisor, a Claude Code session in its own panel that you talk to instead of visiting each session, which lists and summarises sessions and messages or starts them once you approve, with a recap of each session (M5).
+- **Now, the work after M5 (M5.1):** what daily use turned up. Built so far: snoozing a session in Needs you, or flagging one that doesn't need you; a recap strip with the session's goal, what it's working on, its plan and its pull requests' state; a context gauge on each session; and attaching a file in the supervisor's message box. Last comes a session proposing a new session for you to start (spin-off proposals), then a security review, then into `main`.
+- **Next, efficiency (M5.2):** work profiles, a session's model, effort and starting skill chosen by the kind of work; a Usage view of tokens by session, repo, model and day; and a run rate against your plan's weekly limit, with a reserve you set.
 - **Triage (M6):** urgency with reasons, from the index, the supervisor and M4's pull requests. The supervisor reads each idle session's latest turns to judge whether it really needs you. Triage tells "blocked on you" from "blocked on someone else", and pairs pull requests with sessions: "CI is failing on your PR, and the session that opened it is idle."
 - **Peers, part of M6 ([#99](https://github.com/leggetter/pitwall/issues/99)).** Sessions already message each other with Claude Code's cross-session messaging. pitwall could show who a session has talked to, and both sides of each exchange as one thread, apart from sub-agents. The supervisor's messages would show the same way, as its audit trail.
 
@@ -281,7 +282,7 @@ Apache-2.0: see [`LICENSE`](LICENSE). The bundled fonts and icons keep their own
 - **[`docs/decisions.md`](docs/decisions.md):** the settled decisions, D1 to D27, with their reasoning.
 - **[`NOW.md`](NOW.md):** where the work stands and what is next.
 - **[`PLAN.md`](PLAN.md):** the living design: architecture, security rules, open milestones and open questions.
-- **[`docs/plan-archive.md`](docs/plan-archive.md):** history: the finished milestones M0 to M4, their work breakdowns and findings.
+- **[`docs/plan-archive.md`](docs/plan-archive.md):** history: the finished milestones M0 to M5, their work breakdowns and findings.
 - **[`docs/design-system.md`](docs/design-system.md):** the web UI's design system: tokens, layout, components, content and accessibility.
 - **[`docs/spikes/`](docs/spikes/):** the experiments behind the decisions, one write-up each.
 - **[`AGENTS.md`](AGENTS.md):** for contributors, people and agents alike: the repo's rules, its commands, such as `npm run dev` and `npm test`, and its layout.
