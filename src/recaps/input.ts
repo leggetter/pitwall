@@ -56,7 +56,7 @@ import {
   type PullRequestList,
   type PullRequestReview,
 } from '../shared/protocol.js';
-import type { RecapAnswer } from './prompt.js';
+import { todoOf, type RecapAnswer } from './prompt.js';
 
 /** The longest entry, keeping its start and end (finding 2). */
 export const ENTRY_MAX = 2000;
@@ -500,7 +500,7 @@ export function updateRecapInput(input: UpdateInput, random?: () => string): str
   const { summary, todos, waitingOn, title, goal, workingOn, plan } = input.previous;
   const parts = firstPromptBlock(input.firstPrompt);
   const picture = goal === undefined || workingOn === undefined || plan === undefined ? {} : { goal, workingOn, plan };
-  parts.push(block('previous-recap', JSON.stringify({ ...picture, summary, todos: todos.map(({ text, owner }) => ({ text, owner })), waitingOn, title })));
+  parts.push(block('previous-recap', JSON.stringify({ ...picture, summary, todos: todos.map(todoOf), waitingOn, title })));
   parts.push(block('turns-since-previous-recap', input.turns));
   const prs = prsBlock(input.prs);
   parts.push(...prs);
