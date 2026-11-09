@@ -2,7 +2,7 @@
 
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
-Last updated: 2026-11-09, on `docs/handoff-m5.1`, after the usage comparison, the rebuild for 4518 and pushing `m5.2/integration`; before that, a hand-off after M5.1 merged into `main` ([#197](https://github.com/leggetter/pitwall/pull/197), feat: M5.1, the work after M5), closing [#139](https://github.com/leggetter/pitwall/issues/139) (New session defaults to the selected session's directory) and [#140](https://github.com/leggetter/pitwall/issues/140) (Needs you: a recap keeps a session you said is done under Needs you). Before it: the full app check passed 2,235 of 2,236 steps on `0ec493b`; 26 stale checks were fixed in [#195](https://github.com/leggetter/pitwall/pull/195) and the one failure, a check racing the Plan status live region, in [#196](https://github.com/leggetter/pitwall/pull/196). Next: M5.2, efficiency, starting with W155 (work profiles).
+Last updated: 2026-11-09, on `docs/handoff-w166`, a hand-off after W166 (a finished job's own to-dos aren't hidden behind work nobody is watching) merged into `m5.2/integration` ([#202](https://github.com/leggetter/pitwall/pull/202)), spike 014 (Clear and continue through the attach PTY: it works) and the W166 to W168 plan ([#204](https://github.com/leggetter/pitwall/pull/204)). Before it: the M5.1 hand-off, the usage comparison and the rebuild for 4518 ([#200](https://github.com/leggetter/pitwall/pull/200)).
 
 ## Current milestone
 
@@ -37,7 +37,8 @@ Last updated: 2026-11-09, on `docs/handoff-m5.1`, after the usage comparison, th
 
 ## Open questions for Phil
 
-None.
+- **Start W167 (session lineage) in a fresh session now, or after W155 (work profiles)?** Now builds it beside W155, against "One agent at a time"; after keeps to the rule. Lean: now, since Phil approved all three ("yes to all three, go ahead", 2026-11-09) and W167 touches no W155 file.
+- **[#199](https://github.com/leggetter/pitwall/pull/199) (W165, a diagnostics log of why a row is in Needs you)** still targets `docs/handoff-m5.1`, which merged in #200. It needs retargeting to `m5.2/integration`, and its `PLAN.md` entry conflicts with W166 to W168's (both after W160). Lean: its own session does it; W165 goes after W168 in the list.
 
 Answered (Phil, 2026-11-09, "go with your leans"): no user guide for now; the README stays the only user-facing description of what pitwall does, and is revisited when its "What it does" outgrows a screen or someone asks how a feature works (the repo is already public, so the earlier "until it goes public" didn't apply). W163's (spin-off proposals) card stays as built: over Needs you's rows, dismissals kept per browser, the folder checked at Start. W138's (the supervisor's messages say they're from it) footer stays, though it wraps to 3 lines in a draft card at 1,200 px.
 
