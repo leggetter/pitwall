@@ -1168,6 +1168,16 @@ describe("the picture and the session's PRs (W150)", () => {
       expect(input, why).toContain('<latest-turns>');
       expect(input, why).not.toContain('<previous-recap>');
       expect(input, why).toContain('Write the recap.');
+      // Once only (W172's review): a first recap whose plan came back with no items it could read,
+      // an empty list, makes the next call an update, not another first recap.
+      await h.reply(h.calls[0], envelope(answer({ plan: 'M2 of the export, on W2', items: [] })));
+      const later = new Date(h.clock.now + MINUTE).toISOString();
+      h.pages.get(ID)!.push({ kind: 'user', text: 'And W4.', at: later });
+      h.clock.now += 16 * MINUTE;
+      a = { ...a, lastActivityAt: later };
+      await h.poll([a]);
+      expect(h.calls, why).toHaveLength(2);
+      expect(h.calls[1]!.input, why).toContain('<previous-recap>');
     }
   });
 

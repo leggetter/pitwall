@@ -11,8 +11,9 @@
 // with the input on stdin, so no transcript text is ever in a command line. The answer is
 // `--output-format json`'s one object, whose `result` must be exactly one JSON object with the nine
 // fields, a summary, to-dos, what it waits on, a title, since W150 the goal, what it's working on
-// and the plan's line, and since W172 the plan's items and how it changed, and nothing else. Anything else is a failed call, described in pitwall's words, never with
-// the model's or claude's output.
+// and the plan's line, and since W172 the plan's items and how it changed, and nothing else.
+// Anything else is a failed call, described in pitwall's words, never with the model's or claude's
+// output, except plan items in the wrong shape, which are left out instead (W172's review).
 import { plainLine } from '../index/text.js';
 import { isRecord } from '../index/guards.js';
 import { hiddenCharacter } from '../shared/hiddenText.js';
@@ -95,7 +96,7 @@ Answer with one JSON object and nothing else: no code fence, no text before or a
 - items: the plan's milestones, work items or steps, in the plan's own order, from 1 to 15 of them. When the plan has more than 15, keep the ones nearest what it's on now, and fold a run of finished or later ones into one item, such as "Phases 1 to 4". An empty list when plan is empty. Each item:
   - text: the item in a few words, at most 12, starting with its own ID when it has one, such as "W12: retry the failed uploads".
   - state: exactly one of "done", "now", "next", "dropped".
-    - "done": finished, by the material: merged, shipped, checked off, or said to be done. When you can't tell, it's "next". An item whose pull request is no longer open is "done" only when the transcript says it merged.
+    - "done": finished, by the material: merged, shipped, checked off, or said to be done. When you can't tell, it's "next". An item whose pull request is no longer open is "done" only when the transcript says it merged; otherwise keep the state the transcript gives it and end its text with "(PR no longer open)".
     - "now": what this session is working on at its latest turn, the item in workingOn. Usually one item.
     - "next": still to come, or started and not finished, and not what it's on now.
     - "dropped": taken out of the plan, replaced or abandoned, as the material says.
@@ -121,7 +122,7 @@ Answer with one JSON object and nothing else: no code fence, no text before or a
 
 Write to the user as "you", never by their name, even where the material names them. Call the session "it" or "this session", never "I", "me" or "we", even where the material does. Plain words, with no Markdown. Be specific: name a file, a PR or a command only when it helps the user act. Don't invent anything the material doesn't say.
 
-When updating, revise the previous recap rather than writing a new one. Keep the goal and the plan steady, in their words, unless the newer turns change them. Keep why the item in workingOn matters, and change workingOn only as far as the newer turns move the session on. Keep the plan's items steady too, in their words and order: change an item's state only as far as the newer turns move it, add an item only where the newer turns add one to the plan, and mark one "dropped" only where they drop it. Keep changes as it was unless the newer turns change the plan again, then add that change. When the previous recap has no goal, workingOn, plan or items, write them from the material. Keep the summary steady: keep why the session was started, and its sentences that are still true, in their words, and change only what the newer turns change. Drop the to-dos the newer turns finished, keep the rest in their order, and add new ones where they belong. A question the newer turns show you answered or explicitly dismissed is finished: drop it, and if the answer leaves work, that work is a new to-do, usually the session's. Keep every other question for you, even when the newer turns don't mention it. The newer turns keep the user's own lines since the previous recap, each shortened if long: a line "[… N other turns left out …]" marks other turns left out to fit, so look for an answer in the user's lines around it. Only when they start with "[… older turns since the previous recap not read …]" can an answer be missing.`;
+When updating, revise the previous recap rather than writing a new one. Keep the goal and the plan steady, in their words, unless the newer turns change them. Keep why the item in workingOn matters, and change workingOn only as far as the newer turns move the session on. Keep the plan's items steady too, in their words and order: change an item's state only as far as the newer turns move it, add an item only where the newer turns add one to the plan, and mark one "dropped" only where they drop it. Keep changes as it was unless the newer turns change the plan again; then fold the new change in, newest first, still within 40 words, shortening or dropping the oldest. When the previous recap has no goal, workingOn, plan or items, write them from the material. Keep the summary steady: keep why the session was started, and its sentences that are still true, in their words, and change only what the newer turns change. Drop the to-dos the newer turns finished, keep the rest in their order, and add new ones where they belong. A question the newer turns show you answered or explicitly dismissed is finished: drop it, and if the answer leaves work, that work is a new to-do, usually the session's. Keep every other question for you, even when the newer turns don't mention it. The newer turns keep the user's own lines since the previous recap, each shortened if long: a line "[… N other turns left out …]" marks other turns left out to fit, so look for an answer in the user's lines around it. Only when they start with "[… older turns since the previous recap not read …]" can an answer be missing.`;
 
 /**
  * The call's command line, after `claude`. Nothing from a transcript is in it: the input goes over
@@ -255,7 +256,7 @@ function hasExactly(value: Record<string, unknown>, keys: readonly string[]): bo
 export type RecapRefusal = 'text-around' | 'not-json' | 'keys' | 'todos' | 'waiting-on' | 'owner' | 'plan-items' | 'plan-state' | 'not-text' | 'empty-text' | 'hidden-character' | 'empty-fence';
 
 /** What pitwall repaired in an answer instead of refusing it (W126). */
-export type RecapRepair = 'fence' | 'waiting-on';
+export type RecapRepair = 'fence' | 'waiting-on' | 'plan-items';
 
 /** The error for each refusal, in pitwall's words: it says which check failed and never quotes the answer (W126). */
 export const RECAP_REFUSALS: Readonly<Record<RecapRefusal, string>> = {
@@ -376,6 +377,7 @@ export function readRecapAnswer(text: string, { stored = false }: { stored?: boo
   }
   // The picture (W150): why it was started, what it's on and why, and the plan's line, empty for none.
   let context: Pick<RecapAnswer, 'goal' | 'workingOn' | 'plan' | 'planItems' | 'planChanges'> = {};
+  let itemsDropped = false;
   if (picture) {
     const goal = answerText(parsed.goal, (raw) => plainField(raw));
     if ('refusal' in goal) return { ok: false, refusal: goal.refusal };
@@ -387,12 +389,23 @@ export function readRecapAnswer(text: string, { stored = false }: { stored?: boo
     context = { goal: goal.text, workingOn: workingOn.text, plan: plainField(rawPlan) };
     if (withItems && context.plan !== '') {
       const plan = readPlanItems(parsed.items, parsed.changes);
-      if ('refusal' in plan) return { ok: false, refusal: plan.refusal };
-      context.planItems = plan.items;
-      if (plan.changes !== '') context.planChanges = plan.changes;
+      if (!('refusal' in plan)) {
+        context.planItems = plan.items;
+        if (plan.changes !== '') context.planChanges = plan.changes;
+      } else if (stored) {
+        // pitwall wrote the file, so items it can't read mean the file was changed: refused.
+        return { ok: false, refusal: plan.refusal };
+      } else {
+        // A model's items in the wrong shape, or with a character W120's rule refuses, are left out,
+        // none of them shown, rather than failing the whole recap and spending another call on it
+        // (W172's review). An empty list, so lacksPlanItems() is false and no first recap is forced.
+        context.planItems = [];
+        itemsDropped = true;
+      }
     }
   }
   const repaired: RecapRepair[] = object.repaired ? ['fence'] : [];
+  if (itemsDropped) repaired.push('plan-items');
   const agreed = agreedWaitingOn(waitingOn as RecapWaitingOn, todos);
   if (agreed !== waitingOn) repaired.push('waiting-on');
   return { ok: true, answer: { summary: summary.text, todos, waitingOn: agreed, title: title.text, ...context }, repaired };
