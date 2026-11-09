@@ -51,7 +51,7 @@ import {
   type SessionSummary,
 } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
-import type { BadgeLook } from './sessions.js';
+import { needsAttention, WAITING_ON_TEXT, waitingElsewhere, type BadgeLook } from './sessions.js';
 import { couldNot, plainText } from './format.js';
 import { browserStorage, type StorageSource } from './groupState.js';
 import { ATTACH_DELAY_MS, cssTime } from './timing.js';
@@ -91,13 +91,8 @@ export function useRecapCollapsed(storage: StorageSource = browserStorage): [boo
   return [collapsed, set];
 }
 
-/** What a session waits on, other than nothing, as line 2 says it. */
-export const WAITING_ON_TEXT: Readonly<Record<Exclude<RecapWaitingOn, 'nothing'>, string>> = {
-  you: 'Waiting on you',
-  CI: 'Waiting on CI',
-  'another session': 'Waiting on another session',
-  'someone else': 'Waiting on someone else',
-};
+// What a session waits on, as line 2 and the badges say it: in sessions.ts, which statusBadge() is in.
+export { WAITING_ON_TEXT } from './sessions.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -272,11 +267,39 @@ export function recapsStripText(health: RecapHealth | undefined): string | undef
  * recap older than its latest turn, nor from Claude Code's, which says nothing of what it waits on.
  */
 export function quietWaitingOn(session: SessionSummary, needsYou: boolean): string | undefined {
-  const recap = session.recap;
-  if (!recap || recap.stale || recap.source !== 'pitwall' || needsYou || session.ended) return undefined;
-  if (recap.waitingOn === 'you' || recap.waitingOn === 'nothing') return undefined;
+  const waiting = waitingElsewhere(session);
+  if (waiting === undefined || needsYou) return undefined;
   if (session.status === 'busy' || (session.alive && session.state === 'working')) return undefined;
-  return WAITING_ON_TEXT[recap.waitingOn];
+  // A done job's badge says it already, in Done's place (W170).
+  if (session.state === 'done') return undefined;
+  return WAITING_ON_TEXT[waiting];
+}
+
+/**
+ * The PR the session view names after its badge (W170): the one its job's own file links, while its
+ * recap says it waits on someone else, CI or another session, as waitingPr() has it. `owner/name#n`, and its GitHub address.
+ * The index takes the repo and number only from an exact PR URL (src/index/jobs.ts), so the address
+ * is one.
+ */
+export function waitingPrLink(session: SessionSummary): { text: string; url: string } | undefined {
+  const pr = session.jobPr;
+  // When the row's line 2 would name it: not while it needs you, nor while it works (W170's review).
+  if (pr === undefined || waitingPr(session, needsAttention(session)) === undefined) return undefined;
+  return { text: `${pr.repo}#${pr.number}`, url: `https://github.com/${pr.repo}/pull/${pr.number}` };
+}
+
+/**
+ * The pull request a session waiting on someone else, on CI or on another session waits on, as line 2
+ * names it, "#6089" (W170): the one its job's own file links (SessionSummary.jobPr); the session view
+ * names its repo too. None while it needs you, while it works, unless its job is done, and while the
+ * row shows that PR's own badge already (`shown`, the open PRs it owns).
+ */
+export function waitingPr(session: SessionSummary, needsYou: boolean, shown: readonly { repo: string; number: number }[] = []): string | undefined {
+  const pr = session.jobPr;
+  if (pr === undefined || needsYou || waitingElsewhere(session) === undefined) return undefined;
+  if (session.state !== 'done' && (session.status === 'busy' || (session.alive && session.state === 'working'))) return undefined;
+  if (shown.some((owned) => owned.repo.toLowerCase() === pr.repo && owned.number === pr.number)) return undefined;
+  return `#${pr.number}`;
 }
 
 /**

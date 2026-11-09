@@ -320,6 +320,22 @@ export interface SessionSummary {
    * when they can't be read, and when none is left.
    */
   prLinks?: PrLink[];
+  /**
+   * The one pull request a background job's own `state.json` links in its `children` (W170, the job
+   * adapter, src/index/jobs.ts): what a job waiting on someone else, on CI or on another session
+   * usually waits on, so the row's line 2 and the session view name it. Set only when the job links
+   * exactly one, read while the job hasn't finished, as its `needs` line is; any PR, open or not,
+   * whoever's, since the job says so itself. Absent for an interactive session.
+   */
+  jobPr?: JobPr;
+}
+
+/** A pull request by its repo and number (SessionSummary.jobPr). */
+export interface JobPr {
+  /** Lowercase `owner/name`. */
+  repo: string;
+  /** A positive whole number. */
+  number: number;
 }
 
 /**

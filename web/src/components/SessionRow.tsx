@@ -30,7 +30,7 @@ import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import type { PullRequestSummary, SessionGroup, SessionSummary } from '../../../src/shared/protocol.js';
 import { absoluteTime, plainText } from '../format.js';
 import { prNeedText, sessionPrBadge } from '../prs.js';
-import { ENDED_RECAP_HINT, FINISHED_RECAP_HINT, finishedWaitingOnYou, forYouLabel, quietWaitingOn, recapForYou, WAITING_ON_TEXT } from '../recap.js';
+import { ENDED_RECAP_HINT, FINISHED_RECAP_HINT, finishedWaitingOnYou, forYouLabel, quietWaitingOn, recapForYou, WAITING_ON_TEXT, waitingPr } from '../recap.js';
 import { elsewhereRepos } from '../groupBy.js';
 import { canFlag, canSnooze, groupLabel, isFlagged, isSnoozed, needsAttention, needsText, recapNeedsText, rowStatusBadge, snoozeBack } from '../sessions.js';
 import { SNOOZE_BACK_TEXT, snoozedText } from '../snooze.js';
@@ -245,7 +245,10 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
   // Through a PR alone: what its recap says is for you, first (W161), or why the PR needs you.
   const wants: { content: ReactNode; hint?: string } | undefined = (!own && prNeed !== undefined ? prWants(session, prNeed, quiet) : undefined) ?? whatItWants(session);
   // What an idle session's recap says it waits on, when that isn't you (W111): quiet, first on line 2, never needing you.
-  const waitingOn = quietWaitingOn(session, attention);
+  // Then the PR its job's own file links (W170), "#6089", alone for a done job, whose badge says what it waits on.
+  const waitingText = quietWaitingOn(session, attention);
+  const waitingOnPr = waitingPr(session, attention, owned);
+  const waitingOn = waitingText !== undefined && waitingOnPr !== undefined ? `${waitingText}: ${waitingOnPr}` : (waitingText ?? waitingOnPr);
   const pr = sessionPrBadge(owned);
   // Line 2's label: the group's, in Needs you and All sessions.
   const label = showGroup ? plainText(groupLabel(group)) : undefined;

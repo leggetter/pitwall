@@ -42,7 +42,7 @@ const CLEAR_FILTERS = `document.querySelector('.session-list .filter-chips butto
  * since W106's review rather than a 131 px select, keeps them to 2 lines at 1,440 px, where the bar
  * is 408 px, as W91 had it. At 1,200 and 375 px it has a line of its own.
  */
-const BAR_LINES: Readonly<Record<string, number>> = { '375': 3, '375x540': 3, '900': 2, '1200': 3, '1440': 2 };
+const BAR_LINES: Readonly<Record<string, number>> = { '375': 2, '375x540': 2, '900': 2, '1200': 2, '1440': 2 };
 /**
  * The filter bar's lines, from the boxes of what's in it: the field, each chip, Clear filters or its
  * room, and Sort. A box that starts below the bottom of the line before starts a new one; Sort is

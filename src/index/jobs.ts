@@ -15,6 +15,12 @@
 //              cut to 200;
 //              absent, null or empty is 'none', and so is the start placeholder, "send a prompt to
 //              start", which a resumed session shows though it asked nothing (spike 006, finding 2)
+//   children   W170: the one pull request it links, when its `pr` children name exactly one, each
+//              `href` exactly `https://github.com/<owner>/<name>/pull/<n>` (prRefOfUrl()). Claude
+//              Code lists the PRs a job made or touched there, `{ kind: "pr", id, href }`, and a
+//              long-running one can list dozens, so with more than one none is taken: pitwall can't
+//              tell which one it waits on. Anything else there, or a malformed entry, is left out
+//              without making the file 'unknown': the line on what it needs still counts.
 //
 // And, for a resume's card only (W129, the re-review's L1), readSavedPermission(): the permission
 // mode in the job's `respawnFlags`, the flags Claude Code saved when the job started and wakes it
@@ -27,19 +33,23 @@
 import { constants } from 'node:fs';
 import { lstat, open, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
-import { PERMISSION_MODES, type PermissionModeName, type SavedPermission } from '../shared/protocol.js';
+import { PERMISSION_MODES, type JobPr, type PermissionModeName, type SavedPermission } from '../shared/protocol.js';
 import { isRecord } from './guards.js';
+import { prRefOfUrl } from './prLinks.js';
 import { plainLine } from './text.js';
 import { defaultConfigDir } from './transcripts.js';
 
-/** What a job's file says it needs. */
+/** What a job's file says it needs, and the one PR it links, if it links just one (W170). */
 export type JobNeeds =
   /** Claude Code's line, as plain text, at most NEEDS_MAX characters. */
-  | { kind: 'needs'; text: string }
+  | { kind: 'needs'; text: string; pr?: JobPr }
   /** The file was read and asks nothing: no line, an empty one, or the start placeholder. */
-  | { kind: 'none' }
+  | { kind: 'none'; pr?: JobPr }
   /** The file couldn't be used: missing, unreadable, malformed, too big, or another session's. */
   | { kind: 'unknown' };
+
+/** The most `children` entries looked at: Claude Code's are a few, and dozens for a long-running job. */
+export const CHILDREN_MAX = 500;
 
 export interface JobReaderOptions {
   /** The directory holding one folder per job. Default `<configDir>/jobs`, `~/.claude/jobs` unless `$CLAUDE_CONFIG_DIR` is set. */
@@ -218,11 +228,30 @@ export function parseJobState(text: string, sessionId: string): JobNeeds {
   }
   if (!isRecord(parsed) || parsed.sessionId !== sessionId) return UNKNOWN;
   const needs = parsed.needs;
-  if (needs === undefined || needs === null) return NONE;
-  if (typeof needs !== 'string') return UNKNOWN;
-  const line = needsText(needs);
-  if (line === '' || line.toLowerCase() === START_PLACEHOLDER) return NONE;
-  return { kind: 'needs', text: line };
+  if (needs !== undefined && needs !== null && typeof needs !== 'string') return UNKNOWN;
+  const pr = onlyPrOf(parsed.children);
+  const withPr = pr === undefined ? {} : { pr };
+  const line = typeof needs === 'string' ? needsText(needs) : '';
+  if (line === '' || line.toLowerCase() === START_PLACEHOLDER) return pr === undefined ? NONE : { kind: 'none', ...withPr };
+  return { kind: 'needs', text: line, ...withPr };
+}
+
+/**
+ * The one PR a job's `children` link (W170): the `pr` entries' `href`s, when every one that is a PR
+ * URL names the same PR. Undefined for none, for more than one, and for anything that isn't an array.
+ * An entry of another kind, or a `pr` entry whose `href` isn't a PR URL, is passed over.
+ */
+export function onlyPrOf(children: unknown): JobPr | undefined {
+  if (!Array.isArray(children) || children.length > CHILDREN_MAX) return undefined;
+  let found: JobPr | undefined;
+  for (const child of children) {
+    if (!isRecord(child) || child.kind !== 'pr') continue;
+    const ref = prRefOfUrl(child.href);
+    if (ref === undefined) continue;
+    if (found !== undefined && (found.repo !== ref.repo || found.number !== ref.number)) return undefined;
+    found = { repo: ref.repo, number: ref.number };
+  }
+  return found;
 }
 
 /** Claude Code's line as plain text: escapes and control characters removed, on one line, trimmed, at most NEEDS_MAX. */
