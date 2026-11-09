@@ -79,6 +79,18 @@ const part: Part = {
       await t.shot('rows');
     });
 
+    await t.step("rows: the badges stay in their share, clipped rather than running over the row's time", async () => {
+      const bad = await page.evaluate<string[]>(`[...document.querySelectorAll('li.session')].flatMap((li) => {
+        const badges = li.querySelector('.session-badges');
+        const time = li.querySelector('.session-line > .activity');
+        if (!badges || !time) return [];
+        const clipped = getComputedStyle(badges).overflow === 'hidden';
+        const apart = badges.getBoundingClientRect().right <= time.getBoundingClientRect().left + 0.5;
+        return clipped && apart ? [] : [li.querySelector('h3')?.textContent ?? '?'];
+      })`);
+      t.expectEqual(bad.length, 0, `every row's badges clip inside their share, before its time: ${bad.join(', ')}`);
+    });
+
     await t.step('the session view: Context 85K quietly, with its info button and no note', async () => {
       await openFromRow(t, NAMES.conversation);
       await page.waitFor('the context', `!!${VIEW}?.querySelector('.session-view-context')`);

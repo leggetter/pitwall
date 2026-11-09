@@ -823,7 +823,7 @@ textarea {
   flex: 1 1 auto;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--pw-space-2) var(--pw-space-3);
+  gap: var(--pw-space-2);
   min-width: 0;
 }
 
@@ -911,7 +911,7 @@ textarea {
 .filter-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--pw-space-2);
+  gap: var(--pw-space-1-5);
 }
 
 /*
@@ -924,7 +924,7 @@ textarea {
   align-items: center;
   gap: var(--pw-space-1);
   height: var(--pw-control-sm);
-  padding: 0 calc(var(--pw-space-2) + (16px + var(--pw-space-1)) / 2);
+  padding: 0 calc(3px + (16px + var(--pw-space-1)) / 2);
   border: 0;
   border-radius: var(--pw-radius-sm);
   background: var(--pw-surface);
@@ -956,7 +956,7 @@ textarea {
 }
 
 .chip[aria-pressed='true'] {
-  padding: 0 var(--pw-space-2);
+  padding: 0 3px;
   background: var(--pw-selected);
   box-shadow: var(--pw-ring-selected);
   color: var(--pw-info-tint-fg);
@@ -1783,6 +1783,9 @@ mark.match {
   gap: var(--pw-space-1);
   min-width: 0;
   max-width: calc(100% - 10em);
+  /* The badges stay inside their share: a row too narrow for them all cuts the last one, rather than
+   * letting it run over the time. */
+  overflow: hidden;
 }
 
 /* Stale and a finished session's Asked you are short and stay whole; the status badge gives way. */
@@ -4340,12 +4343,12 @@ ol.md-list {
    */
   .chip {
     border: 1px solid ButtonText;
-    padding: 0 calc(var(--pw-space-2) + (16px + var(--pw-space-1)) / 2 - 1px);
+    padding: 0 calc(3px + (16px + var(--pw-space-1)) / 2 - 1px);
   }
 
   .chip[aria-pressed='true'] {
     border: 2px solid Highlight;
-    padding: 0 calc(var(--pw-space-2) - 2px);
+    padding: 0 1px;
   }
 
   /* The selected repo list item, the open root tab, and the theme switch's selected option. */
