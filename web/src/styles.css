@@ -1781,6 +1781,9 @@ mark.match {
   gap: var(--pw-space-1);
   min-width: 0;
   max-width: calc(100% - 10em);
+  /* The badges stay inside their share: a row too narrow for them all cuts the last one, rather than
+   * letting it run over the time. */
+  overflow: hidden;
 }
 
 /* Stale and a finished session's Asked you are short and stay whole; the status badge gives way. */
