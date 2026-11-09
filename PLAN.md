@@ -423,6 +423,32 @@ On `m5.2/integration`, branched from `main` once M5.1 has merged (Phil, 2026-11-
   - The cost: a fresh session's first call with and without the note.
   - The write-up goes in `docs/spikes/015-plugin-session-note.md`; W176 is adjusted to what it finds.
 
+- **W177, The supervisor opens over the page, not in its place** (`m5.2/supervisor-overlay`, M). Independent of W155 to W160; before W178.
+  - Phil, 2026-11-09: "I'd like the supervisor view to pop over the main window in some way rather than taking up the full view. That way you can get an idea of a context it's working in and the UX of using it doesn't feel as all or nothing."
+  - Today: its view (W114) takes the third column, in a session view's or a PR view's place, and opening it drops `?session=` and `?pr=`, so the session you asked about goes out of sight.
+  - What: the supervisor opens as a panel over the page, beside or over the right of the open session or PR view, which stays where it was and stays open, with `?supervisor` added to the URL rather than replacing `?session=` or `?pr=`. The panel can be closed, and kept open while you change the selection. Its header, status, cost, context, New conversation, drafts and box stay as they are.
+  - To decide while building, with screenshots for Phil: a drawer from the right over the third column, or a floating panel; its width at 1,440 and 1,920 px; whether the session view narrows beside it or the panel covers part of it; at narrow widths, where the third column is already a page of its own, it can stay full width.
+  - Accessibility: a non-modal dialog (`role="dialog"`, no focus trap, since the page behind stays usable), focus to its heading on open and back to what opened it on close, and Escape closes it; the design system's z-order (`--pw-z-*`) gets a place for it.
+  - Checks: the supervisor's web tests, the URL rules' tests, and the app check's `supervisor` part at 375, 1,440 and 1,920 px, extended for the panel beside a session view.
+  - Status: Planned (Phil, 2026-11-09).
+- **W178, Ask the supervisor about this session, and why it's in its state** (`m5.2/supervisor-ask-session`, M). After W177; uses W165's (a diagnostics log: why a row is in Needs you) reasons.
+  - Phil, 2026-11-09: "I tend to have questions about Pitwall's functionality as I'm working ... when it says 'busy,' we could ask about the status or ask, 'Why this status?'" A side question with pitwall's context, like Claude Code's `/btw`, but about the session. And, on the supervisor: "The meta query about a session state feels like it should be something for the supervisor and it should have full visibility over every session." He chose the supervisor over a separate one-shot call (2026-11-09).
+  - What the supervisor lacks today: the inputs behind a session's state, which pitwall works out (`needsAttention()`, the status and badge rules, `attention = own || prNeed` in `SessionRow.tsx`) and throws away; any account of how pitwall decides a state; and more of a session than its slim row and excerpt.
+  - What, in four parts:
+    - An "Ask the supervisor" button in the session view (and the PR view), which opens W177's panel with the box filled with a reference to that session, by name and id, for you to finish and send. Sending is still your click (D4, the supervisor: read-only tools, acts only after your click).
+    - A read-only tool, `why_state`: for one session, each badge it has (state, Needs you, PR need, snooze, flag, context) with the rule and the inputs that set it, from the same code the page uses, so the two can't disagree. W165 keeps the Needs you reasons; this serves every badge's, live.
+    - pitwall's own reference: a short document in the repo, `docs/states.md`, on how each state and badge is decided, which the supervisor reads through a tool when a question is about pitwall, and which people can read too. Kept beside the code it describes, and checked by a test that every state the protocol has is in it.
+    - Fuller session detail on request: a tool that returns a session's last few turns, trimmed and marked untrusted as recaps' input is, only when the question needs them, so a "why Busy?" doesn't pay for a transcript.
+  - Security: no new action. The new tools are read-only, return session content as untrusted, as W112's do, and follow PLAN's Security rules for the MCP server.
+  - Checks: the tools' tests (`mcpTools`), a test that `why_state` and the page agree for each state, the reference's coverage test, the web tests for the button, and the app check's `supervisor` part.
+  - Status: Planned (Phil, 2026-11-09).
+- **W179, The supervisor keeps its conversation short** (`m5.2/supervisor-short-context`, S). Independent; any time in M5.2.
+  - Why: W131's usage found most tokens are long contexts re-read every call. The supervisor is one resumed conversation, so its context grows with every question; W136 added its context figure and a New conversation button, which only you press.
+  - Measured (`scripts/usage-report.ts --days 21`, 2026-11-09): the supervisor made 75 calls, 3.5M tokens, about 0.02% of Phil's usage, so its model isn't the cost to cut; its context would become one if W178 makes it the place for every "why" question.
+  - What: a new conversation, saying so in the panel, when you send a message and its context is over a limit (100K to start, set in the config file), or when W178's button asks about a different session than the conversation is about and the context is over a lower one. Its drafts and Sent and started stay as they are. The supervisor's model stays Opus 5.5 (Phil, 2026-11-09), revisited with W158's (the Usage view) figures; `work.supervisor` (W119) can already change it.
+  - Checks: the supervisor's tests for each limit, and that a held, working or drafting supervisor isn't reset, as New conversation's rules already say (W136).
+  - Status: Planned (Phil, 2026-11-09).
+
 ## Open questions
 
 - **Profiles set the sub-agent model as a default, or force it?** A default (Phil, 2026-11-06, W155): since Claude Code v2.1.251, an Agent call's own `model` beats `CLAUDE_CODE_SUBAGENT_MODEL`, and forcing it with `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` would quietly put a security review on Sonnet and a Haiku agent up to Sonnet. 11-02's sub-agents named no model, so a default covers them. Revisit if W158 shows Build sessions' sub-agents still mostly on Opus.
