@@ -51,7 +51,7 @@ import {
   type SessionSummary,
 } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
-import { WAITING_ON_TEXT, waitingElsewhere, type BadgeLook } from './sessions.js';
+import { needsAttention, WAITING_ON_TEXT, waitingElsewhere, type BadgeLook } from './sessions.js';
 import { couldNot, plainText } from './format.js';
 import { browserStorage, type StorageSource } from './groupState.js';
 import { ATTACH_DELAY_MS, cssTime } from './timing.js';
@@ -277,13 +277,14 @@ export function quietWaitingOn(session: SessionSummary, needsYou: boolean): stri
 
 /**
  * The PR the session view names after its badge (W170): the one its job's own file links, while its
- * recap says it waits on someone else, CI or another session. `owner/name#n`, and its GitHub address.
+ * recap says it waits on someone else, CI or another session, as waitingPr() has it. `owner/name#n`, and its GitHub address.
  * The index takes the repo and number only from an exact PR URL (src/index/jobs.ts), so the address
  * is one.
  */
 export function waitingPrLink(session: SessionSummary): { text: string; url: string } | undefined {
   const pr = session.jobPr;
-  if (pr === undefined || waitingElsewhere(session) === undefined) return undefined;
+  // When the row's line 2 would name it: not while it needs you, nor while it works (W170's review).
+  if (pr === undefined || waitingPr(session, needsAttention(session)) === undefined) return undefined;
   return { text: `${pr.repo}#${pr.number}`, url: `https://github.com/${pr.repo}/pull/${pr.number}` };
 }
 

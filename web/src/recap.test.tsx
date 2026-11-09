@@ -322,6 +322,9 @@ describe('a done job waiting on someone else, CI or another session isn’t Done
     expect(waitingPrLink(done('CI', { jobPr: { repo: 'example/demo-app', number: 6089 } }))).toEqual({ text: 'example/demo-app#6089', url: 'https://github.com/example/demo-app/pull/6089' });
     expect(waitingPrLink(done('nothing', { jobPr: { repo: 'example/demo-app', number: 6089 } }))).toBeUndefined();
     expect(waitingPrLink(done('CI'))).toBeUndefined();
+    // Not beside Blocked, while its own line says it needs you, nor beside Busy on a job that isn't done.
+    expect(waitingPrLink(done('CI', { state: 'blocked', needsYou: { reason: 'claude-code', text: 'A made-up question?' }, jobPr: { repo: 'example/demo-app', number: 6089 } }))).toBeUndefined();
+    expect(waitingPrLink(done('CI', { state: 'working', jobPr: { repo: 'example/demo-app', number: 6089 } }))).toBeUndefined();
   });
 });
 
