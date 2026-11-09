@@ -19,6 +19,8 @@ import {
   forYouText,
   parseRecap,
   quietWaitingOn,
+  waitingPr,
+  waitingPrLink,
   readRecapCollapsed,
   recapForYou,
   RECAP_COLLAPSED_KEY,
@@ -239,9 +241,90 @@ describe('what an idle session waits on, when it isn’t you', () => {
     expect(quietWaitingOn(idle('you'), false)).toBeUndefined();
   });
 
-  it('is said for a finished job whose recap waits on CI', () => {
+  it('isn’t said for a finished job whose recap waits on CI: its badge says it, in Done’s place (W170)', () => {
     const done = idle('CI', { kind: 'background', shortId: 'pt111b', status: undefined, state: 'done', alive: false, pid: undefined, finished: true });
-    expect(quietWaitingOn(done, false)).toBe('Waiting on CI');
+    expect(quietWaitingOn(done, false)).toBeUndefined();
+    expect(statusBadge(done)).toEqual({ status: 'waiting-on', label: 'Waiting on CI', look: 'subtle-neutral' });
+  });
+});
+
+describe('a done job waiting on someone else, CI or another session isn’t Done (W170)', () => {
+  // Made up, shaped like the case that prompted it: Claude Code calls the job done, a monitor keeps
+  // its process busy, and its recap says it waits on someone else.
+  const done = (waitingOn: RecapSummary['waitingOn'] | undefined, extra: Partial<SessionSummary> = {}) =>
+    session({
+      kind: 'background',
+      shortId: 'pt170a',
+      state: 'done',
+      status: 'busy',
+      turnEnded: true,
+      lastUserPrompt: 'Wait for the made-up review.',
+      ...(waitingOn === undefined ? {} : { recap: summary({ waitingOn, forYou: 0 }) }),
+      ...extra,
+    });
+
+  it('says what it waits on in Done’s place, subtle and neutral, and never needs you', () => {
+    for (const [waitingOn, text] of [
+      ['someone else', 'Waiting on someone else'],
+      ['CI', 'Waiting on CI'],
+      ['another session', 'Waiting on another session'],
+    ] as const) {
+      const s = done(waitingOn);
+      expect(statusBadge(s)).toEqual({ status: 'waiting-on', label: text, look: 'subtle-neutral' });
+      expect(needsAttention(s)).toBe(false);
+      const row = renderRow(s);
+      expect(row.querySelector('.session-badges .badge[data-status]')?.textContent).toBe(text);
+      expect(row.dataset.attention).toBeUndefined();
+      // Line 2 doesn't say it again.
+      expect(row.querySelector('.session-waiting-on')).toBeNull();
+      row.closest('ul')?.parentElement?.remove();
+    }
+  });
+
+  it('stays Done when the recap waits on nothing, is stale or is Claude Code’s, or there is none', () => {
+    expect(statusBadge(done('nothing')).label).toBe('Done');
+    expect(statusBadge(done(undefined)).label).toBe('Done');
+    expect(statusBadge(done('someone else', { recap: summary({ waitingOn: 'someone else', stale: true }) })).label).toBe('Done');
+    expect(statusBadge(done('someone else', { recap: summary({ waitingOn: 'CI', source: 'claude-code' }) })).label).toBe('Done');
+    // Waiting on you, with no reason from the index, isn't this: the index's 'recap' reason is.
+    expect(statusBadge(done('you')).label).toBe('Done');
+  });
+
+  it('leaves Failed and Stopped as they are', () => {
+    expect(statusBadge(done('CI', { state: 'failed' })).label).toBe('Failed');
+    expect(statusBadge(done('CI', { state: 'stopped' })).label).toBe('Stopped');
+  });
+
+  it('names the PR its job links on line 2, “#6089”, unless the row’s PR badge shows it', () => {
+    const s = done('someone else', { jobPr: { repo: 'example/demo-app', number: 6089 } });
+    expect(waitingPr(s, false)).toBe('#6089');
+    const row = renderRow(s);
+    expect(row.querySelector('.session-waiting-on')?.textContent).toBe('#6089');
+    expect(row.querySelector('.session-what-text')?.textContent).toBe('#6089 · You: Wait for the made-up review.');
+    row.closest('ul')?.parentElement?.remove();
+    // Owned, so the row's PR badge has it already.
+    expect(waitingPr(s, false, [pr({ number: 6089 })])).toBeUndefined();
+    expect(waitingPr(s, false, [pr({ number: 6090 })])).toBe('#6089');
+    // Not while it needs you, nor when its recap waits on nothing.
+    expect(waitingPr(s, true)).toBeUndefined();
+    expect(waitingPr(done('nothing', { jobPr: { repo: 'example/demo-app', number: 6089 } }), false)).toBeUndefined();
+  });
+
+  it('adds the PR after an idle session’s quiet reason, and not while it works', () => {
+    const idle = session({ status: 'idle', recap: summary({ waitingOn: 'CI', forYou: 0 }), jobPr: { repo: 'example/demo-app', number: 42 }, lastUserPrompt: 'Push it.' });
+    const row = renderRow(idle);
+    expect(row.querySelector('.session-waiting-on')?.textContent).toBe('Waiting on CI: #42');
+    row.closest('ul')?.parentElement?.remove();
+    expect(waitingPr({ ...idle, status: 'busy' }, false)).toBeUndefined();
+  });
+
+  it('gives the session view the PR as owner/name#n and its GitHub address', () => {
+    expect(waitingPrLink(done('CI', { jobPr: { repo: 'example/demo-app', number: 6089 } }))).toEqual({ text: 'example/demo-app#6089', url: 'https://github.com/example/demo-app/pull/6089' });
+    expect(waitingPrLink(done('nothing', { jobPr: { repo: 'example/demo-app', number: 6089 } }))).toBeUndefined();
+    expect(waitingPrLink(done('CI'))).toBeUndefined();
+    // Not beside Blocked, while its own line says it needs you, nor beside Busy on a job that isn't done.
+    expect(waitingPrLink(done('CI', { state: 'blocked', needsYou: { reason: 'claude-code', text: 'A made-up question?' }, jobPr: { repo: 'example/demo-app', number: 6089 } }))).toBeUndefined();
+    expect(waitingPrLink(done('CI', { state: 'working', jobPr: { repo: 'example/demo-app', number: 6089 } }))).toBeUndefined();
   });
 });
 

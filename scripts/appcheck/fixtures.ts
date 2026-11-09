@@ -1181,7 +1181,7 @@ export class World {
    * Code, a prompt on screen or a new reason, any of which brings a session marked not needed now back
    * to Needs you.
    */
-  need(sessionId: string, change: Partial<Pick<SessionSummary, 'needsYou' | 'askedYou' | 'state' | 'status' | 'waitingFor'>>): void {
+  need(sessionId: string, change: Partial<Pick<SessionSummary, 'needsYou' | 'askedYou' | 'state' | 'status' | 'waitingFor' | 'jobPr'>>): void {
     const session = this.#sessions.get(sessionId);
     if (session) this.#sessions.set(sessionId, { ...session, ...change });
   }

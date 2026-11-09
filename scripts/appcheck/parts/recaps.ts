@@ -371,6 +371,31 @@ const part: Part = {
       t.expect(!((await page.evaluate<string | null>(lineTwo(RECAPPED.ci))) ?? '').includes('Waiting on'), 'not while it works');
     });
 
+    await t.step('a done job waiting on CI says so in Done’s place, with the PR its job links on line 2 and in its view (W170)', async () => {
+      // Made up, as the case that prompted it: Claude Code calls the job done, a monitor keeps it busy.
+      const id = server.world.byName(RECAPPED.ci).sessionId;
+      server.world.need(id, { state: 'done', status: 'busy', jobPr: { repo: 'example/demo-app', number: 6089 } });
+      server.broadcast();
+      await page.waitFor('its badge', `(${badge(RECAPPED.ci)}) === 'Waiting on CI'`);
+      const named = await page.evaluate<string | null>(lineTwo(RECAPPED.ci));
+      t.expectEqual(named, 'demo-app · #6089 · You: Tidy the made-up export job.', 'line 2 names its PR after the group, not the wait again');
+      t.expectEqual(await page.evaluate(`(${row(RECAPPED.ci)})?.closest('li.session')?.dataset.attention ?? null`), null, 'never needing you');
+      const fits = await page.evaluate<{ badge: boolean; line: boolean }>(
+        `(() => { const li = (${row(RECAPPED.ci)}).closest('li.session'); const label = li.querySelector('.session-badges [data-status] .badge-label') ?? li.querySelector('.session-badges [data-status]'); const pr = li.querySelector('.session-waiting-on'); const text = li.querySelector('.session-what-text'); return { badge: label.scrollWidth <= label.clientWidth + 1, line: pr.getBoundingClientRect().right <= text.getBoundingClientRect().right + 1 }; })()`,
+      );
+      t.expectEqual(fits, { badge: true, line: true }, 'the badge and the PR show whole');
+      await t.shot('waiting-on-ci');
+      await openFromRow(t, RECAPPED.ci);
+      const link = await page.waitFor<{ text: string; href: string } | null>(
+        'the PR after its badge',
+        `(() => { const a = ${VIEW}?.querySelector('.session-view-meta .session-view-waiting-pr'); return a ? { text: a.textContent, href: a.getAttribute('href') } : null; })()`,
+      );
+      t.expectEqual(link, { text: 'example/demo-app#6089', href: 'https://github.com/example/demo-app/pull/6089' }, 'owner/name#n, a link to GitHub');
+      t.expectEqual(await page.evaluate(`${VIEW}?.querySelector('.session-view-meta .badge[data-status]')?.textContent ?? null`), 'Waiting on CI', 'its badge in the view');
+      await t.shot('waiting-on-ci-view');
+      await closeView();
+    });
+
     await t.step('the day’s budget spent: the app strip says so, Refresh is off, and nothing is asked for', async () => {
       await t.fresh({ search: '?view=all', recaps: 'spent' });
       t.expect((await page.evaluate<string | null>(APP_STRIP))?.startsWith("Today's 500 recaps are used up") ?? false, 'the app strip', await page.evaluate(APP_STRIP));
