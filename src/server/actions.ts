@@ -229,13 +229,13 @@ export interface ValidSpawn {
   /** isEffortLevel(), or WORK_DEFAULT for no `--effort`. */
   effort?: WorkChoice['effort'];
   /**
-   * CLAUDE_CODE_SUBAGENT_MODEL for the session's sub-agents: the profile's (W155), else the defaults'
-   * (W119); WORK_DEFAULT for none. Never from the request.
+   * CLAUDE_CODE_SUBAGENT_MODEL for the session's sub-agents: the request's, else the profile's (W155),
+   * else the defaults' (W119); WORK_DEFAULT for none.
    */
   subagentModel?: string;
   /** The work profile's name (W155), as the server's own profiles spell it. */
   profile?: string;
-  /** The request's own model or effort isn't the profile's (New session's Custom, W155). */
+  /** The request's own model, effort or sub-agents' model isn't the profile's (New session's Customized, W155). */
   custom?: true;
   /** The profile's skill (W155), SKILL_NAME_PATTERN, from the server's profile, never the request: the prompt starts `/<skill> `. */
   skill?: string;
@@ -258,7 +258,7 @@ export async function validateSpawnRequest(
   profiles?: (name: string) => WorkProfile | undefined,
 ): Promise<SpawnValidation> {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return invalid('The body must be a JSON object.');
-  const { cwd, prompt, name, model, effort, profile: profileName, attachments: ids } = body as Record<string, unknown>;
+  const { cwd, prompt, name, model, effort, subagentModel, profile: profileName, attachments: ids } = body as Record<string, unknown>;
 
   if (typeof prompt !== 'string' || prompt.trim() === '') return invalid('The first prompt is required.');
   if (prompt.length > MAX_PROMPT_LENGTH) return invalid(`The first prompt can be at most ${MAX_PROMPT_LENGTH} characters.`);
@@ -277,8 +277,12 @@ export async function validateSpawnRequest(
   if (typeof name === 'string' && OWN_NAMES.has(name.trim().toLowerCase())) return invalid(`The name ${name} is pitwall's own. Choose another.`);
   if (model !== undefined && model !== WORK_DEFAULT && !isWorkModel(model)) return invalid(`The model ${modelProblem('session')}.`);
   if (effort !== undefined && effort !== WORK_DEFAULT && !isEffortLevel(effort)) return invalid(`The effort ${EFFORT_PROBLEM}.`);
-  // The profile by its exact name, from the server's own (W155): its skill and sub-agents' model come
-  // from there, never from the request. Not quoted back: it could be any text.
+  // The sub-agents' model, as W119 checks one for sub-agents (W155; Phil, 2026-11-09). Not quoted back.
+  if (subagentModel !== undefined && subagentModel !== WORK_DEFAULT && !isWorkModel(subagentModel, 'subagents')) {
+    return invalid(`The sub-agents' model ${modelProblem('subagents')}.`);
+  }
+  // The profile by its exact name, from the server's own (W155): its skill comes from there, never
+  // from the request. Not quoted back: it could be any text.
   let profile: WorkProfile | undefined;
   if (profileName !== undefined) {
     profile = typeof profileName === 'string' && profileName.length <= 64 ? profiles?.(profileName) : undefined;
@@ -295,15 +299,18 @@ export async function validateSpawnRequest(
 
   const spawn: ValidSpawn = { cwd: dir.path, prompt };
   if (name !== undefined) spawn.name = name as string;
-  // The request's own model and effort, else the profile's; withSessionWork() fills the rest from the defaults.
+  // The request's own model, effort and sub-agents' model, else the profile's; withSessionWork() fills
+  // the rest from the defaults.
   const chosenModel = (model as string | undefined) ?? profile?.model;
   const chosenEffort = (effort as WorkChoice['effort'] | undefined) ?? profile?.effort;
+  const chosenSubagents = (subagentModel as string | undefined) ?? profile?.subagentModel;
   if (chosenModel !== undefined) spawn.model = chosenModel;
   if (chosenEffort !== undefined) spawn.effort = chosenEffort;
+  if (chosenSubagents !== undefined) spawn.subagentModel = chosenSubagents;
   if (profile !== undefined) {
     spawn.profile = profile.name;
-    if ((model !== undefined && model !== profile.model) || (effort !== undefined && effort !== profile.effort)) spawn.custom = true;
-    if (profile.subagentModel !== undefined) spawn.subagentModel = profile.subagentModel;
+    const differs = (sent: unknown, own: string | undefined) => sent !== undefined && sent !== own;
+    if (differs(model, profile.model) || differs(effort, profile.effort) || differs(subagentModel, profile.subagentModel)) spawn.custom = true;
     if (profile.skill !== undefined) spawn.skill = profile.skill;
   }
   if (ids !== undefined && ids.length > 0) {
@@ -626,7 +633,7 @@ export interface SpawnRunner {
 
 /**
  * `spawn` with the defaults for sessions where it names no model or effort, field by field, and the
- * sub-agents' model from the defaults (W119) where its profile names none (W155). The same object
+ * sub-agents' model from the defaults (W119) where neither the request nor its profile names one (W155). The same object
  * without `work`.
  */
 export function withSessionWork(spawn: ValidSpawn, work: Pick<WorkStore, 'choice'> | undefined): ValidSpawn {

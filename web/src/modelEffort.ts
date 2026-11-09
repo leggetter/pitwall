@@ -9,7 +9,6 @@ import {
   isSkillName,
   OFFERED_WORK_MODELS,
   isWorkModel,
-  NO_PROFILE,
   RECAP_EFFORT_LEVELS,
   SUBAGENT_MODEL_ALIASES,
   WORK_DEFAULT,
@@ -41,9 +40,9 @@ export const WORK_LABELS: Readonly<Record<WorkKind, string>> = {
 /** What each kind is, and when a change reaches it. */
 export const WORK_HINTS: Readonly<Record<WorkKind, string>> = {
   session:
-    "New session on the None profile, the supervisor's new sessions, and resuming one pitwall started without a profile; a profile's own model and effort win. From the next session you start.",
+    "Where no dialog chooses: the supervisor's new sessions, and resuming one pitwall didn't start with a profile. New session fills Model and Effort from a profile. From the next session you start.",
   subagents:
-    "For sub-agents whose definition names no model, in New session on the None profile, the supervisor's new sessions, and resuming one pitwall started without a profile; a profile's own wins. From the next session you start. Their effort is the session's: Claude Code has no separate setting for it.",
+    "For sub-agents whose definition names no model, where no dialog chooses: the supervisor's new sessions, and resuming one pitwall didn't start with a profile. New session fills Sub-agents from a profile. From the next session you start. Their effort is the session's: Claude Code has no separate setting for it.",
   supervisor: 'From its next start.',
   recaps: 'From the next recap. At most high effort: a recap may write 4,096 tokens, thinking included.',
   relay: 'Passes on the messages you write to interactive sessions. From its next start.',
@@ -134,43 +133,24 @@ export function readProfiles(value: unknown): WorkProfile[] | undefined {
   return profiles;
 }
 
-/** New session's Profile picker's choice once the model or effort no longer match the profile picked. */
-export const CUSTOM_PROFILE_TEXT = 'Custom';
-
-/** New session's Profile picker's choice for no profile (W155; Phil, 2026-11-09). */
-export const NO_PROFILE_TEXT = `${NO_PROFILE} (pitwall's defaults)`;
+/**
+ * New session's Profile picker's choice once Model, Effort or Sub-agents no longer match the profile
+ * picked (Phil, 2026-11-09). It keeps that profile's skill.
+ */
+export const CUSTOM_PROFILE_TEXT = 'Customized';
 
 /**
- * The line under New session's Profile picker on None: no profile, so the model and effort are
- * pitwall's defaults for sessions, and its sub-agents pitwall's default for them, or Claude Code's.
+ * The line after New session's Sub-agents (W155): the profile's skill, which Customized keeps, or
+ * nothing for a profile without one. The model, effort and sub-agents' model are in their fields.
  */
-export function noProfileHint(work: WorkSettings | undefined): string {
-  const sub = work?.effective.subagents.model;
-  const subagents =
-    work === undefined
-      ? "Sub-agents on pitwall's default for them."
-      : sub === undefined || sub === WORK_DEFAULT
-        ? "Sub-agents on Claude Code's default."
-        : `Sub-agents on pitwall's default for them, ${sub}.`;
-  return `No profile: pitwall's defaults for sessions, as Preferences sets them. ${subagents}`;
+export function profileHint(profile: WorkProfile, custom: boolean): string | undefined {
+  if (profile.skill === undefined) return undefined;
+  const whose = custom ? `, the ${profile.name} profile's skill,` : ',';
+  return `Starts with /${profile.skill}${whose} which must be installed where the session runs.`;
 }
 
-/**
- * The line under New session's Profile picker (W155): what the profile adds besides the model and
- * effort, its sub-agents' default model and its skill, and, once you've changed the model or effort,
- * that those still come from it.
- */
-export function profileHint(profile: WorkProfile, custom: boolean): string {
-  const sub =
-    profile.subagentModel === undefined
-      ? "Sub-agents on pitwall's default for them."
-      : profile.subagentModel === WORK_DEFAULT
-        ? "Sub-agents on Claude Code's default."
-        : `Sub-agents default to ${profile.subagentModel}.`;
-  const skill = profile.skill === undefined ? '' : ` Starts with /${profile.skill}, which must be installed where the session runs.`;
-  const prefix = custom ? `${CUSTOM_PROFILE_TEXT}: your model and effort, with the ${profile.name} profile's sub-agents${profile.skill === undefined ? '' : ' and skill'}. ` : '';
-  return `${prefix}${sub}${skill}`;
-}
+/** New session's Sub-agents hint (W155): what the field sets, a default, never forced. */
+export const SUBAGENTS_HINT = "For sub-agents that don't name their own model.";
 
 const SCOPES: readonly string[] = ['managed', 'local', 'project', 'user'];
 const SETTING_KEYS: readonly string[] = ['model', 'effortLevel', 'modelSettings', 'maxEffortLevel'];
@@ -368,6 +348,18 @@ export function sessionDefaultText(settings: WorkSettings | undefined, field: 'm
   const value = settings.effective.session[field];
   if (value !== undefined && value !== WORK_DEFAULT) return `Default: ${fieldValueText(field, value)}`;
   return claudeDefaultText(settings, 'session', field, field === 'effort' ? (model ?? modelInEffect(settings, 'session')) : undefined);
+}
+
+/**
+ * New session's Sub-agents' first option (W155): what the server applies with none chosen, pitwall's
+ * default for sub-agents, the override included, "Default: Sonnet", or Claude Code's, resolved where
+ * the server said. "Default" before the settings load.
+ */
+export function subagentsDefaultText(settings: WorkSettings | undefined): string {
+  if (settings === undefined) return 'Default';
+  const value = settings.effective.subagents.model;
+  if (value !== undefined && value !== WORK_DEFAULT) return `Default: ${modelText(value)}`;
+  return claudeDefaultText(settings, 'subagents', 'model');
 }
 
 /** The "Claude Code's default" option, with its value where the server resolved it: "Claude Code's default: Opus 5.5 (…)". */

@@ -94,7 +94,16 @@ export interface Records {
   /** Every size the page gave an attached session, in order: its `open`'s, then each resize's (W74). */
   sizes: Array<{ name: string; from: 'open' | 'resize' } & TerminalSize>;
   /** `attachments` only when the request had them (W82). */
-  spawns: Array<{ cwd: string; name?: string | undefined; profile?: string | undefined; model?: string | undefined; effort?: string | undefined; promptLength: number; attachments?: string[] | undefined }>;
+  spawns: Array<{
+    cwd: string;
+    name?: string | undefined;
+    profile?: string | undefined;
+    model?: string | undefined;
+    effort?: string | undefined;
+    subagentModel?: string | undefined;
+    promptLength: number;
+    attachments?: string[] | undefined;
+  }>;
   /** Each POST of WORK_PATH (W119): the overrides sent, and the status they got. */
   workPosts: Array<{ overrides: unknown; status: number }>;
   /**
@@ -289,6 +298,8 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
   const madeUpWork = () =>
     built.work.createWorkStore({
       config: { ...built.work.emptyChoices(), session: { effort: 'high' }, subagents: { model: 'haiku' } },
+      // Review replaced by a made-up config file's, with a skill, as Phil's mockup has it (W155).
+      profiles: [{ name: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet', skill: 'agent-roles:role-reviewer', source: 'config' }],
       configFile: '/Users/example/.pitwall/config.json',
       claude: async (layers, dir) => {
         const user = { scope: 'user' as const, model: 'claude-opus-5-5' };
@@ -935,9 +946,10 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       ...(typeof body.profile === 'string' ? { profile: body.profile } : {}),
       ...(typeof body.model === 'string' ? { model: body.model } : {}),
       ...(typeof body.effort === 'string' && (protocol.EFFORT_LEVELS as readonly string[]).includes(body.effort) ? { effort: body.effort as SpawnRequest['effort'] } : {}),
+      ...(body.subagentModel === protocol.WORK_DEFAULT || protocol.isWorkModel(body.subagentModel, 'subagents') ? { subagentModel: body.subagentModel as string } : {}),
       ...(attachments ? { attachments } : {}),
     };
-    records.spawns.push({ cwd: request.cwd, name: request.name, profile: request.profile, model: request.model, effort: request.effort, promptLength: request.prompt.length, attachments: request.attachments });
+    records.spawns.push({ cwd: request.cwd, name: request.name, profile: request.profile, model: request.model, effort: request.effort, subagentModel: request.subagentModel, promptLength: request.prompt.length, attachments: request.attachments });
     const started = world.spawn(request, root);
     json(res, 201, { ok: true, shortId: started.summary.shortId ?? '', name: started.summary.name } satisfies SpawnResult);
     later(options.listDelayMs ?? 800, () => {

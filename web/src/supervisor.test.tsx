@@ -197,7 +197,7 @@ describe('a resume card’s lines (W129)', () => {
       'pitwall resumes it on what it started it with, from the Review profile: model sonnet, effort high, sub-agents sonnet.',
     );
     expect(resumeLaunchText({ profile: 'Build', custom: true, model: 'haiku', effort: 'default', subagentModel: 'default' })).toBe(
-      "pitwall resumes it on what it started it with, from the Build profile, with its model or effort changed: model haiku, effort Claude Code's default, sub-agents Claude Code's default.",
+      "pitwall resumes it on what it started it with, from the Build profile, customized: model haiku, effort Claude Code's default, sub-agents Claude Code's default.",
     );
   });
 

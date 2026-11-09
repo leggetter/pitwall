@@ -500,7 +500,7 @@ export function resumeLaunchText(launch: SessionLaunch): string {
     ...(launch.effort === undefined ? [] : [`effort ${shown(launch.effort)}`]),
     ...(launch.subagentModel === undefined ? [] : [`sub-agents ${shown(launch.subagentModel)}`]),
   ];
-  const from = launch.profile === undefined ? 'a profile' : `the ${launch.profile} profile${launch.custom === true ? ', with its model or effort changed' : ''}`;
+  const from = launch.profile === undefined ? 'a profile' : `the ${launch.profile} profile${launch.custom === true ? ', customized' : ''}`;
   return `pitwall resumes it on what it started it with, from ${from}: ${parts.join(', ')}.`;
 }
 

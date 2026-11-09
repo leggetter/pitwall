@@ -25,6 +25,7 @@ import {
 import {
   DEFAULT_MAX_CONCURRENT_COMMANDS,
   firstLine,
+  launchOf,
   MAX_PROMPT_LENGTH,
   parseBackgrounded,
   parseCopyNote,
@@ -36,6 +37,7 @@ import {
   RateWindow,
   SpawnLimiter,
   trustHint,
+  validateSpawnRequest,
   withSessionWork,
   type ActionOptions,
 } from './actions.js';
@@ -43,7 +45,7 @@ import type { CommandOptions, CommandResult, RunCommand } from './command.js';
 import type { RunningServer } from './index.js';
 import { startServerWithInternals } from './server.js';
 import { SessionLaunches } from './sessionLaunches.js';
-import { createWorkStore, emptyChoices, type WorkStore } from './work.js';
+import { createWorkStore, emptyChoices, modelProblem, type WorkStore } from './work.js';
 import { pitwallOrigin, proofFor } from '../test/proof.js';
 
 const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
@@ -1608,12 +1610,33 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
       expect(started.run.calls.map((call) => call.options.env.CLAUDE_CODE_SUBAGENT_MODEL)).toEqual(['sonnet', 'haiku']);
     });
 
-    it("the request's own model and effort win over the profile's (New session's Custom); its skill and sub-agents still apply", async () => {
-      const started = await startWith(profiled());
+    it("the request's own model, effort and sub-agents' model win over the profile's (New session's Customized); its skill still applies", async () => {
+      const started = await startWith(profiled(), fakeRunner(backgrounded(), backgrounded()));
       await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Review', effort: 'max' });
-      const [call] = started.run.calls;
-      expect(call?.args).toEqual(['--bg', '--model', 'sonnet', '--effort', 'max', '--', '/agent-roles:role-reviewer go']);
-      expect(call?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('sonnet');
+      await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Review', model: 'opus', effort: 'high', subagentModel: 'haiku' });
+      const [first, second] = started.run.calls;
+      expect(first?.args).toEqual(['--bg', '--model', 'sonnet', '--effort', 'max', '--', '/agent-roles:role-reviewer go']);
+      expect(first?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('sonnet');
+      expect(second?.args).toEqual(['--bg', '--model', 'opus', '--effort', 'high', '--', '/agent-roles:role-reviewer go']);
+      expect(second?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('haiku');
+      expect(Object.keys(second?.options.env ?? {}).some((name) => /FORCE/i.test(name))).toBe(false);
+    });
+
+    it("the request's sub-agents' model on Claude Code's default leaves the inherited environment's alone, over the profile's", async () => {
+      const env = { PATH: '/usr/bin', CLAUDE_CODE_SUBAGENT_MODEL: 'fable' };
+      const started = await startWith(profiled(), fakeRunner(backgrounded()), env);
+      await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Review', subagentModel: 'default' });
+      expect(started.run.calls[0]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('fable');
+    });
+
+    it("refuses a sub-agents' model W119 wouldn't allow for sub-agents, and never quotes it; nothing starts", async () => {
+      const started = await startWith(profiled());
+      for (const subagentModel of ['opusplan', 'sonnet[1m]', 'best', 'opus --x', 'claude-opus-5-5\n', `claude-opus-${'5-'.repeat(40)}5`, '', 1, null, ['opus']]) {
+        const res = await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Build', subagentModel });
+        expect(res.status, JSON.stringify(subagentModel)).toBe(400);
+        expect((res.json as { error: string }).error).toBe(`The sub-agents' model ${modelProblem('subagents')}.`);
+      }
+      expect(started.run.calls).toEqual([]);
     });
 
     it("a profile's sub-agents on Claude Code's default leave the inherited environment's alone, over the defaults'", async () => {
@@ -1633,13 +1656,16 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
       expect(started.run.calls).toEqual([]);
     });
 
-    it("takes no skill or sub-agents' model from the request: only the profile's name", async () => {
-      const started = await startWith(profiled());
-      const res = await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Build', skill: 'evil --dangerously-skip-permissions', subagentModel: 'opus', subagent: 'opus' });
-      expect(res.status).toBe(201);
-      const [call] = started.run.calls;
-      expect(call?.args).toEqual(['--bg', '--model', 'claude-opus-5-5', '--effort', 'high', '--', 'go']);
-      expect(call?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('sonnet');
+    it("takes no skill from the request, with a profile or without: only the server's profile's", async () => {
+      const started = await startWith(profiled(), fakeRunner(backgrounded(), backgrounded()));
+      const evil = { skill: 'evil --dangerously-skip-permissions', profileSkill: 'evil', subagent: 'opus' };
+      expect((await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Build', ...evil })).status).toBe(201);
+      expect((await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Review', ...evil, skill: 'handoff' })).status).toBe(201);
+      expect(started.run.calls.map((call) => call.args)).toEqual([
+        ['--bg', '--model', 'claude-opus-5-5', '--effort', 'high', '--', 'go'],
+        ['--bg', '--model', 'sonnet', '--effort', 'high', '--', '/agent-roles:role-reviewer go'],
+      ]);
+      expect(started.run.calls[0]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('sonnet');
     });
 
     it('without a profile, spawn is as before W155: the defaults, and no skill', async () => {
@@ -1649,7 +1675,7 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
       expect(started.run.calls[0]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('haiku');
     });
 
-    it("None, no profile, gets pitwall's defaults for sessions and their sub-agents, Preferences' overrides included, and keeps no record", async () => {
+    it("no profile, as the supervisor's new sessions, gets pitwall's defaults for sessions and their sub-agents, Preferences' overrides included, and keeps no record", async () => {
       const work = profiled();
       expect(work.update({ overrides: { session: { effort: 'low' }, subagents: { model: 'sonnet' } } }).ok).toBe(true);
       const launches = new SessionLaunches();
@@ -1661,6 +1687,20 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
       expect(run.calls[0]?.args).toEqual(['--bg', '--model', 'opus', '--effort', 'low', '--', 'go']);
       expect(run.calls[0]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('sonnet');
       expect(launches.size).toBe(0);
+    });
+
+    it("records what was used, the sub-agents' model included, and Customized for any field that isn't the profile's", async () => {
+      const store = profiled();
+      const check = async (body: Record<string, unknown>) => {
+        const result = await validateSpawnRequest({ cwd: repo, prompt: 'go', ...body }, [root], undefined, (name) => store.profile(name));
+        if (!result.ok) throw new Error(result.error);
+        return launchOf(withSessionWork(result.spawn, store));
+      };
+      expect(await check({ profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet' })).toEqual({ profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet' });
+      expect(await check({ profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'haiku' })).toEqual({ profile: 'Review', custom: true, model: 'sonnet', effort: 'high', subagentModel: 'haiku' });
+      expect(await check({ profile: 'Review', model: 'opus' })).toEqual({ profile: 'Review', custom: true, model: 'opus', effort: 'high', subagentModel: 'sonnet' });
+      // Omitted: the profile's, then the defaults'.
+      expect(await check({ profile: 'Bare' })).toEqual({ profile: 'Bare', model: 'opus', effort: 'high', subagentModel: 'haiku' });
     });
 
     describe('resume keeps the profile it started with (Phil, 2026-11-09)', () => {
@@ -1692,12 +1732,20 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
         expect(started.run.calls[2]?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'sonnet', '--effort', 'high']);
       });
 
-      it('keeps what Custom used, and a profile whose sub-agents are on Claude Code\'s default leaves the variable alone', async () => {
+      it('keeps what Customized used, and a profile whose sub-agents are on Claude Code\'s default leaves the variable alone', async () => {
         const started = await startHome(profiled(), fakeRunner(backgrounded('99999999', 'pitwall-test-stopped'), woken()));
         expect((await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Inherit', model: 'haiku', effort: 'low' })).status).toBe(201);
         expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
         expect(started.run.calls[1]?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'haiku', '--effort', 'low']);
         expect(started.run.calls[1]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
+      });
+
+      it("keeps the sub-agents' model Customized chose, and resumes on it", async () => {
+        const started = await startHome(profiled(), fakeRunner(backgrounded('99999999', 'pitwall-test-stopped'), woken()));
+        expect((await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'haiku' })).status).toBe(201);
+        expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
+        expect(started.run.calls[1]?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'sonnet', '--effort', 'high']);
+        expect(started.run.calls[1]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('haiku');
       });
 
       it('survives a restart: a new pitwall on the same home resumes it on the profile, though its run never started it', async () => {

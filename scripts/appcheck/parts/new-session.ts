@@ -9,9 +9,9 @@
 // start in the repo or directory selected in the repo list, never the open session's, and from a view
 // with no directory chosen (W147, D27). A session's proposal's Start (W163) opens it filled in with
 // the proposal, once the server has checked it, and a refused check says why on the card. Profile
-// (W155) starts on Build and fills Model and Effort; a pick fills them again, a change to either shows
-// Custom, and the line under it says what else the profile sets; None sends no profile, so pitwall's
-// defaults apply, and a change to Model or Effort under it is just that. W63's switch to the new session's group and tab is its own
+// (W155) starts on Build and fills Model, Effort and Sub-agents; a pick fills them again, a change to
+// any of them shows Customized (Phil, 2026-11-09), the line after Sub-agents names the profile's
+// skill, and a start sends all three. W63's switch to the new session's group and tab is its own
 // part, new-session-selected.
 
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -36,15 +36,17 @@ const ACTIVE = `document.getElementById(${COMBOBOX}?.getAttribute('aria-activede
 const DIRECTORY_LABELS = `[...(${DIALOG}?.querySelectorAll('[role="listbox"] [role="option"]') ?? [])].map((el) => el.textContent.replace(/, repo$/, ''))`;
 /** A made-up worktree of the api-server repo, whose group keeps it, as a worktree's does (world.move()). */
 const WORKTREE = `${API_SERVER}/.claude/worktrees/pitwall-test-wt`;
-/** Profile's choice as it shows, its profiles' names, and the line under it (W155). */
+/** Profile's choice as it shows, its profiles' names, and the line that describes it, its skill's (W155). */
 const SHOWN_PROFILE = `(() => { const select = ${field('Profile')}; return select?.options[select.selectedIndex]?.textContent; })()`;
 const PROFILE_NAMES = `[...${field('Profile')}.options].filter((option) => !option.disabled).map((option) => option.textContent)`;
-const PROFILE_HINT = `${DIALOG}?.querySelector('.field-hint[id$="-hint"]')?.textContent`;
-/** The Profile picker's None (Phil, 2026-11-09): its option's value and text. */
-const NONE_VALUE = '\u0000none';
-const NONE_TEXT = "None (pitwall's defaults)";
+const PROFILE_HINT = `document.getElementById(${field('Profile')}?.getAttribute('aria-describedby') ?? '')?.textContent ?? null`;
+/** Model, Effort and Sub-agents' values (W155). */
+const THREE = `[${field('Model')}.value, ${field('Effort')}.value, ${field('Sub-agents')}.value]`;
+/** The made-up config file's Review's skill line (scripts/appcheck/server.ts), and Customized's. */
+const REVIEW_SKILL = 'Starts with /agent-roles:role-reviewer, which must be installed where the session runs.';
+const REVIEW_SKILL_CUSTOMIZED = "Starts with /agent-roles:role-reviewer, the Review profile's skill, which must be installed where the session runs.";
 /** What a start on Build, untouched, sends besides the rest, in the fake server's record's order. */
-const BUILD = { profile: 'Build', model: 'claude-opus-5-5', effort: 'high' } as const;
+const BUILD = { profile: 'Build', model: 'claude-opus-5-5', effort: 'high', subagentModel: 'sonnet' } as const;
 /** Each request for the directory list, as the fake server recorded it. */
 const listRequests = (requests: string[]) => requests.filter((request) => request.startsWith('GET /api/directories '));
 
@@ -155,7 +157,7 @@ const part: Part = {
       await t.fresh({ search: '?view=all' });
       await openDialog(t, 'New session');
       const labels = await page.evaluate<string[]>(`[...${DIALOG}.querySelectorAll('label.field-label')].map((l) => l.textContent.trim())`);
-      t.expectEqual(labels, ['Directory', 'Name optional', 'Profile', 'Model optional', 'Effort optional', 'First prompt'], 'its fields');
+      t.expectEqual(labels, ['Directory', 'Name optional', 'Profile', 'Model optional', 'Effort optional', 'Sub-agents optional', 'First prompt'], 'its fields');
       const values = await page.evaluate<string[]>(DIRECTORY_LABELS);
       for (const dir of [CODE, API_SERVER, DEMO_APP]) t.expect(values.includes(shortPath(dir)), `it offers ${dir}`, values);
       t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), '', 'from All sessions, a view, no directory is chosen (W147)');
@@ -176,10 +178,12 @@ const part: Part = {
         `${field('Effort')}?.options[1]?.textContent === ${q("Claude Code's default: xhigh (the project's Claude Code settings)")}`,
       );
       t.expectEqual(await page.evaluate(chooseOption(field('Model'), 'claude-opus-5-5')), 'claude-opus-5-5', "Build's model again");
-      t.expectEqual(await page.evaluate(PROFILE_NAMES), ['Build', 'Review', 'Security review', 'Docs', NONE_TEXT], 'the built-in profiles, in order, then None');
+      t.expectEqual(await page.evaluate(PROFILE_NAMES), ['Build', 'Review', 'Security review', 'Docs'], 'the built-in profiles, in order, Review replaced by the config file\'s');
       t.expectEqual(await page.evaluate(`${field('Effort')}.value`), 'high', "and Effort is Build's");
-      t.expectEqual(await page.evaluate(PROFILE_HINT), 'Sub-agents default to sonnet.', 'the line under it says what else Build sets');
-      t.expect(await page.evaluate(`document.getElementById(${field('Profile')}.getAttribute('aria-describedby'))?.textContent === ${PROFILE_HINT}`), 'Profile is described by that line');
+      t.expectEqual(await page.evaluate(`${field('Sub-agents')}.value`), 'sonnet', "and Sub-agents is Build's");
+      t.expectEqual(await page.evaluate(`${field('Sub-agents')}.options[0].textContent`), 'Default: haiku', "Sub-agents' first option names the made-up config file's default for them");
+      t.expectEqual(await page.evaluate(describedText(field('Sub-agents'))), "For sub-agents that don't name their own model.", 'Sub-agents is described by its hint');
+      t.expectEqual(await page.evaluate(`${field('Profile')}.getAttribute('aria-describedby')`), null, 'Build has no skill, so no line describes Profile');
       t.expect(await page.evaluate(`!!${dialogButton('Start session')} && !!${dialogButton('Cancel')}`), 'Start session and Cancel');
       const card = await page.evaluate<{ left: number; right: number; top: number; bottom: number }>(dialogBox);
       t.expect(card.left >= 15.5 && card.right <= t.viewport.width - 15.5 && card.top >= 0 && card.bottom <= t.viewport.height, 'inside the window', card);
@@ -199,7 +203,7 @@ const part: Part = {
       await page.click('Name', field('Name'));
       await page.type(name);
       t.expectEqual(await page.evaluate(chooseOption(field('Effort'), 'low')), 'low', 'the effort chosen (W119)');
-      t.expectEqual(await page.evaluate(SHOWN_PROFILE), 'Custom', 'Profile shows Custom once the effort is not its own (W155)');
+      t.expectEqual(await page.evaluate(SHOWN_PROFILE), 'Customized', 'Profile shows Customized once the effort is not its own (W155)');
       await page.click('First prompt', PROMPT);
       await page.type(FIRST_PROMPT);
       await page.click('Start session', dialogButton('Start session'));
@@ -207,58 +211,60 @@ const part: Part = {
       t.expect((await page.evaluate<string[]>(toasts)).includes(`Started ${name}. Its view opens when it shows up in the list.`), 'the toast says it started', await page.evaluate(toasts));
       t.expectEqual(
         server.records.spawns,
-        [{ cwd: API_SERVER, name, profile: 'Build', model: 'claude-opus-5-5', effort: 'low', promptLength: FIRST_PROMPT.length }],
-        "the fake server got the start, once, with Build's name and model, and the effort chosen",
+        [{ cwd: API_SERVER, name, profile: 'Build', model: 'claude-opus-5-5', effort: 'low', subagentModel: 'sonnet', promptLength: FIRST_PROMPT.length }],
+        "the fake server got the start, once, with Build's name, model and sub-agents, and the effort chosen",
       );
       await page.waitFor('its view', `${viewName} === ${q(name)}`, 8000);
       t.expect(await page.evaluate(`[...document.querySelectorAll('.session-list [data-open-session]')].some((el) => el.textContent.trim() === ${q(name)})`), 'its row is listed');
       await t.shot('started');
     });
 
-    await t.step('Profile: a pick fills Model and Effort, a change shows Custom, and the line says what else it sets (W155)', async () => {
+    await t.step('Profile: a pick fills Model, Effort and Sub-agents, a change to any shows Customized, and the line names its skill (W155)', async () => {
       await t.fresh({ search: `?repo=${DEMO_APP}` });
       await openDialog(t, 'New session');
       await page.waitFor('Build to fill Model', `${field('Model')}?.value === 'claude-opus-5-5'`);
       t.expectEqual(await page.evaluate(chooseOption(field('Profile'), 'Review')), 'Review', 'Review picked');
-      t.expectEqual(await page.evaluate(`[${field('Model')}.value, ${field('Effort')}.value]`), ['sonnet', 'high'], "Model and Effort are Review's");
-      t.expectEqual(await page.evaluate(chooseOption(field('Profile'), 'Docs')), 'Docs', 'Docs picked');
-      t.expectEqual(await page.evaluate(`[${field('Model')}.value, ${field('Effort')}.value]`), ['sonnet', 'medium'], "Model and Effort are Docs'");
-      t.expectEqual(await page.evaluate(chooseOption(field('Model'), 'haiku')), 'haiku', 'a model chosen');
-      t.expectEqual(await page.evaluate(SHOWN_PROFILE), 'Custom', 'Profile shows Custom');
-      t.expectEqual(await page.evaluate(PROFILE_HINT), "Custom: your model and effort, with the Docs profile's sub-agents. Sub-agents default to sonnet.", "the line says Docs's sub-agents still apply");
-      const hint = await page.evaluate<{ left: number; right: number }>(`(() => { const r = ${DIALOG}.querySelector('.field-hint[id$="-hint"]').getBoundingClientRect(); return { left: r.left, right: r.right }; })()`);
+      t.expectEqual(await page.evaluate(THREE), ['sonnet', 'high', 'sonnet'], "Model, Effort and Sub-agents are Review's");
+      t.expectEqual(await page.evaluate(PROFILE_HINT), REVIEW_SKILL, "the line after Sub-agents names Review's skill, and describes Profile");
+      await t.shot('profile-review');
+      t.expectEqual(await page.evaluate(chooseOption(field('Model'), 'opus')), 'opus', 'a model chosen');
+      t.expectEqual(await page.evaluate(SHOWN_PROFILE), 'Customized', 'Profile shows Customized');
+      t.expectEqual(await page.evaluate(THREE), ['opus', 'high', 'sonnet'], 'the other two keep the profile\'s');
+      t.expectEqual(await page.evaluate(PROFILE_HINT), REVIEW_SKILL_CUSTOMIZED, 'Customized keeps the skill, and says whose');
+      const hint = await page.evaluate<{ left: number; right: number }>(`(() => { const r = document.getElementById(${field('Profile')}.getAttribute('aria-describedby')).getBoundingClientRect(); return { left: r.left, right: r.right }; })()`);
       const card = await page.evaluate<{ left: number; right: number }>(dialogBox);
       t.expect(hint.left >= card.left && hint.right <= card.right, 'the line fits in the dialog', { hint, card });
-      await t.shot('profile-custom');
-      t.expectEqual(await page.evaluate(chooseOption(field('Profile'), 'Security review')), 'Security review', 'Security review picked after Custom');
-      t.expectEqual(await page.evaluate(`[${field('Model')}.value, ${field('Effort')}.value]`), ['claude-opus-5-5', 'xhigh'], "Model and Effort are Security review's");
-      t.expectEqual(await page.evaluate(PROFILE_HINT), 'Sub-agents default to opus.', 'and the line is its own');
+      await t.shot('profile-customized');
+      t.expectEqual(await page.evaluate(chooseOption(field('Profile'), 'Docs')), 'Docs', 'Docs picked after Customized');
+      t.expectEqual(await page.evaluate(THREE), ['sonnet', 'medium', 'sonnet'], "all three are Docs'");
+      t.expectEqual(await page.evaluate(PROFILE_HINT), null, 'Docs has no skill: no line');
+      t.expectEqual(await page.evaluate(chooseOption(field('Effort'), 'low')), 'low', 'an effort chosen');
+      t.expectEqual(await page.evaluate(SHOWN_PROFILE), 'Customized', 'Effort too shows Customized');
+      t.expectEqual(await page.evaluate(chooseOption(field('Profile'), 'Security review')), 'Security review', 'Security review picked');
+      t.expectEqual(await page.evaluate(THREE), ['claude-opus-5-5', 'xhigh', 'opus'], "all three are Security review's");
       await page.click('Cancel', dialogButton('Cancel'));
       await page.waitFor('the dialog to close', `!${DIALOG}`);
       t.expectEqual(server.records.spawns, [], 'nothing was started');
     });
 
-    await t.step("Profile's None sends no profile, so pitwall's defaults apply, and says what its sub-agents get (Phil, 2026-11-09)", async () => {
+    await t.step("Sub-agents: a change shows Customized, and the start sends it with the profile's skill left to the server (Phil, 2026-11-09)", async () => {
       await t.fresh({ search: `?repo=${DEMO_APP}` });
       await openDialog(t, 'New session');
       await page.waitFor('Build to fill Model', `${field('Model')}?.value === 'claude-opus-5-5'`);
-      t.expectEqual(await page.evaluate(chooseOption(field('Profile'), NONE_VALUE)), NONE_VALUE, 'None picked');
-      t.expectEqual(await page.evaluate(SHOWN_PROFILE), NONE_TEXT, 'Profile shows None');
-      t.expectEqual(await page.evaluate(`[${field('Model')}.value, ${field('Effort')}.value]`), ['', ''], "Model and Effort on their first options, pitwall's defaults for sessions");
-      t.expectEqual(
-        await page.evaluate(PROFILE_HINT),
-        "No profile: pitwall's defaults for sessions, as Preferences sets them. Sub-agents on pitwall's default for them, haiku.",
-        "the line says the defaults apply, and the sub-agents' from the made-up config file",
-      );
-      t.expect(await page.evaluate(`document.getElementById(${field('Profile')}.getAttribute('aria-describedby'))?.textContent === ${PROFILE_HINT}`), 'Profile is described by that line');
-      t.expectEqual(await page.evaluate(chooseOption(field('Effort'), 'low')), 'low', 'an effort chosen');
-      t.expectEqual(await page.evaluate(SHOWN_PROFILE), NONE_TEXT, 'still None: no Custom without a profile');
-      await t.shot('profile-none');
+      t.expectEqual(await page.evaluate(chooseOption(field('Profile'), 'Review')), 'Review', 'Review picked');
+      t.expectEqual(await page.evaluate(chooseOption(field('Sub-agents'), 'haiku')), 'haiku', 'sub-agents on haiku');
+      t.expectEqual(await page.evaluate(SHOWN_PROFILE), 'Customized', 'Profile shows Customized');
+      t.expectEqual(await page.evaluate(PROFILE_HINT), REVIEW_SKILL_CUSTOMIZED, 'still with its skill');
+      await t.shot('profile-subagents');
       await page.click('First prompt', PROMPT);
       await page.type(FIRST_PROMPT);
       await page.click('Start session', dialogButton('Start session'));
       await page.waitFor('the dialog to close', `!${DIALOG}`);
-      t.expectEqual(server.records.spawns, [{ cwd: DEMO_APP, effort: 'low', promptLength: FIRST_PROMPT.length }], 'the fake server got no profile and no model, so the defaults');
+      t.expectEqual(
+        server.records.spawns,
+        [{ cwd: DEMO_APP, profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'haiku', promptLength: FIRST_PROMPT.length }],
+        "the fake server got Review by name, with the three fields as shown, and no skill",
+      );
     });
 
     await t.step('Directory is an autocomplete: focus selects its text, emptied it lists every directory, and it narrows as you type', async () => {

@@ -18,14 +18,15 @@
 //   project skill and a plugin's `plugin:skill` named at the start of `claude --bg`'s prompt run as
 //   they do typed. A skill Claude Code doesn't find where the session runs is "Unknown command", and
 //   the prompt never reaches the model: the session waits for you.
-// - The server resolves a request's profile by its name from these, never from what the page sends
-//   beyond the name. pitwall keeps no prompts of its own: the instructions stay in skills.
+// - The server resolves a request's profile by its name from these, and takes its skill from here,
+//   never from the page. New session sends the model, effort and sub-agents' model it shows, each
+//   checked as W119's are (Phil, 2026-11-09). pitwall keeps no prompts of its own: the instructions
+//   stay in skills.
 import {
   DEFAULT_PROFILE,
   isEffortLevel,
   isSkillName,
   isWorkModel,
-  NO_PROFILE,
   SUPERVISOR_MODEL,
   WORK_DEFAULT,
   WORK_PROFILE_NAME_PATTERN,
@@ -52,10 +53,10 @@ export const SKILL_PROBLEM =
 const PROFILE_NAME_PROBLEM = `must be 1 to 40 letters, digits, spaces, ".", "_" and "-", starting with a letter or digit`;
 
 /**
- * The names New session's picker uses for its own choices, never a profile's: Custom, shown once the
- * model or effort changes, and None (NO_PROFILE), no profile at all (Phil, 2026-11-09). Ignoring case.
+ * The names New session's picker uses for its own choice, never a profile's: Customized, shown once
+ * the Model, Effort or Sub-agents changes (Phil, 2026-11-09), and Custom, its name before. Ignoring case.
  */
-export const RESERVED_PROFILE_NAMES: ReadonlySet<string> = new Set(['custom', NO_PROFILE.toLowerCase()]);
+export const RESERVED_PROFILE_NAMES: ReadonlySet<string> = new Set(['customized', 'custom']);
 
 /**
  * The config file's `profiles`, checked: an object whose keys are the names and whose values are
@@ -79,7 +80,7 @@ export function parseProfiles(
     if (!WORK_PROFILE_NAME_PATTERN.test(name)) fail(`${key}, its profile number ${i + 1}`, `has a name that ${PROFILE_NAME_PROBLEM}`);
     const where = `${key}.${name}`;
     const folded = name.toLowerCase();
-    if (RESERVED_PROFILE_NAMES.has(folded)) fail(where, 'is a name New session uses for its own choices, Custom and None. Choose another.');
+    if (RESERVED_PROFILE_NAMES.has(folded)) fail(where, 'is a name New session uses for its own choice, Customized. Choose another.');
     if (seen.has(folded)) fail(where, 'has the same name as another profile, ignoring case. Name each once.');
     seen.add(folded);
     profiles.push(parseProfile(name, (value as Record<string, unknown>)[name], where, fail, unknown));

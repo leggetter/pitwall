@@ -1086,11 +1086,19 @@ export interface SpawnRequest {
   /** Optional effort (W119): an EffortLevel, or WORK_DEFAULT. Absent: the defaults for sessions. */
   effort?: EffortLevel | typeof WORK_DEFAULT;
   /**
+   * Optional sub-agents' default model (W155; Phil, 2026-11-09), CLAUDE_CODE_SUBAGENT_MODEL for the
+   * session, never forced: as isWorkModel(…, 'subagents') allows, or WORK_DEFAULT for none whatever
+   * the profile and pitwall's defaults say. Absent: the profile's, else the defaults for sub-agents
+   * (WorkSettings.effective.subagents).
+   */
+  subagentModel?: string;
+  /**
    * Optional work profile (W155): the name of one of WorkSettings.profiles, exactly. The server looks
-   * it up in its own profiles, and 400s for a name it doesn't have. Its model and effort apply where
-   * `model` and `effort` are absent; its sub-agents' model and its skill always apply, from the
-   * server's profile, never from the request. Absent: no profile, as before W155, which is what New
-   * session's None (NO_PROFILE) sends: pitwall's defaults for sessions and their sub-agents apply.
+   * it up in its own profiles, and 400s for a name it doesn't have. Its model, effort and sub-agents'
+   * model apply where `model`, `effort` and `subagentModel` are absent; its skill always applies, from
+   * the server's profile, never from the request. Absent: no profile, as before W155: pitwall's
+   * defaults for sessions and their sub-agents apply. New session sends one once the profiles load
+   * (Phil, 2026-11-09: Customized, never None), with all three fields as the dialog shows them.
    */
   profile?: string;
   /**
@@ -2518,8 +2526,8 @@ export interface ClaudeDefaults {
 
 /**
  * A work profile (W155): a session's launch settings, by name. New session's Profile picker fills its
- * model and effort; the server adds its sub-agents' model and its skill. A field it lacks is left to
- * the defaults for sessions (WorkSettings.effective), as a dialog field left on its default is.
+ * Model, Effort and Sub-agents; the server adds its skill. A field it lacks is left to the defaults for
+ * sessions and sub-agents (WorkSettings.effective), as a dialog field left on its default is.
  */
 export interface WorkProfile {
   /** WORK_PROFILE_NAME_PATTERN; unique ignoring case. */
@@ -2546,17 +2554,10 @@ export interface WorkProfile {
 export const DEFAULT_PROFILE = 'Build';
 
 /**
- * New session's Profile picker's choice for no profile (W155; Phil, 2026-11-09): the request names
- * none, so pitwall's defaults for sessions and their sub-agents apply (W119: the config file's `work`,
- * then Preferences' overrides), as before W155. Reserved, as Custom is: no profile may have the name.
- */
-export const NO_PROFILE = 'None';
-
-/**
  * The settings pitwall started a session with from a work profile (W155; Phil, 2026-11-09), which it
- * reuses when it resumes that session: the profile's name, whether its model or effort were changed in
- * the dialog (Custom), and what was used. `model`, `effort` and `subagentModel` are as WorkProfile's,
- * WORK_DEFAULT for none. Never the skill: it was the first prompt's prefix, and runs once.
+ * reuses when it resumes that session: the profile's name, whether its model, effort or sub-agents'
+ * model were changed in the dialog (Customized), and what was used. `model`, `effort` and
+ * `subagentModel` are as WorkProfile's, WORK_DEFAULT for none. Never the skill: it was the first prompt's prefix, and runs once.
  */
 export interface SessionLaunch {
   profile?: string;
