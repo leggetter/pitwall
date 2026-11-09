@@ -364,7 +364,7 @@ On `m5.2/integration`, branched from `main` once M5.1 has merged (Phil, 2026-11-
   - The strip: a Plan section in the picture's body, after Working on: an `<h4>` disclosure, "Plan", with the plan's line on its row, one line with an ellipsis while collapsed, the default, kept in `pitwall.recap-plan-collapsed.v1`; open, the items tagged Done, Now, Next or Dropped, then "Changes:" only when there's a change. No section with no plan; a plain heading with no items.
   - The supervisor's tools (`mcpTools.ts`) pass on a recap's title, summary and to-dos only, not the goal, working on or plan, so they don't get the items either; unchanged.
   - Checks: `src/recaps/` prompt, input, engine and store tests, `recapRoutes` (the old paths 404), `RecapStrip`'s tests, the gallery, and the app check's `recaps` part at 375 and 1200, light and dark: the toggle on one row with its label and line, the list, tags inside the strip, no sideways scroll, no section for an empty plan.
-  - Status: Built on `m5.2/plan-in-recap`, awaiting review.
+  - Status: Done, merged into `m5.2/integration` ([#211](https://github.com/leggetter/pitwall/pull/211)) after a fresh review (approve with fixes), its fixes made by the coordinator: a model's plan items it can't read are left out and the recap kept (a stored file's still refused), W123's "(PR no longer open)" rule back in the prompt, changes folded within 40 words on an update, a once-only test for the forced first recap, D26's bullets. Left: no live check against Haiku yet; it should count how often items are left out.
 
 ## Open questions
 
