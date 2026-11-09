@@ -273,6 +273,22 @@ const part: Part = {
       if (t.layout !== 'drawer') t.expectEqual(await page.evaluate<number>(NEEDS_YOU), counts.needs - 2, 'and so does Needs you');
     });
 
+    await t.step('Needs you’s notice: its button under the text when the session list column is 600 px or narrower, however wide the app', async () => {
+      await t.fresh({ search: '?view=needs-you', supervisor: 'idle', approvals: true });
+      await page.waitFor('the notice', `!!document.querySelector('.supervisor-notice .inline-alert-actions')`);
+      const box = await page.evaluate<{ width: number; textWidth: number; textBottom: number; actionsTop: number; actionsRight: number }>(
+        `(() => { const n = document.querySelector('.supervisor-notice'); const r = (s) => n.querySelector(s).getBoundingClientRect(); return { width: parseFloat(getComputedStyle(n).width) - parseFloat(getComputedStyle(n).paddingLeft) - parseFloat(getComputedStyle(n).paddingRight), textWidth: r('.inline-alert-text').width, textBottom: r('.inline-alert-text').bottom, actionsTop: r('.inline-alert-actions').top, actionsRight: r('.inline-alert-actions').right }; })()`,
+      );
+      if (box.width <= 600) {
+        t.expect(box.actionsTop >= box.textBottom - 0.5, 'the button under the text', box);
+        // The text takes the alert's width but the 16 px icon, its 8 px gap and the 12 px padding at each side.
+        t.expect(box.textWidth >= box.width - 16 - 8 - 24 - 1, 'the text across the alert, not a strip beside the button', box);
+      } else {
+        t.expect(box.actionsTop < box.textBottom, 'the button beside the text', box);
+      }
+      await t.shot('needs-you-notice');
+    });
+
     await t.step('sent and started (W124): each session with its state, Needs you’s notice, and Open, which opens it', async () => {
       await t.fresh({ search: '?view=all', supervisor: 'idle', approvals: true });
       await openRepoList(t);
