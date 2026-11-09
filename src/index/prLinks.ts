@@ -231,6 +231,19 @@ export function claudeLinkOf(entry: Record<string, unknown>, sessionId?: string)
   return { kind: 'linked', repo: slug, number: prNumber, at };
 }
 
+/**
+ * The PR `url` names when it's exactly `https://github.com/<owner>/<name>/pull/<n>`, as a `pr-link`
+ * entry's `prUrl` must be (claudeLinkOf()), with the repo lowercase; otherwise undefined.
+ */
+export function prRefOfUrl(url: unknown): PrRef | undefined {
+  if (typeof url !== 'string') return undefined;
+  const match = LINK_URL.exec(url);
+  if (!match) return undefined;
+  const name = match[2] ?? '';
+  if (name === '.' || name === '..') return undefined;
+  return prRef(match[1] ?? '', name, match[3] ?? '');
+}
+
 /** A link as the scanner keeps it: a PrLink with its time as epoch milliseconds. */
 export interface FoundLink {
   kind: PrLinkKind;

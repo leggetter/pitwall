@@ -83,7 +83,7 @@ pitwall [root...]  ->  local server (127.0.0.1, per-run token)  ->  web UI
 | Conversation history | `~/.claude/projects/<dir>/<session-id>.jsonl` | **Internal.** The format changes between versions. Read-only, behind one adapter |
 | A session's context size | The newest main-chain assistant entry's `message.usage` in that transcript: `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`, each `message.id` once, sidechains and `<synthetic>` entries left out | **Internal.** Read from W133, in the transcript adapter (`contextTokensOf()`), failing soft: absent when it can't be read, and the session view says "unavailable" |
 | A session's sub-agents | `~/.claude/projects/<dir>/<session-id>/subagents/agent-<id>.jsonl` and `.meta.json` | **Internal.** Read from W76, read-only, as part of the transcript adapter |
-| A background job's "needs" line | `~/.claude/jobs/<id>/state.json` | **Internal**, and documented as not stable. Read from W69 (spike 007), behind one adapter, falling back to `claude agents`' state when it can't be read |
+| A background job's "needs" line, and the one PR its `children` link (W170) | `~/.claude/jobs/<id>/state.json` | **Internal**, and documented as not stable. Read from W69 (spike 007), behind one adapter, falling back to `claude agents`' state when it can't be read; `children` is read the same way, and a shape it doesn't know is left out without making the file unreadable |
 | Posting into a session's inbox socket directly | Unix socket under `/tmp/cc-socks*` | Only the auth line is documented. Don't depend on it |
 
 Observed while building M1 (Claude Code v2.1.301):
@@ -346,7 +346,10 @@ On `m5.2/integration`, branched from `main` once M5.1 has merged (Phil, 2026-11-
   - What: when the recap's `waitingOn` is `someone else`, `CI` or `another session`, the badge says "Waiting on someone else", "Waiting on CI" or "Waiting on another session", subtle and neutral, not solid, in Done's place, and the row stays out of Needs you. `nothing` keeps Done. Where the job's `children` link a PR, the badge may name it ("Waiting on review: #6089") if it fits at narrow widths.
   - Left to M6: noticing a new push to the PR, and the waits that need pitwall to watch something.
   - Checks: `web/src/sessions.ts`'s tests for each `waitingOn` value, the row's and the view's tests, the app check's `lists` part at 360 px and a wide width. A UI change, so the app check.
-  - Status: Planned.
+  - Built (Phil approved building it, 2026-11-09, "yes to all", the PR part included): `statusBadge()` gives a done job whose current recap, pitwall's, waits on someone else, CI or another session the status `waiting-on`, "Waiting on …", subtle neutral, in Done's place; Failed and Stopped stay. The job adapter (`src/index/jobs.ts`) reads `children` and keeps the PR when its `pr` entries name exactly one, by an exact `https://github.com/<owner>/<name>/pull/<n>` (`prRefOfUrl()`), as `SessionSummary.jobPr`; any other shape is left out without making the file unreadable. Line 2 names it, "#6089", unless the row's PR badge shows it, and the session view links it after the badge, `owner/name#n`.
+  - Why not in the badge: a badge that doesn't fit ends in an ellipsis, so the PR number, at its end, is what a 375 px row cuts first; and "review" would be a guess, since `someone else` can be a PR's author as well as its reviewer. So the badge says what it waits on, and line 2 and the view say on which PR.
+  - Left: a finished job's file isn't read (W69's rule), so a done job with no process shows the badge but no PR; a job whose `children` link several PRs (a long-running one can list dozens) shows none; the app check's step is in the `recaps` part, which runs with recaps on, not `lists`.
+  - Status: Done, merged into `m5.2/integration` ([#208](https://github.com/leggetter/pitwall/pull/208)) after a fresh review; its one fix, the session view's link following line 2's conditions, made.
 
 ## Open questions
 

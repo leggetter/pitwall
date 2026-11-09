@@ -390,6 +390,23 @@ describe('SessionView: the badges a row has, with their explanations (W31)', () 
     expect(within(lineTwo()).getByRole('button', { name: FINISHED_ASKED_HINT })).toBeTruthy();
   });
 
+  it('shows a done job waiting on someone else as that, with the PR its job links after it, a link to GitHub (W170)', () => {
+    const waiting = target({
+      kind: 'background',
+      shortId: 'pt170v',
+      state: 'done',
+      status: 'busy',
+      recap: { waitingOn: 'someone else', title: 'A made-up review', forYou: 0, at: new Date().toISOString(), source: 'pitwall' },
+      jobPr: { repo: 'example/demo-app', number: 6089 },
+    });
+    render(<SessionView session={waiting} listed onClose={() => {}} />);
+    expect(badges()).toEqual(['Waiting on someone else']);
+    const link = within(lineTwo()).getByRole('link', { name: 'example/demo-app#6089' });
+    expect(link.getAttribute('href')).toBe('https://github.com/example/demo-app/pull/6089');
+    expect(link.getAttribute('target')).toBe('_blank');
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+  });
+
   it('shows neither for a session that is neither stale nor finished', () => {
     render(<SessionView session={target({ askedYou: { reason: 'open-questions', excerpt: 'A made-up question?' } })} listed onClose={() => {}} />);
     expect(badges()).toEqual(['Asked you']);

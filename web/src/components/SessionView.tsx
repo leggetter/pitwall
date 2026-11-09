@@ -73,7 +73,7 @@ import { DEFAULT_TERMINAL_FOCUS, type TerminalFocus } from '../terminalFocus.js'
 import { formatRoots, plainText, shortenHome } from '../format.js';
 import { PANEL_MENU_STEP, PANEL_MIN, panelLimits, panelReset, shownPanel, type PanelWidthStore } from '../panelWidth.js';
 import { replyInConversation } from '../relay.js';
-import { finishedWaitingOnYou, WAITING_ON_TEXT } from '../recap.js';
+import { finishedWaitingOnYou, WAITING_ON_TEXT, waitingPrLink } from '../recap.js';
 import { prNeedOf } from '../work.js';
 import { attachCommand, canFlag, canSnooze, isFlagged, isSnoozed, needsAttention, resumeCommand, statusBadge } from '../sessions.js';
 import { SNOOZE_CHOICES, WAKE_ITEM } from '../snooze.js';
@@ -725,6 +725,7 @@ export function SessionView({
   };
 
   const badge = statusBadge(session);
+  const waitingOnPr = waitingPrLink(session);
   // Snoozed (W154): its badge is outlined, with "Snoozed until …" after it.
   const snoozed = isSnoozed(session);
   // Flagged as not needing you (W153): the same, with "You flagged this".
@@ -964,6 +965,12 @@ export function SessionView({
           {/* Idle shows here, though not in the list. */}
           <StatusBadge badge={badge} />
           {aside !== undefined && <span className="session-view-set-aside">{aside}</span>}
+          {/* The PR its job links, while it waits on someone else, CI or another session (W170). */}
+          {waitingOnPr !== undefined && (
+            <a className="session-view-waiting-pr" href={waitingOnPr.url} target="_blank" rel="noopener noreferrer">
+              {waitingOnPr.text}
+            </a>
+          )}
           {/*
             The row's other badges, each with an info button after it, so its explanation, which is a
             hover-only tooltip in the row, is reachable here by keyboard and screen readers.
