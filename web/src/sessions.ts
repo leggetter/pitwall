@@ -1,7 +1,7 @@
 // What the screen derives from a session: whether it needs Phil, which status
 // badge it gets, where it sorts, and whether it passes the filters.
 
-import { ENDED_SHOWN_DAYS, type SessionGroup, type SessionKind, type SessionSummary } from '../../src/shared/protocol.js';
+import { ENDED_SHOWN_DAYS, type RecapWaitingOn, type SessionGroup, type SessionKind, type SessionSummary } from '../../src/shared/protocol.js';
 import { shortenHome } from './format.js';
 
 /**
@@ -84,6 +84,28 @@ export function snoozeBack(session: SessionSummary): 'time' | 'woken' | undefine
  */
 export type BadgeLook = 'solid-warning' | 'subtle-warning' | 'subtle-info' | 'subtle-neutral' | 'subtle-success' | 'subtle-danger' | 'outline';
 
+/** What a session waits on, other than nothing, as line 2 and the badges say it. */
+export const WAITING_ON_TEXT: Readonly<Record<Exclude<RecapWaitingOn, 'nothing'>, string>> = {
+  you: 'Waiting on you',
+  CI: 'Waiting on CI',
+  'another session': 'Waiting on another session',
+  'someone else': 'Waiting on someone else',
+};
+
+/** What a session waits on when it isn't you or nothing (W170). */
+export type WaitingElsewhere = Exclude<RecapWaitingOn, 'you' | 'nothing'>;
+
+/**
+ * What a session's current recap, pitwall's, says it waits on, when that's CI, someone else or another
+ * session: never you or nothing, and never from a recap older than its latest turn (stale), from Claude
+ * Code's, which says nothing of what it waits on, or for an ended session.
+ */
+export function waitingElsewhere(session: SessionSummary): WaitingElsewhere | undefined {
+  const recap = session.recap;
+  if (!recap || recap.stale || recap.source !== 'pitwall' || session.ended) return undefined;
+  return recap.waitingOn === 'you' || recap.waitingOn === 'nothing' ? undefined : recap.waitingOn;
+}
+
 /** The session states the badges tell apart, as in the Badges table. */
 export type SessionStatus =
   | 'waiting'
@@ -93,6 +115,7 @@ export type SessionStatus =
   | 'recap'
   | 'blocked-stale'
   | 'failed'
+  | 'waiting-on'
   | 'done'
   | 'stopped'
   | 'ended'
@@ -122,6 +145,9 @@ export interface StatusBadge {
  * - 'asked': "Asked you", subtle, as before W69.
  * - 'recap': "Waiting on you", subtle as Asked you is (M5, W111): its current recap says it's waiting
  *   on you, as a job Claude Code calls done can be (Phil, 2026-10-29). It takes Done's place.
+ * A job Claude Code calls done whose current recap says it waits on someone else, on CI or on another
+ * session shows "Waiting on someone else", "Waiting on CI" or "Waiting on another session" in Done's
+ * place, subtle and neutral, never needing you (W170): "it's still marked as DONE" (Phil, 2026-11-09).
  * A blocked job that needs nothing of you shows as its process does: idle, with no badge in the list
  * and "Idle" in the session view, or Busy, or Not running. A stale one keeps its "Blocked" text,
  * outlined. A finished session shows its state (done, stopped or failed) even when it asked
@@ -156,7 +182,12 @@ function needsBadge(session: SessionSummary): StatusBadge {
   // A stale blocked job keeps its "Blocked" text but loses the attention styling.
   if (session.state === 'blocked' && session.stale) return { status: 'blocked-stale', label: `Blocked${reason}`, look: 'outline' };
   if (session.state === 'failed') return { status: 'failed', label: 'Failed', look: 'subtle-danger' };
-  if (session.state === 'done') return { status: 'done', label: 'Done', look: 'subtle-success' };
+  if (session.state === 'done') {
+    // Claude Code calls it done, but its recap says it waits on someone else, CI or another session (W170).
+    const waiting = waitingElsewhere(session);
+    if (waiting !== undefined) return { status: 'waiting-on', label: WAITING_ON_TEXT[waiting], look: 'subtle-neutral' };
+    return { status: 'done', label: 'Done', look: 'subtle-success' };
+  }
   if (session.state === 'stopped') return { status: 'stopped', label: 'Stopped', look: 'subtle-neutral' };
   if (!session.alive) return { status: 'not-running', label: 'Not running', look: 'outline' };
   if (session.status === 'busy') return { status: 'busy', label: 'Busy', look: 'subtle-info', dot: true };

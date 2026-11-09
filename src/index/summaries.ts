@@ -103,6 +103,7 @@ export function toSessionSummary(
     summary.title = transcript.aiTitle;
     summary.titleSource = 'claude-code';
   }
+  if (extras.job !== undefined && extras.job.kind !== 'unknown' && extras.job.pr !== undefined) summary.jobPr = { ...extras.job.pr };
   const needsYou = needsYouOf(row, summary, transcript, extras);
   if (needsYou !== undefined) summary.needsYou = needsYou;
   return summary;

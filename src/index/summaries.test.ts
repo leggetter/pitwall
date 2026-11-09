@@ -193,6 +193,16 @@ describe('toSessionSummary', () => {
     expect([summary, done, live].sort(compareSessions).map((s) => s.sessionId)).toEqual(['live', summary.sessionId, 'done']);
   });
 
+  it("carries the one PR its job's file links (W170), and none from an unknown file", () => {
+    const pr = { repo: 'example/demo-app', number: 6089 };
+    const done = row({ kind: 'background', shortId: 'pt170s', pid: 77, status: 'busy', state: 'done' });
+    expect(toSessionSummary(done, { transcript: 'ok' }, NOW, { job: { kind: 'none', pr } }).jobPr).toEqual(pr);
+    expect(toSessionSummary(done, { transcript: 'ok' }, NOW, { job: { kind: 'needs', text: 'Tea?', pr } }).jobPr).toEqual(pr);
+    expect(toSessionSummary(done, { transcript: 'ok' }, NOW, { job: { kind: 'none' } })).not.toHaveProperty('jobPr');
+    expect(toSessionSummary(done, { transcript: 'ok' }, NOW, { job: { kind: 'unknown' } })).not.toHaveProperty('jobPr');
+    expect(toSessionSummary(done, { transcript: 'ok' }, NOW)).not.toHaveProperty('jobPr');
+  });
+
   describe('title', () => {
     const titled = (aiTitle: string, overrides: Partial<AgentRow> = {}) =>
       toSessionSummary(row(overrides), { transcript: 'ok', aiTitle }, NOW);
