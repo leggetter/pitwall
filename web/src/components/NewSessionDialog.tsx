@@ -250,7 +250,7 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
   // With the directory they were asked for (W122), so an answer for an earlier choice never shows.
   const [loadedWork, setWork] = useState<{ settings: WorkSettings; dir: string | undefined }>();
   // The work profiles (W155), from the first answer, and the one picked: Build, until the answer
-  // says there's no such profile. Picking one fills Model, Effort and Sub-agents, as does the first
+  // says there's no such profile. The Profile field shows only once they've loaded. Picking one fills Model, Effort and Sub-agents, as does the first
   // answer, unless one of them was changed before it came.
   const [profiles, setProfiles] = useState<WorkProfile[]>();
   const [picked, setPicked] = useState<string | undefined>(DEFAULT_PROFILE);
@@ -668,7 +668,8 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
         )}
       </div>
 
-      {picked !== undefined && (
+      {/* Only once the profiles have loaded: before that, or if they never do, none is sent (W155). */}
+      {pickedProfile !== undefined && (
         <div className="field">
           <label className="field-label" htmlFor={ids.profile}>
             Profile
@@ -687,7 +688,7 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
               aria-describedby={hint === undefined ? undefined : `${ids.profile}-hint`}
               {...disabled}
             >
-              {(profiles ?? [{ name: DEFAULT_PROFILE }]).map((profile) => (
+              {(profiles ?? []).map((profile) => (
                 <option key={profile.name} value={profile.name}>
                   {profile.name}
                 </option>

@@ -287,7 +287,12 @@ On `m5.2/integration`, branched from `main` once M5.1 has merged (Phil, 2026-11-
     - Read back as untrusted, as the snoozes are (Security), and every value checked again as a resume looks it up, with the profiles' checks; one that fails is dropped, and that field takes the defaults for sessions. Writing fails soft: held in memory for the run.
     - The resume: the record's values, then the defaults for any it lacks, as `--model`, `--effort` and `CLAUDE_CODE_SUBAGENT_MODEL` (actions.ts). The supervisor's resume card says them (`launch` on the approval, `resumeLaunchText()`), "from the Review profile, customized" for Customized.
   - Checks: the config file's tests; New session's tests (a pick fills Sub-agents, a change to each of the three shows Customized, a re-pick refills, the request carries the sub-agents' model); actions.test.ts's (a bad sub-agents' model is a 400 that doesn't quote it, no skill from the request, the launch record holds the sub-agents' model and Customized, resume with a record, across a restart, and without one); sessionLaunches.test.ts; supervisorApprovals.test.ts's card; the app check's `new-session` part (Review's skill line, Customized, a start with Sub-agents changed).
-  - Status: Built on `m5.2/work-profiles`, with Customized and Sub-agents (Phil, 2026-11-09) and resume keeping the profile, for review.
+  - Left, from the second review (2026-11-09):
+    - A session started before the profiles load, so with no profile, keeps no launch record, and resumes on the defaults.
+    - Two pitwalls on one `PITWALL_HOME` overwrite each other's launch records: each writes the set it loaded at start, as the snoozes and flags stores do.
+    - The record's "customized" compares values, so a field changed to a value that equals the profile's isn't customized on the resume card.
+    - A screen reader isn't told when the Profile picker switches to Customized.
+  - Status: Built on `m5.2/work-profiles`, with Customized and Sub-agents (Phil, 2026-11-09) and resume keeping the profile; reviewed twice, and the Profile field shows only once the profiles have loaded.
 - **W156, The supervisor proposes sessions with a profile** (`m5.2/supervisor-profiles`, S). After W155.
   - `spawn_session` and the resume tool take a profile's name, checked against the profiles; the card shows the profile, and you can change it before you approve. The supervisor's prompt says which profile fits which work.
   - The prompt goes to version 7, so the supervisor's next start begins a new conversation.

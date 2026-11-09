@@ -383,6 +383,8 @@ describe("New session's Model and Effort (W119)", () => {
     await settle();
     expect(optionTexts(screen.getByLabelText(/^Effort/) as HTMLSelectElement)).toEqual(['Default', 'low', 'medium', 'high', 'xhigh', 'max']);
     expect(optionTexts(screen.getByLabelText(/^Model/) as HTMLSelectElement)[1]).toBe('sonnet');
+    // No profiles, so no Profile field claims one: none is sent (W155).
+    expect(screen.queryByLabelText(/^Profile/)).toBeNull();
   });
 });
 
@@ -514,9 +516,11 @@ describe("New session's Profile (W155)", () => {
       return fetch(url, init);
     });
     renderDialog(slow);
-    expect(shownProfile(fields().profile)).toBe('Build');
-    expect(optionTexts(fields().subagents)[0]).toBe('Default');
-    fireEvent.change(fields().subagents, { target: { value: 'haiku' } });
+    // No Profile until the profiles come: none would be sent (W155).
+    expect(screen.queryByLabelText('Profile')).toBeNull();
+    const subagents = screen.getByLabelText(/^Sub-agents/) as HTMLSelectElement;
+    expect(optionTexts(subagents)[0]).toBe('Default');
+    fireEvent.change(subagents, { target: { value: 'haiku' } });
     await act(async () => answer?.());
     await settle();
     expect([shownProfile(fields().profile), fields().model.value, fields().subagents.value]).toEqual(['Customized', '', 'haiku']);

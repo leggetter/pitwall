@@ -5,11 +5,11 @@
 //
 // What's kept, for each session pitwall started with a profile: the short id `claude --bg` reported,
 // its session id once the index lists it with that short id, when it was started or last resumed, and
-// the SessionLaunch: the profile's name, whether you changed its model or effort in the dialog
-// (Custom), and the model, effort and sub-agents' model actually used, WORK_DEFAULT for none. Never
+// the SessionLaunch: the profile's name, whether you changed its model, effort or sub-agents' model
+// in the dialog (Customized), and the model, effort and sub-agents' model actually used, WORK_DEFAULT for none. Never
 // the skill: it was the first prompt's prefix, and must not run again on a resume. Never a prompt,
-// name, directory, token or other session content. A session started with no profile (New session's
-// None, the supervisor's spawn_session until W156) has no record, and resumes as before: the defaults
+// name, directory, token or other session content. A session started with no profile (New session
+// before its profiles have loaded, the supervisor's spawn_session until W156) has no record, and resumes as before: the defaults
 // for sessions this pitwall started in this run, else no flags.
 //
 // Kept in $PITWALL_HOME/session-launches.json, 0600, written whole by rename on each change, at most
