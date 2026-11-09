@@ -40,42 +40,57 @@ export type PtySpawner = (file: string, args: string[], options: PtySpawnOptions
 type NodePty = typeof import('node-pty');
 
 let nodePty: NodePty | undefined;
+/** node-pty's spawn-helper, found when node-pty loads; undefined off macOS or when there's none. */
+let spawnHelper: string | undefined;
 
 /** The real PtySpawner, over node-pty. */
 export const spawnPty: PtySpawner = (file, args, options) => {
   nodePty ??= loadNodePty();
+  // Before every spawn, not once per process: an `npm ci` under a running
+  // server reinstalls the helper without its execute bit, and every attach
+  // after it would fail until a restart (W169).
+  if (spawnHelper !== undefined) makeExecutable(spawnHelper);
   return nodePty.spawn(file, args, { ...options, encoding: 'utf8' });
 };
 
 function loadNodePty(): NodePty {
   const require = createRequire(import.meta.url);
   const pty = require('node-pty') as NodePty;
-  makeSpawnHelperExecutable(require);
+  if (process.platform === 'darwin') {
+    spawnHelper = findSpawnHelper(dirname(require.resolve('node-pty/package.json')), `${process.platform}-${process.arch}`);
+  }
   return pty;
 }
 
 /**
  * node-pty 1.1.0's macOS prebuilds ship `spawn-helper` without its execute
  * bit (mode 0644 in the published tarball), so every spawn fails with
- * `posix_spawnp failed.` Set it, once, when it's missing. Linux builds from
- * source and doesn't use the helper. Remove this when an upgrade ships the
- * helper executable (1.2.0-beta.15 does).
+ * `posix_spawnp failed.` pitwall sets the bit when it's missing. Linux builds
+ * from source and doesn't use the helper. Remove this when a stable release
+ * ships the helper executable (the 1.2.0 betas do; 1.1.0 is still `latest`).
+ *
+ * The helper node-pty uses: its own build first, then the prebuild, the
+ * order node-pty loads its native module in.
  */
-function makeSpawnHelperExecutable(require: NodeRequire): void {
-  if (process.platform !== 'darwin') return;
-  const root = dirname(require.resolve('node-pty/package.json'));
-  for (const dir of ['build/Release', `prebuilds/${process.platform}-${process.arch}`]) {
+export function findSpawnHelper(root: string, platformArch: string): string | undefined {
+  for (const dir of ['build/Release', `prebuilds/${platformArch}`]) {
     const helper = join(root, dir, 'spawn-helper');
-    if (!existsSync(helper)) continue;
-    try {
-      accessSync(helper, constants.X_OK);
-    } catch {
-      try {
-        chmodSync(helper, 0o755);
-      } catch {
-        // Read-only install: the spawn then fails with node-pty's own error.
-      }
-    }
+    if (existsSync(helper)) return helper;
+  }
+  return undefined;
+}
+
+/** Adds the execute bit when it's missing. Never throws. */
+export function makeExecutable(path: string): void {
+  try {
+    accessSync(path, constants.X_OK);
     return;
+  } catch {
+    // Not executable, or gone mid-reinstall: try to set it.
+  }
+  try {
+    chmodSync(path, 0o755);
+  } catch {
+    // Read-only install, or no file: the spawn then fails with node-pty's own error.
   }
 }
