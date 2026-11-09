@@ -121,7 +121,11 @@ function parseProfile(
  */
 export function mergeProfiles(config: readonly WorkProfile[] = []): WorkProfile[] {
   const byName = new Map(config.map((profile) => [profile.name.toLowerCase(), profile]));
-  const merged = BUILT_IN_PROFILES.map((builtIn) => ({ ...(byName.get(builtIn.name.toLowerCase()) ?? builtIn) }));
+  // A replacement keeps the built-in's own name, so `build` replaces Build and Build is still found by name.
+  const merged = BUILT_IN_PROFILES.map((builtIn) => {
+    const replacement = byName.get(builtIn.name.toLowerCase());
+    return replacement === undefined ? { ...builtIn } : { ...replacement, name: builtIn.name };
+  });
   const builtInNames = new Set(BUILT_IN_PROFILES.map((profile) => profile.name.toLowerCase()));
   for (const profile of config) if (!builtInNames.has(profile.name.toLowerCase())) merged.push({ ...profile });
   return merged;

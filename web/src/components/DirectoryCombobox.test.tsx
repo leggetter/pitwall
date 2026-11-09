@@ -112,7 +112,7 @@ describe('Directory', () => {
     fireEvent.change(within(dialog).getByLabelText('First prompt'), { target: { value: 'go' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
     await settle();
-    expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/demo-app`, prompt: 'go', profile: 'Build' }]);
+    expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/demo-app`, prompt: 'go' }]);
   });
 
   it('offers every directory while it shows the chosen one, as a select would, and narrows once you type', async () => {
@@ -255,7 +255,7 @@ describe('Directory', () => {
     fireEvent.change(within(dialog).getByLabelText('First prompt'), { target: { value: 'go' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
     await settle();
-    expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/demo-api`, prompt: 'go', profile: 'Build' }]);
+    expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/demo-api`, prompt: 'go' }]);
   });
 
   it('highlights the first match as you type, so Enter takes it (W142)', async () => {
@@ -280,7 +280,7 @@ describe('Directory', () => {
     fireEvent.change(within(dialog).getByLabelText('First prompt'), { target: { value: 'go' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
     await settle();
-    expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/demo-app`, prompt: 'go', profile: 'Build' }]);
+    expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/demo-app`, prompt: 'go' }]);
   });
 
   it('highlights none while nothing matches, or the text is emptied, so Enter keeps the text (W142)', async () => {
@@ -368,7 +368,7 @@ describe('Directory', () => {
 
     key(input, 'Enter', { metaKey: true });
     await settle();
-    expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/note`, prompt: 'go', profile: 'Build' }]);
+    expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/note`, prompt: 'go' }]);
   });
 
   it('opens with ↓, highlighting the first; with ↑, the last; and with Alt + ↓, highlighting none', async () => {
@@ -468,8 +468,8 @@ describe('Directory', () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
       await settle();
       expect(spawns(server.fetch)).toEqual([
-        { cwd: `${CODE}/notes${space}`, prompt: 'go', profile: 'Build' },
-        { cwd: `${CODE}/notes`, prompt: 'go', profile: 'Build' },
+        { cwd: `${CODE}/notes${space}`, prompt: 'go' },
+        { cwd: `${CODE}/notes`, prompt: 'go' },
       ]);
       unmount();
     }
@@ -534,7 +534,7 @@ describe('Directory', () => {
     fireEvent.change(within(dialog).getByLabelText('First prompt'), { target: { value: 'go' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
     await settle();
-    expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/demo-app/web/deep/er/than/three`, prompt: 'go', profile: 'Build' }]);
+    expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/demo-app/web/deep/er/than/three`, prompt: 'go' }]);
   });
 
   it("with a root tab open, offers that root's directories alone (W38)", async () => {
@@ -629,7 +629,7 @@ describe('Directory', () => {
       fireEvent.change(within(dialog).getByLabelText('First prompt'), { target: { value: 'go' } });
       fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
       await settle();
-      expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/typed`, prompt: 'go', profile: 'Build' }]);
+      expect(spawns(server.fetch)).toEqual([{ cwd: `${CODE}/typed`, prompt: 'go' }]);
       unmount();
     }
   });

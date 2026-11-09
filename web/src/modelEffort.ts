@@ -147,7 +147,7 @@ export function profileHint(profile: WorkProfile, custom: boolean): string {
         ? "Sub-agents on Claude Code's default."
         : `Sub-agents default to ${profile.subagentModel}.`;
   const skill = profile.skill === undefined ? '' : ` Starts with /${profile.skill}, which must be installed where the session runs.`;
-  const prefix = custom ? `${CUSTOM_PROFILE_TEXT}: your model and effort, with ${profile.name}'s sub-agents${profile.skill === undefined ? '' : ' and skill'}. ` : '';
+  const prefix = custom ? `${CUSTOM_PROFILE_TEXT}: your model and effort, with the ${profile.name} profile's sub-agents${profile.skill === undefined ? '' : ' and skill'}. ` : '';
   return `${prefix}${sub}${skill}`;
 }
 

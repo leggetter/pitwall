@@ -193,7 +193,7 @@ describe('New session: the dialog', () => {
     expect(posts(server)).toEqual([]);
     fireEvent.keyDown(within(dialog).getByLabelText('First prompt'), { key: 'Enter', metaKey: true });
     await settle();
-    expect(posts(server).map((post) => post.body)).toEqual([{ cwd: REPO, prompt: 'first', profile: 'Build' }]);
+    expect(posts(server).map((post) => post.body)).toEqual([{ cwd: REPO, prompt: 'first' }]);
 
     dialog = openDialog();
     fill(dialog, { prompt: 'second' });
@@ -296,7 +296,7 @@ describe('New session: starting one', () => {
     expect(posts(server)).toEqual([
       {
         url: SPAWN_PATH,
-        body: { cwd: OTHER_REPO, prompt: 'Reply with: ready', name: 'pitwall-test-spawn', profile: 'Build', model: 'haiku' },
+        body: { cwd: OTHER_REPO, prompt: 'Reply with: ready', name: 'pitwall-test-spawn', model: 'haiku' },
         headers: expect.objectContaining({ Authorization: `Bearer ${API_KEY}` }),
       },
     ]);
@@ -362,8 +362,8 @@ describe('New session: starting one', () => {
 
     expect(posts(server).map((post) => post.body)).toEqual([
       // Before the profiles have loaded (this fake server has none), Build by name, which the server always has.
-      { cwd: REPO, prompt: 'first', profile: 'Build' },
-      { cwd: `${ROOT}/new-thing`, prompt: 'second', profile: 'Build', model: 'claude-haiku-4-5' },
+      { cwd: REPO, prompt: 'first' },
+      { cwd: `${ROOT}/new-thing`, prompt: 'second', model: 'claude-haiku-4-5' },
     ]);
   });
 

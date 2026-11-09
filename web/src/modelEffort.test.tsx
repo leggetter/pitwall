@@ -442,7 +442,7 @@ describe("New session's Profile (W155)", () => {
 
     fireEvent.change(fields().effort, { target: { value: 'xhigh' } });
     expect(shownProfile(fields().profile)).toBe('Custom');
-    expect(screen.getByText(/^Custom: your model and effort, with Review's sub-agents and skill\. Sub-agents default to sonnet\./)).toBeTruthy();
+    expect(screen.getByText(/^Custom: your model and effort, with the Review profile's sub-agents and skill\. Sub-agents default to sonnet\./)).toBeTruthy();
     // Back to the profile's own: no longer Custom.
     fireEvent.change(fields().effort, { target: { value: 'high' } });
     expect(shownProfile(fields().profile)).toBe('Review');
@@ -525,6 +525,6 @@ describe("New session's Profile (W155)", () => {
 
   it('words what a profile adds', () => {
     expect(profileHint({ name: 'X', subagentModel: 'default', source: 'config' }, false)).toBe("Sub-agents on Claude Code's default.");
-    expect(profileHint({ name: 'X', subagentModel: 'haiku', source: 'config' }, true)).toBe("Custom: your model and effort, with X's sub-agents. Sub-agents default to haiku.");
+    expect(profileHint({ name: 'X', subagentModel: 'haiku', source: 'config' }, true)).toBe("Custom: your model and effort, with the X profile's sub-agents. Sub-agents default to haiku.");
   });
 });

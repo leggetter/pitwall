@@ -153,9 +153,16 @@ describe('the profiles that apply', () => {
       { name: 'review', model: 'opus', skill: 'agent-roles:role-reviewer', source: 'config' },
     ];
     const merged = mergeProfiles(config);
-    expect(merged.map((profile) => profile.name)).toEqual(['Build', 'review', 'Security review', 'Docs', 'Extra']);
+    // The replacement keeps the built-in's name, so the store and the page still find it by that name.
+    expect(merged.map((profile) => profile.name)).toEqual(['Build', 'Review', 'Security review', 'Docs', 'Extra']);
     // Whole: the built-in's effort and sub-agents don't carry over.
-    expect(merged[1]).toEqual({ name: 'review', model: 'opus', skill: 'agent-roles:role-reviewer', source: 'config' });
+    expect(merged[1]).toEqual({ name: 'Review', model: 'opus', skill: 'agent-roles:role-reviewer', source: 'config' });
+  });
+
+  it('keep Build findable when the file replaces it under another case', () => {
+    const work = createWorkStore({ profiles: [{ name: 'build', model: 'haiku', source: 'config' }] });
+    expect(work.settings().profiles?.[0]).toEqual({ name: 'Build', model: 'haiku', source: 'config' });
+    expect(work.profile('Build')?.model).toBe('haiku');
   });
 
   it('are in WorkSettings, and the store finds one by its exact name, as a copy', () => {

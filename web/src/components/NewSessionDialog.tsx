@@ -460,8 +460,9 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
     }
     const request: SpawnRequest = { cwd, prompt };
     if (name !== '') request.name = name;
-    // The profile by name (W155): before the profiles have loaded, Build, which the server always has.
-    if (picked !== undefined && (profiles === undefined || pickedProfile !== undefined)) request.profile = picked;
+    // The profile by name (W155), only once the profiles have loaded: before that, or if they never do,
+    // the fields show pitwall's defaults, so none is sent and the server applies those.
+    if (pickedProfile !== undefined) request.profile = pickedProfile.name;
     // A field on its first option is pitwall's defaults for sessions. With a profile that sets the field,
     // that has to be said, or the server would take the profile's: the defaults' value, or Claude Code's.
     const session = latestWork?.effective.session;
