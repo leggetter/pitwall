@@ -79,6 +79,8 @@ describe('parseRecap', () => {
     expect(parseRecap(RECAP)).toEqual(RECAP);
     expect(parseRecap({ ...RECAP, stale: true })).toEqual({ ...RECAP, stale: true });
     expect(parseRecap({ ...RECAP, todos: [], waitingOn: 'nothing' })?.todos).toEqual([]);
+    // W166's `after` is read and dropped: the page has no use for it.
+    expect(parseRecap({ ...RECAP, todos: [{ text: 'a', owner: 'you', after: true }] })?.todos).toEqual([{ text: 'a', owner: 'you' }]);
   });
 
   it('refuses anything that isn’t one', () => {
@@ -97,6 +99,8 @@ describe('parseRecap', () => {
       { ...RECAP, todos: [{ text: 'a', owner: 'me' }] },
       { ...RECAP, todos: [{ text: 1, owner: 'you' }] },
       { ...RECAP, todos: [{ text: 'a', owner: 'you', extra: true }] },
+      { ...RECAP, todos: [{ text: 'a', owner: 'you', after: 'yes' }] },
+      { ...RECAP, todos: [{ text: 'a', owner: 'you', after: true, extra: true }] },
       { ...RECAP, todos: [null] },
       { why: 'the old shape', now: 'b', next: 'c', waitingOn: 'you', title: 'd', at: RECAP.at, throughAt: RECAP.throughAt, source: 'pitwall' },
     ]) {

@@ -2,14 +2,14 @@
 
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
-Last updated: 2026-11-09, on `docs/handoff-m5.1`, a hand-off after M5.1 merged into `main` ([#197](https://github.com/leggetter/pitwall/pull/197), feat: M5.1, the work after M5), closing [#139](https://github.com/leggetter/pitwall/issues/139) (New session defaults to the selected session's directory) and [#140](https://github.com/leggetter/pitwall/issues/140) (Needs you: a recap keeps a session you said is done under Needs you). Before it: the full app check passed 2,235 of 2,236 steps on `0ec493b`; 26 stale checks were fixed in [#195](https://github.com/leggetter/pitwall/pull/195) and the one failure, a check racing the Plan status live region, in [#196](https://github.com/leggetter/pitwall/pull/196). Next: M5.2, efficiency, starting with W155 (work profiles).
+Last updated: 2026-11-09, on `docs/handoff-w166`, a hand-off after W166 (a finished job's own to-dos aren't hidden behind work nobody is watching) merged into `m5.2/integration` ([#202](https://github.com/leggetter/pitwall/pull/202)), spike 014 (Clear and continue through the attach PTY: it works) and the W166 to W168 plan ([#204](https://github.com/leggetter/pitwall/pull/204)). Before it: the M5.1 hand-off, the usage comparison and the rebuild for 4518 ([#200](https://github.com/leggetter/pitwall/pull/200)).
 
 ## Current milestone
 
 **M5.2, efficiency, next,** on `m5.2/integration`, to be branched from `main` at `e4886ab` (`PLAN.md`, "M5.2 - Efficiency" and "M5.2 work breakdown"). M5.1 is done; its detail is in `docs/plan-archive.md` ("M5.1 - After M5", "M5.1 work breakdown"), and M0 to M5 before it.
 
 - **What the usage showed** (W131, the usage report; 14 days to 11-02, every repo): 11.35B tokens, 97.7% of them cache reads, 87% of those at more than 200K of context; sub-agents 58%. Phil: "The problem isn't the global rules. It's pitwall" (2026-11-03).
-- **Effort:** Phil's `~/.claude/settings.json` sets Opus 5.5 to high since 10-30 (it was xhigh from about 10-08). The week from 11-02 is the test against 10-20 to 10-29 (Next 1).
+- **Effort:** Phil's `~/.claude/settings.json` sets Opus 5.5 to high since 10-30 (it was xhigh from about 10-08). Measured 2026-11-09 (`usage-report.ts --days 21 --json`, by day, every repo): 10-20 to 10-29 at xhigh, 9 active days, 1.12B tokens a day, 3,264 calls, 2.56M output, 785 output and 344K total a call; 11-02 to 11-09 at high, 7 active days, 750M a day (-33%), 3,294 calls (flat), 2.43M output (-5%), 739 output (-6%) and 228K total a call (-34%). The drop is shorter contexts (cache reads), not effort: output, which holds the thinking, fell only 6% a call. The work mix differs between the weeks.
 - **The merge rule** (Phil, 2026-11-06): merge each item after a fresh sub-agent review and its fixes, without waiting for a try-out; his feedback from real use becomes new work items. Claude Code's auto mode refused a `gh pr merge` into `main` until Phil said "you merge" (2026-11-09).
 
 ## Open work
@@ -17,7 +17,9 @@ Last updated: 2026-11-09, on `docs/handoff-m5.1`, a hand-off after M5.1 merged i
 | Item | State |
 | --- | --- |
 | M5.2, W155 to W160 | Not started. W155 (work profiles), W156 (the supervisor proposes sessions with a profile), W157 (spike 013: reading the plan's percentages without changing your settings), W158 (the Usage view), W159 (the run rate against a weekend reserve), W160 (the supervisor reads the run rate), in that order (`PLAN.md`, "M5.2 work breakdown") |
-| W165 (a diagnostics log: why a row is in Needs you) | Planned, any time in M5.2 (`PLAN.md`, "M5.2 work breakdown"); Phil approved the work item on 2026-11-09 |
+| W166 to W168: W166 (a finished job's own to-dos aren't hidden behind work nobody is watching), W167 (session lineage: what a session continues across `/clear` or a hand-off), W168 (Clear and continue: a hand-off you start with one click, spike 014 first) | W166 merged ([#202](https://github.com/leggetter/pitwall/pull/202)); spike 014 (Clear and continue through the attach PTY) done and it works (`docs/spikes/014-clear-and-continue.md`); W167 and W168 planned. In that order, independent of W155 to W160 (`PLAN.md`, "M5.2 work breakdown"); Phil approved all three on 2026-11-09 ("yes to all three, go ahead"), after a hand-off session showed as done when it needed `/clear` and a prompt |
+| W165 (a diagnostics log: why a row is in Needs you), W170 (a waiting-on-someone-else session isn't "Done") | Planned, any time in M5.2 (`PLAN.md`, "M5.2 work breakdown"); Phil approved planning both on 2026-11-09, building not yet approved for W170 ([#199](https://github.com/leggetter/pitwall/pull/199)) |
+| W169 (attach survives an `npm ci` under a running server) | Merged into `m5.2/integration` ([#203](https://github.com/leggetter/pitwall/pull/203)). `npm ci` in the main checkout while 4518 ran put node-pty's `spawn-helper` back without its execute bit, and pitwall set it only once per process, so every attach failed with `posix_spawnp failed.` (2026-11-07 and 2026-11-09). `src/server/pty.ts` now checks the bit before every spawn. Remove it when a stable node-pty ships the helper executable |
 | Left from W164 (M5.1's security review) | F5 (a snooze trusts the relay's name, not its msg_ids), I3's note on attached files, I4 (by design); in the archive's W164 item |
 | Left from M5's security notes (Info) | A look-alike name doesn't trigger the resume card's shared-name note; resume errors show a folder outside `untrusted`; the `claude` command list isn't checked against Claude Code 2.1.316's hidden commands |
 | Left from M5.1's items | Each item's "Left" is in its archive entry: for example W153's (flag) no retry of a failed ask, W154's (snooze) unseen scheduled wake-ups, W163's (spin-off proposals) overlap check, "Ask the supervisor" and the profile's model, with M6 |
@@ -28,15 +30,17 @@ Last updated: 2026-11-09, on `docs/handoff-m5.1`, a hand-off after M5.1 merged i
 
 ## Next, in order
 
-1. **Today, 2026-11-09:** `npx tsx scripts/usage-report.ts --days 7` against the 10-20 to 10-29 figures, for the high-effort week; then one blog-editing session on Sonnet for Phil to judge (agreed; not the evals post).
-2. **Phil's 4518:** it was built from `aa955fa` (2026-11-07, 12:22); W161 to W164's code has merged since. In the main checkout, which is on `m5.1/integration`: `git checkout main && git pull --ff-only && npm ci && npm run build`, then Phil restarts 4518. After that restart, the supervisor begins a new conversation once (prompt version 6, W138), if it hasn't already.
-3. **Branch `m5.2/integration` from `main`** and push it, then W155 (work profiles) in a worktree (`.worktrees/work-profiles`), built by a sub-agent at high effort, a fresh review, the coordinator's fixes, merge into `m5.2/integration`, CI there. Read `PLAN.md`'s W155 item and W119's `work` block (`src/config.ts`, `src/server/work.ts`) first.
-4. **Then W156 to W160,** one session per item (`AGENTS.md`, Efficiency), then M5.2's security review and the merge into `main`, with its PR text shown to Phil first.
-5. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
+1. **One blog-editing session on Sonnet for Phil to judge** (agreed; not the evals post). The usage comparison is done (Current milestone, Effort).
+2. **Phil restarts 4518:** the main checkout is on `main` at `e4886ab` and built (2026-11-09), so the restart picks up W161 to W164. After it, the supervisor begins a new conversation once (prompt version 6, W138, the supervisor's messages say they're from it), if it hasn't already.
+3. **`m5.2/integration` is pushed** (from `main` at `e4886ab`). Next, W155 (work profiles) in a worktree (`.worktrees/work-profiles`), built by a sub-agent at high effort, a fresh review, the coordinator's fixes, merge into `m5.2/integration`, CI there. Read `PLAN.md`'s W155 item and W119's `work` block (`src/config.ts`, `src/server/work.ts`) first.
+4. **W166 to W168,** in that order, each on its own branch from `m5.2/integration` and merged after a fresh review, beside W155; W168 starts with spike 014 (sending `/clear` and a prompt to a background job through pitwall's attach PTY).
+5. **Then W156 to W160,** one session per item (`AGENTS.md`, Efficiency), then M5.2's security review and the merge into `main`, with its PR text shown to Phil first.
+6. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
 
 ## Open questions for Phil
 
-None.
+- **Start W167 (session lineage) in a fresh session now, or after W155 (work profiles)?** Now builds it beside W155, against "One agent at a time"; after keeps to the rule. Lean: now, since Phil approved all three ("yes to all three, go ahead", 2026-11-09) and W167 touches no W155 file.
+- **[#199](https://github.com/leggetter/pitwall/pull/199) (W165, a diagnostics log of why a row is in Needs you)** still targets `docs/handoff-m5.1`, which merged in #200. It needs retargeting to `m5.2/integration`, and its `PLAN.md` entry conflicts with W166 to W168's (both after W160). Lean: its own session does it; W165 goes after W168 in the list.
 
 Answered (Phil, 2026-11-09, "go with your leans"): no user guide for now; the README stays the only user-facing description of what pitwall does, and is revisited when its "What it does" outgrows a screen or someone asks how a feature works (the repo is already public, so the earlier "until it goes public" didn't apply). W163's (spin-off proposals) card stays as built: over Needs you's rows, dismissals kept per browser, the folder checked at Start. W138's (the supervisor's messages say they're from it) footer stays, though it wraps to 3 lines in a draft card at 1,200 px.
 

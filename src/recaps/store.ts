@@ -32,7 +32,7 @@ import { isRecord } from '../index/guards.js';
 import { isSessionUuid } from '../index/transcripts.js';
 import { ENDED_LISTED_DAYS, type SessionRecap } from '../shared/protocol.js';
 import { ensureLaunchDir } from '../server/launch.js';
-import { readRecapAnswer } from './prompt.js';
+import { readRecapAnswer, todoOf } from './prompt.js';
 
 /** The folder's name in pitwall's home. */
 export const RECAP_STORE_DIR_NAME = 'recap-store';
@@ -129,7 +129,7 @@ export function storedText(sessionId: string, recap: SessionRecap): string {
     sessionId,
     at: recap.at,
     throughAt: recap.throughAt,
-    recap: { summary: recap.summary, todos: recap.todos.map(({ text, owner }) => ({ text, owner })), waitingOn: recap.waitingOn, title: recap.title, ...picture },
+    recap: { summary: recap.summary, todos: recap.todos.map(todoOf), waitingOn: recap.waitingOn, title: recap.title, ...picture },
   })}\n`;
 }
 
@@ -178,7 +178,7 @@ export function parseStoredRecap(text: string, sessionId: string, nowMs: number,
   if (answer.todos.length !== raw.todos.length) return undefined;
   for (let i = 0; i < answer.todos.length; i++) {
     const kept = raw.todos[i] as Record<string, unknown>;
-    if (answer.todos[i]!.text !== kept.text || answer.todos[i]!.owner !== kept.owner) return undefined;
+    if (answer.todos[i]!.text !== kept.text || answer.todos[i]!.owner !== kept.owner || answer.todos[i]!.after !== kept.after) return undefined;
   }
   if (!ignoreAge && nowMs - Math.max(atMs, throughMs) > RECAP_KEEP_MS) return 'expired';
   return { ...answer, at: parsed.at as string, throughAt: parsed.throughAt as string, source: 'pitwall' };
