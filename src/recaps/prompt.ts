@@ -64,6 +64,11 @@ export const RECAP_SETTINGS = JSON.stringify({ crossSessionInbound: 'refuse', au
  * now puts a session under Needs you (W146; Phil, 2026-11-05: questions "should be carried forward
  * unless they have been explicitly ignored").
  *
+ * W166: each to-do says whether it only follows an earlier one (`after`), so a finished background
+ * job's step of yours that doesn't, such as "Run /clear, then …", isn't hidden behind a CI check
+ * nothing is left to watch (Phil, 2026-11-09: a hand-off "marked as Done, but I actually need to run
+ * /clear and then a prompt").
+ *
  * W150 (the recap strip gives the picture): the goal, what it's working on and why, and the plan's
  * one line, since the to-dos restate the footer of the latest turn, which the conversation already
  * shows (Phil, 2026-11-05: "give us a bit more direction on the current work items we're working
@@ -76,7 +81,7 @@ You get material from one session's transcript: the user's first prompt, sometim
 
 Answer with one JSON object and nothing else: no code fence, no text before or after it.
 
-{"goal": "...", "workingOn": "...", "plan": "...", "summary": "...", "todos": [{"text": "...", "owner": "..."}], "waitingOn": "...", "title": "..."}
+{"goal": "...", "workingOn": "...", "plan": "...", "summary": "...", "todos": [{"text": "...", "owner": "...", "after": false}], "waitingOn": "...", "title": "..."}
 
 - goal: why the session was started, in one sentence of at most 25 words: the outcome the user wants, from their first prompt and what they asked for after it, not the steps. If the user has since moved the session on to another goal, give the new one and say it moved on.
 - workingOn: the item it's on now, and why it matters to the goal or the plan, in one or two sentences of at most 40 words. Start with the item's own ID when it has one, such as "W12" or "#42". Not what comes after it: that's for the to-dos. When the work is finished, say what it finished.
@@ -89,6 +94,7 @@ Answer with one JSON object and nothing else: no code fence, no text before or a
     - "session": this session does it itself, once it carries on.
     - "CI": checks, a build or a deploy.
     - "someone else": another person, such as a reviewer or an author, or another Claude Code session.
+  - after: true when it can only happen once an earlier to-do in the list is done, such as a release after a merge, or a step that needs an answer the user hasn't given yet; false when it can be done now, whatever comes before it in the list.
 - waitingOn: what the session is waiting on right now, exactly one of "you", "another session", "CI", "someone else", "nothing".
   - "you": the user has a question still to answer, from the latest turn or an earlier one, or a decision, approval or action due now, not only after something else happens. Then the first to-do that isn't the session's is the user's.
   - "another session": it's waiting for a reply or a result from another Claude Code session.
@@ -238,6 +244,8 @@ const ANSWER_KEYS = ['summary', 'todos', 'waitingOn', 'title', 'goal', 'workingO
 /** The fields of a recap stored before W150, which only the store accepts (readRecapAnswer()'s `stored`). */
 const STORED_BEFORE_W150_KEYS = ['summary', 'todos', 'waitingOn', 'title'] as const;
 const TODO_KEYS = ['text', 'owner'] as const;
+/** A to-do's keys since W166: `after` too. A to-do has these or TODO_KEYS, exactly. */
+const TODO_KEYS_AFTER = ['text', 'owner', 'after'] as const;
 
 /** The longest title, in characters, after its words are cut to RECAP_TITLE_MAX_WORDS. */
 export const RECAP_TITLE_MAX_CHARS = 120;
@@ -329,7 +337,7 @@ export type RecapReading = { ok: true; answer: RecapAnswer; repaired: RecapRepai
  * The model's answer, read strictly: after trimming, exactly one JSON object (one surrounding code
  * fence is stripped) with summary, todos, waitingOn, title, goal, workingOn and plan and no others
  * (W150; with `stored`, for a recap kept before W150, also exactly the first four); todos an array of
- * objects with exactly text and owner, owner one of RECAP_TODO_OWNERS, only the first RECAP_TODOS_MAX
+ * objects with exactly text and owner, and since W166 `after`, a boolean, owner one of RECAP_TODO_OWNERS, only the first RECAP_TODOS_MAX
  * kept; waitingOn one of RECAP_WAITING_ON; every text a string, not empty once made plain, but plan,
  * which is empty when there's none, and none with a character W120's rule refuses. Anything else is refused with the check that refused it
  * (RecapRefusal), a code fence with other text or a second object included.
@@ -363,12 +371,15 @@ export function readRecapAnswer(text: string, { stored = false }: { stored?: boo
   if ('refusal' in title) return { ok: false, refusal: title.refusal };
   const todos: RecapTodo[] = [];
   for (const raw of rawTodos.slice(0, RECAP_TODOS_MAX)) {
-    if (!isRecord(raw) || !hasExactly(raw, TODO_KEYS)) return { ok: false, refusal: 'todos' };
+    if (!isRecord(raw) || !(hasExactly(raw, TODO_KEYS) || hasExactly(raw, TODO_KEYS_AFTER))) return { ok: false, refusal: 'todos' };
     const owner = raw.owner;
     if (typeof owner !== 'string' || !(RECAP_TODO_OWNERS as readonly string[]).includes(owner)) return { ok: false, refusal: 'owner' };
+    if ('after' in raw && typeof raw.after !== 'boolean') return { ok: false, refusal: 'todos' };
     const todoText = answerText(raw.text, (each) => plainField(each));
     if ('refusal' in todoText) return { ok: false, refusal: todoText.refusal };
-    todos.push({ text: todoText.text, owner: owner as RecapTodoOwner });
+    const todo: RecapTodo = { text: todoText.text, owner: owner as RecapTodoOwner };
+    if (typeof raw.after === 'boolean') todo.after = raw.after;
+    todos.push(todo);
   }
   // The picture (W150): why it was started, what it's on and why, and the plan's line, empty for none.
   let context: Pick<RecapAnswer, 'goal' | 'workingOn' | 'plan'> = {};
@@ -425,6 +436,11 @@ function agreedWaitingOn(waitingOn: RecapWaitingOn, todos: readonly RecapTodo[])
  */
 export function leadTodo<T extends { owner: RecapTodoOwner }>(todos: readonly T[]): T | undefined {
   return todos.find((todo) => todo.owner !== 'session');
+}
+
+/** A to-do as the recap has it: text, owner and, since W166, whether it follows an earlier one. */
+export function todoOf({ text, owner, after }: RecapTodo): RecapTodo {
+  return after === undefined ? { text, owner } : { text, owner, after };
 }
 
 /** readRecapAnswer() without the reason: the answer, or undefined. */

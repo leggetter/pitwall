@@ -107,6 +107,7 @@ import {
   hasPicture,
   leadTodo,
   readRecapAnswer,
+  todoOf,
   RECAP_REFUSALS,
   type RecapRepair,
   planStatusArgs,
@@ -874,12 +875,26 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     return summary;
   }
 
+  /**
+   * Your step that's due now, for Needs you's 'recap' reason. Only when your step is the next one, not
+   * a later to-do of yours behind someone else's (W146). But a background job that says it's done
+   * takes no other turn until you prompt it, so CI or someone else's step ahead of yours is checked by
+   * nobody: there, your first to-do that doesn't follow an earlier one is due (W166). Not when it waits
+   * on another session, whose message would start its next turn, nor from a recap made before W166,
+   * which doesn't say which to-dos follow others.
+   */
+  function yourNext(session: SessionSummary, recap: SessionRecap): string | undefined {
+    const lead = leadTodo(recap.todos);
+    if (lead?.owner === 'you' && recap.waitingOn === 'you') return lead.text;
+    if (!jobDone(session) || recap.waitingOn === 'another session') return undefined;
+    if (recap.todos.some((todo) => todo.after === undefined)) return undefined;
+    return recap.todos.find((todo) => todo.owner === 'you' && todo.after === false)?.text;
+  }
+
   /** Needs you's 'recap' reason, when it holds and no earlier reason does (NeedsYou's order). */
   function needsYouOf(session: SessionSummary, recap: SessionRecap): NeedsYou | undefined {
-    // Only when your step is the next one, not a later to-do of yours behind someone else's (W146).
-    const lead = leadTodo(recap.todos);
-    const next = lead?.owner === 'you' ? lead.text : undefined;
-    if (recap.source !== 'pitwall' || recap.stale === true || recap.waitingOn !== 'you' || next === undefined || next === '') return undefined;
+    const next = yourNext(session, recap);
+    if (recap.source !== 'pitwall' || recap.stale === true || next === undefined || next === '') return undefined;
     if (session.stale || session.finished || working(session)) return undefined;
     const reason = session.needsYou?.reason;
     if (reason !== undefined && reason !== 'restarted' && reason !== 'blocked') return undefined;
@@ -1004,7 +1019,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
 
 /** A stored recap's answer fields, for an update's input: W150's goal, working on and plan when it has them. */
 function answerOf(recap: SessionRecap): RecapAnswer {
-  const answer: RecapAnswer = { summary: recap.summary, todos: recap.todos.map(({ text, owner }) => ({ text, owner })), waitingOn: recap.waitingOn, title: recap.title };
+  const answer: RecapAnswer = { summary: recap.summary, todos: recap.todos.map(todoOf), waitingOn: recap.waitingOn, title: recap.title };
   if (hasPicture(recap)) Object.assign(answer, { goal: recap.goal, workingOn: recap.workingOn, plan: recap.plan });
   return answer;
 }

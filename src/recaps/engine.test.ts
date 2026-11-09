@@ -959,6 +959,56 @@ describe('what the snapshot shows', () => {
     expect(h.engine.decorate(a)).not.toHaveProperty('needsYou');
   });
 
+  describe("a finished job's own to-dos (W166)", () => {
+    // The hand-off of 2026-11-09: a CI check nothing is left to watch, then two steps of yours.
+    const handoff = [
+      { text: "Check main's CI on the merge", owner: 'CI', after: false },
+      { text: 'Push the hand-off commit', owner: 'you', after: false },
+      { text: 'Run /clear, then start the next session', owner: 'you', after: false },
+    ];
+
+    it('needs you for your first step that follows no other, whatever it waits on', async () => {
+      const { h, a } = await recapped({ todos: handoff, waitingOn: 'CI' });
+      expect(h.engine.decorate(a).recap).toMatchObject({ waitingOn: 'CI', forYou: 2, next: 'Push the hand-off commit' });
+      expect(h.engine.decorate(a).needsYou).toEqual({ reason: 'recap', text: 'Push the hand-off commit' });
+      const someone = await recapped({ todos: [{ text: 'Review #42', owner: 'someone else', after: false }, { text: 'Rebase #43', owner: 'you', after: false }], waitingOn: 'someone else' });
+      expect(someone.h.engine.decorate(someone.a).needsYou).toEqual({ reason: 'recap', text: 'Rebase #43' });
+    });
+
+    it("skips a step of yours that follows another's, so W146's case stays out", async () => {
+      const todos = [
+        { text: 'Merge #42', owner: 'someone else', after: false },
+        { text: 'Release the CLI once #42 ships', owner: 'you', after: true },
+      ];
+      const { h, a } = await recapped({ todos, waitingOn: 'someone else' });
+      expect(h.engine.decorate(a)).not.toHaveProperty('needsYou');
+      const later = await recapped({ todos: [handoff[0], { ...handoff[1], after: true }, handoff[2]], waitingOn: 'CI' });
+      expect(later.h.engine.decorate(later.a).needsYou).toEqual({ reason: 'recap', text: handoff[2]!.text });
+    });
+
+    it("keeps W146's rule for a job that isn't done, an interactive session, a wait on another session and a recap from before W166", async () => {
+      const { h, a } = await recapped({ todos: handoff, waitingOn: 'CI' });
+      for (const state of ['working', 'blocked'] as const) expect(h.engine.decorate({ ...a, state }), state).not.toHaveProperty('needsYou');
+      expect(h.engine.decorate({ ...a, alive: false })).not.toHaveProperty('needsYou');
+      expect(h.engine.decorate({ ...a, kind: 'interactive' })).not.toHaveProperty('needsYou');
+      const other = await recapped({ todos: handoff, waitingOn: 'another session' });
+      expect(other.h.engine.decorate(other.a)).not.toHaveProperty('needsYou');
+      const before = await recapped({ todos: handoff.map(({ text, owner }) => ({ text, owner })), waitingOn: 'CI' });
+      expect(before.h.engine.decorate(before.a)).not.toHaveProperty('needsYou');
+      const mixed = await recapped({ todos: [handoff[0], { text: handoff[1]!.text, owner: 'you' }], waitingOn: 'CI' });
+      expect(mixed.h.engine.decorate(mixed.a)).not.toHaveProperty('needsYou');
+    });
+
+    it('not while its turn runs, nor from a stale recap', async () => {
+      const { h, a } = await recapped({ todos: handoff, waitingOn: 'CI' });
+      const newer = new Date(Date.parse(a.lastActivityAt!) + 1000).toISOString();
+      expect(h.engine.decorate({ ...a, lastActivityAt: newer })).not.toHaveProperty('needsYou');
+      h.facts.set('a', { file: '/made-up/projects/a.jsonl', turnEnded: false });
+      h.engine.observe(new Map(h.facts));
+      expect(h.engine.decorate(a)).not.toHaveProperty('needsYou');
+    });
+  });
+
   it("not while CI runs a step of the session's before yours (#168's review)", async () => {
     const todos = [
       { text: 'Watch CI on #42 and fix failures', owner: 'session' },
