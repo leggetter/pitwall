@@ -8,7 +8,9 @@
 // their ids, and a close that asks the server to remove them; Cancel closes it. + New session and `n`
 // start in the repo or directory selected in the repo list, never the open session's, and from a view
 // with no directory chosen (W147, D27). A session's proposal's Start (W163) opens it filled in with
-// the proposal, once the server has checked it, and a refused check says why on the card. W63's switch to the new session's group and tab is its own
+// the proposal, once the server has checked it, and a refused check says why on the card. Profile
+// (W155) starts on Build and fills Model and Effort; a pick fills them again, a change to either shows
+// Custom, and the line under it says what else the profile sets. W63's switch to the new session's group and tab is its own
 // part, new-session-selected.
 
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -33,6 +35,12 @@ const ACTIVE = `document.getElementById(${COMBOBOX}?.getAttribute('aria-activede
 const DIRECTORY_LABELS = `[...(${DIALOG}?.querySelectorAll('[role="listbox"] [role="option"]') ?? [])].map((el) => el.textContent.replace(/, repo$/, ''))`;
 /** A made-up worktree of the api-server repo, whose group keeps it, as a worktree's does (world.move()). */
 const WORKTREE = `${API_SERVER}/.claude/worktrees/pitwall-test-wt`;
+/** Profile's choice as it shows, its profiles' names, and the line under it (W155). */
+const SHOWN_PROFILE = `(() => { const select = ${field('Profile')}; return select?.options[select.selectedIndex]?.textContent; })()`;
+const PROFILE_NAMES = `[...${field('Profile')}.options].filter((option) => !option.disabled).map((option) => option.textContent)`;
+const PROFILE_HINT = `${DIALOG}?.querySelector('.field-hint[id$="-hint"]')?.textContent`;
+/** What a start on Build, untouched, sends besides the rest, in the fake server's record's order. */
+const BUILD = { profile: 'Build', model: 'claude-opus-5-5', effort: 'high' } as const;
 /** Each request for the directory list, as the fake server recorded it. */
 const listRequests = (requests: string[]) => requests.filter((request) => request.startsWith('GET /api/directories '));
 
@@ -143,21 +151,31 @@ const part: Part = {
       await t.fresh({ search: '?view=all' });
       await openDialog(t, 'New session');
       const labels = await page.evaluate<string[]>(`[...${DIALOG}.querySelectorAll('label.field-label')].map((l) => l.textContent.trim())`);
-      t.expectEqual(labels, ['Directory', 'Name optional', 'Model optional', 'Effort optional', 'First prompt'], 'its fields');
+      t.expectEqual(labels, ['Directory', 'Name optional', 'Profile', 'Model optional', 'Effort optional', 'First prompt'], 'its fields');
       const values = await page.evaluate<string[]>(DIRECTORY_LABELS);
       for (const dir of [CODE, API_SERVER, DEMO_APP]) t.expect(values.includes(shortPath(dir)), `it offers ${dir}`, values);
       t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), '', 'from All sessions, a view, no directory is chosen (W147)');
       t.expectEqual(await page.evaluate(`${DIRECTORY}.placeholder`), '~/code/…', 'and its placeholder shows the root');
       t.expect(await page.evaluate(`document.activeElement === ${DIRECTORY}`), 'focus is on Directory, its first field', await page.evaluate(focused));
       t.expectEqual(await chooseDirectory(t, DIRECTORY, DEMO_APP), shortPath(DEMO_APP), 'a directory chosen');
-      // Model and Effort start from the defaults for sessions, which their first options name (W119): the made-up
-      // config file's effort, and Claude Code's own model, from made-up settings, read for the directory (W122).
+      // Profile starts on Build, which fills Model and Effort with its own (W155).
+      await page.waitFor('Build to fill Model', `${field('Model')}?.value === 'claude-opus-5-5'`);
+      t.expectEqual(await page.evaluate(SHOWN_PROFILE), 'Build', 'Profile starts on Build');
+      // Model and Effort's first options name the defaults for sessions (W119): the made-up config file's
+      // effort, and Claude Code's own model, from made-up settings, read for the directory (W122). Effort's
+      // Claude Code default follows the model chosen, so it's read on Model's first option, then Build's again.
       await page.waitFor('the defaults for sessions', `${field('Effort')}?.options[0]?.textContent === 'Default: high'`);
       t.expectEqual(await page.evaluate(`${field('Model')}.options[0].textContent`), 'Default: Opus 5.5 (your Claude Code settings)', "Model's first option names Claude Code's default and where it's from");
+      await page.evaluate(chooseOption(field('Model'), ''));
       await page.waitFor(
         "Effort's Claude Code's default, from the directory's project settings",
         `${field('Effort')}?.options[1]?.textContent === ${q("Claude Code's default: xhigh (the project's Claude Code settings)")}`,
       );
+      t.expectEqual(await page.evaluate(chooseOption(field('Model'), 'claude-opus-5-5')), 'claude-opus-5-5', "Build's model again");
+      t.expectEqual(await page.evaluate(PROFILE_NAMES), ['Build', 'Review', 'Security review', 'Docs'], 'the built-in profiles, in order');
+      t.expectEqual(await page.evaluate(`${field('Effort')}.value`), 'high', "and Effort is Build's");
+      t.expectEqual(await page.evaluate(PROFILE_HINT), 'Sub-agents default to sonnet.', 'the line under it says what else Build sets');
+      t.expect(await page.evaluate(`document.getElementById(${field('Profile')}.getAttribute('aria-describedby'))?.textContent === ${PROFILE_HINT}`), 'Profile is described by that line');
       t.expect(await page.evaluate(`!!${dialogButton('Start session')} && !!${dialogButton('Cancel')}`), 'Start session and Cancel');
       const card = await page.evaluate<{ left: number; right: number; top: number; bottom: number }>(dialogBox);
       t.expect(card.left >= 15.5 && card.right <= t.viewport.width - 15.5 && card.top >= 0 && card.bottom <= t.viewport.height, 'inside the window', card);
@@ -177,15 +195,43 @@ const part: Part = {
       await page.click('Name', field('Name'));
       await page.type(name);
       t.expectEqual(await page.evaluate(chooseOption(field('Effort'), 'low')), 'low', 'the effort chosen (W119)');
+      t.expectEqual(await page.evaluate(SHOWN_PROFILE), 'Custom', 'Profile shows Custom once the effort is not its own (W155)');
       await page.click('First prompt', PROMPT);
       await page.type(FIRST_PROMPT);
       await page.click('Start session', dialogButton('Start session'));
       await page.waitFor('the dialog to close', `!${DIALOG}`);
       t.expect((await page.evaluate<string[]>(toasts)).includes(`Started ${name}. Its view opens when it shows up in the list.`), 'the toast says it started', await page.evaluate(toasts));
-      t.expectEqual(server.records.spawns, [{ cwd: API_SERVER, name, effort: 'low', promptLength: FIRST_PROMPT.length }], 'the fake server got the start, once, with the effort and no model, so the default');
+      t.expectEqual(
+        server.records.spawns,
+        [{ cwd: API_SERVER, name, profile: 'Build', model: 'claude-opus-5-5', effort: 'low', promptLength: FIRST_PROMPT.length }],
+        "the fake server got the start, once, with Build's name and model, and the effort chosen",
+      );
       await page.waitFor('its view', `${viewName} === ${q(name)}`, 8000);
       t.expect(await page.evaluate(`[...document.querySelectorAll('.session-list [data-open-session]')].some((el) => el.textContent.trim() === ${q(name)})`), 'its row is listed');
       await t.shot('started');
+    });
+
+    await t.step('Profile: a pick fills Model and Effort, a change shows Custom, and the line says what else it sets (W155)', async () => {
+      await t.fresh({ search: `?repo=${DEMO_APP}` });
+      await openDialog(t, 'New session');
+      await page.waitFor('Build to fill Model', `${field('Model')}?.value === 'claude-opus-5-5'`);
+      t.expectEqual(await page.evaluate(chooseOption(field('Profile'), 'Review')), 'Review', 'Review picked');
+      t.expectEqual(await page.evaluate(`[${field('Model')}.value, ${field('Effort')}.value]`), ['sonnet', 'high'], "Model and Effort are Review's");
+      t.expectEqual(await page.evaluate(chooseOption(field('Profile'), 'Docs')), 'Docs', 'Docs picked');
+      t.expectEqual(await page.evaluate(`[${field('Model')}.value, ${field('Effort')}.value]`), ['sonnet', 'medium'], "Model and Effort are Docs'");
+      t.expectEqual(await page.evaluate(chooseOption(field('Model'), 'haiku')), 'haiku', 'a model chosen');
+      t.expectEqual(await page.evaluate(SHOWN_PROFILE), 'Custom', 'Profile shows Custom');
+      t.expectEqual(await page.evaluate(PROFILE_HINT), "Custom: your model and effort, with Docs's sub-agents. Sub-agents default to sonnet.", "the line says Docs's sub-agents still apply");
+      const hint = await page.evaluate<{ left: number; right: number }>(`(() => { const r = ${DIALOG}.querySelector('.field-hint[id$="-hint"]').getBoundingClientRect(); return { left: r.left, right: r.right }; })()`);
+      const card = await page.evaluate<{ left: number; right: number }>(dialogBox);
+      t.expect(hint.left >= card.left && hint.right <= card.right, 'the line fits in the dialog', { hint, card });
+      await t.shot('profile-custom');
+      t.expectEqual(await page.evaluate(chooseOption(field('Profile'), 'Security review')), 'Security review', 'Security review picked after Custom');
+      t.expectEqual(await page.evaluate(`[${field('Model')}.value, ${field('Effort')}.value]`), ['claude-opus-5-5', 'xhigh'], "Model and Effort are Security review's");
+      t.expectEqual(await page.evaluate(PROFILE_HINT), 'Sub-agents default to opus.', 'and the line is its own');
+      await page.click('Cancel', dialogButton('Cancel'));
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+      t.expectEqual(server.records.spawns, [], 'nothing was started');
     });
 
     await t.step('Directory is an autocomplete: focus selects its text, emptied it lists every directory, and it narrows as you type', async () => {
@@ -238,7 +284,7 @@ const part: Part = {
       await page.type(FIRST_PROMPT);
       await page.click('Start session', dialogButton('Start session'));
       await page.waitFor('the dialog to close', `!${DIALOG}`);
-      t.expectEqual(server.records.spawns, [{ cwd: DEMO_APP_WEB, promptLength: FIRST_PROMPT.length }], 'the fake server got the start, in the absolute path');
+      t.expectEqual(server.records.spawns, [{ cwd: DEMO_APP_WEB, ...BUILD, promptLength: FIRST_PROMPT.length }], 'the fake server got the start, in the absolute path');
       t.expectEqual(listRequests(server.records.requests).length, 1, 'one list for the whole opening');
     });
 
@@ -408,7 +454,7 @@ const part: Part = {
       await page.type(FIRST_PROMPT);
       await page.click('Start session', dialogButton('Start session'));
       await page.waitFor('the dialog to close', `!${DIALOG}`);
-      t.expectEqual(server.records.spawns, [{ cwd, promptLength: FIRST_PROMPT.length, attachments: ids }], 'the fake server got the start, with their ids');
+      t.expectEqual(server.records.spawns, [{ cwd, ...BUILD, promptLength: FIRST_PROMPT.length, attachments: ids }], 'the fake server got the start, with their ids');
       await page.settle(300);
       t.expectEqual(server.records.deletes.length, 1, "closing after the start asked the server to remove none of the session's files");
     });
@@ -537,7 +583,7 @@ const part: Part = {
       await page.waitFor('the dialog', `${dialogName} === 'New session'`);
       await page.click('Start session', dialogButton('Start session'));
       await page.waitFor('the dialog to close', `!${DIALOG}`);
-      t.expectEqual(server.records.spawns, [{ cwd: DEMO_APP_WEB, name: 'pitwall-test-spin-off', promptLength: SPIN_OFF_PROMPT.length }], 'Start session started it, as filled in');
+      t.expectEqual(server.records.spawns, [{ cwd: DEMO_APP_WEB, name: 'pitwall-test-spin-off', ...BUILD, promptLength: SPIN_OFF_PROMPT.length }], 'Start session started it, as filled in');
       await page.waitFor('the card to go', `!${card}`);
     });
 

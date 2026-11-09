@@ -1574,6 +1574,90 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
     expect((cleared.json as { effective: { supervisor: unknown } }).effective.supervisor).toEqual({ model: 'claude-opus-5-5' });
   });
 
+  describe('work profiles (W155)', () => {
+    /** The W119 config, and a config file's profiles: Review replaced with a skill, and one of its own. */
+    const profiled = (): WorkStore =>
+      createWorkStore({
+        config: { ...emptyChoices(), session: { model: 'opus', effort: 'high' }, subagents: { model: 'haiku' } },
+        profiles: [
+          { name: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet', skill: 'agent-roles:role-reviewer', source: 'config' },
+          { name: 'Bare', skill: 'handoff', source: 'config' },
+          { name: 'Inherit', subagentModel: 'default', source: 'config' },
+        ],
+      });
+
+    it("a profile's model, effort and sub-agents' model, as CLAUDE_CODE_SUBAGENT_MODEL, a default and never forced", async () => {
+      const started = await startWith(profiled());
+      expect((await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Security review' })).status).toBe(201);
+      const [call] = started.run.calls;
+      expect(call?.args).toEqual(['--bg', '--model', 'claude-opus-5-5', '--effort', 'xhigh', '--', 'go']);
+      expect(call?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('opus');
+      expect(Object.keys(call?.options.env ?? {}).some((name) => /FORCE/i.test(name))).toBe(false);
+    });
+
+    it("puts the server's profile's skill at the start of the first prompt, as typed, before the attachments' lines", async () => {
+      const started = await startWith(profiled(), fakeRunner(backgrounded(), backgrounded()));
+      await spawnAsPage(started, { cwd: repo, prompt: 'Review PR 12', profile: 'Review' });
+      await spawnAsPage(started, { cwd: repo, prompt: '-p go', profile: 'Bare' });
+      expect(started.run.calls.map((call) => call.args)).toEqual([
+        ['--bg', '--model', 'sonnet', '--effort', 'high', '--', '/agent-roles:role-reviewer Review PR 12'],
+        // No model or effort in the profile: the defaults for sessions, field by field, and their sub-agents'.
+        ['--bg', '--model', 'opus', '--effort', 'high', '--', '/handoff -p go'],
+      ]);
+      expect(started.run.calls.map((call) => call.options.env.CLAUDE_CODE_SUBAGENT_MODEL)).toEqual(['sonnet', 'haiku']);
+    });
+
+    it("the request's own model and effort win over the profile's (New session's Custom); its skill and sub-agents still apply", async () => {
+      const started = await startWith(profiled());
+      await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Review', effort: 'max' });
+      const [call] = started.run.calls;
+      expect(call?.args).toEqual(['--bg', '--model', 'sonnet', '--effort', 'max', '--', '/agent-roles:role-reviewer go']);
+      expect(call?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('sonnet');
+    });
+
+    it("a profile's sub-agents on Claude Code's default leave the inherited environment's alone, over the defaults'", async () => {
+      const env = { PATH: '/usr/bin', CLAUDE_CODE_SUBAGENT_MODEL: 'fable' };
+      const started = await startWith(profiled(), fakeRunner(backgrounded()), env);
+      await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Inherit' });
+      expect(started.run.calls[0]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('fable');
+    });
+
+    it("refuses a profile the server doesn't have, by its exact name, and never quotes it; nothing starts", async () => {
+      const started = await startWith(profiled());
+      for (const profile of ['review', 'Nope', '', 'x'.repeat(65), 1, null, { name: 'Review' }, ['Review']]) {
+        const res = await spawnAsPage(started, { cwd: repo, prompt: 'go', profile });
+        expect(res.status, JSON.stringify(profile)).toBe(400);
+        expect((res.json as { error: string }).error).toBe("That profile isn't one pitwall has. Reopen New session to see the profiles now.");
+      }
+      expect(started.run.calls).toEqual([]);
+    });
+
+    it("takes no skill or sub-agents' model from the request: only the profile's name", async () => {
+      const started = await startWith(profiled());
+      const res = await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Build', skill: 'evil --dangerously-skip-permissions', subagentModel: 'opus', subagent: 'opus' });
+      expect(res.status).toBe(201);
+      const [call] = started.run.calls;
+      expect(call?.args).toEqual(['--bg', '--model', 'claude-opus-5-5', '--effort', 'high', '--', 'go']);
+      expect(call?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('sonnet');
+    });
+
+    it('without a profile, spawn is as before W155: the defaults, and no skill', async () => {
+      const started = await startWith(profiled());
+      await spawnAsPage(started, { cwd: repo, prompt: 'go' });
+      expect(started.run.calls[0]?.args).toEqual(['--bg', '--model', 'opus', '--effort', 'high', '--', 'go']);
+      expect(started.run.calls[0]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('haiku');
+    });
+
+    it('GET lists the profiles: the built-ins, replaced in place, then the config file\'s', async () => {
+      const started = await startWith(profiled());
+      const port = started.server.port;
+      const read = await get(port, WORK_PATH, { authorization: `Bearer ${started.apiKey}`, origin: origin(port) });
+      const profiles = (read.json as { profiles: { name: string; source: string; skill?: string }[] }).profiles;
+      expect(profiles.map((profile) => `${profile.name}:${profile.source}`)).toEqual(['Build:built-in', 'Review:config', 'Security review:built-in', 'Docs:built-in', 'Bare:config', 'Inherit:config']);
+      expect(profiles[1]?.skill).toBe('agent-roles:role-reviewer');
+    });
+  });
+
   it('POST refuses a value Claude Code would refuse or ignore, saying which, and keeps the overrides it had', async () => {
     const work = configured();
     const started = await startWith(work);

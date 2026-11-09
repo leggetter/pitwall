@@ -94,7 +94,7 @@ export interface Records {
   /** Every size the page gave an attached session, in order: its `open`'s, then each resize's (W74). */
   sizes: Array<{ name: string; from: 'open' | 'resize' } & TerminalSize>;
   /** `attachments` only when the request had them (W82). */
-  spawns: Array<{ cwd: string; name?: string | undefined; model?: string | undefined; effort?: string | undefined; promptLength: number; attachments?: string[] | undefined }>;
+  spawns: Array<{ cwd: string; name?: string | undefined; profile?: string | undefined; model?: string | undefined; effort?: string | undefined; promptLength: number; attachments?: string[] | undefined }>;
   /** Each POST of WORK_PATH (W119): the overrides sent, and the status they got. */
   workPosts: Array<{ overrides: unknown; status: number }>;
   /**
@@ -909,6 +909,10 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (!isRecord(body) || typeof body.cwd !== 'string' || typeof body.prompt !== 'string' || body.prompt.trim() === '') {
       return json(res, 400, { ok: false, error: 'Made up: a directory and a prompt.' } satisfies SpawnResult);
     }
+    // A work profile (W155) only by a name the store has, as the real server checks it.
+    if (body.profile !== undefined && (typeof body.profile !== 'string' || work.profile(body.profile) === undefined)) {
+      return json(res, 400, { ok: false, error: "That profile isn't one pitwall has. Reopen New session to see the profiles now." } satisfies SpawnResult);
+    }
     const root = world.rootFor(body.cwd);
     if (root === undefined) return json(res, 400, { ok: false, error: 'Made up: that directory is under no root.' } satisfies SpawnResult);
     // The files (W82): uploads this server kept and no spawn has used, each once, at most ATTACHMENTS_MAX_PER_SESSION.
@@ -928,11 +932,12 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       cwd: body.cwd,
       prompt: body.prompt,
       ...(typeof body.name === 'string' ? { name: body.name } : {}),
+      ...(typeof body.profile === 'string' ? { profile: body.profile } : {}),
       ...(typeof body.model === 'string' ? { model: body.model } : {}),
       ...(typeof body.effort === 'string' && (protocol.EFFORT_LEVELS as readonly string[]).includes(body.effort) ? { effort: body.effort as SpawnRequest['effort'] } : {}),
       ...(attachments ? { attachments } : {}),
     };
-    records.spawns.push({ cwd: request.cwd, name: request.name, model: request.model, effort: request.effort, promptLength: request.prompt.length, attachments: request.attachments });
+    records.spawns.push({ cwd: request.cwd, name: request.name, profile: request.profile, model: request.model, effort: request.effort, promptLength: request.prompt.length, attachments: request.attachments });
     const started = world.spawn(request, root);
     json(res, 201, { ok: true, shortId: started.summary.shortId ?? '', name: started.summary.name } satisfies SpawnResult);
     later(options.listDelayMs ?? 800, () => {

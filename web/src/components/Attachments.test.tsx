@@ -566,7 +566,7 @@ describe('New session: starting with files', () => {
     expect(dialog.querySelectorAll('.field-problem')).toHaveLength(0);
     fireEvent.click(start(dialog));
     await settle();
-    expect(server.spawns).toEqual([{ cwd: REPO, prompt: 'Look at these.', attachments: ['id-1'] }]);
+    expect(server.spawns).toEqual([{ cwd: REPO, prompt: 'Look at these.', profile: 'Build', attachments: ['id-1'] }]);
     expect(onStarted).toHaveBeenCalledOnce();
   });
 
@@ -599,7 +599,7 @@ describe('New session: starting with files', () => {
     fireEvent.click(start(dialog));
     await settle();
     // In the list's order.
-    expect(server.spawns).toEqual([{ cwd: REPO, prompt: 'Look at these.', attachments: ['id-1', 'id-2'] }]);
+    expect(server.spawns).toEqual([{ cwd: REPO, prompt: 'Look at these.', profile: 'Build', attachments: ['id-1', 'id-2'] }]);
   });
 
   it('while starting, Remove, Try again and Attach files are aria-disabled, and a drop or a paste attaches nothing', async () => {

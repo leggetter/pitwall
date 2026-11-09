@@ -176,7 +176,7 @@ describe('New session for a PR row in a cloned repo', () => {
     fireEvent.click(startButton(review)!);
     fireEvent.click(within(dialog('New session')).getByRole('button', { name: 'Start session' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New session' })).toBeNull());
-    expect(server.posts()).toEqual([{ url: SPAWN_PATH, body: { cwd: DEMO, name: 'pr-57', prompt: expect.stringContaining(review.url) } }]);
+    expect(server.posts()).toEqual([{ url: SPAWN_PATH, body: { cwd: DEMO, name: 'pr-57', prompt: expect.stringContaining(review.url), profile: 'Build' } }]);
     expect(toastMessages()).toContain(startedText(STARTED.name));
     // Listed, with no link of its own yet: the page's pending one makes it the owner.
     await update(snap(startedSession()));
@@ -263,7 +263,7 @@ describe('Clone and start for a PR row in a repo that isn’t cloned', () => {
     expect(field('First prompt').value).toBe(`Fix the failing checks on ${docs.url}.`);
     fireEvent.click(within(dialog('New session')).getByRole('button', { name: 'Start session' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New session' })).toBeNull());
-    expect(server.posts().at(-1)).toEqual({ url: SPAWN_PATH, body: { cwd: DOCS, name: 'pr-5', prompt: expect.stringContaining(docs.url) } });
+    expect(server.posts().at(-1)).toEqual({ url: SPAWN_PATH, body: { cwd: DOCS, name: 'pr-5', prompt: expect.stringContaining(docs.url), profile: 'Build' } });
   });
 
   it('from the repo’s own not-cloned group, follows the clone to its group, once the list places the PR under it', async () => {

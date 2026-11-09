@@ -7,10 +7,13 @@
 //   the directories under the roots, fetched once per opening, as the dialog opens, and narrowed as
 //   you type (directories.ts). It opens showing its first choice, whose text focus selects, so typing
 //   replaces it; while it shows the chosen one, the list offers every directory, as a select would.
-//   Name and Model, optional,
-//   Model's "Other…" revealing a field, and Effort (W119), each starting from pitwall's defaults for
-//   sessions, which the first option names once they've loaded, or Claude Code's own, resolved for
-//   the directory chosen (W122, modelEffort.ts); and the first prompt. With a root tab open (W38), the
+//   Name, optional; Profile (W155), which starts on Build and fills Model and Effort with its own, and
+//   shows Custom once either changes, while its sub-agents' model and skill, which its line under it
+//   names, still apply; Model, with "Other…" revealing a field, and Effort (W119), which with a profile
+//   that leaves one out, or on its first option, are pitwall's defaults for sessions, which the first
+//   option names once they've loaded, or Claude Code's own, resolved for the directory chosen (W122,
+//   modelEffort.ts); and the first prompt. The request names the profile; the server takes its
+//   sub-agents' model and skill from its own profiles, never from the page. With a root tab open (W38), the
 //   directories are that tab's, and a typed one must be in that tab, so the session is listed where
 //   it was started from. A chosen directory is sent as its absolute path; a typed one as before, or
 //   from a `~/` path under a root.
@@ -50,7 +53,17 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
-import { EFFORT_LEVELS, WORK_DEFAULT, type DirectoryList, type EffortLevel, type IndexSnapshot, type SpawnRequest, type WorkSettings } from '../../../src/shared/protocol.js';
+import {
+  DEFAULT_PROFILE,
+  EFFORT_LEVELS,
+  WORK_DEFAULT,
+  type DirectoryList,
+  type EffortLevel,
+  type IndexSnapshot,
+  type SpawnRequest,
+  type WorkProfile,
+  type WorkSettings,
+} from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { ATTACH_TEXT, attachmentsProblem, draggingFiles, pastedFiles, useAttachments } from '../attachments.js';
 import {
@@ -65,7 +78,7 @@ import {
   type DirectoryOption,
 } from '../directories.js';
 import { plainText, shortenHome } from '../format.js';
-import { claudeChoiceText, fetchWorkSettings, modelInEffect, sessionDefaultText } from '../modelEffort.js';
+import { claudeChoiceText, CUSTOM_PROFILE_TEXT, fetchWorkSettings, modelInEffect, profileHint, sessionDefaultText } from '../modelEffort.js';
 import {
   directoryChoices,
   directoryProblem,
@@ -91,6 +104,8 @@ import '../actions.css';
 /** The picker's "type one" choice. No path can contain a NUL, so it can't collide with one. */
 const OTHER = '\u0000other';
 const MODELS = ['sonnet', 'opus', 'haiku'] as const;
+/** The Profile picker's Custom: shown, never chosen. A NUL, so no profile's name can be it. */
+const CUSTOM = '\u0000custom';
 
 /** The sentence before the trust command (4: Dialogs, New session dialog). */
 export const TRUST_TEXT = "pitwall never trusts a directory for you. Run this in a terminal, accept Claude Code's trust prompt, then start the session again:";
@@ -194,7 +209,7 @@ function directoryAnnouncement(listing: Listing, truncated: boolean, listed: num
 
 export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, noDirectory = false, subtitle, notice }: NewSessionDialogProps) {
   const api = useContext(ApiContext);
-  const ids = { dir: useId(), name: useId(), model: useId(), customModel: useId(), effort: useId(), prompt: useId() };
+  const ids = { dir: useId(), name: useId(), profile: useId(), model: useId(), customModel: useId(), effort: useId(), prompt: useId() };
   const alive = useRef(true);
   const submitting = useRef(false);
 
@@ -221,6 +236,14 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
   // pitwall's defaults for sessions (W119), for the first options' words. Without them, "Default".
   // With the directory they were asked for (W122), so an answer for an earlier choice never shows.
   const [loadedWork, setWork] = useState<{ settings: WorkSettings; dir: string | undefined }>();
+  // The work profiles (W155), from the first answer, and the one picked: Build, until the answer
+  // says there's no such profile. Picking one fills Model and Effort, as does the first answer, unless
+  // either was changed before it came.
+  const [profiles, setProfiles] = useState<WorkProfile[]>();
+  const [picked, setPicked] = useState<string | undefined>(DEFAULT_PROFILE);
+  const changedWork = useRef(false);
+  // The latest answer for any directory: its profiles and defaults for sessions don't depend on it.
+  const [latestWork, setLatestWork] = useState<WorkSettings>();
   const [prompt, setPrompt] = useState(prefill?.prompt ?? '');
   const [busy, setBusy] = useState(false);
   // Problems show once a submit has been tried, then follow the typing.
@@ -355,6 +378,13 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
   // applies.
   const settingsDir = directoryProblem(cwd, snapshot.roots, tab) === undefined ? cwd : undefined;
   const firstFetch = useRef(true);
+  const profilesLoaded = useRef(false);
+  /** Model and Effort as `profile` has them: each it leaves out on its first option, pitwall's defaults for sessions. */
+  const fill = (profile: WorkProfile) => {
+    setModelChoice(profile.model ?? '');
+    setCustomModel('');
+    setEffort(profile.effort ?? '');
+  };
   useEffect(() => {
     if (!api) return;
     const controller = new AbortController();
@@ -364,6 +394,15 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
         // An answer that read another directory's project settings is someone else's: leave it.
         if (loaded.claude?.dir !== undefined && loaded.claude.dir !== settingsDir) return;
         setWork({ settings: loaded, dir: settingsDir });
+        setLatestWork(loaded);
+        if (!profilesLoaded.current) {
+          profilesLoaded.current = true;
+          const list = loaded.profiles ?? [];
+          setProfiles(list);
+          const first = list.find((profile) => profile.name === DEFAULT_PROFILE);
+          if (first === undefined) setPicked(undefined);
+          else if (!changedWork.current) fill(first);
+        }
       });
     if (firstFetch.current) {
       firstFetch.current = false;
@@ -380,6 +419,11 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
   // the last directory's.
   const work = loadedWork !== undefined && loadedWork.dir === settingsDir ? loadedWork.settings : undefined;
   const defaults = work?.effective.session;
+  const pickedProfile = picked === undefined ? undefined : profiles?.find((profile) => profile.name === picked);
+  // Custom: the model or effort isn't the profile's any more. Its sub-agents' model and skill still apply.
+  const custom = pickedProfile !== undefined && (model !== (pickedProfile.model ?? '') || effort !== (pickedProfile.effort ?? ''));
+  // The models offered: the aliases, and any other a profile names, such as Build's claude-opus-5-5, so filling one never needs "Other…".
+  const models = [...MODELS, ...new Set((profiles ?? []).map((profile) => profile.model).filter((one): one is string => one !== undefined && one !== WORK_DEFAULT && !(MODELS as readonly string[]).includes(one)))];
   // The model a session would run on, for its effort's default: the choice, else the default's.
   const effortModel = modelChoice === '' ? undefined : modelChoice === OTHER ? model || undefined : modelChoice;
   const problems = {
@@ -416,8 +460,15 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
     }
     const request: SpawnRequest = { cwd, prompt };
     if (name !== '') request.name = name;
+    // The profile by name (W155): before the profiles have loaded, Build, which the server always has.
+    if (picked !== undefined && (profiles === undefined || pickedProfile !== undefined)) request.profile = picked;
+    // A field on its first option is pitwall's defaults for sessions. With a profile that sets the field,
+    // that has to be said, or the server would take the profile's: the defaults' value, or Claude Code's.
+    const session = latestWork?.effective.session;
     if (model !== '') request.model = model;
+    else if (request.profile !== undefined && pickedProfile?.model !== undefined) request.model = session?.model ?? WORK_DEFAULT;
     if (effort !== '') request.effort = effort;
+    else if (request.profile !== undefined && pickedProfile?.effort !== undefined) request.effort = session?.effort ?? WORK_DEFAULT;
     if (attachments.ids.length > 0) request.attachments = [...attachments.ids];
     submitting.current = true;
     setBusy(true);
@@ -456,6 +507,11 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
     if (!busy) set(event.target.value);
   };
   const disabled = { 'aria-disabled': busy || undefined };
+  /** A change to Model or Effort: the first answer's profile no longer fills them over it. */
+  const changeWork = (set: (value: string) => void) => (value: string) => {
+    changedWork.current = true;
+    set(value);
+  };
   const describedBy = (...parts: (string | false | undefined)[]) => parts.filter(Boolean).join(' ') || undefined;
   const keys = modEnter();
   const filesProblem = `${ids.prompt}-files-problem`;
@@ -585,15 +641,57 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
         )}
       </div>
 
+      {picked !== undefined && (
+        <div className="field">
+          <label className="field-label" htmlFor={ids.profile}>
+            Profile
+          </label>
+          <span className="select">
+            <select
+              id={ids.profile}
+              className="select-input"
+              value={custom ? CUSTOM : picked}
+              onChange={edit((value) => {
+                const profile = profiles?.find((one) => one.name === value);
+                if (profile === undefined) return;
+                setPicked(profile.name);
+                fill(profile);
+              })}
+              aria-describedby={pickedProfile === undefined ? undefined : `${ids.profile}-hint`}
+              {...disabled}
+            >
+              {(profiles ?? [{ name: DEFAULT_PROFILE }]).map((profile) => (
+                <option key={profile.name} value={profile.name}>
+                  {profile.name}
+                </option>
+              ))}
+              {custom && (
+                <option value={CUSTOM} disabled>
+                  {CUSTOM_PROFILE_TEXT}
+                </option>
+              )}
+            </select>
+            <Icon name="select" className="select-icon" />
+          </span>
+          {pickedProfile !== undefined && (
+            <p className="field-hint" id={`${ids.profile}-hint`}>
+              {profileHint(pickedProfile, custom)}
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="field">
         <label className="field-label" htmlFor={ids.model}>
           Model <span className="field-optional">optional</span>
         </label>
         <span className="select">
-          <select id={ids.model} className="select-input" value={modelChoice} onChange={edit(setModelChoice)} {...disabled}>
+          <select id={ids.model} className="select-input" value={modelChoice} onChange={edit(changeWork(setModelChoice))} {...disabled}>
             <option value="">{sessionDefaultText(work, 'model')}</option>
-            {defaults?.model !== undefined && defaults.model !== WORK_DEFAULT && <option value={WORK_DEFAULT}>{claudeChoiceText(work, 'session', 'model')}</option>}
-            {MODELS.map((alias) => (
+            {((defaults?.model !== undefined && defaults.model !== WORK_DEFAULT) || modelChoice === WORK_DEFAULT) && (
+              <option value={WORK_DEFAULT}>{claudeChoiceText(work, 'session', 'model')}</option>
+            )}
+            {models.map((alias) => (
               <option key={alias} value={alias}>
                 {alias}
               </option>
@@ -612,7 +710,7 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
             autoComplete="off"
             spellCheck={false}
             value={customModel}
-            onChange={edit(setCustomModel)}
+            onChange={edit(changeWork(setCustomModel))}
             readOnly={busy}
             {...disabled}
             aria-invalid={shown.model !== undefined || undefined}
@@ -631,9 +729,9 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
           Effort <span className="field-optional">optional</span>
         </label>
         <span className="select">
-          <select id={ids.effort} className="select-input" value={effort} onChange={edit((value) => setEffort(value as typeof effort))} {...disabled}>
+          <select id={ids.effort} className="select-input" value={effort} onChange={edit(changeWork((value) => setEffort(value as typeof effort)))} {...disabled}>
             <option value="">{sessionDefaultText(work, 'effort', effortModel)}</option>
-            {defaults?.effort !== undefined && defaults.effort !== WORK_DEFAULT && (
+            {((defaults?.effort !== undefined && defaults.effort !== WORK_DEFAULT) || effort === WORK_DEFAULT) && (
               <option value={WORK_DEFAULT}>{claudeChoiceText(work, 'session', 'effort', effortModel ?? (work === undefined ? undefined : modelInEffect(work, 'session')))}</option>
             )}
             {EFFORT_LEVELS.map((level) => (

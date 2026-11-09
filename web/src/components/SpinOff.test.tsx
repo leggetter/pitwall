@@ -158,7 +158,7 @@ describe('a spin-off proposal in Needs you', () => {
     fireEvent.change(field('First prompt'), { target: { value: 'Tidy the made-up README, my way.' } });
     fireEvent.click(within(dialog()).getByRole('button', { name: 'Start session' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New session' })).toBeNull());
-    expect(server.posts().at(-1)).toEqual({ url: SPAWN_PATH, body: { cwd: DOCS, name: 'tidy-readme', prompt: 'Tidy the made-up README, my way.' } });
+    expect(server.posts().at(-1)).toEqual({ url: SPAWN_PATH, body: { cwd: DOCS, name: 'tidy-readme', prompt: 'Tidy the made-up README, my way.', profile: 'Build' } });
     expect(toastMessages()).toContain(startedText(STARTED.name));
     expect(cards()).toEqual([]);
     expect(storage.values.get(SPIN_OFFS_KEY)).toBe(JSON.stringify({ v: 1, dismissed: [`${ASKER_ID}:${KEY}`] }));

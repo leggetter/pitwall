@@ -6,6 +6,7 @@
 import {
   EFFORT_LEVELS,
   isEffortLevel,
+  isSkillName,
   OFFERED_WORK_MODELS,
   isWorkModel,
   RECAP_EFFORT_LEVELS,
@@ -13,6 +14,8 @@ import {
   WORK_DEFAULT,
   WORK_KINDS,
   WORK_PATH,
+  WORK_PROFILE_NAME_PATTERN,
+  WORK_PROFILES_MAX,
   type ClaudeDefault,
   type ClaudeDefaults,
   type ClaudeDefaultSource,
@@ -20,6 +23,7 @@ import {
   type WorkChoice,
   type WorkChoices,
   type WorkKind,
+  type WorkProfile,
   type WorkSettings,
 } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
@@ -87,14 +91,64 @@ export function readWorkSettings(value: unknown): WorkSettings | undefined {
   const effective = readChoices(value.effective);
   if (!builtIn || !config || !overrides || !effective) return undefined;
   const claude = readClaudeDefaults(value.claude);
+  const profiles = readProfiles(value.profiles);
   return {
     builtIn,
     config,
     overrides,
     effective,
     ...(typeof value.configFile === 'string' ? { configFile: value.configFile } : {}),
+    ...(profiles === undefined ? {} : { profiles }),
     ...(claude === undefined ? {} : { claude }),
   };
+}
+
+/**
+ * WorkSettings.profiles (W155), read defensively: a profile is kept only when its name and every field
+ * it has pass the server's checks, and a name is kept once. Undefined when the answer has no list.
+ */
+export function readProfiles(value: unknown): WorkProfile[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const profiles: WorkProfile[] = [];
+  const seen = new Set<string>();
+  for (const entry of value.slice(0, WORK_PROFILES_MAX + 4)) {
+    if (!isRecord(entry) || typeof entry.name !== 'string' || !WORK_PROFILE_NAME_PATTERN.test(entry.name) || seen.has(entry.name.toLowerCase())) continue;
+    if (entry.source !== 'built-in' && entry.source !== 'config') continue;
+    if (entry.model !== undefined && entry.model !== WORK_DEFAULT && !isWorkModel(entry.model, 'session')) continue;
+    if (entry.effort !== undefined && entry.effort !== WORK_DEFAULT && !isEffortLevel(entry.effort)) continue;
+    if (entry.subagentModel !== undefined && entry.subagentModel !== WORK_DEFAULT && !isWorkModel(entry.subagentModel, 'subagents')) continue;
+    if (entry.skill !== undefined && !isSkillName(entry.skill)) continue;
+    seen.add(entry.name.toLowerCase());
+    profiles.push({
+      name: entry.name,
+      source: entry.source,
+      ...(entry.model === undefined ? {} : { model: entry.model as string }),
+      ...(entry.effort === undefined ? {} : { effort: entry.effort as WorkProfile['effort'] }),
+      ...(entry.subagentModel === undefined ? {} : { subagentModel: entry.subagentModel as string }),
+      ...(entry.skill === undefined ? {} : { skill: entry.skill as string }),
+    });
+  }
+  return profiles;
+}
+
+/** New session's Profile picker's choice once the model or effort no longer match the profile picked. */
+export const CUSTOM_PROFILE_TEXT = 'Custom';
+
+/**
+ * The line under New session's Profile picker (W155): what the profile adds besides the model and
+ * effort, its sub-agents' default model and its skill, and, once you've changed the model or effort,
+ * that those still come from it.
+ */
+export function profileHint(profile: WorkProfile, custom: boolean): string {
+  const sub =
+    profile.subagentModel === undefined
+      ? "Sub-agents on pitwall's default for them."
+      : profile.subagentModel === WORK_DEFAULT
+        ? "Sub-agents on Claude Code's default."
+        : `Sub-agents default to ${profile.subagentModel}.`;
+  const skill = profile.skill === undefined ? '' : ` Starts with /${profile.skill}, which must be installed where the session runs.`;
+  const prefix = custom ? `${CUSTOM_PROFILE_TEXT}: your model and effort, with ${profile.name}'s sub-agents${profile.skill === undefined ? '' : ' and skill'}. ` : '';
+  return `${prefix}${sub}${skill}`;
 }
 
 const SCOPES: readonly string[] = ['managed', 'local', 'project', 'user'];
