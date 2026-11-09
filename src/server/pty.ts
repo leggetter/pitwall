@@ -39,27 +39,39 @@ export type PtySpawner = (file: string, args: string[], options: PtySpawnOptions
 
 type NodePty = typeof import('node-pty');
 
-let nodePty: NodePty | undefined;
-/** node-pty's spawn-helper, found when node-pty loads; undefined off macOS or when there's none. */
-let spawnHelper: string | undefined;
+/** What spawnPty needs once node-pty has loaded: its spawn, and its spawn-helper, if it has one. */
+export interface LoadedPty {
+  spawn: NodePty['spawn'];
+  /** undefined off macOS, or when there's none. */
+  helper: string | undefined;
+}
+
+/**
+ * A PtySpawner that loads node-pty on its first spawn and makes sure the
+ * helper is executable before every spawn, not once per process: an `npm ci`
+ * under a running server reinstalls it without its execute bit, and every
+ * attach after it would fail until a restart (W169).
+ */
+export function ptySpawner(load: () => LoadedPty): PtySpawner {
+  let loaded: LoadedPty | undefined;
+  return (file, args, options) => {
+    loaded ??= load();
+    if (loaded.helper !== undefined) makeExecutable(loaded.helper);
+    return loaded.spawn(file, args, { ...options, encoding: 'utf8' });
+  };
+}
 
 /** The real PtySpawner, over node-pty. */
-export const spawnPty: PtySpawner = (file, args, options) => {
-  nodePty ??= loadNodePty();
-  // Before every spawn, not once per process: an `npm ci` under a running
-  // server reinstalls the helper without its execute bit, and every attach
-  // after it would fail until a restart (W169).
-  if (spawnHelper !== undefined) makeExecutable(spawnHelper);
-  return nodePty.spawn(file, args, { ...options, encoding: 'utf8' });
-};
+export const spawnPty: PtySpawner = ptySpawner(loadNodePty);
 
-function loadNodePty(): NodePty {
+function loadNodePty(): LoadedPty {
   const require = createRequire(import.meta.url);
   const pty = require('node-pty') as NodePty;
-  if (process.platform === 'darwin') {
-    spawnHelper = findSpawnHelper(dirname(require.resolve('node-pty/package.json')), `${process.platform}-${process.arch}`);
-  }
-  return pty;
+  const helper =
+    process.platform === 'darwin'
+      ? findSpawnHelper(dirname(require.resolve('node-pty/package.json')), `${process.platform}-${process.arch}`)
+      : undefined;
+  return { spawn: pty.spawn.bind(pty), helper };
 }
 
 /**

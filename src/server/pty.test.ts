@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } fr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { findSpawnHelper, makeExecutable } from './pty.js';
+import { findSpawnHelper, makeExecutable, ptySpawner, type PtyProcess } from './pty.js';
 
 let dir: string | undefined;
 afterEach(() => {
@@ -59,5 +59,30 @@ describe('makeExecutable', () => {
 
   it('does not throw when the helper is gone', () => {
     expect(() => makeExecutable(join(fakeInstall([]), 'spawn-helper'))).not.toThrow();
+  });
+});
+
+describe('ptySpawner', () => {
+  it('makes the helper executable before every spawn, not only the first (W169)', () => {
+    const helper = join(fakeInstall(['prebuilds/darwin-arm64']), 'prebuilds/darwin-arm64/spawn-helper');
+    const modesAtSpawn: number[] = [];
+    let loads = 0;
+    const spawn = ptySpawner(() => {
+      loads += 1;
+      return {
+        helper,
+        spawn: (() => {
+          modesAtSpawn.push(mode(helper));
+          return {} as PtyProcess;
+        }) as never,
+      };
+    });
+    const options = { cols: 80, rows: 24, cwd: '/', env: {}, name: 'xterm-256color' };
+    spawn('/bin/echo', [], options);
+    // npm ci under a running server: the file comes back as 0644.
+    chmodSync(helper, 0o644);
+    spawn('/bin/echo', [], options);
+    expect(modesAtSpawn).toEqual([0o755, 0o755]);
+    expect(loads).toBe(1);
   });
 });
