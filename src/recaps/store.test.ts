@@ -6,7 +6,7 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { RECAP_FIELD_MAX, type SessionRecap } from '../shared/protocol.js';
+import { PLAN_ITEM_MAX, PLAN_ITEMS_MAX, RECAP_FIELD_MAX, type SessionRecap } from '../shared/protocol.js';
 import { memoryRecapStore, parseStoredRecap, RECAP_KEEP_MS, RECAP_STORE_DIR_NAME, RECAP_STORE_MAX_BYTES, recapStoreDir, storedText } from './store.js';
 
 const posix = process.platform !== 'win32';
@@ -153,6 +153,71 @@ describe('the file', () => {
       ['a goal longer than a recap keeps', (file) => (file.recap.goal = 'x'.repeat(RECAP_FIELD_MAX + 1))],
     ])('ignores a file with %s', (_name, change) => {
       expect(parseStoredRecap(edited(change, A, recap(PICTURE)), A, NOW)).toBeUndefined();
+    });
+  });
+
+  describe("W172's plan items and changes", () => {
+    const PLANNED = {
+      goal: 'Rewrite the made-up export.',
+      workingOn: 'W2: the writer, which the reader needs.',
+      plan: 'M2 of the export rewrite, W1 to W3',
+      planItems: [
+        { text: 'W1: the reader', state: 'done' as const },
+        { text: 'W2: the writer', state: 'now' as const },
+        { text: 'W3: the old path', state: 'dropped' as const },
+      ],
+      planChanges: 'W3 was dropped: the writer replaces it.',
+    };
+
+    it("writes them after the plan in the answer's keys, and reads them back, changes empty for none", () => {
+      const planned = recap(PLANNED);
+      const file = JSON.parse(storedText(A, planned));
+      expect(Object.keys(file.recap)).toEqual(['summary', 'todos', 'waitingOn', 'title', 'goal', 'workingOn', 'plan', 'items', 'changes']);
+      expect(file.recap).toMatchObject({ items: PLANNED.planItems, changes: PLANNED.planChanges });
+      expect(file.version).toBe(1);
+      expect(parseStoredRecap(storedText(A, planned), A, NOW)).toEqual(planned);
+      const { planChanges: _changes, ...unchanged } = PLANNED;
+      expect(JSON.parse(storedText(A, recap(unchanged))).recap.changes).toBe('');
+      expect(parseStoredRecap(storedText(A, recap(unchanged)), A, NOW)).toEqual(recap(unchanged));
+      // A plan with no items keeps its empty list, so it isn't taken for one stored before W172.
+      expect(parseStoredRecap(storedText(A, recap({ ...unchanged, planItems: [] })), A, NOW)).toEqual(recap({ ...unchanged, planItems: [] }));
+    });
+
+    it('still loads a file stored from W150 until W172, the plan line without items', () => {
+      const { planItems: _items, planChanges: _changes, ...w150 } = PLANNED;
+      const text = storedText(A, recap(w150));
+      expect(JSON.parse(text).recap).not.toHaveProperty('items');
+      expect(parseStoredRecap(text, A, NOW)).toEqual(recap(w150));
+    });
+
+    it('fits the longest recap, with every item and changes, in RECAP_STORE_MAX_BYTES', () => {
+      const field = '€'.repeat(RECAP_FIELD_MAX - 1) + '…';
+      const item = '€'.repeat(PLAN_ITEM_MAX - 1) + '…';
+      const longest = recap({
+        summary: field,
+        todos: Array.from({ length: 6 }, () => ({ text: field, owner: 'session' as const })),
+        waitingOn: 'nothing',
+        goal: field,
+        workingOn: field,
+        plan: field,
+        planItems: Array.from({ length: PLAN_ITEMS_MAX }, () => ({ text: item, state: 'next' as const })),
+        planChanges: field,
+      });
+      const text = storedText(A, longest);
+      expect(Buffer.byteLength(text)).toBeLessThanOrEqual(RECAP_STORE_MAX_BYTES);
+      expect(parseStoredRecap(text, A, NOW)).toEqual(longest);
+    });
+
+    it.each<[string, (file: Record<string, unknown> & { recap: Record<string, unknown> }) => void]>([
+      ['items without changes', (file) => delete file.recap.changes],
+      ['an unknown state', (file) => ((file.recap.items as Array<Record<string, unknown>>)[0]!.state = 'blocked')],
+      ['an item a recap would make plain', (file) => ((file.recap.items as Array<Record<string, unknown>>)[0]!.text = 'Two\nlines')],
+      ['a hidden character in the changes', (file) => (file.recap.changes = 'W3\u200b was dropped')],
+      ['changes a recap would make plain', (file) => (file.recap.changes = ' W3 was dropped. ')],
+      ['more items than a recap keeps', (file) => (file.recap.items = Array.from({ length: PLAN_ITEMS_MAX + 1 }, () => ({ text: 'a', state: 'next' })))],
+      ['items with an empty plan', (file) => (file.recap.plan = '')],
+    ])('ignores a file with %s', (_name, change) => {
+      expect(parseStoredRecap(edited(change, A, recap(PLANNED)), A, NOW)).toBeUndefined();
     });
   });
 

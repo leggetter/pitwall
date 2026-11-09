@@ -244,12 +244,6 @@ export interface SessionSummary {
    * W112's supervisor included (D26).
    */
   recap?: RecapSummary;
-  /**
-   * ISO 8601: when the session's newest plan status was made (M5, W123), the only word of it the
-   * snapshot carries (D14), so a view can tell there's one to fetch, and a newer one, with
-   * planStatusPath(). Absent until one is made, and with `--no-recaps`.
-   */
-  planStatusAt?: string;
   /** ISO 8601 timestamp of the newest transcript entry, when the transcript was readable. */
   lastActivityAt?: string;
   /**
@@ -1920,6 +1914,15 @@ export interface SessionRecap {
   workingOn?: string;
   /** W150: the plan it works through, in one line; empty when the material shows none. */
   plan?: string;
+  /**
+   * W172 (the plan is part of the recap): the plan's milestones, work items or steps in its own
+   * order, at most PLAN_ITEMS_MAX, each done, now, next or dropped. Only with a non-empty plan, and
+   * then always, though possibly empty, but in a recap stored from W150 until W172, which has the
+   * plan's line alone until its next first recap.
+   */
+  planItems?: PlanItem[];
+  /** W172: how the plan changed during the session, at most RECAP_FIELD_MAX characters. Absent when it records no change. */
+  planChanges?: string;
   /** ISO 8601: when it was made. */
   at: string;
   /** ISO 8601: the newest transcript entry it covers. */
@@ -1998,7 +2001,7 @@ export const RECAP_FIRST_PROMPT_CAP = 1500;
 export const RECAP_FIELD_MAX = 400;
 
 /**
- * The most of a session's PRs a recap's or a plan status's input names (W150): its strong links
+ * The most of a session's PRs a recap's input names (W150): its strong links
  * (prLinkIsStrong()), newest first, each PR once.
  */
 export const RECAP_PRS_MAX = 5;
@@ -2030,10 +2033,10 @@ export function recapRefreshPath(sessionId: string): string {
  */
 export type RecapRefreshResult = ActionResult | { ok: false; error: string; busy: 'spent' | 'running' };
 
-// --- Plan status (M5, W123) -----------------------------------------------------------------------
+// --- The plan's items (M5, W123; part of the recap since W172) -----------------------------------
 
 /**
- * Where one of a plan's items is (W123), by the plan status call's prompt:
+ * Where one of a plan's items is (W123), by the recap call's prompt (W172):
  * - 'done': finished, by the transcript: merged, shipped, checked off or said to be done.
  * - 'now': what the session is on at its latest turn.
  * - 'next': still to come, or started and not finished, and not what it's on now.
@@ -2044,76 +2047,29 @@ export type PlanItemState = 'done' | 'now' | 'next' | 'dropped';
 /** The values, for checking a model's answer. */
 export const PLAN_ITEM_STATES: readonly PlanItemState[] = ['done', 'now', 'next', 'dropped'];
 
-/** One of a plan's milestones, work items or steps. `text` is plain, at most PLAN_ITEM_MAX characters. */
+/** One of a plan's milestones, work items or steps (SessionRecap.planItems). `text` is plain, at most PLAN_ITEM_MAX characters. */
 export interface PlanItem {
   text: string;
   state: PlanItemState;
 }
 
-/**
- * A session's plan status (M5, W123; Phil, 2026-11-02: "I want it to be clear that work is done as
- * part of a plan... we're working our way through that plan. That plan can change."): a reminder of
- * where the session is in the bigger picture, made when you press Plan status on the recap strip,
- * never by itself. One `claude -p` call, as a recap's (D26), over more of the transcript: its first
- * prompt, its newest compaction summary, all its sections, and its latest turns up to
- * PLAN_TURNS_CAP characters. Nothing is sent to the session. GET planStatusPath(); kept in memory
- * only, the newest per session, and the snapshot says only when it was made
- * (SessionSummary.planStatusAt, D14). All text is plain, never Markdown. Untrusted, as a recap is: a
- * transcript can steer what the model writes, so it's shown as plain text and read as data (D26).
- */
-export interface PlanStatus {
-  /** False when the transcript shows no plan the session works through: then there's no `plan`, `items` is empty and there's no `changes`. */
-  found: boolean;
-  /** What the plan is, in one line, at most RECAP_FIELD_MAX characters. */
-  plan?: string;
-  /** Its milestones, work items or steps in the plan's own order, at most PLAN_ITEMS_MAX. At least one when `found`. */
-  items: PlanItem[];
-  /** How the plan changed during the session, when the transcript records a change; at most RECAP_FIELD_MAX characters. */
-  changes?: string;
-  /** ISO 8601: when it was made. */
-  at: string;
-  /** ISO 8601: the newest transcript entry it covers. */
-  throughAt: string;
-}
-
-/** The most items a plan status keeps: the first ones, in the plan's order. */
+/** The most items a recap keeps of a plan: the first ones, in the plan's order. */
 export const PLAN_ITEMS_MAX = 15;
 
 /** The longest item, in characters. */
 export const PLAN_ITEM_MAX = 200;
 
-/** Characters of the latest turns a plan status reads: three times a recap's, for the bigger picture. */
+/**
+ * Characters of the latest turns a first recap reads (W150): three times an update's, for the bigger
+ * picture. Named for W123's plan status, which read the same, until W172 folded it into the recap.
+ */
 export const PLAN_TURNS_CAP = 24_000;
 
-/** Characters of the first prompt a plan status reads, keeping its start and end: twice a recap's, since a plan is often set out there. */
+/** Characters of the first prompt a first recap reads, keeping its start and end: twice an update's, since a plan is often set out there. */
 export const PLAN_FIRST_PROMPT_CAP = 3000;
 
-/** Characters of the newest compaction summary a plan status reads, all its sections, keeping its start and end. */
+/** Characters of the newest compaction summary a first recap reads, all its sections, keeping its start and end. */
 export const PLAN_COMPACTION_CAP = 12_000;
-
-/** GET: the session's newest PlanStatus, or 404 when none has been made. The same authorization as SNAPSHOT_PATH. */
-export function planStatusPath(sessionId: string): string {
-  return `/api/sessions/${encodeURIComponent(sessionId)}/plan-status`;
-}
-
-/**
- * POST, no body: make the session's plan status now, answered with a PlanStatusResult once the call
- * has finished, a few seconds to a minute. It needs what every state-changing request needs: the
- * apiKey, pitwall's Origin and its exact Host. It counts against the day's recap budget
- * (RECAP_DAILY_BUDGET) as a recap call. 404 when pitwall has no transcript of the session, 409 with
- * `--no-recaps`, 429 when the day's budget is spent or a plan status of it is being made already,
- * which the answer's `busy` says, or when two of other sessions' are (busy 'running', with `others`), 502 when the call failed, with why in pitwall's words, 503 while
- * the server closes.
- */
-export function planStatusRefreshPath(sessionId: string): string {
-  return `/api/sessions/${encodeURIComponent(sessionId)}/plan-status/refresh`;
-}
-
-/** planStatusRefreshPath()'s answer: the new plan status, or why not. */
-export type PlanStatusResult =
-  | { ok: true; status: PlanStatus }
-  /** `others`: busy with other sessions' plan statuses, as many as pitwall makes at a time, so none of this one is coming. */
-  | { ok: false; error: string; busy?: 'spent' | 'running'; others?: true };
 
 // --- The supervisor (M5; spike 009; D4 reopened, option B) ----------------------------------------
 

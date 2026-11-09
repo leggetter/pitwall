@@ -132,7 +132,7 @@ export function formatReport(r: UsageReport): string {
   out.push('', table(['tool', 'results', 'images', 'characters', 'median', 'p90', 'max'], r5.byTool.map((x) => [x.tool, x.results, x.images, tokens(x.chars), tokens(x.median), tokens(x.p90), tokens(x.max)])));
 
   section("pitwall's own calls");
-  out.push(`${pct(r.pitwall.shareOfTotal)} of all tokens. Recaps and plan status run with --no-session-persistence, so they leave no transcript and aren't here.`);
+  out.push(`${pct(r.pitwall.shareOfTotal)} of all tokens. Recaps run with --no-session-persistence, so they leave no transcript and aren't here.`);
   out.push('', rowTable('kind', r.pitwall.byKind));
 
   section('Data quality');
