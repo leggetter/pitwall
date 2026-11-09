@@ -17,6 +17,7 @@ Last updated: 2026-11-09, on `docs/handoff-m5.1`, a hand-off after M5.1 merged i
 | Item | State |
 | --- | --- |
 | M5.2, W155 to W160 | Not started. W155 (work profiles), W156 (the supervisor proposes sessions with a profile), W157 (spike 013: reading the plan's percentages without changing your settings), W158 (the Usage view), W159 (the run rate against a weekend reserve), W160 (the supervisor reads the run rate), in that order (`PLAN.md`, "M5.2 work breakdown") |
+| W165 (a diagnostics log: why a row is in Needs you) | Planned, any time in M5.2 (`PLAN.md`, "M5.2 work breakdown"); Phil approved the work item on 2026-11-09 |
 | Left from W164 (M5.1's security review) | F5 (a snooze trusts the relay's name, not its msg_ids), I3's note on attached files, I4 (by design); in the archive's W164 item |
 | Left from M5's security notes (Info) | A look-alike name doesn't trigger the resume card's shared-name note; resume errors show a folder outside `untrusted`; the `claude` command list isn't checked against Claude Code 2.1.316's hidden commands |
 | Left from M5.1's items | Each item's "Left" is in its archive entry: for example W153's (flag) no retry of a failed ask, W154's (snooze) unseen scheduled wake-ups, W163's (spin-off proposals) overlap check, "Ask the supervisor" and the profile's model, with M6 |

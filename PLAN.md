@@ -298,6 +298,14 @@ On `m5.2/integration`, branched from `main` once M5.1 has merged (Phil, 2026-11-
   - A read-only `get_usage` tool: the week's percentages, the pace, the heaviest sessions and those with a large context. With it the supervisor answers "can I start another build today?" and suggests a hand-off, a lighter profile or pausing a background session; you act (D4).
   - Its new-session cards show the pace beside the profile.
   - Status: Planned.
+- **W165, A diagnostics log: why a row is in Needs you** (`m5.2/diagnostics-log`, S). Independent of W155 to W160; any time in M5.2.
+  - Phil, 2026-11-09: a session whose work was done (`pr-6219`, approved) was still in Needs you with a requested review, and "how can we improve it if we can't look at logs and determine what's working and what's not?" The reason for a row is worked out in memory and in the page (`attention = own || prNeed`, `web/src/components/SessionRow.tsx`) and thrown away; `~/.pitwall/flags.jsonl` (W153, the flag log) records only the flags a person toggles by hand. From outside the browser nothing says why a row was flagged, and the API is out of reach without the run's token, which stays so.
+  - What: `$PITWALL_HOME/diagnostics.jsonl`, 0600, one line each time a session enters or leaves Needs you: time, session ID, the session's own reason, the PR need (its state, such as `review-requested`) and which one won. It also logs the PR poller's outcome per poll (counts: listed, skipped as reviewed already, failed), since the stale-search case that sparked this is decided there (`reviewRequestOf()`, W101).
+  - What it leaves out: transcript text, session names, PR titles and recap content, and any token, so it can sit beside the public repo's rules (Write for a public repo).
+  - Where: the server, behind one small writer module like the flag log's, failing soft (a write that fails is dropped, never crashes), size-capped and rotated so it can't grow without bound. Whether a `--no-diagnostics` flag turns it off is open.
+  - The report: `scripts/diagnostics-report.ts [--days 7] [--session <id>] [--json]`, read-only, like `scripts/flag-report.ts` (W153): why a session was flagged and for how long, and which reasons fire most.
+  - Checks: the writer's tests (transitions only, never a repeat line for the same state; fail-soft; cap), a test that no field can carry text from a transcript, the report's tests, and `PLAN.md`'s Security section updated, since it's new storage on disk: a security review.
+  - Status: Planned.
 
 ## Open questions
 
