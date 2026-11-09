@@ -2,14 +2,14 @@
 
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
-Last updated: 2026-11-09, on `docs/handoff-m5.1`, a hand-off after M5.1 merged into `main` ([#197](https://github.com/leggetter/pitwall/pull/197), feat: M5.1, the work after M5), closing [#139](https://github.com/leggetter/pitwall/issues/139) (New session defaults to the selected session's directory) and [#140](https://github.com/leggetter/pitwall/issues/140) (Needs you: a recap keeps a session you said is done under Needs you). Before it: the full app check passed 2,235 of 2,236 steps on `0ec493b`; 26 stale checks were fixed in [#195](https://github.com/leggetter/pitwall/pull/195) and the one failure, a check racing the Plan status live region, in [#196](https://github.com/leggetter/pitwall/pull/196). Next: M5.2, efficiency, starting with W155 (work profiles).
+Last updated: 2026-11-09, on `docs/handoff-m5.1`, after the usage comparison, the rebuild for 4518 and pushing `m5.2/integration`; before that, a hand-off after M5.1 merged into `main` ([#197](https://github.com/leggetter/pitwall/pull/197), feat: M5.1, the work after M5), closing [#139](https://github.com/leggetter/pitwall/issues/139) (New session defaults to the selected session's directory) and [#140](https://github.com/leggetter/pitwall/issues/140) (Needs you: a recap keeps a session you said is done under Needs you). Before it: the full app check passed 2,235 of 2,236 steps on `0ec493b`; 26 stale checks were fixed in [#195](https://github.com/leggetter/pitwall/pull/195) and the one failure, a check racing the Plan status live region, in [#196](https://github.com/leggetter/pitwall/pull/196). Next: M5.2, efficiency, starting with W155 (work profiles).
 
 ## Current milestone
 
 **M5.2, efficiency, next,** on `m5.2/integration`, to be branched from `main` at `e4886ab` (`PLAN.md`, "M5.2 - Efficiency" and "M5.2 work breakdown"). M5.1 is done; its detail is in `docs/plan-archive.md` ("M5.1 - After M5", "M5.1 work breakdown"), and M0 to M5 before it.
 
 - **What the usage showed** (W131, the usage report; 14 days to 11-02, every repo): 11.35B tokens, 97.7% of them cache reads, 87% of those at more than 200K of context; sub-agents 58%. Phil: "The problem isn't the global rules. It's pitwall" (2026-11-03).
-- **Effort:** Phil's `~/.claude/settings.json` sets Opus 5.5 to high since 10-30 (it was xhigh from about 10-08). The week from 11-02 is the test against 10-20 to 10-29 (Next 1).
+- **Effort:** Phil's `~/.claude/settings.json` sets Opus 5.5 to high since 10-30 (it was xhigh from about 10-08). Measured 2026-11-09 (`usage-report.ts --days 21 --json`, by day, every repo): 10-20 to 10-29 at xhigh, 9 active days, 1.12B tokens a day, 3,264 calls, 2.56M output, 785 output and 344K total a call; 11-02 to 11-09 at high, 7 active days, 750M a day (-33%), 3,294 calls (flat), 2.43M output (-5%), 739 output (-6%) and 228K total a call (-34%). The drop is shorter contexts (cache reads), not effort: output, which holds the thinking, fell only 6% a call. The work mix differs between the weeks.
 - **The merge rule** (Phil, 2026-11-06): merge each item after a fresh sub-agent review and its fixes, without waiting for a try-out; his feedback from real use becomes new work items. Claude Code's auto mode refused a `gh pr merge` into `main` until Phil said "you merge" (2026-11-09).
 
 ## Open work
@@ -27,9 +27,9 @@ Last updated: 2026-11-09, on `docs/handoff-m5.1`, a hand-off after M5.1 merged i
 
 ## Next, in order
 
-1. **Today, 2026-11-09:** `npx tsx scripts/usage-report.ts --days 7` against the 10-20 to 10-29 figures, for the high-effort week; then one blog-editing session on Sonnet for Phil to judge (agreed; not the evals post).
-2. **Phil's 4518:** it was built from `aa955fa` (2026-11-07, 12:22); W161 to W164's code has merged since. In the main checkout, which is on `m5.1/integration`: `git checkout main && git pull --ff-only && npm ci && npm run build`, then Phil restarts 4518. After that restart, the supervisor begins a new conversation once (prompt version 6, W138), if it hasn't already.
-3. **Branch `m5.2/integration` from `main`** and push it, then W155 (work profiles) in a worktree (`.worktrees/work-profiles`), built by a sub-agent at high effort, a fresh review, the coordinator's fixes, merge into `m5.2/integration`, CI there. Read `PLAN.md`'s W155 item and W119's `work` block (`src/config.ts`, `src/server/work.ts`) first.
+1. **One blog-editing session on Sonnet for Phil to judge** (agreed; not the evals post). The usage comparison is done (Current milestone, Effort).
+2. **Phil restarts 4518:** the main checkout is on `main` at `e4886ab` and built (2026-11-09), so the restart picks up W161 to W164. After it, the supervisor begins a new conversation once (prompt version 6, W138, the supervisor's messages say they're from it), if it hasn't already.
+3. **`m5.2/integration` is pushed** (from `main` at `e4886ab`). Next, W155 (work profiles) in a worktree (`.worktrees/work-profiles`), built by a sub-agent at high effort, a fresh review, the coordinator's fixes, merge into `m5.2/integration`, CI there. Read `PLAN.md`'s W155 item and W119's `work` block (`src/config.ts`, `src/server/work.ts`) first.
 4. **Then W156 to W160,** one session per item (`AGENTS.md`, Efficiency), then M5.2's security review and the merge into `main`, with its PR text shown to Phil first.
 5. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
 
