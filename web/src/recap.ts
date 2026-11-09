@@ -118,8 +118,10 @@ export function cutText(text: string, max: number): string {
 
 /** A to-do from recapPath()'s body: exactly a string text and a known owner, the text cut to RECAP_FIELD_MAX. */
 function parseTodo(raw: unknown): RecapTodo | undefined {
-  if (!isRecord(raw) || Object.keys(raw).length !== 2) return undefined;
-  const { text, owner } = raw;
+  if (!isRecord(raw)) return undefined;
+  const { text, owner, after } = raw;
+  // W166's `after`, when there is one, is a third key; the page has no use for it.
+  if (Object.keys(raw).length !== (after === undefined ? 2 : 3) || (after !== undefined && typeof after !== 'boolean')) return undefined;
   if (typeof text !== 'string' || typeof owner !== 'string' || !(RECAP_TODO_OWNERS as readonly string[]).includes(owner)) return undefined;
   return { text: cutText(text, RECAP_FIELD_MAX), owner: owner as RecapTodoOwner };
 }

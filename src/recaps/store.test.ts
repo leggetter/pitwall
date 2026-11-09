@@ -80,6 +80,17 @@ describe('the file', () => {
     expect(parseStoredRecap(storedText(A, long), A, NOW)).toEqual(long);
   });
 
+  it("reads back each to-do's `after` (W166), and refuses a file whose `after` the check would change", () => {
+    const todos = [{ text: 'Merge #42', owner: 'someone else' as const, after: false }, { text: 'Release the CLI', owner: 'you' as const, after: true }];
+    const kept = recap({ todos, waitingOn: 'someone else' });
+    expect(parseStoredRecap(storedText(A, kept), A, NOW)).toEqual(kept);
+    expect(storedText(A, kept)).toContain('"after":true');
+    expect(storedText(A, recap())).not.toContain('"after"');
+    const odd = JSON.parse(storedText(A, kept));
+    odd.recap.todos[0].after = 'no';
+    expect(parseStoredRecap(`${JSON.stringify(odd)}\n`, A, NOW)).toBeUndefined();
+  });
+
   it.each<[string, string]>([
     ['not JSON', '{"version":1,'],
     ['not an object', '[]'],

@@ -10,6 +10,7 @@ import {
   parseRecapAnswer,
   plainTitle,
   readRecapAnswer,
+  todoOf,
   RECAP_REFUSALS,
   type RecapRefusal,
   PLAN_STATUS_SYSTEM_PROMPT,
@@ -87,7 +88,7 @@ describe('RECAP_SYSTEM_PROMPT', () => {
   });
 
   it('asks for a summary and to-dos (W121): why and now, a goal that moved on, where it is in a plan, and to-dos in order, each owned', () => {
-    expect(RECAP_SYSTEM_PROMPT).toContain('{"goal": "...", "workingOn": "...", "plan": "...", "summary": "...", "todos": [{"text": "...", "owner": "..."}], "waitingOn": "...", "title": "..."}');
+    expect(RECAP_SYSTEM_PROMPT).toContain('{"goal": "...", "workingOn": "...", "plan": "...", "summary": "...", "todos": [{"text": "...", "owner": "...", "after": false}], "waitingOn": "...", "title": "..."}');
     expect(RECAP_SYSTEM_PROMPT).toContain('first why the session was started, from the user\'s first prompt, then where it is now');
     expect(RECAP_SYSTEM_PROMPT).toContain('If the work has since moved on to another goal, say so and name it.');
     expect(RECAP_SYSTEM_PROMPT).toContain('give one sentence on where it is in that plan');
@@ -212,6 +213,24 @@ describe('parseRecapAnswer', () => {
       expect(parseRecapAnswer(answer({ todos: [{ text: 'a', owner }, TODOS[0]] }))?.todos[0]).toEqual({ text: 'a', owner });
     }
     expect(parseRecapAnswer(answer({ todos: [], waitingOn: 'nothing' }))?.todos).toEqual([]);
+  });
+
+  it("keeps each to-do's `after`, and refuses one that isn't a boolean or comes with another key (W166)", () => {
+    const todos = [{ text: 'Merge #42', owner: 'someone else', after: false }, { text: 'Release the CLI', owner: 'you', after: true }];
+    expect(parseRecapAnswer(answer({ todos, waitingOn: 'someone else' }))?.todos).toEqual(todos);
+    // A to-do without it, as before W166, is still read, and has none.
+    expect(parseRecapAnswer(answer({ todos: [{ text: 'a', owner: 'you' }] }))?.todos[0]).toEqual({ text: 'a', owner: 'you' });
+    for (const after of ['true', 1, null, {}]) {
+      expect(readRecapAnswer(answer({ todos: [{ text: 'a', owner: 'you', after }] })), String(after)).toEqual({ ok: false, refusal: 'todos' });
+    }
+    expect(readRecapAnswer(answer({ todos: [{ text: 'a', owner: 'you', after: true, due: 'now' }] }))).toEqual({ ok: false, refusal: 'todos' });
+    expect(todoOf({ text: 'a', owner: 'you' })).toEqual({ text: 'a', owner: 'you' });
+    expect(todoOf({ text: 'a', owner: 'you', after: false })).toEqual({ text: 'a', owner: 'you', after: false });
+  });
+
+  it('asks the model which to-dos follow an earlier one (W166)', () => {
+    expect(RECAP_SYSTEM_PROMPT).toContain('"after": false');
+    expect(RECAP_SYSTEM_PROMPT).toContain('- after: true when it can only happen once an earlier to-do in the list is done');
   });
 
   it('makes each text one plain line of at most RECAP_FIELD_MAX characters', () => {
