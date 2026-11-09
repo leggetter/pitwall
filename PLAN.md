@@ -349,7 +349,7 @@ On `m5.2/integration`, branched from `main` once M5.1 has merged (Phil, 2026-11-
   - Built (Phil approved building it, 2026-11-09, "yes to all", the PR part included): `statusBadge()` gives a done job whose current recap, pitwall's, waits on someone else, CI or another session the status `waiting-on`, "Waiting on …", subtle neutral, in Done's place; Failed and Stopped stay. The job adapter (`src/index/jobs.ts`) reads `children` and keeps the PR when its `pr` entries name exactly one, by an exact `https://github.com/<owner>/<name>/pull/<n>` (`prRefOfUrl()`), as `SessionSummary.jobPr`; any other shape is left out without making the file unreadable. Line 2 names it, "#6089", unless the row's PR badge shows it, and the session view links it after the badge, `owner/name#n`.
   - Why not in the badge: a badge that doesn't fit ends in an ellipsis, so the PR number, at its end, is what a 375 px row cuts first; and "review" would be a guess, since `someone else` can be a PR's author as well as its reviewer. So the badge says what it waits on, and line 2 and the view say on which PR.
   - Left: a finished job's file isn't read (W69's rule), so a done job with no process shows the badge but no PR; a job whose `children` link several PRs (a long-running one can list dozens) shows none; the app check's step is in the `recaps` part, which runs with recaps on, not `lists`.
-  - Status: Built, in review on `m5.2/waiting-badge`.
+  - Status: Done, merged into `m5.2/integration` ([#208](https://github.com/leggetter/pitwall/pull/208)) after a fresh review; its one fix, the session view's link following line 2's conditions, made.
 
 ## Open questions
 
