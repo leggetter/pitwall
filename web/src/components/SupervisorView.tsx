@@ -3,10 +3,17 @@
 // (supervisor.ts). Phil, 2026-10-29: "the point is to create a customized workflow that isn't just
 // typing into a terminal and having a specialized UI".
 //
-// - The header: "Supervisor", its status, this run's cost, and Start while it's off or has failed. While
+// - The header: "Supervisor", its status, this run's cost, its context (W136) once its first call of the
+//   run has said, New conversation, and Start while it's off or has failed. While
 //   it's held, the error, in pitwall's words, with the `claude stop` command it names, to copy, and
 //   Start, for once you've run it: pitwall never stops or ends the session that has it. While it's
 //   failed, the error, with Start.
+// - New conversation (W136): asks first, in the page (InlineConfirm, under the header), then the server
+//   stops it and forgets the conversation; the next message or Start begins a new one. Off, saying why,
+//   while the snapshot shows it would be refused: held, starting, working, or drafts waiting. A
+//   refusal the page couldn't see is a danger alert with the server's reason. The conversation below is
+//   drawn afresh (SupervisorConversation, keyed by the conversation), here and in any other tab, where
+//   the snapshot's session id going away says so.
 // - The conversation: the session view's (Conversation.tsx), from supervisorConversationPath(), with
 //   Load earlier, Jump to latest, markdown as pitwall's own elements (D15) and the working line (W102)
 //   while it works, from the snapshot's status. A session or PR its replies name opens it (W125,
@@ -21,18 +28,24 @@
 // starts when you press Start or send it a message. Nothing in it is a live region but what the
 // conversation and the box announce, so a snapshot that changes its status announces nothing.
 
-import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import type { PullRequestSummary, SessionSummary, SupervisorState } from '../../../src/shared/protocol.js';
 import { createMentions, type MentionTarget } from '../mentions.js';
 import { needsAttention } from '../sessions.js';
-import type { NotNeeded } from '../notNeeded.js';
 import { ApiContext } from '../api.js';
+import type { WorkingLineState } from '../working.js';
 import { getSupervisorConversation } from '../conversation.js';
 import { plainText } from '../format.js';
 import {
   COST_HINT,
   costText,
   heldCommand,
+  NEW_CONVERSATION_CONFIRM,
+  NEW_CONVERSATION_DONE,
+  NEW_CONVERSATION_LABEL,
+  newConversationBlocked,
+  newSupervisorConversation,
+  SUPERVISOR_CONTEXT_INFO,
   STATUS_LABELS,
   STATUS_LOOKS,
   STATUS_NOTES,
@@ -48,6 +61,10 @@ import { Badge } from './Badge.js';
 import { Button } from './Button.js';
 import { ConversationPanel, useConversation, type PageLoader } from './Conversation.js';
 import { CodeText } from './CodeText.js';
+import { ContextMeta } from './ContextGauge.js';
+import { InlineConfirm } from './InlineConfirm.js';
+import { useToast } from './Toast.js';
+import { focusQuietly, Tooltip } from './Tooltip.js';
 import { CopyCommand } from './CopyCommand.js';
 import { EmptyState } from './EmptyState.js';
 import { Icon } from './Icon.js';
@@ -95,7 +112,6 @@ export interface SupervisorViewProps {
   onDraftChange?: ((hasDraft: boolean) => void) | undefined;
   /** Every session the snapshot lists, for what it sent and started (W124). */
   sessions?: readonly SessionSummary[] | undefined;
-  notNeeded?: NotNeeded | undefined;
   /** Opens a session's view in this one's place, as its row in the list does (W124). */
   onOpenSession?: ((sessionId: string) => void) | undefined;
   /** Your open PRs, as pitwall lists them, which a reply can name as owner/name#123 (W125). */
@@ -104,9 +120,9 @@ export interface SupervisorViewProps {
   onOpenPr?: ((key: string) => void) | undefined;
 }
 
-export function SupervisorView({ state, onClose, layout = 'overlay', compact = false, backLabel, headingRef, animate = true, onDraftChange, sessions = [], notNeeded, onOpenSession, prs, onOpenPr }: SupervisorViewProps) {
+export function SupervisorView({ state, onClose, layout = 'overlay', compact = false, backLabel, headingRef, animate = true, onDraftChange, sessions = [], onOpenSession, prs, onOpenPr }: SupervisorViewProps) {
   const api = useContext(ApiContext);
-  const mentions = useReplyMentions(sessions, notNeeded, onOpenSession, prs, onOpenPr);
+  const mentions = useReplyMentions(sessions, onOpenSession, prs, onOpenPr);
   const ids = { title: useId(), conversation: useId(), panel: useId(), suggest: useId() };
   const ownHeading = useRef<HTMLHeadingElement>(null);
   const heading = headingRef ?? ownHeading;
@@ -141,9 +157,57 @@ export function SupervisorView({ state, onClose, layout = 'overlay', compact = f
   // Fetched again when a turn ends, its status changes, or you send it a message.
   const [sent, setSent] = useState(0);
   const active = status === 'working' || status === 'starting';
-  const conversation = useConversation(`${state.lastTurnAt ?? ''}|${status}|${sent}`, loader, { pollMs: active ? WORKING_POLL_MS : undefined, pollMissing: true });
-  const newest = conversation.state.ahead ?? conversation.state;
-  const working = useMemo(() => supervisorWorkingLine(status, newest.entries, newest.before !== undefined), [status, newest.entries, newest.before]);
+  // Which conversation is shown (W136): a new one after New conversation here, or when the snapshot's
+  // session id goes away or changes, as another tab's New conversation does (a tab that missed the
+  // snapshot without one, after a sleep, sees it change straight to the new id), so the one left is
+  // never shown again.
+  const [generation, setGeneration] = useState(0);
+  const shownSession = useRef(state.sessionId);
+  useEffect(() => {
+    if (shownSession.current !== undefined && state.sessionId !== shownSession.current) setGeneration((count) => count + 1);
+    shownSession.current = state.sessionId;
+  }, [state.sessionId]);
+
+  // New conversation (W136): asked in the page first, never a browser dialog.
+  const toast = useToast();
+  const [confirmingNew, setConfirmingNew] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [newError, setNewError] = useState<string>();
+  const newButton = useRef<HTMLButtonElement>(null);
+  const blocked = newConversationBlocked(state);
+  // A refusal is about the status it was pressed in: any change of status takes it away.
+  useEffect(() => {
+    setNewError(undefined);
+  }, [status]);
+  const openNew = () => {
+    if (blocked !== undefined || clearing) return;
+    setNewError(undefined);
+    setConfirmingNew(true);
+  };
+  const cancelNew = () => {
+    if (clearing) return;
+    setConfirmingNew(false);
+    focusQuietly(newButton.current);
+  };
+  const confirmNew = async () => {
+    if (!api || clearing) return;
+    setClearing(true);
+    const outcome = await newSupervisorConversation(api, requests.current?.signal);
+    if (!alive.current) return;
+    setClearing(false);
+    setConfirmingNew(false);
+    if (outcome.kind === 'done') {
+      setGeneration((count) => count + 1);
+      toast({ tone: 'success', message: NEW_CONVERSATION_DONE, key: 'supervisor-new-conversation' });
+      // What you do next is write the new conversation's first message.
+      field.current?.focus();
+    } else if (outcome.kind === 'failed') {
+      setNewError(outcome.error);
+      focusQuietly(newButton.current);
+    } else {
+      focusQuietly(newButton.current);
+    }
+  };
 
   // Start, while it's off or has failed: busy until the snapshot says it's starting, or the answer fails.
   const [starting, setStarting] = useState(false);
@@ -218,6 +282,8 @@ export function SupervisorView({ state, onClose, layout = 'overlay', compact = f
     [onDraftChange],
   );
   const onEscape = () => {
+    // The confirmation first, as the session view's (4: Inline confirmation): Escape cancels it, never the view.
+    if (confirmingNew) return cancelNew();
     if (!draft.current) onClose();
   };
   const toBox = useCallback(() => field.current?.focus(), []);
@@ -273,8 +339,29 @@ export function SupervisorView({ state, onClose, layout = 'overlay', compact = f
               <InfoTip text={COST_HINT} className="session-view-info" />
             </span>
           )}
+          {state.contextTokens !== undefined && (
+            <span data-supervisor-context={state.contextTokens}>
+              <ContextMeta tokens={state.contextTokens} info={SUPERVISOR_CONTEXT_INFO} />
+            </span>
+          )}
           {state.lastTurnAt !== undefined && <Timestamp className="session-view-activity" at={state.lastTurnAt} prefix="Last turn " />}
-          {status === 'off' && <span className="supervisor-start">{startButton('primary')}</span>}
+          <span className="supervisor-head-actions">
+            <Tooltip content={blocked} relation="description">
+              <Button
+                ref={newButton}
+                size="sm"
+                variant="ghost"
+                icon="add"
+                disabled={blocked !== undefined || clearing}
+                aria-expanded={confirmingNew}
+                onClick={openNew}
+                data-supervisor-new=""
+              >
+                {NEW_CONVERSATION_LABEL}
+              </Button>
+            </Tooltip>
+            {status === 'off' && startButton('primary')}
+          </span>
         </div>
         {status === 'off' && <p className="supervisor-note">{STATUS_NOTES.off}</p>}
         {status === 'held' && (
@@ -303,23 +390,44 @@ export function SupervisorView({ state, onClose, layout = 'overlay', compact = f
         )}
       </header>
 
+      {(confirmingNew || newError !== undefined) && (
+        <div className="session-actions supervisor-new" data-supervisor-new-confirm="">
+          {confirmingNew ? (
+            <InlineConfirm
+              question={NEW_CONVERSATION_CONFIRM.question}
+              consequence={NEW_CONVERSATION_CONFIRM.consequence}
+              confirmLabel={NEW_CONVERSATION_CONFIRM.confirm}
+              busyLabel={NEW_CONVERSATION_CONFIRM.busy}
+              icon="add"
+              variant="danger"
+              busy={clearing}
+              onConfirm={() => void confirmNew()}
+              onCancel={cancelNew}
+            />
+          ) : (
+            <Alert tone="danger" role="alert">
+              {newError}
+            </Alert>
+          )}
+        </div>
+      )}
+
       <h3 className="visually-hidden" id={ids.conversation}>
         Conversation
       </h3>
       <MentionsContext.Provider value={mentions}>
-        <ConversationPanel
-          conversation={conversation}
+        <SupervisorConversation
+          key={generation}
+          status={status}
+          refresh={`${state.lastTurnAt ?? ''}|${status}|${sent}`}
+          loader={loader}
           id={ids.panel}
           labelledBy={ids.conversation}
-          hidden={false}
-          role="region"
-          working={working}
-          workingReady={conversation.state.status !== 'loading' && conversation.state.status !== 'unavailable'}
           empty={empty}
         />
       </MentionsContext.Provider>
 
-      <SupervisorHandoffs handoffs={state.handoffs} sessions={sessions} notNeeded={notNeeded} onOpenSession={onOpenSession} />
+      <SupervisorHandoffs handoffs={state.handoffs} sessions={sessions} onOpenSession={onOpenSession} />
 
       <ApprovalCards approvals={state.approvals} onEmpty={toBox} />
 
@@ -331,13 +439,51 @@ export function SupervisorView({ state, onClose, layout = 'overlay', compact = f
 }
 
 /**
+ * Its conversation (W114), in a component of its own so that a new conversation (W136) draws it from
+ * nothing: keyed by which conversation it is, so nothing of the one left stays, its entries, its
+ * place or its "no longer available" notice.
+ */
+function SupervisorConversation({
+  status,
+  refresh,
+  loader,
+  id,
+  labelledBy,
+  empty,
+}: {
+  status: SupervisorState['status'];
+  /** Changes when it's to be fetched again: a turn's end, its status, or a message you sent. */
+  refresh: string;
+  loader: PageLoader | undefined;
+  id: string;
+  labelledBy: string;
+  empty: ReactNode;
+}) {
+  const active = status === 'working' || status === 'starting';
+  const conversation = useConversation(refresh, loader, { pollMs: active ? WORKING_POLL_MS : undefined, pollMissing: true });
+  const newest = conversation.state.ahead ?? conversation.state;
+  const working = useMemo<WorkingLineState>(() => supervisorWorkingLine(status, newest.entries, newest.before !== undefined), [status, newest.entries, newest.before]);
+  return (
+    <ConversationPanel
+      conversation={conversation}
+      id={id}
+      labelledBy={labelledBy}
+      hidden={false}
+      role="region"
+      working={working}
+      workingReady={conversation.state.status !== 'loading' && conversation.state.status !== 'unavailable'}
+      empty={empty}
+    />
+  );
+}
+
+/**
  * What the replies can name (W125, mentions.ts): the sessions and PRs pitwall lists, rebuilt only when
  * what a mention depends on changes, so a snapshot that changes nothing else draws no reply again.
  * None without a way to open them.
  */
 function useReplyMentions(
   sessions: readonly SessionSummary[],
-  notNeeded: NotNeeded | undefined,
   onOpenSession: ((sessionId: string) => void) | undefined,
   prs: readonly PullRequestSummary[] | undefined,
   onOpenPr: ((key: string) => void) | undefined,
@@ -347,16 +493,16 @@ function useReplyMentions(
   const linkSessions = onOpenSession !== undefined;
   const linkPrs = onOpenPr !== undefined;
   const signature = JSON.stringify([
-    linkSessions ? sessions.map((session) => [session.sessionId, session.name, session.shortId ?? '', session.alive, session.ended === true, needsAttention(session, notNeeded)]) : [],
+    linkSessions ? sessions.map((session) => [session.sessionId, session.name, session.shortId ?? '', session.alive, session.ended === true, needsAttention(session)]) : [],
     linkPrs ? (prs ?? []).map((pr) => [pr.repo, pr.number, pr.repoLabel]) : [],
   ]);
-  const inputs = useRef({ sessions, notNeeded, prs });
-  inputs.current = { sessions, notNeeded, prs };
+  const inputs = useRef({ sessions, prs });
+  inputs.current = { sessions, prs };
   return useMemo(() => {
     if (!linkSessions && !linkPrs) return undefined;
-    const { sessions: all, notNeeded: marks, prs: list } = inputs.current;
+    const { sessions: all, prs: list } = inputs.current;
     return {
-      mentions: createMentions(linkSessions ? all : [], linkPrs ? (list ?? []) : [], marks),
+      mentions: createMentions(linkSessions ? all : [], linkPrs ? (list ?? []) : []),
       open: (target: MentionTarget) => {
         if (target.kind === 'session') opens.current.onOpenSession?.(target.sessionId);
         else opens.current.onOpenPr?.(target.key);

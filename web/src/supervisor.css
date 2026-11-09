@@ -25,11 +25,20 @@
   margin-block: calc(-1 * var(--pw-space-0-5));
 }
 
-/* Start, while it's off: at the end of the meta line, the line's own height. */
-.supervisor-start {
+/* New conversation (W136), then Start while it's off: at the end of the meta line, the line's own height, 8 px apart. */
+.supervisor-head-actions {
   display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--pw-space-2);
   margin-left: auto;
   margin-block: calc(-1 * var(--pw-space-0-5));
+}
+
+/* New conversation's confirmation, or its refusal, under the header, as the session view's (4: Inline confirmation). */
+.supervisor-view > .supervisor-new {
+  flex: none;
+  padding: var(--pw-space-2) var(--pw-space-4);
 }
 
 .supervisor-note {
@@ -89,23 +98,41 @@
 
 /*
  * The draft cards, between the conversation and the message box, on the footer's muted band: at most
- * 40% of the view, then the list scrolls under its heading (a Tab stop while it does, ScrollBox), so the
- * conversation and the box keep their room.
+ * 70% of the view (W136: a card's text, up to half the window, is read in the band, not scrolled in a
+ * smaller one), then the list scrolls under its heading (a Tab stop while it does, ScrollBox). It gives
+ * way before the message box does: the conversation goes first, then the band shrinks, never the box.
  */
+.supervisor-view > .session-view-body {
+  /* The conversation grows from nothing into the room the band and the box leave, so it gives way
+     first. At its content's height, as every session view's body is, it shrank only in proportion to
+     that height, and a long conversation squeezed the band to its heading (W141). */
+  flex-basis: 0;
+}
+
 .supervisor-approvals {
-  flex: none;
+  flex: 0 1 auto;
+  /* Below its content's height, or it couldn't shrink at all: a flex item's minimum is its content.
+     Hidden overflow, so squeezed below its heading on a very short window it never paints over the
+     box; its list scrolls inside it, so nothing else is cut. */
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: var(--pw-space-2);
-  max-height: 40%;
+  max-height: 70%;
   padding: var(--pw-space-3) var(--pw-space-4) 0;
   border-top: 1px solid var(--pw-border);
   background: var(--pw-surface-muted);
 }
 
-/* What it sent and started (W124): the drafts' band, above them, its list scrolling past 30%. */
+/*
+ * What it sent and started (W124): the drafts' band, above them, its list scrolling past 30%, or past
+ * 15% while there are drafts, so the two together leave the conversation and the box their room (W136).
+ */
 .supervisor-handoffs {
-  flex: none;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: var(--pw-space-1);
@@ -113,6 +140,10 @@
   padding: var(--pw-space-3) var(--pw-space-4) 0;
   border-top: 1px solid var(--pw-border);
   background: var(--pw-surface-muted);
+}
+
+.supervisor-handoffs:has(~ .supervisor-approvals) {
+  max-height: 15%;
 }
 
 .supervisor-handoffs-note,
@@ -314,9 +345,14 @@
   line-height: var(--pw-leading-s);
 }
 
-/* The model's text, as text: its line breaks kept, eight lines at most, then it scrolls. */
+/*
+ * The model's text, as text: its line breaks kept, up to half the window's height, never less than
+ * eight lines, then it scrolls (W136: a long proposal is read before it's sent, not in an 8-line slot).
+ * Never taller than leaves its card whole in the band, down to two lines: ApprovalCards measures the
+ * room and sets a smaller max-height on the element when it has to (W143), on the editor too.
+ */
 .approval-text {
-  max-height: calc(8 * var(--pw-leading-m) + 2 * var(--pw-space-2));
+  max-height: max(calc(8 * var(--pw-leading-m) + 2 * var(--pw-space-2)), 50vh);
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: var(--pw-space-2) var(--pw-space-3);
@@ -346,6 +382,26 @@
   white-space: nowrap;
 }
 
+/*
+ * The line pitwall adds at the end of a message (W138): its own, apart from the model's text, so a
+ * thin rule in place of the text's tint, in the muted text colour, and never scrolled.
+ */
+.approval-footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+  margin-top: var(--pw-space-1);
+}
+
+.approval-footer-text {
+  padding: var(--pw-space-1) var(--pw-space-3);
+  border-left: 2px solid var(--pw-border-strong);
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  overflow-wrap: anywhere;
+}
+
 /* Under text taller than its box, or with codes in it: how long it is, and what they are. */
 .approval-length {
   color: var(--pw-text-muted);
@@ -353,9 +409,16 @@
   line-height: var(--pw-leading-s);
 }
 
-/* The editor: three lines to eight, as the message box's text box grows. */
+/*
+ * The editor: from three lines, growing as the text does up to the card's text box's height, half the
+ * window and never less than eight lines (W136), then it scrolls. Over the message box's own 8 lines (relay.css).
+ */
 .approval-editor {
   min-height: calc(3 * var(--pw-leading-m) + 2 * var(--pw-space-1-5));
+}
+
+.relay-text.approval-editor {
+  max-height: max(calc(8 * var(--pw-leading-m) + 2 * var(--pw-space-1-5)), 50vh);
 }
 
 .approval-editing .relay-count {
@@ -363,15 +426,34 @@
   align-self: flex-end;
 }
 
+/*
+ * Its buttons. ApprovalCards bounds the text box, or the editor, so the whole card fits the band and
+ * these are in view (W143); only on a card too short for the rest of it, such as at 375 x 600, marked data-cramped, they
+ * stick to the band's bottom edge, on the card's surface, over what the band hasn't scrolled to yet,
+ * so they're never out of reach. The padding, cancelled by the margin, keeps a gap above them there.
+ */
+.approval-card[data-cramped] .approval-actions {
+  position: sticky;
+  bottom: 0;
+}
+
 .approval-actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--pw-space-2);
+  margin-top: calc(-1 * var(--pw-space-1-5));
+  padding-top: var(--pw-space-1-5);
+  background: var(--pw-surface);
 }
 
 @media (max-height: 760px) {
   .approval-text {
     max-height: calc(4 * var(--pw-leading-m) + 2 * var(--pw-space-2));
+  }
+
+  /* The editor keeps the message box's 8 lines there, as before W136. */
+  .relay-text.approval-editor {
+    max-height: calc(8 * var(--pw-leading-m) + 2 * var(--pw-space-1-5));
   }
 }
 
@@ -397,4 +479,9 @@
 .supervisor-notice {
   padding: var(--pw-space-3) var(--pw-space-4);
   border-bottom: 1px solid var(--pw-border);
+}
+
+/* Attach file (W135), first on the message box's help line: a ghost sm button, its 24 px box overlapping the 20 px line. */
+.supervisor-attach {
+  margin-block: calc(-1 * var(--pw-space-0-5));
 }

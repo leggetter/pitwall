@@ -1,33 +1,38 @@
 // The New session dialog (docs/design-system.md, 4: Dialogs; W12): from the header or `n`, with the
 // roots' directories; Start session asks for a first prompt; a start says so in a toast, and the
-// session's view opens once the index lists it, as the fake server does a moment later; "Another
-// directory under a root…" reveals the directory autocomplete (W70), which narrows as you type, takes
-// an option from the keyboard, and starts a session in it; files for the first prompt (W82), through
+// session's view opens once the index lists it, as the fake server does a moment later; Directory is
+// one autocomplete (W70, W140), whose text focus selects, which lists the groups' directories and the
+// root first, narrows as you type, highlights the first match as you type so Enter takes it (W142), and starts a session in it; files for the first prompt (W82), through
 // Attach files, a drop and a paste, refused ones, the server's refusal and its 503, Remove, which
 // asks the server to remove a kept one, an upload that's slow, one that fails, a start that sends
-// their ids, and a close that asks the server to remove them; Cancel closes it. W63's switch to the new
-// session's group and tab is its own part, new-session-selected.
+// their ids, and a close that asks the server to remove them; Cancel closes it. + New session and `n`
+// start in the repo or directory selected in the repo list, never the open session's, and from a view
+// with no directory chosen (W147, D27). A session's proposal's Start (W163) opens it filled in with
+// the proposal, once the server has checked it, and a refused check says why on the card. W63's switch to the new session's group and tab is its own
+// part, new-session-selected.
 
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { crc32, deflateSync } from 'node:zlib';
-import { API_SERVER, CODE, DEMO_APP, DEMO_APP_WEB } from '../fixtures.js';
+import { API_SERVER, CODE, DEMO_APP, DEMO_APP_WEB, NAMES, SPIN_OFF, SPIN_OFF_PROMPT } from '../fixtures.js';
 import type { Case, Part } from '../runner.js';
 import { FAIL_UPLOAD, SLOW_UPLOAD, STALLED_UPLOAD, UNAVAILABLE_UPLOAD } from '../server.js';
-import { chooseOption, DIALOG, dialogBox, dialogButton, dialogName, focused, headerButton, openDialog, toasts, viewName } from './_dom.js';
+import { chooseDirectory, chooseOption, DIALOG, dialogBox, dialogButton, dialogName, focused, headerButton, openDialog, openFromRow, shortPath, toasts, viewName } from './_dom.js';
 
 const q = JSON.stringify;
 const field = (label: string) => `[...(${DIALOG}?.querySelectorAll('input, select, textarea') ?? [])].find((el) => el.labels?.[0]?.textContent.trim().startsWith(${q(label)}))`;
 const DIRECTORY = field('Directory');
 const PROMPT = field('First prompt');
 const FIRST_PROMPT = 'A made-up first prompt for the app check.';
-/** The select's "Another directory under a root…" choice. */
-const OTHER = '\u0000other';
 const COMBOBOX = `${DIALOG}?.querySelector('[role="combobox"]')`;
 /** The options the list shows, as they read. */
 const OPTIONS = `[...(${DIALOG}?.querySelectorAll('[role="listbox"] [role="option"]') ?? [])].filter((el) => !el.closest('[hidden]')).map((el) => el.textContent)`;
 const EXPANDED = `${COMBOBOX}?.getAttribute('aria-expanded')`;
 const ACTIVE = `document.getElementById(${COMBOBOX}?.getAttribute('aria-activedescendant') ?? '')`;
+/** Directory's options as they read, without "repo", in order, open or not: while it shows the chosen one, every one. */
+const DIRECTORY_LABELS = `[...(${DIALOG}?.querySelectorAll('[role="listbox"] [role="option"]') ?? [])].map((el) => el.textContent.replace(/, repo$/, ''))`;
+/** A made-up worktree of the api-server repo, whose group keeps it, as a worktree's does (world.move()). */
+const WORKTREE = `${API_SERVER}/.claude/worktrees/pitwall-test-wt`;
 /** Each request for the directory list, as the fake server recorded it. */
 const listRequests = (requests: string[]) => requests.filter((request) => request.startsWith('GET /api/directories '));
 
@@ -139,18 +144,20 @@ const part: Part = {
       await openDialog(t, 'New session');
       const labels = await page.evaluate<string[]>(`[...${DIALOG}.querySelectorAll('label.field-label')].map((l) => l.textContent.trim())`);
       t.expectEqual(labels, ['Directory', 'Name optional', 'Model optional', 'Effort optional', 'First prompt'], 'its fields');
+      const values = await page.evaluate<string[]>(DIRECTORY_LABELS);
+      for (const dir of [CODE, API_SERVER, DEMO_APP]) t.expect(values.includes(shortPath(dir)), `it offers ${dir}`, values);
+      t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), '', 'from All sessions, a view, no directory is chosen (W147)');
+      t.expectEqual(await page.evaluate(`${DIRECTORY}.placeholder`), '~/code/…', 'and its placeholder shows the root');
+      t.expect(await page.evaluate(`document.activeElement === ${DIRECTORY}`), 'focus is on Directory, its first field', await page.evaluate(focused));
+      t.expectEqual(await chooseDirectory(t, DIRECTORY, DEMO_APP), shortPath(DEMO_APP), 'a directory chosen');
       // Model and Effort start from the defaults for sessions, which their first options name (W119): the made-up
       // config file's effort, and Claude Code's own model, from made-up settings, read for the directory (W122).
       await page.waitFor('the defaults for sessions', `${field('Effort')}?.options[0]?.textContent === 'Default: high'`);
       t.expectEqual(await page.evaluate(`${field('Model')}.options[0].textContent`), 'Default: Opus 5.5 (your Claude Code settings)', "Model's first option names Claude Code's default and where it's from");
-      t.expectEqual(
-        await page.evaluate(`${field('Effort')}.options[1].textContent`),
-        "Claude Code's default: xhigh (the project's Claude Code settings)",
+      await page.waitFor(
         "Effort's Claude Code's default, from the directory's project settings",
+        `${field('Effort')}?.options[1]?.textContent === ${q("Claude Code's default: xhigh (the project's Claude Code settings)")}`,
       );
-      const values = await page.evaluate<string[]>(`[...${DIRECTORY}.options].map((o) => o.value)`);
-      for (const dir of [CODE, API_SERVER, DEMO_APP]) t.expect(values.includes(dir), `it offers ${dir}`, values);
-      t.expect(await page.evaluate(`document.activeElement === ${DIRECTORY}`), 'focus is on Directory, its first field', await page.evaluate(focused));
       t.expect(await page.evaluate(`!!${dialogButton('Start session')} && !!${dialogButton('Cancel')}`), 'Start session and Cancel');
       const card = await page.evaluate<{ left: number; right: number; top: number; bottom: number }>(dialogBox);
       t.expect(card.left >= 15.5 && card.right <= t.viewport.width - 15.5 && card.top >= 0 && card.bottom <= t.viewport.height, 'inside the window', card);
@@ -166,7 +173,7 @@ const part: Part = {
     });
 
     await t.step('starts a session, says so, and opens its view once it is listed', async () => {
-      t.expectEqual(await page.evaluate(chooseOption(DIRECTORY, API_SERVER)), API_SERVER, 'the directory chosen');
+      t.expectEqual(await chooseDirectory(t, DIRECTORY, API_SERVER), shortPath(API_SERVER), 'the directory chosen');
       await page.click('Name', field('Name'));
       await page.type(name);
       t.expectEqual(await page.evaluate(chooseOption(field('Effort'), 'low')), 'low', 'the effort chosen (W119)');
@@ -181,16 +188,22 @@ const part: Part = {
       await t.shot('started');
     });
 
-    await t.step('Another directory under a root… reveals the autocomplete, with focus in it, which narrows as you type', async () => {
-      await t.fresh({ search: '?view=all' });
+    await t.step('Directory is an autocomplete: focus selects its text, emptied it lists every directory, and it narrows as you type', async () => {
+      // With a repo selected, so Directory opens with it chosen (W147).
+      await t.fresh({ search: `?repo=${DEMO_APP}` });
       await openDialog(t, 'New session');
-      await page.evaluate(chooseOption(DIRECTORY, OTHER));
-      await page.waitFor('the combobox to take focus', `document.activeElement === ${COMBOBOX}`);
+      await page.waitFor('focus in Directory', `document.activeElement === ${COMBOBOX}`);
+      t.expect(
+        await page.evaluate<boolean>(`(() => { const field = ${COMBOBOX}; return field.value !== '' && field.selectionStart === 0 && field.selectionEnd === field.value.length; })()`),
+        'its text is selected, so typing replaces it',
+      );
+      t.expectEqual(await page.evaluate(EXPANDED), 'false', 'its list is shut as the dialog opens');
+      await page.key('Backspace');
       await page.waitFor('its list', `${EXPANDED} === 'true' && ${OPTIONS}.length > 0`);
       t.expectEqual(
         await page.evaluate(OPTIONS),
-        ['~/code/api-server, repo', '~/code/demo-app, repo', '~/code/docs-site, repo', '~/code/notes', '~/code/api-server/cmd', '~/code/demo-app/docs', '~/code/demo-app/web', '~/code/api-server/cmd/server'],
-        'the directories under the root, shallower first, repos marked',
+        ['~/code', '~/code/api-server, repo', '~/code/demo-app, repo', '~/code/docs-site, repo', '~/code/notes', '~/code/api-server/cmd', '~/code/demo-app/docs', '~/code/demo-app/web', '~/code/api-server/cmd/server'],
+        "the groups' directories and the root first, then the directories under the root, shallower first, repos marked",
       );
       t.expectEqual(await page.evaluate(`${COMBOBOX}.getAttribute('aria-controls') === ${DIALOG}.querySelector('[role="listbox"]').id`), true, 'it controls its listbox');
       t.expectEqual(listRequests(server.records.requests), ['GET /api/directories 200'], 'the list was fetched, once');
@@ -201,9 +214,9 @@ const part: Part = {
       await t.shot('directory-list');
     });
 
-    await t.step('takes an option from the keyboard, and Escape closes only the list', async () => {
-      await page.key('ArrowDown');
-      t.expectEqual(await page.evaluate(`${ACTIVE}?.textContent`), '~/code/demo-app/web', '↓ highlights the option');
+    await t.step('takes the first match on Enter, highlighted as you type, and Escape closes only the list', async () => {
+      t.expectEqual(await page.evaluate(`${ACTIVE}?.textContent`), '~/code/demo-app/web', 'typing highlights the first match, with no ↓ (W142)');
+      t.expectEqual(await page.evaluate(`${ACTIVE}?.getAttribute('aria-selected')`), 'true', 'and it is the selected option');
       const box = await page.evaluate<{ top: number; bottom: number; left: number; right: number }>(
         `(() => { const r = ${ACTIVE}.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }; })()`,
       );
@@ -230,7 +243,8 @@ const part: Part = {
     });
 
     await t.step('Attach files takes files from the picker, uploads each, and lists it with its size, and a thumbnail for an image', async () => {
-      await t.fresh({ search: '?view=all' });
+      // With a repo selected, so Directory opens with it chosen and the start later in this case has one (W147).
+      await t.fresh({ search: `?repo=${API_SERVER}` });
       await openDialog(t, 'New session');
       t.expect(await page.evaluate(`!!${dialogButton('Attach files')}`), 'Attach files is there');
       t.expectEqual(
@@ -389,7 +403,7 @@ const part: Part = {
       const listed = (await page.evaluate<string[][]>(LISTED)).filter(([, state]) => state === 'uploaded').map(([name]) => name);
       const ids = listed.map((name) => server.records.uploads.find((upload) => upload.name === name && upload.status === 201)?.id);
       t.expectEqual(listed, ['pitwall-test-notes.txt', 'pitwall-test-plan.md', 'image.png', 'pitwall-test-data.json', `${SLOW_UPLOAD}-one.txt`, `${FAIL_UPLOAD}-notes.txt`], 'the uploaded files');
-      const cwd = await page.evaluate<string>(`${DIRECTORY}.value`);
+      const cwd = (await page.evaluate<string>(`${DIRECTORY}.value`)).replace(/^~/, '/Users/example');
       await page.click('First prompt', PROMPT);
       await page.type(FIRST_PROMPT);
       await page.click('Start session', dialogButton('Start session'));
@@ -459,6 +473,104 @@ const part: Part = {
       await page.key('n');
       await page.waitFor('the dialog', `${dialogName} === 'New session'`);
       await page.key('Escape');
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+    });
+
+    const sessionOf = (sessionName: string) => server.world.byName(sessionName);
+
+    await t.step('with a repo selected, + New session starts in it, with nothing else filled in (W147)', async () => {
+      await t.fresh({ search: `?repo=${API_SERVER}` });
+      await openDialog(t, 'New session');
+      const values = await page.evaluate<string[]>(DIRECTORY_LABELS);
+      t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), shortPath(API_SERVER), 'the selected repo is chosen');
+      t.expect(values[0] !== shortPath(API_SERVER), 'which is not the first choice, so it was chosen for the selection', values);
+      t.expectEqual(values.filter((value) => value === shortPath(API_SERVER)).length, 1, 'and listed once');
+      t.expectEqual(await page.evaluate(`${PROMPT}.value`), '', 'the prompt is blank');
+      await t.shot('repo-selected');
+      await page.click('Cancel', dialogButton('Cancel'));
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+    });
+
+    await t.step("n with the repo selected and a worktree's session open: the repo, not the session's worktree, and the start sends it", async () => {
+      await openFromRow(t, NAMES.inApi);
+      server.world.move(sessionOf(NAMES.inApi).sessionId, WORKTREE);
+      server.broadcast();
+      await page.waitFor('the moved session', `${viewName} === ${q(NAMES.inApi)}`);
+      await page.settle(100);
+      await page.evaluate(`(document.activeElement?.blur(), true)`);
+      await page.key('n');
+      await page.waitFor('the dialog', `${dialogName} === 'New session'`);
+      t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), shortPath(API_SERVER), 'the selected repo is chosen');
+      t.expect(!(await page.evaluate<string[]>(DIRECTORY_LABELS)).includes(shortPath(WORKTREE)), "the session's worktree isn't offered");
+      await page.click('First prompt', PROMPT);
+      await page.type(FIRST_PROMPT);
+      server.clearRecords();
+      await page.click('Start session', dialogButton('Start session'));
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+      t.expectEqual(server.records.spawns.map((spawn) => spawn.cwd), [API_SERVER], 'the start sent the repo');
+    });
+
+    await t.step("Start on a proposal's card checks it, then opens New session filled in with it; nothing starts until Start session (W163)", async () => {
+      const card = `document.querySelector('.session-list li.spin-off-card')`;
+      const button = (label: string) => `[...(${card}?.querySelectorAll('.approval-actions button') ?? [])].find((b) => b.textContent.trim() === ${q(label)})`;
+      await t.fresh({ search: '?view=needs-you' });
+      const id = server.world.byName(NAMES.conversation).sessionId;
+      server.world.spinOff(id, SPIN_OFF);
+      server.broadcast();
+      await page.waitFor('the card', `!!${card}`);
+      server.clearRecords();
+      await page.click('Start…', button('Start…'));
+      await page.waitFor('the dialog', `${dialogName} === 'New session'`);
+      t.expectEqual(server.records.spinOffChecks, [{ name: NAMES.conversation, key: SPIN_OFF.key, status: 200 }], 'the server checked it, by its key');
+      t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), shortPath(DEMO_APP_WEB), 'its folder chosen');
+      t.expectEqual(await page.evaluate(`${field('Name')}.value`), 'pitwall-test-spin-off', 'its name');
+      t.expectEqual(await page.evaluate(`${PROMPT}.value`), SPIN_OFF_PROMPT, 'its whole prompt');
+      t.expect((await page.evaluate<string>(`${DIALOG}.textContent`)).includes(`as ${NAMES.conversation} proposed`), 'the subtitle names the session that proposed it');
+      const box = await page.evaluate<{ left: number; right: number; top: number; bottom: number }>(dialogBox);
+      t.expect(box.left >= 0 && box.right <= t.viewport.width && box.top >= 0 && box.bottom <= t.viewport.height, 'inside the window', box);
+      t.expectEqual(server.records.spawns, [], 'nothing was started');
+      await t.shot('spin-off-start');
+      await page.click('Cancel', dialogButton('Cancel'));
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+      t.expect(await page.evaluate(`!!${card}`), 'the card stays after Cancel');
+      await page.click('Start…', button('Start…'));
+      await page.waitFor('the dialog', `${dialogName} === 'New session'`);
+      await page.click('Start session', dialogButton('Start session'));
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+      t.expectEqual(server.records.spawns, [{ cwd: DEMO_APP_WEB, name: 'pitwall-test-spin-off', promptLength: SPIN_OFF_PROMPT.length }], 'Start session started it, as filled in');
+      await page.waitFor('the card to go', `!${card}`);
+    });
+
+    await t.step("a proposal the server refuses says why on its card, and opens nothing (W163)", async () => {
+      const card = `document.querySelector('.session-list li.spin-off-card')`;
+      await t.fresh({ search: '?view=needs-you' });
+      const id = server.world.byName(NAMES.conversation).sessionId;
+      t.allow(new RegExp(`/api/sessions/${id}/spin-off$`), 'the refused check this step asks for');
+      server.world.spinOff(id, { kind: 'proposal', key: '0a1b2c3d4e5f6071', folder: '/Users/example/elsewhere', prompt: SPIN_OFF_PROMPT });
+      server.broadcast();
+      await page.waitFor('the card', `!!${card}`);
+      await page.click('Start…', `[...${card}.querySelectorAll('.approval-actions button')].find((b) => b.textContent.trim() === 'Start…')`);
+      await page.waitFor('its alert', `!!${card}?.querySelector('[role="alert"]')`);
+      t.expectEqual(await page.evaluate(`${card}.querySelector('[role="alert"]').textContent`), "The directory /Users/example/elsewhere isn't under one of your roots.", "the server's reason");
+      t.expect(await page.evaluate(`!${DIALOG}`), 'no dialog opened');
+      await t.shot('spin-off-refused');
+    });
+
+    await t.step('with a view selected and a session open, no directory is chosen, and Start session asks for one', async () => {
+      await t.fresh({ search: '?view=all' });
+      await openFromRow(t, NAMES.inApi);
+      await openDialog(t, 'New session');
+      t.expectEqual(await page.evaluate(`${DIRECTORY}.value`), '', "no directory, not the session's");
+      await page.click('First prompt', PROMPT);
+      await page.type(FIRST_PROMPT);
+      server.clearRecords();
+      await page.click('Start session', dialogButton('Start session'));
+      await page.waitFor('the problem', `!!${DIALOG}.querySelector('.field-problem')`);
+      t.expectEqual(await page.evaluate(`${DIALOG}.querySelector('.field-problem')?.textContent`), 'Choose a directory.', 'it says to choose one');
+      t.expect(await page.evaluate(`document.activeElement === ${DIRECTORY}`), 'focus goes to Directory', await page.evaluate(focused));
+      t.expectEqual(server.records.spawns, [], 'nothing was started');
+      await t.shot('view-selected');
+      await page.click('Cancel', dialogButton('Cancel'));
       await page.waitFor('the dialog to close', `!${DIALOG}`);
     });
   },

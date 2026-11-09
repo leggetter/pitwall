@@ -11,7 +11,7 @@ export default defineConfig({
     projects: [
       {
         extends: true,
-        test: { name: 'server', include: ['src/**/*.test.ts'], environment: 'node', setupFiles: ['src/test/noClaude.ts'] },
+        test: { name: 'server', include: ['src/**/*.test.ts', '.claude/hooks/*.test.ts'], environment: 'node', setupFiles: ['src/test/noClaude.ts'] },
       },
       {
         extends: true,

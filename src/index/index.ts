@@ -65,6 +65,12 @@ export interface IndexerOptions {
    */
   relayName?: string;
   /**
+   * The supervisor's session name, SUPERVISOR_NAME (D4), passed in: a session's SendMessage calls to
+   * it show as 'to-pitwall' entries with `recipient: 'supervisor'`, and Claude Code's refusal of one
+   * in pitwall's words (W138). Without it, they stay tool calls and the refusal a generic notice.
+   */
+  supervisorName?: string;
+  /**
    * Called after each poll whose `claude agents` listing succeeded, before the snapshot's listeners,
    * with what the index read of each listed session's transcript that the snapshot doesn't carry
    * (SessionFacts), by session id: for M5's recap engine. A hook that throws is ignored.
@@ -221,6 +227,8 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
   let current = new Set<string>();
   /** Where the relay's messages came from, per transcript, for the conversation's 'to-pitwall' entries. */
   const relayBook = options.relayName === undefined ? undefined : new RelayAddressBook(options.relayName);
+  /** The same for the supervisor's messages (W138). */
+  const supervisorBook = options.supervisorName === undefined ? undefined : new RelayAddressBook(options.supervisorName);
   let running = false;
   let stopped = false;
   /** pollSoon() was called while a poll ran: poll again once it's done. */
@@ -260,6 +268,7 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
       if (rows !== undefined) liveRows = rows;
       current = new Set(snapshot.groups.flatMap((group) => group.sessions.map((session) => session.sessionId)));
       relayBook?.retain(current);
+      supervisorBook?.retain(current);
       for (const listener of [...listeners]) {
         try {
           listener(snapshot);
@@ -312,7 +321,11 @@ export function createIndexer(options: IndexerOptions, deps: IndexerDeps): Index
       const file = transcriptFile(deps, sessionId);
       if (file === undefined) return undefined;
       const subagents = await labelsOf(sessionId);
-      return readPage(file, sessionId, before, { ...(relayBook === undefined ? {} : { relay: relayBook }), ...(subagents === undefined ? {} : { subagents }) });
+      return readPage(file, sessionId, before, {
+        ...(relayBook === undefined ? {} : { relay: relayBook }),
+        ...(supervisorBook === undefined ? {} : { supervisor: supervisorBook }),
+        ...(subagents === undefined ? {} : { subagents }),
+      });
     },
     async subagents(sessionId) {
       if (!current.has(sessionId)) return undefined;

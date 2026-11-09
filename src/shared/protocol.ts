@@ -38,6 +38,43 @@ export interface AskedYou {
 }
 
 /**
+ * A new session a session proposes (W163, spin-off proposals): the newest assistant message ended its
+ * turn with a fenced block whose info string is `spin-off` (the `spin-off` skill, skills/spin-off/ in
+ * pitwall's repo), naming a folder, an optional name and the first prompt. Untrusted session text,
+ * read by the index (src/index/spinOff.ts) behind the transcript adapter and bounded there: each
+ * field at most its limit below, and no character that doesn't show as itself (hiddenTextProblem()).
+ * Nothing starts from it: the card in Needs you opens New session filled in, after the server checks
+ * it as the supervisor's spawn_session is checked (spinOffPath()).
+ * - 'proposal': the block as read. `folder` is absolute, `~` expanded to the home folder.
+ * - 'unreadable': a block pitwall found but won't show, with why, in pitwall's own words, never the
+ *   session's text: a field over its limit, a hidden character, a line it doesn't know, no folder or
+ *   no prompt.
+ * `key` tells one proposal from the next, for the page's Dismiss: a hash of the block's text.
+ */
+export type SpinOff =
+  | { kind: 'proposal'; key: string; folder: string; name?: string; prompt: string }
+  | { kind: 'unreadable'; key: string; problem: string };
+
+/** The longest folder a spin-off block names (W163). */
+export const SPIN_OFF_FOLDER_MAX = 1024;
+/** The longest name a spin-off block gives, as New session's names are at most 64 (NAME_PATTERN). */
+export const SPIN_OFF_NAME_MAX = 64;
+
+/** The answer to a POST to spinOffPath() (W163): the proposal as checked, to fill New session in with, or why it can't start. */
+export type SpinOffCheck = { ok: true; cwd: string; name?: string; prompt: string } | { ok: false; error: string };
+
+/**
+ * Check a session's spin-off proposal before New session opens with it (W163): the server takes the
+ * session's proposal from its own snapshot, never from the request, and runs spawn_session's checks
+ * (checkSpawn()): the folder an existing directory under a root, by its real path; the name New
+ * session's; the prompt not blank, at most SPAWN_PROMPT_MAX, not just a claude command; no hidden
+ * character. Nothing starts and nothing is sent to the session. A POST, so the apiKey and Origin checks hold.
+ */
+export function spinOffPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/spin-off`;
+}
+
+/**
  * Why a session needs you, judged from its context rather than from Claude
  * Code's state alone (spike 007; Phil, 2026-10-27). The first reason that
  * holds, in this order:
@@ -153,6 +190,20 @@ export interface SessionSummary {
    */
   askedYou?: AskedYou;
   /**
+   * A new session it proposes (W163), from a `spin-off` block in its newest assistant message, held as
+   * askedYou is: once its turn has ended, with no prompt since, never while a prompt is on screen or on
+   * a stale session. A newer message without one clears it. Finished and ended sessions keep theirs.
+   */
+  spinOff?: SpinOff;
+  /**
+   * Set when the transcript says the session's last turn has ended (W69's rule,
+   * spike 007, finding 4), whatever Claude Code's status, which a plugin's
+   * monitor or a restart can keep at busy (finding 6). Absent while a turn runs
+   * or when the transcript marks no turn's end. The web UI's isBusy() reads it,
+   * so a session held at busy still comes back to Needs you for its PR (W161).
+   */
+  turnEnded?: true;
+  /**
    * Set when the session needs you, with the reason (NeedsYou). The index sets
    * it on every snapshot, pitwall's first included, so after a restart Needs
    * you reflects each session's context: `state: 'blocked'` alone no longer
@@ -161,6 +212,27 @@ export interface SessionSummary {
    * exactly the sessions that have it.
    */
   needsYou?: NeedsYou;
+  /**
+   * You flagged that it doesn't need you (W153), and it still needs what it needed then: the same
+   * NeedsYou reason and text, question, prompt and, for 'recap', the same recap. `needsYou` stays
+   * set; the web UI leaves a flagged session out of Needs you and every count, as it does one marked
+   * not needed now (W88). Gone once what it needs changes, or you undo the flag.
+   */
+  flagged?: SessionFlag;
+  /**
+   * You snoozed it (W154): Needs you is right about it, but not now. The web UI leaves a snoozed
+   * session out of Needs you and every count, as it does a flagged one; `needsYou` stays set. Kept on
+   * the server, in a 0600 file under pitwall's home, so it holds in every browser and across restarts.
+   * Ends when `until` passes, if it has one, or sooner when the session is woken (`wokenAt` after
+   * `at`), and then `snoozeEnded` says why; or, with nothing said, when you take it off or start or
+   * join a turn in it (`attendedAt` after `at`).
+   */
+  snoozed?: SessionSnooze;
+  /**
+   * Why a snooze on it ended by itself (W154), for SNOOZE_ENDED_SHOWN_MS after it ended, so its row
+   * can say why it's back. Not set while it's snoozed again.
+   */
+  snoozeEnded?: SnoozeEnded;
   /**
    * The session's recap, as the list needs it (M5, RecapSummary). Absent until one is made, and
    * with `--no-recaps`. Sub-agents and pitwall's own sessions are never listed, so never have one.
@@ -180,6 +252,29 @@ export interface SessionSummary {
   planStatusAt?: string;
   /** ISO 8601 timestamp of the newest transcript entry, when the transcript was readable. */
   lastActivityAt?: string;
+  /**
+   * ISO 8601: the newest turn something other than you started (W154), what wakes a snoozed session:
+   * a message from another session or a sub-agent's report, or a background task's notification,
+   * that arrived while no turn ran. A prompt you typed doesn't count, and neither does a message from
+   * pitwall's relay (RELAY_NAME), which you sent or approved. Read from the transcript (internal);
+   * absent when the entries read have none.
+   */
+  wokenAt?: string;
+  /**
+   * ISO 8601: the newest turn you started or joined (W154): a prompt, or a message from pitwall's
+   * relay, which you sent or approved. A snooze from before it is dropped, with nothing said: you've
+   * been there, so a need it shows later is a new one. Read from the transcript (internal); absent
+   * when the entries read have none.
+   */
+  attendedAt?: string;
+  /**
+   * How many tokens of context the session's newest call carried (W133): what the model read, from
+   * the cache or not, on its last main-chain call, from the transcript's usage records. Every call
+   * sends all of it again, so a big one costs on every turn. Absent when the transcript or its usage
+   * can't be read, as before a session's first reply. The web UI flags it over CONTEXT_WARN_TOKENS
+   * and CONTEXT_HIGH_TOKENS.
+   */
+  contextTokens?: number;
   /**
    * The newest prompt typed by the user, truncated to 300 characters. Messages
    * from other sessions (cross-session messages) are never counted as prompts.
@@ -476,6 +571,22 @@ export interface RelayAlert {
 }
 
 /**
+ * pitwall's relay's session name (D8): what a target sees as the sender of a message pitwall sent
+ * for you. The index leaves its messages out of what wakes a snoozed session (W154,
+ * SessionSummary.wokenAt): you sent them, or approved them.
+ */
+export const RELAY_NAME = 'pitwall-relay';
+
+/**
+ * A session's context (SessionSummary.contextTokens, W133) is flagged over this many tokens, in
+ * warning: time to hand off or compact. On 2026-11-02, 87% of cache reads were at more than 200K.
+ */
+export const CONTEXT_WARN_TOKENS = 200_000;
+
+/** And over this many, in danger (W133). pitwall's own coordinator ran at 760K to 916K that day. */
+export const CONTEXT_HIGH_TOKENS = 400_000;
+
+/**
  * WebSocket protocol version. Version 2 (M2) replaced M1's raw-token auth with
  * challenge-response, so the raw token never travels over the socket. Version
  * 3 binds the proof to the page's origin, so a page on another origin, such as
@@ -557,7 +668,9 @@ export type ConversationEntryKind =
    * (W46). A call is to pitwall when its `to` is the relay's name, or a `uds:`
    * address that a cross-session message from the relay's name came from
    * earlier in the same transcript, on any page. A call whose result was an
-   * error, or that has no `message` text, stays a 'tool' entry.
+   * error, or that has no `message` text, stays a 'tool' entry. A call to
+   * pitwall's supervisor, by the same rule with its name, is one too, with
+   * `recipient: 'supervisor'` (W138).
    */
   | 'to-pitwall'
   /**
@@ -569,7 +682,10 @@ export type ConversationEntryKind =
    * `toolError`. A call whose input isn't the shape below stays a 'tool' entry.
    */
   | 'question'
-  /** Anything else worth showing: a compaction summary, a task notification, a command's output. */
+  /**
+   * Anything else worth showing: a compaction summary, a task notification, a command's output, and
+   * Claude Code's notice that it refused one of this session's messages, in pitwall's words (W138).
+   */
   | 'notice';
 
 /** One question in a 'question' entry (W49). Every string is plain text, never markdown or HTML. */
@@ -620,6 +736,12 @@ export interface ConversationEntry {
   toolError?: boolean;
   /** For 'cross-session': the sender's name, as the receiving session saw it. */
   from?: string;
+  /**
+   * For 'to-pitwall': 'supervisor' when the call addressed pitwall's supervisor (W138), by its name
+   * or an address its messages came from, rather than the relay. The supervisor takes no messages
+   * from sessions, so Claude Code refuses each one; the web UI says it went to the supervisor's name.
+   */
+  recipient?: 'supervisor';
   /**
    * For 'cross-session': the message's id, as Claude Code records it (`origin.msg_id`, W99), when
    * it has one. The same id SendMessage's result gave its sender, so pitwall's recaps can tell a
@@ -841,6 +963,90 @@ export interface RelayResult {
 /** Relay a message to an interactive session, through pitwall's headless relay session (D8). */
 export function relayPath(sessionId: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/relay`;
+}
+
+/** A flag you put on a session in Needs you (W153): it doesn't need you. */
+export interface SessionFlag {
+  /** When you flagged it, ISO 8601. */
+  at: string;
+}
+
+/** A snooze you put on a session in Needs you (W154). */
+export interface SessionSnooze {
+  /**
+   * When you snoozed it, ISO 8601: the time of the snapshot you snoozed from, if that's earlier, so a
+   * wake the page hadn't shown yet still counts.
+   */
+  at: string;
+  /** When it ends by itself, ISO 8601. Absent for Later, which ends only when the session is woken. */
+  until?: string;
+}
+
+/** Why a snooze ended by itself (W154): its time was up, or the session was woken by a turn you didn't start. */
+export interface SnoozeEnded {
+  /** When it ended, ISO 8601. */
+  at: string;
+  why: 'time' | 'woken';
+}
+
+/** How long a row says why a snooze ended (SessionSummary.snoozeEnded): 12 hours. */
+export const SNOOZE_ENDED_SHOWN_MS = 12 * 60 * 60 * 1000;
+
+/** The longest snooze: 31 days, past next week from any day. */
+export const SNOOZE_MAX_MS = 31 * 24 * 60 * 60 * 1000;
+
+/**
+ * Body of a POST to snoozePath() (W154). `until`, ISO 8601, in the future and at most SNOOZE_MAX_MS
+ * away, is when it ends by itself; without it, it's Later, which ends only when the session is woken.
+ */
+export interface SnoozeRequest {
+  until?: string;
+}
+
+/** The answer to a POST to snoozePath() or unsnoozePath() (W154). */
+export type SnoozeResult = { ok: true; snoozed?: SessionSnooze } | { ok: false; error: string };
+
+/** Snooze a session in Needs you (W154): out of Needs you until `until`, or until it's woken. Nothing is sent to the session. */
+export function snoozePath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/snooze`;
+}
+
+/** Take a snooze off (W154): the session is back in Needs you while it needs you. */
+export function unsnoozePath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/unsnooze`;
+}
+
+/** Where a flag was asked from, for the flag log's counts (W153). */
+export type FlagFrom = 'row' | 'view';
+
+/**
+ * Body of a POST to flagPath() (W153). `reason` is the NeedsYou reason the page showed: the server
+ * refuses the flag when the session no longer needs you for it, so a flag never lands on a need you
+ * didn't see.
+ */
+export interface FlagRequest {
+  reason: NeedsYou['reason'];
+  from: FlagFrom;
+}
+
+/**
+ * The answer to a POST to flagPath() or unflagPath() (W153). On a flag, `asked` is the relay's
+ * outcome for the message asking the session what it needs, absent when nothing was sent: the
+ * session was already flagged for this need, or, for unflagPath(), always.
+ */
+export type FlagResult = { ok: true; asked?: RelayResult } | { ok: false; error: string };
+
+/**
+ * Flag a session in Needs you as not needing you (W153): pitwall logs it, leaves it out of Needs
+ * you until what it needs changes, and asks the session, through the relay, what it needs.
+ */
+export function flagPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/flag`;
+}
+
+/** Undo a flag (W153): logged, and the session is back in Needs you. Nothing is sent to the session. */
+export function unflagPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/unflag`;
 }
 
 /** Body of a POST to SPAWN_PATH (W12). */
@@ -1682,6 +1888,16 @@ export interface SessionRecap {
   waitingOn: RecapWaitingOn;
   /** What the session is about, at most RECAP_TITLE_MAX_WORDS words. */
   title: string;
+  /**
+   * W150 (the recap strip gives the picture): why the session was started, kept steady across
+   * updates. Absent from a recap stored before W150 and from Claude Code's own (source
+   * 'claude-code'); goal, workingOn and plan are there together or not at all.
+   */
+  goal?: string;
+  /** W150: the item it's on now, with its ID when it has one, and why it matters to the goal or the plan. */
+  workingOn?: string;
+  /** W150: the plan it works through, in one line; empty when the material shows none. */
+  plan?: string;
   /** ISO 8601: when it was made. */
   at: string;
   /** ISO 8601: the newest transcript entry it covers. */
@@ -1733,11 +1949,22 @@ export interface RecapHealth {
 /** The model recaps run on (spike 010: as right as Sonnet 5.5 on 56 recaps, at a fifteenth of the cost). */
 export const RECAP_MODEL = 'claude-haiku-5-5';
 
-/** How long a session must be idle after a turn ends before it's recapped (spike 010: trailing, 5 minutes). */
+/** How long a session with no recap yet must be idle after a turn ends before it's recapped (spike 010: trailing, 5 minutes). */
 export const RECAP_DEBOUNCE_MS = 5 * 60 * 1000;
 
-/** The most recap calls in a day (spike 010: about twice the busiest day measured, 96). */
-export const RECAP_DAILY_BUDGET = 200;
+/**
+ * How long a session with a recap must be idle after a turn ends before the recap is updated (W132):
+ * longer than a first recap's wait, since the recap there stands in meanwhile, marked as maybe out of
+ * date, and a session that takes a turn every few minutes would otherwise be recapped after each.
+ */
+export const RECAP_UPDATE_DEBOUNCE_MS = 15 * 60 * 1000;
+
+/**
+ * The most recap calls in a day: 500 since W132 (Phil, 2026-11-02), up from spike 010's 200, about
+ * twice the busiest day measured, 96, which try-out pitwalls on the same home spent on 2026-11-02.
+ * Kept recaps and the longer update wait bring a day to about 40 to 50 automatic calls (W132).
+ */
+export const RECAP_DAILY_BUDGET = 500;
 
 /** Characters of the latest turns a recap reads (spike 010: 24k changed no answer and cost 37% more). */
 export const RECAP_TURNS_CAP = 8000;
@@ -1745,8 +1972,14 @@ export const RECAP_TURNS_CAP = 8000;
 /** Characters of the first prompt a recap reads, keeping its start and end. */
 export const RECAP_FIRST_PROMPT_CAP = 1500;
 
-/** The longest summary, and the longest to-do. */
+/** The longest summary, the longest to-do, and the longest goal, working on and plan line (W150). */
 export const RECAP_FIELD_MAX = 400;
+
+/**
+ * The most of a session's PRs a recap's or a plan status's input names (W150): its strong links
+ * (prLinkIsStrong()), newest first, each PR once.
+ */
+export const RECAP_PRS_MAX = 5;
 
 /** The most words in a recap's title. */
 export const RECAP_TITLE_MAX_WORDS = 8;
@@ -1900,6 +2133,13 @@ export interface SupervisorState {
    * one needs you. At most SUPERVISOR_HANDOFFS_MAX; absent when there are none.
    */
   handoffs?: SupervisorHandoff[];
+  /**
+   * How many tokens of context its newest call carried (W136), as SessionSummary.contextTokens counts
+   * a session's (W133): `input_tokens + cache_read_input_tokens + cache_creation_input_tokens` of the
+   * newest assistant message on its stream. Absent until its first call in this run, and after New
+   * conversation. The web UI flags it over CONTEXT_WARN_TOKENS and CONTEXT_HIGH_TOKENS.
+   */
+  contextTokens?: number;
 }
 
 /**
@@ -1980,8 +2220,38 @@ export const SUPERVISOR_MODEL = 'claude-opus-5-5';
 /** An approval you don't answer is declined after this, inside the 30 minutes pitwall gives the supervisor's MCP calls (W115). */
 export const SUPERVISOR_APPROVAL_TIMEOUT_MS = 29 * 60 * 1000;
 
-/** The longest message you can send the supervisor, and the longest message or edit it proposes, resume_session's included (W127). */
-export const SUPERVISOR_MESSAGE_MAX = 20_000;
+/**
+ * The longest message you can send the supervisor (W134): long enough to paste a brief, such as a
+ * journal file, for it to read, since it can't read files itself (D4).
+ */
+export const SUPERVISOR_MESSAGE_MAX = 100_000;
+
+/**
+ * The longest message the supervisor proposes, resume_session's included (W127), and so the longest
+ * edit you make of one on its card. It stays at 20,000 when what you send it grew (W134): a card
+ * is text you read before Send.
+ */
+export const SUPERVISOR_PROPOSAL_MAX = 20_000;
+
+/**
+ * The line pitwall adds to every message the supervisor sends a session through SendMessage (W138;
+ * Phil, 2026-11-04), after a blank line, once you Send or Edit: fixed text of pitwall's, never the
+ * model's, so a session knows who the message is from and doesn't spend a turn on a reply Claude Code
+ * will refuse (the supervisor takes no messages from sessions, D4). Its card shows it apart from the
+ * text you can edit, which can't remove it. It doesn't count toward SUPERVISOR_PROPOSAL_MAX, which is
+ * the text you read and edit, so what goes is at most that plus SUPERVISOR_MESSAGE_FOOTER_SEPARATOR
+ * and this line. Plain ASCII, so it passes the hidden-character checks the text gets.
+ */
+export const SUPERVISOR_MESSAGE_FOOTER =
+  "Sent by pitwall's supervisor after the user approved it. The supervisor takes no messages from sessions, so a reply to it will be refused: answer here, in this session, where the user reads it.";
+
+/** What goes between the message and SUPERVISOR_MESSAGE_FOOTER: a blank line. */
+export const SUPERVISOR_MESSAGE_FOOTER_SEPARATOR = '\n\n';
+
+/** A message the supervisor sends a session, as it goes (W138): the text you approved, then pitwall's line. */
+export function withSupervisorFooter(text: string): string {
+  return `${text}${SUPERVISOR_MESSAGE_FOOTER_SEPARATOR}${SUPERVISOR_MESSAGE_FOOTER}`;
+}
 
 /**
  * The longest first prompt a new session takes (SpawnRequest's prompt, New session's dialog), and so
@@ -2001,6 +2271,15 @@ export const SUPERVISOR_START_PATH = '/api/supervisor/start';
 
 /** POST, no body: stop its running turn, with an `interrupt` control request. The same checks. */
 export const SUPERVISOR_INTERRUPT_PATH = '/api/supervisor/interrupt';
+
+/**
+ * POST, no body: New conversation (W136). Stops the supervisor if it runs and forgets the
+ * conversation on file, so the next message or Start begins a new one; it starts nothing itself. The
+ * old transcript stays on disk, and its session id stays pitwall's own. The same checks. 409 with
+ * `--no-supervisor`, and, with the reason, while it starts or a turn runs, while drafts or your
+ * messages wait for that conversation, or while it's 'held'.
+ */
+export const SUPERVISOR_NEW_CONVERSATION_PATH = '/api/supervisor/new-conversation';
 
 /** GET: the supervisor's conversation, a ConversationPage, paged with `before` as conversationPath() pages a session's. */
 export function supervisorConversationPath(before?: string): string {

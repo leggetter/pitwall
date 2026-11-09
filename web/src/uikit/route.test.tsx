@@ -1,5 +1,7 @@
-// The #uikit route (W19): the gallery at #uikit, the app everywhere else, the token handling
-// unaffected either way, and no network at all while the gallery shows.
+// The #uikit route (W19): the gallery at #uikit, the app everywhere else, and no network at all while
+// the gallery shows. The real gallery takes 10 s or more to render each time, past 30 s on CI's busy
+// runners, so only the tests that need it render it here, and they wait for up to 2 minutes (W149).
+// routeApp.test.tsx has the token's way in and out of the app, with a stand-in gallery.
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { App } from '../App.js';
@@ -34,11 +36,17 @@ function go(hash: string) {
   });
 }
 
+/**
+ * A test that renders the whole gallery: about 53,000 elements, which take 6 to 7 s to render and
+ * up to 6 s more to settle on a 2026 laptop, and two or three times as long on CI under the suite's load.
+ */
+const GALLERY_TEST_MS = 120_000;
+
 /** Waits until every specimen's scenario has finished, so nothing is still on its way. */
 async function settled() {
-  // The gallery renders every specimen before its heading shows: under the whole suite's load, that's more than a second.
-  await screen.findByRole('heading', { name: 'pitwall UI kit' }, { timeout: 15_000 });
-  await waitFor(() => expect(document.querySelector('.uikit[data-ready]')).not.toBeNull(), { timeout: 15_000 });
+  // The gallery renders every specimen before its heading shows.
+  await screen.findByRole('heading', { name: 'pitwall UI kit' }, { timeout: 60_000 });
+  await waitFor(() => expect(document.querySelector('.uikit[data-ready]')).not.toBeNull(), { timeout: 60_000 });
 }
 
 describe('isUikitHash', () => {
@@ -71,7 +79,11 @@ describe('the #uikit route', () => {
     // Every component in every state, and no browser hover text in place of a tooltip anywhere (W25, W27).
     const titled = [...document.querySelectorAll('[title]')];
     expect(titled.map((element) => element.outerHTML.slice(0, 120))).toEqual([]);
-  }, 30_000);
+    // Each link in the index has its section, so #uikit/<section> finds it.
+    const sections = [...document.querySelectorAll<HTMLAnchorElement>('.uikit-index a')].map((link) => link.getAttribute('href')?.slice(1) ?? '');
+    expect(sections.length).toBeGreaterThan(1);
+    expect(sections.filter((id) => !document.getElementById(id))).toEqual([]);
+  }, GALLERY_TEST_MS);
 
   it('opens no WebSocket, calls no fetch and never reads the token, with the browser defaults in place', async () => {
     window.sessionStorage.setItem(TOKEN_STORAGE_KEY, 'stored-token');
@@ -94,7 +106,7 @@ describe('the #uikit route', () => {
     } finally {
       vi.unstubAllGlobals();
     }
-  }, 30_000);
+  }, GALLERY_TEST_MS);
 
   it('shows the app everywhere else', () => {
     window.history.replaceState(null, '', '/#somewhere-else');
@@ -103,53 +115,6 @@ describe('the #uikit route', () => {
     expect(screen.getByText('This tab has no token for pitwall.')).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'pitwall UI kit' })).toBeNull();
   });
-
-  it('arriving with a token, then going to #uikit and back: the token is kept and the app reconnects with it', async () => {
-    window.history.replaceState(null, '', '/#token=from-the-cli');
-    const fake = fakeSockets();
-    render(<App createSocket={fake.factory} />);
-    expect(window.location.hash).toBe('');
-    expect(window.sessionStorage.getItem(TOKEN_STORAGE_KEY)).toBe('from-the-cli');
-    expect(fake.sockets).toHaveLength(1);
-
-    go('#uikit');
-    await settled();
-    // Leaving the app closes its connection.
-    expect(fake.sockets[0]!.closedByClient).toBe(true);
-    expect(fake.sockets).toHaveLength(1);
-
-    go('');
-    expect(screen.queryByRole('heading', { name: 'pitwall UI kit' })).toBeNull();
-    expect(fake.sockets).toHaveLength(2);
-    expect(window.sessionStorage.getItem(TOKEN_STORAGE_KEY)).toBe('from-the-cli');
-  }, 30_000);
-
-  it('arriving at #uikit, then following a #token= link: the app takes the token as usual', async () => {
-    window.history.replaceState(null, '', '/#uikit');
-    const fake = fakeSockets();
-    render(<App createSocket={fake.factory} />);
-    await settled();
-    expect(fake.sockets).toHaveLength(0);
-
-    go('#token=from-the-cli');
-
-    expect(screen.queryByRole('heading', { name: 'pitwall UI kit' })).toBeNull();
-    expect(window.location.hash).toBe('');
-    expect(window.location.href).not.toContain('from-the-cli');
-    expect(window.sessionStorage.getItem(TOKEN_STORAGE_KEY)).toBe('from-the-cli');
-    expect(fake.sockets).toHaveLength(1);
-  }, 30_000);
-
-  it('a link to a section stays on the gallery', async () => {
-    window.history.replaceState(null, '', '/#uikit');
-    render(<App createSocket={fakeSockets().factory} />);
-    await settled();
-
-    go('#uikit/terminal');
-
-    expect(screen.getByRole('heading', { name: 'pitwall UI kit' })).toBeTruthy();
-    expect(document.getElementById('uikit/terminal')).not.toBeNull();
-  }, 30_000);
 
   it("switches the theme from the app's own switch in its bar, and the app keeps the choice", async () => {
     window.history.replaceState(null, '', '/#uikit');
@@ -174,5 +139,5 @@ describe('the #uikit route', () => {
     // Leaving keeps it: it's the app's choice, not the gallery's.
     go('');
     expect(root.getAttribute('data-theme')).toBe('light');
-  }, 30_000);
+  }, GALLERY_TEST_MS);
 });

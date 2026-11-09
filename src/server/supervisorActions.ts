@@ -34,7 +34,7 @@
 //                   F2), the one live session of that name, ignoring case, wherever it runs, so a
 //                   name shared with a session outside the roots is refused; only the fields pitwall
 //                   knows; a plain message, no idle notices; a `content` preview that is the message
-//                   or its start, never other text; text not blank, at most SUPERVISOR_MESSAGE_MAX
+//                   or its start, never other text; text not blank, at most SUPERVISOR_PROPOSAL_MAX
 //   a new session   directory: an existing directory under a root, by its real path, as New session
 //                   requires (checkDirectory()); name: NAME_PATTERN, never one of pitwall's own
 //                   (OWN_NAMES); prompt: not blank, at most MAX_PROMPT_LENGTH, not just a claude
@@ -57,15 +57,20 @@
 // The recipient gate (src/supervisor/gate.ts) checks a message's `to` again before Claude Code asks,
 // against recipientNames(), as defence in depth.
 //
-// What goes is exactly what the card showed, or your edit: pitwall adds nothing to it (D25's rule: a
-// prompt pitwall fills in goes as typed by you, and here you read it, whole, before it goes). The card
+// What goes is exactly what the card showed, or your edit (D25's rule: a prompt pitwall fills in goes
+// as typed by you, and here you read it, whole, before it goes), with one exception, which the card
+// shows too: a message to a session ends with pitwall's own fixed line, SUPERVISOR_MESSAGE_FOOTER
+// (W138), after a blank line, saying it's from the supervisor, with your approval, and that a reply to
+// it will be refused. It's added after the checks, to the allowed input only (sentMessageInput()), so
+// the card's text, your edit and SUPERVISOR_PROPOSAL_MAX are about what you read and write, never the
+// line; it's plain ASCII, so it can't carry a character the checks would refuse. The card
 // shows the string itself, never through a filter that removes text, and since the checks above
 // refuse every character that wouldn't show, there is nothing on it you can't read; anything unusual
 // left, such as a no-break space, it draws as its code (web/src/components/ApprovalCards.tsx).
 import type { AgentRow, AgentsSource } from '../index/agents.js';
 import { isRecord } from '../index/guards.js';
 import { hiddenTextProblem } from '../shared/hiddenText.js';
-import { MCP_TOOLS, SUPERVISOR_MESSAGE_MAX, type IndexSnapshot, type SavedPermission, type SessionSummary, type SupervisorDecision } from '../shared/protocol.js';
+import { MCP_TOOLS, SUPERVISOR_PROPOSAL_MAX, withSupervisorFooter, type IndexSnapshot, type SavedPermission, type SessionSummary, type SupervisorDecision } from '../shared/protocol.js';
 import { DECLINED_MESSAGE, type ApprovalDraft, type ApprovalQueue, type PermissionAnswer } from '../supervisor/approvals.js';
 import { isPreviewOf, KNOWN_INPUT_FIELDS, OWN_NAMES } from '../supervisor/supervisorGateHook.mjs';
 import { mcpToolName } from '../supervisor/prompt.js';
@@ -164,7 +169,7 @@ function checkText(text: unknown, max: number, what: string): Checked<string> {
  * a new session's prompt could (claudeCommands.ts, validateSpawnRequest()).
  */
 export function checkResumeText(text: unknown): Checked<string> {
-  const checked = checkText(text, SUPERVISOR_MESSAGE_MAX, 'message');
+  const checked = checkText(text, SUPERVISOR_PROPOSAL_MAX, 'message');
   if (!checked.ok) return checked;
   if (isClaudeCommand(checked.value)) {
     return {
@@ -197,7 +202,7 @@ export function checkMessage(input: unknown, snapshot: IndexSnapshot | undefined
   if (OWN_NAMES.has(nameKey(to.trim()))) return { ok: false, error: 'pitwall’s own sessions can’t be messaged.' };
   const addressable = checkTo(to);
   if (!addressable.ok) return addressable;
-  const text = checkText(input.message, SUPERVISOR_MESSAGE_MAX, 'message');
+  const text = checkText(input.message, SUPERVISOR_PROPOSAL_MAX, 'message');
   if (!text.ok) return text;
   // Claude Code's preview of the message: anything but the message or its start could carry text
   // the card never shows (W115's review).
@@ -333,6 +338,14 @@ function resumeInput(sessionId: string, text: string): Record<string, unknown> {
  */
 export function messageInput(to: string, text: string): Record<string, unknown> {
   return { to, message: text };
+}
+
+/**
+ * The input a message is allowed with, once checked (W138): `{ to, message }`, the message being the
+ * text you approved with pitwall's fixed line after it (withSupervisorFooter()).
+ */
+export function sentMessageInput(to: string, text: string): Record<string, unknown> {
+  return messageInput(to, withSupervisorFooter(text));
 }
 
 /** The input spawn_session runs with, once allowed: the real path, the prompt, the name if any. */
@@ -474,7 +487,7 @@ export function createResumeSessionTool(sources: SupervisorActionSources): McpTo
       type: 'object',
       properties: {
         id: { type: 'string', description: 'The session’s id, as list_sessions gives it.' },
-        message: { type: 'string', description: `The whole message, at most ${SUPERVISOR_MESSAGE_MAX.toLocaleString('en-US')} characters.` },
+        message: { type: 'string', description: `The whole message, at most ${SUPERVISOR_PROPOSAL_MAX.toLocaleString('en-US')} characters.` },
       },
       required: ['id', 'message'],
       additionalProperties: false,
@@ -544,7 +557,7 @@ export type DecisionAnswer = { status: 200 } | { status: 400 | 404 | 409; error:
 
 /** The note the supervisor reads before your next message, after you edited what it proposed. */
 export function editNote(draft: ApprovalDraft, sent: string): string {
-  if (draft.kind === 'message') return `the user edited your message to ${JSON.stringify(draft.to)} before it was sent. What was sent: ${JSON.stringify(sent)}`;
+  if (draft.kind === 'message') return `the user edited your message to ${JSON.stringify(draft.to)} before it was sent. What was sent, before pitwall's line: ${JSON.stringify(sent)}`;
   // By its id, not its name, which is untrusted (W129, L3).
   if (draft.kind === 'resume') return `the user edited your message to the session ${draft.sessionId}, which pitwall resumed with it, before it was sent. What was sent: ${JSON.stringify(sent)}`;
   return `the user edited the first prompt of your new session in ${JSON.stringify(draft.directory)} before it started. What was sent: ${JSON.stringify(sent)}`;
@@ -581,7 +594,7 @@ export async function decide(sources: SupervisorActionSources, id: string, decis
       // Rebuilt from what the card showed, or your edit: never a field the card didn't show.
       const next = messageInput(approval.to, decision.decision === 'edit' ? decision.text : approval.text);
       if (decision.decision === 'edit') {
-        const text = checkText(decision.text, SUPERVISOR_MESSAGE_MAX, 'message');
+        const text = checkText(decision.text, SUPERVISOR_PROPOSAL_MAX, 'message');
         if (!text.ok) return { status: 400, error: text.error };
       }
       const message = checkMessage(next, sources.snapshots.latest(), own);
@@ -592,7 +605,8 @@ export async function decide(sources: SupervisorActionSources, id: string, decis
         sources.approvals.settle(id, { behavior: 'deny', message: `pitwall checked this again when the user answered, and didn't send it: ${why}` });
         return { status: 409, error: `pitwall didn't send it: ${checked.ok ? 'it no longer names the same session.' : checked.error}` };
       }
-      if (!sources.approvals.settle(id, { behavior: 'allow', updatedInput: next })) return gone();
+      // What you approved, with pitwall's line after it (W138), added only now, after every check.
+      if (!sources.approvals.settle(id, { behavior: 'allow', updatedInput: sentMessageInput(approval.to, decision.decision === 'edit' ? decision.text : approval.text) })) return gone();
       if (decision.decision === 'edit' && decision.text !== approval.text) sources.approvals.note(editNote(approval, decision.text));
       // So the panel can open the session it went to (W124): the one running session of that name, as checked.
       const recipient = recipientOf(approval.to, sources.snapshots.latest(), own);

@@ -1,5 +1,6 @@
-// Recaps (M5, W111, W121): the real RecapStrip in every state, in the session view and alone at its width,
-// Plan status (W123), the session rows' recap reasons on line 2, and the app strip's recap lines. Each strip has a stub
+// Recaps (M5, W111, W121, W150): the real RecapStrip in every state, in the session view and alone at its
+// width, the picture (W150: goal, working on, plan and your to-dos) and recaps without it, Plan status
+// (W123), the session rows' recap reasons on line 2, and the app strip's recap lines. Each strip has a stub
 // API (stubs.ts) holding its made-up recap, and its own collapsed setting in memory, so pressing one
 // changes none of the others. Every recap here is made up, as spike 010's examples are.
 
@@ -51,9 +52,27 @@ function recap(extra: Partial<SessionRecap> = {}): SessionRecap {
   };
 }
 
-/** The first to-do for you, or undefined. */
+/** W150's picture of the made-up recap: the goal, what it's on and why, and the plan's line. */
+const PICTURE = {
+  goal: 'Make the made-up nightly export work on files over 2 GB.',
+  workingOn: '#42: the fix for the 32-bit size field in the upload step, which the large-file goal needs before the archive job can reuse it.',
+  plan: 'The made-up large-file plan: #42, then the archive job, then the thumbnails; on #42 now',
+};
+
+/** A made-up recap with the picture (W150). */
+function pictured(extra: Partial<SessionRecap> = {}): SessionRecap {
+  return recap({ ...PICTURE, ...extra });
+}
+
+/** The first to-do for you, or undefined, as the engine's summaryOf() gives it. */
 function nextOf(full: SessionRecap): string | undefined {
   return full.todos.find((todo) => todo.owner === 'you')?.text;
+}
+
+/** The to-do Needs you's 'recap' reason shows: the first one the session doesn't own, when it's yours (W146). */
+function dueOf(full: SessionRecap): string | undefined {
+  const lead = full.todos.find((todo) => todo.owner !== 'session');
+  return lead?.owner === 'you' ? lead.text : undefined;
 }
 
 /** What the snapshot carries of `full` (D14): how many to-dos are yours, and the first of them as `next`. */
@@ -72,7 +91,7 @@ function summaryOf(full: SessionRecap): RecapSummary {
 
 /** A session with `full` as its recap, its title from it, and, waiting on you, Needs you's 'recap' reason. */
 function recapped(name: string, full: SessionRecap | undefined, extra: Partial<SessionSummary> = {}): { session: SessionSummary; full: SessionRecap | undefined } {
-  const next = full ? nextOf(full) : undefined;
+  const next = full ? dueOf(full) : undefined;
   const needs = full && full.waitingOn === 'you' && !full.stale && full.source === 'pitwall' && next !== undefined;
   return {
     session: session(name, {
@@ -119,7 +138,28 @@ function Strip({
   );
 }
 
-const IN_VIEW = recapped('recap-view', recap());
+const IN_VIEW = recapped('recap-view', pictured());
+const PICTURE_YOU = recapped('recap-picture-you', pictured());
+const PICTURE_CI = recapped(
+  'recap-picture-ci',
+  pictured({
+    waitingOn: 'CI',
+    todos: [
+      { text: 'Finish the made-up e2e run on #42', owner: 'CI' },
+      { text: 'Mark #42 ready once it passes', owner: 'session' },
+      { text: 'Say whether to open a backport PR for the 1.x branch', owner: 'you' },
+    ],
+  }),
+);
+const PICTURE_SOMEONE = recapped(
+  'recap-picture-someone',
+  pictured({ waitingOn: 'someone else', todos: [{ text: "Fix the review's comments on #42", owner: 'someone else' }], plan: '' }),
+);
+const PICTURE_DONE = recapped(
+  'recap-picture-done',
+  pictured({ waitingOn: 'nothing', todos: [], workingOn: 'Nothing: #42 merged, and the nightly run passed with a 3 GB file, which was the goal.', plan: '' }),
+);
+const PICTURE_STALE = recapped('recap-picture-stale', pictured({ stale: true }), { lastActivityAt: ago(1) });
 const YOU = recapped('recap-you', recap());
 const CI = recapped(
   'recap-ci',
@@ -215,7 +255,7 @@ export function RecapSpecimens() {
     <>
       <Specimen
         title="In the session view"
-        note="Between the header and the tabs, on every tab: line 1 is the disclosure button, how old the recap is and Refresh; then the summary, why it was started and where it is now; then the to-dos in order, each with who it waits on as a tag, yours in the Needs you tone. The title in the header is the recap's, pitwall's, with where it came from in its tooltip."
+        note="Between the header and the tabs, on every tab: line 1 is the disclosure button, how old the recap is and Refresh right after it; then the picture (W150): Goal, why it was started; Working on, the item and why it matters; Plan, its line, with Show plan; For you, only your to-dos. The title in the header is the recap's, pitwall's, with where it came from in its tooltip."
         frame="view"
       >
         <Stubbed options={{ recaps: { [IN_VIEW.session.sessionId]: IN_VIEW.full! } }}>
@@ -231,10 +271,33 @@ export function RecapSpecimens() {
           <SessionView session={VIEW_ENDED} listed onClose={noop} recaps={HEALTHY} />
         </Stubbed>
       </Specimen>
-      <StripSpecimen title="Waiting on you" note="The summary, then the to-dos in order: yours with a You tag in the Needs you tone, subtle warning, as Asked you, and their text in full colour; the rest quiet, subtle neutral tags and muted text. The session needs you, for Needs you's reason 'recap', with your first to-do on its row's line 2.">
+      <StripSpecimen title="The picture, waiting on you" note="W150: Goal, Working on, Plan with Show plan, then For you (2): only your to-dos, in order, with no tags, since they're all yours. The session's own, CI's and someone else's to-dos aren't shown: what's next is the conversation's.">
+        <Strip of={PICTURE_YOU} />
+      </StripSpecimen>
+      <StripSpecimen title="The picture, waiting on CI" note="Your to-do comes after CI's, so it's listed, and a quiet line says what it waits on now: Waiting on CI.">
+        <Strip of={PICTURE_CI} />
+      </StripSpecimen>
+      <StripSpecimen title="The picture, no plan, waiting on someone else" note="The recap names no plan: Plan says None named., and Show plan can still look. Nothing for you, so no For you line; the quiet line says what it waits on.">
+        <Strip of={PICTURE_SOMEONE} />
+      </StripSpecimen>
+      <StripSpecimen title="The picture, nothing left" note="No to-dos at all: Nothing left to do.">
+        <Strip of={PICTURE_DONE} />
+      </StripSpecimen>
+      <StripSpecimen title="The picture, collapsed" note="Working on on one line, its whole in a tooltip when it's cut, and 2 for you after it. The goal, the plan and your to-dos are hidden.">
+        <Strip of={PICTURE_YOU} collapsed />
+      </StripSpecimen>
+      <StripSpecimen title="The picture, may be out of date" note="Line 1: the age, Refresh right after it, as the recap's own, then May be out of date. The view asked for a new one once as it opened, which this stub refuses quietly.">
+        <Strip of={PICTURE_STALE} options={{ recapRefresh: 'failed' }} />
+      </StripSpecimen>
+      <StripSpecimen title="Show plan" note="W150: Show plan, on the Plan line, opens the plan status panel (W123) right under it: the plan's one line, its items in order, each Done, Now, Next or Dropped, and how the plan changed; its age, Make a new one and Close.">
+        <Scenario run={async (root) => (await element(root, '[data-plan-status]')).click()}>
+          <Strip of={PICTURE_YOU} />
+        </Scenario>
+      </StripSpecimen>
+      <StripSpecimen title="Without the picture, waiting on you" note="A recap stored before W150: the summary, then the to-dos in order: yours with a You tag in the Needs you tone, subtle warning, as Asked you, and their text in full colour; the rest quiet, subtle neutral tags and muted text. The session needs you, for Needs you's reason 'recap', with your first to-do on its row's line 2.">
         <Strip of={YOU} />
       </StripSpecimen>
-      <StripSpecimen title="Waiting on CI" note="The to-dos in their order, CI's first: yours comes later, still in the Needs you tone. It never counts as needing you.">
+      <StripSpecimen title="Without the picture, waiting on CI" note="The to-dos in their order, CI's first: yours comes later, still in the Needs you tone. It never counts as needing you.">
         <Strip of={CI} />
       </StripSpecimen>
       <StripSpecimen title="Waiting on another session" note="Another session's to-do is Someone else's.">
@@ -252,7 +315,7 @@ export function RecapSpecimens() {
       >
         <Strip of={STALE} options={{ recapRefresh: 'failed' }} />
       </StripSpecimen>
-      <StripSpecimen title="Claude Code's recap" note="Before pitwall's first recap, or while the day's budget is spent: Claude Code's own away_summary, as the summary alone, with no to-dos. Nothing to open, so no disclosure button.">
+      <StripSpecimen title="Claude Code's recap" note="Before pitwall's first recap, or while the day's budget is spent: Claude Code's own away_summary, as the summary alone, with no to-dos. Nothing to open, so no disclosure button, and Plan status sits under the summary (W150).">
         <Strip of={CLAUDE} />
       </StripSpecimen>
       <StripSpecimen title="Collapsed" note="The summary's first line, its whole in a tooltip when it's cut, and how many to-dos are yours, 2 for you, in the Needs you tone. The choice is kept per viewer, as a boolean, in pitwall.recap-collapsed.v1.">
@@ -267,7 +330,7 @@ export function RecapSpecimens() {
       <StripSpecimen title="Open, a long recap" note="Six to-dos, the most a recap keeps, for each owner. Open, everything wraps; past 35% of the view's height it scrolls inside itself.">
         <Strip of={LONG} />
       </StripSpecimen>
-      <StripSpecimen title="Plan status" note="W123: pressed, where the session is in its bigger plan, under the summary and the to-dos: the plan's one line, its items in order, each Done, Now, Next or Dropped, and how the plan changed; its age, Make a new one and Close.">
+      <StripSpecimen title="Plan status, without the picture" note="W123: in a recap without the picture, a text button in the body under the to-dos (W150); pressed, where the session is in its bigger plan, under it: the plan's one line, its items in order, each Done, Now, Next or Dropped, and how the plan changed; its age, Make a new one and Close.">
         <Scenario run={async (root) => (await element(root, '[data-plan-status]')).click()}>
           <Strip of={LONG} />
         </Scenario>

@@ -98,7 +98,7 @@ describe('supervisorEnvironment()', () => {
 
 describe('the system prompt, version 3', () => {
   it('reads from the tools, recaps first, treats what they return as untrusted, proposes messages and sessions for approval with a reason, never asks a session its status', () => {
-    expect(SUPERVISOR_PROMPT_VERSION).toBe(5);
+    expect(SUPERVISOR_PROMPT_VERSION).toBe(6);
     const prompt = SUPERVISOR_SYSTEM_PROMPT;
     expect(prompt).toContain("Answer from pitwall's tools");
     expect(prompt).toContain('read_session');
@@ -129,9 +129,14 @@ describe('the system prompt, version 3', () => {
 
   it('never relays a reply or asks for "go", and points at the panel instead (W124)', () => {
     const prompt = SUPERVISOR_SYSTEM_PROMPT;
-    expect(prompt).toContain("You never see a session's reply, and you don't relay one");
+    expect(prompt).toContain("A session's reply to you is refused, and you don't relay one");
     expect(prompt).toContain('Never ask the user to reply "go"');
     expect(prompt).toContain('open that session from the panel');
+  });
+
+  it("knows pitwall ends each message with its own line, so it doesn't write one (W138, version 6)", () => {
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain('pitwall ends each message you send with SendMessage with a fixed line of its own');
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain("Don't write that yourself.");
   });
 
   it('drafts messages as the supervisor on the user’s behalf, never in their first person (W124)', () => {

@@ -21,7 +21,8 @@ import { createShortcutsStore, ShortcutsStoreContext } from '../shortcuts.js';
 import { group, minutesAgo, NOW, pr, prLink, prList, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
 import { toastMessages } from '../test/toasts.js';
-import { Dashboard, notNeededStaysText } from './Dashboard.js';
+import { snoozedToast } from '../snooze.js';
+import { Dashboard } from './Dashboard.js';
 import { CONFIGURATION_URL, NO_RELATION, prSourceBody, REFRESH_LABEL, REFRESH_OFF } from './PrList.js';
 import { COPY_LINK, OPEN_ON_GITHUB, OWNS_IT, PR_MISSING, PrView } from './PrView.js';
 import { LINKED_NOTE } from './SessionPrs.js';
@@ -32,6 +33,7 @@ class QuietTerminal implements TerminalHandle {
   rows = 24;
   write() {}
   onData() {}
+  paste() {}
   fit() {}
   focus() {}
   dispose() {}
@@ -235,16 +237,16 @@ describe('rows', () => {
     expect(sessionRow('alpha').querySelector('.session-what')?.textContent).toBe('demo-app · You: run the tests');
   });
 
-  it('marking a session not needed now while its PR needs you keeps it in Needs you, and the toast says why', async () => {
+  it('a session snoozed while its PR needs you stays in Needs you, and the toast says why (W154)', async () => {
     const base = snap();
-    const kappa = session({ sessionId: 'pr-kappa', name: 'kappa', status: 'waiting', waitingFor: 'permission prompt', prLinks: [prLink('pushed', failing, 1)] });
+    const kappa = session({ sessionId: 'pr-kappa', name: 'kappa', status: 'waiting', waitingFor: 'permission prompt', prLinks: [prLink('pushed', failing, 1)], snoozed: { at: '2026-03-02T11:00:00.000Z' } });
     const s = { ...base, groups: [...base.groups, group({ key: `${ROOT}/more`, label: 'more', sessions: [kappa] })] };
     render(<Dashboard view={{ state: 'live', snapshot: s, prs: prList(PRS) }} navigation={memoryNavigation('?view=needs-you')} storage={memory().source} />);
-    fireEvent.click(sessionRow('kappa').querySelector<HTMLElement>('[data-not-needed-session]')!);
     await settle();
-    expect(toastMessages()).toEqual([notNeededStaysText('kappa', 42)]);
-    expect(notNeededStaysText('kappa', 42)).toBe('Marked kappa not needed now. It stays in Needs you while #42 needs you.');
-    expect(sessionRow('kappa').querySelector('.session-what-text')?.textContent).toBe('more · Not needed now · Needs you for example/demo-app#42: CI failing');
+    expect(sessionRow('kappa').querySelector('.session-what-text')?.textContent).toBe("more · Snoozed until it's woken · Needs you for example/demo-app#42: CI failing");
+    expect(snoozedToast('kappa', { at: '2026-03-02T11:00:00.000Z' }, new Date(NOW), 42)).toBe(
+      "Snoozed kappa until it's woken: a turn you didn't start, such as a message or a finished task. It stays in Needs you while #42 needs you.",
+    );
   });
 
   it("says nothing of its PR in the session view while the session needs you itself (W128)", async () => {
@@ -255,6 +257,49 @@ describe('rows', () => {
     await settle();
     expect(sessionView()!.querySelector('.session-view-prs')).not.toBeNull();
     expect(sessionView()!.querySelector('.session-view-pr-need')).toBeNull();
+  });
+
+  it("keeps a busy session's PR out of Needs you, with its badge, until it stops; then says what its recap has for you, not the PR's state (W161)", async () => {
+    const base = snap();
+    const asked = placed(pr({ number: 57, title: 'Review the made-up retry budget', relation: 'review-requested', reviewRequest: { via: 'direct' } }, 20), cloned(`${ROOT}/demo-app`, 'demo-app'));
+    const working = { kind: 'background' as const, shortId: 'l57', status: 'busy' as const, state: 'working' as const, prLinks: [prLink('prompted', asked, 1)] };
+    const lambda = (overrides: Parameters<typeof session>[0] = {}) => session({ sessionId: 'pr-lambda', name: 'lambda', lastUserPrompt: 'Review the made-up PR', ...working, ...overrides });
+    const withLambda = (each: ReturnType<typeof session>): IndexSnapshot => ({ ...base, groups: [...base.groups, group({ key: `${ROOT}/more`, label: 'more', sessions: [each] })] });
+    const recap = { waitingOn: 'someone else' as const, title: 'Made-up review', forYou: 3, next: 'Say whether the made-up budget may go to 5', at: new Date(NOW).toISOString(), source: 'pitwall' as const };
+    const ui = (each: ReturnType<typeof session>, search = '?view=needs-you') => (
+      <Dashboard view={{ state: 'live', snapshot: withLambda(each), prs: prList([...PRS, asked]) }} navigation={memoryNavigation(search)} storage={memory().source} />
+    );
+    const { unmount } = render(ui(lambda({ recap })));
+    await settle();
+    // Busy: not in Needs you, nor its count, whatever its recap says; alpha and beta are, through their PRs.
+    expect(rows()).toEqual(['alpha', 'beta']);
+    expect(repoItem('Needs you')?.querySelector('.badge')?.textContent).toBe('2 need you');
+    // Nor in the Pull requests item's, as the view's summary counts: its PR keeps its badge on the row.
+    expect(prItem()?.querySelector('.badge')?.textContent).toBe('2 need you');
+    unmount();
+    const prs = render(ui(lambda(), '?view=prs&session=pr-lambda'));
+    await settle();
+    // Nor does its view say it needs you for the PR.
+    expect(sessionView()!.querySelector('.session-view-prs')).not.toBeNull();
+    expect(sessionView()!.querySelector('.session-view-pr-need')).toBeNull();
+    expect(sessionRow('lambda').querySelector('.pr-badge')?.textContent).toBe('Pull request #57, review requested, needs attention');
+    expect(sessionRow('lambda').classList.contains('attention')).toBe(false);
+    expect(sessionRow('lambda').querySelector('.session-what')?.textContent).toBe('more · You: Review the made-up PR');
+    prs.unmount();
+    // Busy and blocked, as Claude Code flips it, with nothing of its own: still not in Needs you.
+    const again = render(ui(lambda({ state: 'blocked', needsYou: undefined })));
+    await settle();
+    expect(rows()).toEqual(['alpha', 'beta']);
+    // Stopped: back in Needs you through its PR, saying so.
+    again.rerender(ui(lambda({ status: 'idle', state: 'done' })));
+    expect(rows()).toContain('lambda');
+    expect(sessionRow('lambda').classList.contains('attention')).toBe(true);
+    expect(sessionRow('lambda').querySelector('.session-what')?.textContent).toBe('more · Needs you for example/demo-app#57: review requested');
+    // With a recap that has something for you, that instead; a stale one doesn't.
+    again.rerender(ui(lambda({ status: 'idle', state: 'done', recap })));
+    expect(sessionRow('lambda').querySelector('.session-what')?.textContent).toBe('more · For you (3): Say whether the made-up budget may go to 5');
+    again.rerender(ui(lambda({ status: 'idle', state: 'done', recap: { ...recap, stale: true } })));
+    expect(sessionRow('lambda').querySelector('.session-what')?.textContent).toBe('more · Needs you for example/demo-app#57: review requested');
   });
 
   it('moves a PR to the session that acted on it later, which takes its badge over', () => {

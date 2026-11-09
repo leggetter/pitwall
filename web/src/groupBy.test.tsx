@@ -11,12 +11,14 @@ import {
   groupByPhrase,
   groupSessions,
   isRootStart,
+  elsewhereRepos,
   mainRepo,
   readGroupBy,
   writeGroupBy,
   type GroupBy,
 } from './groupBy.js';
 import type { StorageSource } from './groupState.js';
+import { keepsOpenSession, selectionShowing } from './selection.js';
 import { groupId, listScope, sessionsIn } from './sessions.js';
 import { group, minutesAgo, session } from './test/fixtures.js';
 
@@ -41,7 +43,8 @@ const repo = (root: string, name: string, changes: number, calls: number, minute
  * - `small` started in ~/work itself and worked in api alone.
  * - `alone` started in ~/work itself and worked in no repo.
  * - `inApi` started in api and worked in evals: a repo-started session, which never moves.
- * - `inNotes` started in a directory below ~/work and worked in evals: it never moves either.
+ * - `inNotes` started in a directory below ~/work that's in no repo and worked in evals alone, as a
+ *   session that clones a repo there and works in it does: Main repo moves it to evals (W145).
  * - `inBlog` started in blog.
  */
 function fixture() {
@@ -92,6 +95,17 @@ describe('mainRepo', () => {
   });
 });
 
+describe('elsewhereRepos (W149)', () => {
+  it("is the repos under another root than the group's, most changed first, each once, placeable only", () => {
+    const old = { key: at(PERSONAL, 'old'), label: 'old', calls: 9, changes: 99, lastAt: minutesAgo(1) } as unknown as WorkedIn;
+    const s = session({ cwd: WORK, workedIn: [repo(PERSONAL, 'blog', 1, 9), repo(WORK, 'api', 50, 50), repo(PERSONAL, 'skills', 4, 4), repo(PERSONAL, 'blog', 1, 9), old] });
+    expect(elsewhereRepos(s, { root: WORK }).map((r) => r.label)).toEqual(['skills', 'blog']);
+    expect(elsewhereRepos(s, { root: `${WORK}/` }).map((r) => r.label)).toEqual(['skills', 'blog']);
+    expect(elsewhereRepos(s, { root: PERSONAL }).map((r) => r.label)).toEqual(['api']);
+    expect(elsewhereRepos(session({ cwd: WORK }), { root: WORK })).toEqual([]);
+  });
+});
+
 describe('isRootStart', () => {
   it("is a root's own directory, not a repo, nor a root that is itself a repo", () => {
     expect(isRootStart({ key: WORK, root: WORK, kind: 'directory' })).toBe(true);
@@ -106,25 +120,25 @@ describe('groupSessions: Main repo, the default', () => {
     expect(DEFAULT_GROUP_BY).toBe('main-repo');
   });
 
-  it('moves a session started in a root itself to its main repo, and leaves every other session where it started', () => {
+  it('moves a session started in a root itself to its main repo, one started in a directory in no repo to its one repo, and leaves the rest where they started', () => {
     const fx = fixture();
     expect(placement(groupSessions(fx.groups, 'main-repo').groups)).toEqual({
       // The root's own group keeps only the root-started session that worked in no repo.
       'work (work)': ['alone'],
       // small moved to api, its only repo; in-api, started there, stays.
       'api (work)': ['in-api', 'small'],
-      // A directory below the root isn't the root itself: in-notes stays, though it worked in evals.
-      'notes (work)': ['in-notes'],
       'blog (personal)': ['in-blog'],
-      // big's main repo is evals, which has no group in the snapshot: one is built for it.
-      'evals (work)': ['big'],
+      // big's main repo is evals, which has no group in the snapshot: one is built for it. in-notes
+      // started in a directory in no repo and worked in evals alone, so it's there too, and notes,
+      // with no session left, is left out.
+      'evals (work)': ['big', 'in-notes'],
     });
   });
 
   it('builds a group for a repo with no snapshot group from the WorkedIn: its key, label and root, kind git', () => {
     const fx = fixture();
     const evals = groupSessions(fx.groups, 'main-repo').groups.find((g) => g.key === at(WORK, 'evals'));
-    expect(evals).toEqual({ key: at(WORK, 'evals'), label: 'evals', kind: 'git', root: WORK, sessions: [fx.big] });
+    expect(evals).toEqual({ key: at(WORK, 'evals'), label: 'evals', kind: 'git', root: WORK, sessions: [fx.big, fx.inNotes] });
   });
 
   it('never moves a repo-started session, whatever it worked in', () => {
@@ -141,17 +155,31 @@ describe('groupSessions: Main repo, the default', () => {
     expect(home.get(fx.alone.sessionId)?.key).toBe(WORK);
   });
 
-  it("moves a session whose main repo is under another root to that root, and so to that root's tab", () => {
+  it("keeps a session in the root it started in: its main repo there, though it changed another root's repo more (W149)", () => {
     const fx = fixture();
-    // Worked most in blog, under ~/personal, this time.
+    // Worked most in blog, under ~/personal, this time, and a little in api, under ~/work.
     const crossing = session({ name: 'crossing', cwd: WORK, workedIn: [repo(WORK, 'api', 1, 5), repo(PERSONAL, 'blog', 4, 5)] });
     const groups = fx.groups.map((g) => (g.key === WORK ? { ...g, sessions: [...g.sessions, crossing] } : g));
     const result = groupSessions(groups, 'main-repo');
-    const blog = result.groups.find((g) => g.key === at(PERSONAL, 'blog'));
-    expect(blog?.root).toBe(PERSONAL);
-    expect(blog?.sessions.map((s) => s.name).sort()).toEqual(['crossing', 'in-blog']);
-    expect(result.home.get(crossing.sessionId)).toBe(blog);
-    expect(result.groups.filter((g) => g.root === WORK).flatMap((g) => g.sessions)).not.toContain(crossing);
+    const api = result.groups.find((g) => g.key === at(WORK, 'api'));
+    expect(api?.sessions).toContain(crossing);
+    expect(result.home.get(crossing.sessionId)).toBe(api);
+    expect(result.groups.filter((g) => g.root === PERSONAL).flatMap((g) => g.sessions)).not.toContain(crossing);
+  });
+
+  it("keeps a root-started session that worked only in another root's repos in the root's own group (W149)", () => {
+    const fx = fixture();
+    const skills = session({ name: 'skills', cwd: WORK, workedIn: [repo(PERSONAL, 'skills', 6, 30)] });
+    const groups = fx.groups.map((g) => (g.key === WORK ? { ...g, sessions: [...g.sessions, skills] } : g));
+    const result = groupSessions(groups, 'main-repo');
+    expect(result.groups.find((g) => g.key === WORK)?.sessions.map((s) => s.name).sort()).toEqual(['alone', 'skills']);
+    expect(result.home.get(skills.sessionId)?.key).toBe(WORK);
+    expect(result.groups.some((g) => g.key === at(PERSONAL, 'skills'))).toBe(false);
+    // Every repo it worked in still lists it under that repo too, and keeps it in the root's own group.
+    const every = groupSessions(groups, 'every-repo');
+    expect(every.groups.find((g) => g.key === WORK)?.sessions).toContain(skills);
+    expect(every.groups.find((g) => g.key === at(PERSONAL, 'skills'))?.sessions).toEqual([skills]);
+    expect(every.home.get(skills.sessionId)?.key).toBe(WORK);
   });
 
   it('lists each session in one group, so the counts add up to All sessions', () => {
@@ -169,7 +197,7 @@ describe('groupSessions: Main repo, the default', () => {
   it('keeps the snapshot’s groups in its order, with built groups after them, and sorts each by urgency', () => {
     const fx = fixture();
     const { groups } = groupSessions(fx.groups, 'main-repo');
-    expect(groups.map((g) => g.label)).toEqual(['work', 'api', 'notes', 'blog', 'evals']);
+    expect(groups.map((g) => g.label)).toEqual(['work', 'api', 'blog', 'evals']);
     // api: in-api asked you, so it's before small.
     expect(groups.find((g) => g.label === 'api')?.sessions.map((s) => s.name)).toEqual(['in-api', 'small']);
   });
@@ -189,7 +217,7 @@ describe('groupSessions: Main repo, the default', () => {
       small: 'api (work)',
       alone: 'work (work)',
       'in-api': 'api (work)',
-      'in-notes': 'notes (work)',
+      'in-notes': 'evals (work)',
       'in-blog': 'blog (personal)',
     });
   });
@@ -198,6 +226,67 @@ describe('groupSessions: Main repo, the default', () => {
     const inRepoRoot = session({ name: 'in-repo-root', cwd: WORK, workedIn: [repo(PERSONAL, 'blog', 9, 9)] });
     const groups = [group({ key: WORK, label: 'work', kind: 'git', root: WORK, sessions: [inRepoRoot] })];
     expect(placement(groupSessions(groups, 'main-repo').groups)).toEqual({ 'work (work)': ['in-repo-root'] });
+  });
+});
+
+describe('groupSessions: a session started in a directory in no repo (W145)', () => {
+  const NOTES = at(WORK, 'notes');
+  const inNotes = (name: string, workedIn?: WorkedIn[]) => session({ name, cwd: NOTES, ...(workedIn ? { workedIn } : {}) });
+  const notesGroup = (...sessions: ReturnType<typeof session>[]) => [group({ key: NOTES, label: 'notes', kind: 'directory', root: WORK, sessions })];
+
+  it('moves to the one repo it worked in under its root, though it only read it; one under another root counts for nothing (W149)', () => {
+    const cloned = inNotes('cloned', [repo(WORK, 'some-repo', 0, 40)]);
+    const crossing = inNotes('crossing', [repo(PERSONAL, 'blog', 3, 9)]);
+    const both = inNotes('both', [repo(PERSONAL, 'blog', 9, 90), repo(WORK, 'api', 1, 2)]);
+    const result = groupSessions(notesGroup(cloned, crossing, both), 'main-repo');
+    expect(placement(result.groups)).toEqual({ 'notes (work)': ['crossing'], 'some-repo (work)': ['cloned'], 'api (work)': ['both'] });
+    expect(result.home.get(cloned.sessionId)?.key).toBe(at(WORK, 'some-repo'));
+    expect(result.home.get(crossing.sessionId)?.key).toBe(NOTES);
+  });
+
+  it('stays in its directory with two or more repos, with none, and before its scan has landed', () => {
+    const two = inNotes('two', [repo(WORK, 'api', 9, 90), repo(WORK, 'evals', 1, 10)]);
+    const none = inNotes('none', []);
+    const unscanned = inNotes('unscanned');
+    for (const mode of ['main-repo', 'every-repo'] as const) {
+      const result = groupSessions(notesGroup(two, none, unscanned), mode);
+      expect(result.groups.find((g) => g.key === NOTES)?.sessions.map((s) => s.name).sort(), mode).toEqual(['none', 'two', 'unscanned']);
+      for (const s of [two, none, unscanned]) expect(result.home.get(s.sessionId)?.key, mode).toBe(NOTES);
+    }
+  });
+
+  it('counts only a placeable repo: one without a root leaves it where it started', () => {
+    const old = { key: at(WORK, 'evals'), label: 'evals', calls: 9, changes: 9, lastAt: minutesAgo(1) } as unknown as WorkedIn;
+    const mixed = inNotes('mixed', [old, repo(WORK, 'api', 1, 5)]);
+    const onlyOld = inNotes('only-old', [old]);
+    expect(placement(groupSessions(notesGroup(mixed, onlyOld), 'main-repo').groups)).toEqual({ 'notes (work)': ['only-old'], 'api (work)': ['mixed'] });
+  });
+
+  it('moves once its scan lands, and an open session view in the repo group stays open', () => {
+    const before = inNotes('cloned');
+    const after = { ...before, workedIn: [repo(WORK, 'some-repo', 2, 30)] };
+    expect(groupSessions(notesGroup(before), 'main-repo').home.get(before.sessionId)?.key).toBe(NOTES);
+    const moved = groupSessions(notesGroup(after), 'main-repo');
+    expect(moved.home.get(after.sessionId)?.key).toBe(at(WORK, 'some-repo'));
+    // Choosing the repo keeps it open; its directory no longer lists it, so choosing that would close it (W139).
+    expect(keepsOpenSession(moved.groups, { repo: at(WORK, 'some-repo'), root: WORK }, after.sessionId)).toBe(true);
+    expect(keepsOpenSession(moved.groups, { repo: NOTES, root: WORK }, after.sessionId)).toBe(false);
+    // Opened from outside the list, it selects the repo, its home (W144).
+    expect(selectionShowing({ roots: [WORK], groups: moved.groups }, { view: 'all' }, undefined, after.sessionId, moved.home)).toBeUndefined();
+    expect(selectionShowing({ roots: [WORK], groups: moved.groups }, { repo: NOTES }, undefined, after.sessionId, moved.home)).toEqual({ repo: at(WORK, 'some-repo') });
+  });
+
+  it('is in Every repo it worked in under both its directory and the repo, its home the repo', () => {
+    const cloned = inNotes('cloned', [repo(WORK, 'some-repo', 2, 30)]);
+    const result = groupSessions(notesGroup(cloned), 'every-repo');
+    expect(placement(result.groups)).toEqual({ 'notes (work)': ['cloned'], 'some-repo (work)': ['cloned'] });
+    expect(result.home.get(cloned.sessionId)?.key).toBe(at(WORK, 'some-repo'));
+  });
+
+  it('stays where it started in Where it started', () => {
+    const cloned = inNotes('cloned', [repo(WORK, 'some-repo', 2, 30)]);
+    const groups = notesGroup(cloned);
+    expect(groupSessions(groups, 'where-started').home.get(cloned.sessionId)).toBe(groups[0]);
   });
 });
 
@@ -228,6 +317,7 @@ describe('groupSessions: Every repo it worked in', () => {
     expect(placement(groupSessions(fx.groups, 'every-repo').groups)).toEqual({
       'work (work)': ['alone'],
       'api (work)': ['in-api', 'small'],
+      // in-notes started in notes, so it's there as well as under evals.
       'notes (work)': ['in-notes'],
       // big worked in blog too, under the other root.
       'blog (personal)': ['big', 'in-blog'],
@@ -251,14 +341,14 @@ describe('groupSessions: Every repo it worked in', () => {
     expect(groupSessions(groups, 'every-repo').groups.find((g) => g.label === 'evals')?.sessions).toEqual([twice]);
   });
 
-  it('gives each session a home: where it started, or a root-started session’s main repo', () => {
+  it('gives each session a home: where it started, or the repo Main repo moves it to', () => {
     const fx = fixture();
     expect(homes(fx, 'every-repo')).toEqual({
       big: 'evals (work)',
       small: 'api (work)',
       alone: 'work (work)',
       'in-api': 'api (work)',
-      'in-notes': 'notes (work)',
+      'in-notes': 'evals (work)',
       'in-blog': 'blog (personal)',
     });
   });
@@ -272,7 +362,7 @@ describe('groupSessions: Every repo it worked in', () => {
       ['big', 'evals'],
       ['in-api', 'api'],
       ['in-blog', 'blog'],
-      ['in-notes', 'notes'],
+      ['in-notes', 'evals'],
       ['small', 'api'],
     ]);
     const needsYou = listScope(grouped.groups, { kind: 'needs-you' }, 'urgency', grouped.home);

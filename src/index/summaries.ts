@@ -92,7 +92,13 @@ export function toSessionSummary(
   if (row.waitingFor !== undefined) summary.waitingFor = row.waitingFor;
   if (transcript.lastActivityAt !== undefined) summary.lastActivityAt = transcript.lastActivityAt;
   if (transcript.lastUserPrompt !== undefined) summary.lastUserPrompt = transcript.lastUserPrompt;
+  if (transcript.contextTokens !== undefined) summary.contextTokens = transcript.contextTokens;
+  if (transcript.wokenAt !== undefined) summary.wokenAt = transcript.wokenAt;
+  if (transcript.attendedAt !== undefined) summary.attendedAt = transcript.attendedAt;
   if (transcript.askedYou !== undefined && askedHolds(row, transcript, stale)) summary.askedYou = transcript.askedYou;
+  // A proposal (W163) holds as a question does: once the turn that wrote it has ended.
+  if (transcript.spinOff !== undefined && askedHolds(row, transcript, stale)) summary.spinOff = transcript.spinOff;
+  if (transcript.turnEnded === true) summary.turnEnded = true;
   if (transcript.aiTitle !== undefined && !sameTitle(transcript.aiTitle, row.name)) {
     summary.title = transcript.aiTitle;
     summary.titleSource = 'claude-code';

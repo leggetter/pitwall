@@ -22,6 +22,7 @@ import {
   WORK_DEFAULT,
 } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
+import type { Selection } from './selection.js';
 import { couldNot, shortenHome, tryAgainIn } from './format.js';
 
 // The server's rules, repeated so the dialog can say what's wrong before sending.
@@ -189,6 +190,19 @@ export function directoryChoices(snapshot: Pick<IndexSnapshot, 'roots' | 'groups
   }
   for (const root of roots) if (!paths.includes(root)) paths.push(root);
   return paths.map((path) => ({ path, label: shortenHome(path) }));
+}
+
+/**
+ * The directory + New session starts in (W147, D27, Phil, 2026-11-05): the repo or directory
+ * selected in the repo list, when it's at or under a root, in the open root tab when there is one
+ * (directoryProblem()). Never the open session's: choosing a group can close it (W139), and the repo
+ * list always has a selection. Undefined with a view selected (Needs you, All sessions, Starred, Pull
+ * requests), or a group no directory can be, as a not-cloned repo's (notClonedKey()), so New session
+ * opens with no directory chosen.
+ */
+export function newSessionDirectory(selection: Selection, roots: readonly string[], tab?: string): string | undefined {
+  if ('view' in selection) return undefined;
+  return directoryProblem(selection.repo, roots, tab) === undefined ? selection.repo : undefined;
 }
 
 function isWithin(root: string, dir: string): boolean {

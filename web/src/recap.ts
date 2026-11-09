@@ -9,11 +9,14 @@
 //
 // - **When the view fetches:** recapPath() once the view is shown, and again whenever the snapshot's
 //   `recap.at` changes. Only for a session that has a recap: one with none has nothing to fetch.
-// - **When it asks for one:** once, as the view is first shown, when its recap is stale or it has
-//   none, after --pw-delay-attach, so a session only passed through with j or k is never recapped,
-//   as it's never attached (W54). Never again by itself, whatever arrives: the recap engine makes the
-//   next one 5 minutes after a turn ends (W110), and Refresh is there for the rest. Not while the
-//   day's budget is spent, which the snapshot says (RecapHealth).
+// - **When it asks for one:** once, as the view is first shown, after --pw-delay-attach, so a session
+//   only passed through with j or k is never recapped, as it's never attached (W54), and only when
+//   it's worth a call (W132, asksOnOpen()): when the session has no recap, or its recap is stale and
+//   its turn has ended. Not while it works, since its recap would be stale again at the turn's end,
+//   and the engine updates it 15 minutes after that (RECAP_UPDATE_DEBOUNCE_MS; 5 for a background
+//   job that says it is done, W162). Never again by
+//   itself, whatever arrives: Refresh is there for the rest. Not while the day's budget is spent,
+//   which the snapshot says (RecapHealth).
 // - **No strip** with recaps off (no `recaps` on the snapshot, or a 409), and for a session the server
 //   says it can't recap (a 404): one with no transcript it can read. An ended session has one: it's
 //   recapped when you ask (D26), and its view asks once as it opens, as any other's does.
@@ -22,6 +25,11 @@
 //   after it asked (RecapHealth's errorAt), which the app strip then says.
 //   Off, saying why, while the day's budget is spent. Its other results are toasts, as Refresh for
 //   the PR list has them.
+//
+// - **The picture** (W150, the recap strip gives the picture): a recap since W150 also has the goal,
+//   what it's working on and why, and the plan's line (recapPicture()). The strip shows those, and of
+//   the to-dos only yours, since what's next is the conversation's. One without them, stored before
+//   W150 or Claude Code's own, shows its summary as before.
 //
 // Only one thing is stored: whether the strip is collapsed, a boolean, per viewer (D14).
 
@@ -47,6 +55,7 @@ import type { BadgeLook } from './sessions.js';
 import { couldNot, plainText } from './format.js';
 import { browserStorage, type StorageSource } from './groupState.js';
 import { ATTACH_DELAY_MS, cssTime } from './timing.js';
+import { turnMode } from './working.js';
 import type { ShowToast } from './components/Toast.js';
 
 /** Whether the strip is collapsed: "true" or "false", nothing else (D14). */
@@ -119,11 +128,13 @@ function parseTodo(raw: unknown): RecapTodo | undefined {
  * A recap from recapPath()'s body, read defensively: every field of SessionRecap with its type, a
  * known `waitingOn`, `source` and owner for each to-do, and times that are times; anything else is no
  * recap. The summary, each to-do and the title are cut to RECAP_FIELD_MAX, and the to-dos to
- * RECAP_TODOS_MAX, as the server should already have them.
+ * RECAP_TODOS_MAX, as the server should already have them. W150's goal, working on and plan are kept,
+ * cut the same way, only when all three are text; one that isn't text makes it no recap.
  */
 export function parseRecap(body: unknown): SessionRecap | undefined {
   if (!isRecord(body)) return undefined;
-  const { summary, todos, waitingOn, title, at, throughAt, source, stale } = body;
+  const { summary, todos, waitingOn, title, at, throughAt, source, stale, goal, workingOn, plan } = body;
+  for (const field of [goal, workingOn, plan]) if (field !== undefined && typeof field !== 'string') return undefined;
   if (typeof summary !== 'string' || typeof title !== 'string' || !Array.isArray(todos)) return undefined;
   if (typeof waitingOn !== 'string' || !(RECAP_WAITING_ON as readonly string[]).includes(waitingOn)) return undefined;
   if (source !== 'pitwall' && source !== 'claude-code') return undefined;
@@ -140,8 +151,52 @@ export function parseRecap(body: unknown): SessionRecap | undefined {
     throughAt,
     source,
   };
+  if (typeof goal === 'string' && typeof workingOn === 'string' && typeof plan === 'string') {
+    recap.goal = cutText(goal, RECAP_FIELD_MAX);
+    recap.workingOn = cutText(workingOn, RECAP_FIELD_MAX);
+    recap.plan = cutText(plan, RECAP_FIELD_MAX);
+  }
   if (stale === true) recap.stale = true;
   return recap;
+}
+
+/** W150's picture of a recap: its goal, what it's working on and its plan's line, as plain text. */
+export interface RecapPicture {
+  goal: string;
+  workingOn: string;
+  /** Empty when the recap names no plan. */
+  plan: string;
+}
+
+/**
+ * The recap's picture (W150), when it's pitwall's and has one: a goal and a working on that aren't
+ * empty once made plain, and a plan's line, which may be. Undefined for one stored before W150 and
+ * for Claude Code's, which the strip shows as their summary.
+ */
+export function recapPicture(recap: SessionRecap): RecapPicture | undefined {
+  if (recap.source !== 'pitwall' || recap.goal === undefined || recap.workingOn === undefined || recap.plan === undefined) return undefined;
+  const goal = plainText(recap.goal).trim();
+  const workingOn = plainText(recap.workingOn).trim();
+  if (goal === '' || workingOn === '') return undefined;
+  return { goal, workingOn, plan: plainText(recap.plan).trim() };
+}
+
+/** The picture's labels (W150). */
+export const GOAL_LABEL = 'Goal:';
+export const WORKING_ON_LABEL = 'Working on:';
+export const PLAN_LABEL = 'Plan:';
+/** "For you (2):", before your to-dos. */
+export const forYouLabel = (count: number) => `For you (${count.toLocaleString('en-US')}):`;
+/** The plan line when the recap names none: Show plan can still look. */
+export const NO_PLAN_LINE = 'None named.';
+
+/**
+ * The quiet line under the picture when the session waits on CI, someone else or another session
+ * (W150): "Waiting on CI.". Undefined for you, whose to-dos are listed, and for nothing.
+ */
+export function waitingLineText(waitingOn: RecapWaitingOn): string | undefined {
+  if (waitingOn === 'you' || waitingOn === 'nothing') return undefined;
+  return `${WAITING_ON_TEXT[waitingOn]}.`;
 }
 
 /** A to-do's owner as its tag says it (W121). The session is "Session": the tag is a label, not a sentence. */
@@ -223,6 +278,18 @@ export function quietWaitingOn(session: SessionSummary, needsYou: boolean): stri
 }
 
 /**
+ * The first of your to-dos in a session's current recap, pitwall's, and how many it has (W161): what a
+ * row that needs you through a PR alone says on line 2, "For you (3): …", rather than the PR's state.
+ * None from a recap older than its latest turn, which may have been answered since.
+ */
+export function recapForYou(session: SessionSummary): { next: string; count: number } | undefined {
+  const recap = session.recap;
+  if (!recap || recap.stale || recap.source !== 'pitwall' || recap.forYou < 1) return undefined;
+  const next = recap.next?.trim();
+  return next === undefined || next === '' ? undefined : { next, count: recap.forYou };
+}
+
+/**
  * Whether a finished or ended session's current recap, pitwall's, says it's waiting on you (W111's
  * review): its row and view show an outline "Waiting on you", as a finished session's Asked you is,
  * with FINISHED_RECAP_HINT or ENDED_RECAP_HINT, and it never counts as needing you, since the index
@@ -279,6 +346,22 @@ export interface UseRecapOptions {
   toast: ShowToast;
   /** The element the strip is in, for --pw-delay-attach. */
   delayFrom?: () => Element | null | undefined;
+  /**
+   * Whether the conversation's newest page says the turn has ended (ConversationPage.turnEnded), as
+   * the working line reads it: Claude Code's status alone can say busy with no turn running.
+   */
+  turnEnded?: boolean;
+}
+
+/**
+ * Whether the strip asks for a recap as the view opens (W132): when the session has none, or its
+ * recap is stale and its turn has ended, by the working line's rule (turnMode()). Not while it works:
+ * a recap made then is stale at the turn's end, and the engine makes the next one by itself.
+ */
+export function asksOnOpen(session: SessionSummary, listed: boolean, turnEnded: boolean | undefined): boolean {
+  const summary = session.recap;
+  if (summary === undefined) return true;
+  return summary.stale === true && turnMode(session, listed, turnEnded) !== 'working';
 }
 
 type Phase = 'idle' | 'queued' | 'asking' | 'awaiting';
@@ -287,7 +370,7 @@ type Phase = 'idle' | 'queued' | 'asking' | 'awaiting';
 const TOAST_KEY = 'recap-refresh';
 
 /** The recap behind one session's strip: what to show, and Refresh. See the top of this file for when it fetches and asks. */
-export function useRecap({ api, session, health, listed, hidden, toast, delayFrom }: UseRecapOptions): RecapController {
+export function useRecap({ api, session, health, listed, hidden, toast, delayFrom, turnEnded }: UseRecapOptions): RecapController {
   const { sessionId } = session;
   const summary = session.recap;
   const summaryAt = summary?.at;
@@ -385,10 +468,14 @@ export function useRecap({ api, session, health, listed, hidden, toast, delayFro
     [api, sessionId],
   );
 
-  // Once, as the view is first shown: a stale recap, or none, asks for one, after --pw-delay-attach.
-  // Hidden before then, as by a root tab's switch, it decides again when it's shown.
+  // Once, as the view is first shown: none, or a stale recap once the turn has ended, asks for one
+  // (asksOnOpen()), after --pw-delay-attach, by the session as it is then, since the conversation's
+  // first page, which says whether the turn has ended, may come meanwhile. Hidden before then, as by a
+  // root tab's switch, it decides again when it's shown.
   const stale = summary !== undefined ? summary.stale === true : fetched?.stale === true;
   const wanted = summary === undefined || summary.stale === true;
+  const asks = useRef<() => boolean>(() => false);
+  asks.current = () => asksOnOpen(session, listed, turnEnded);
   useEffect(() => {
     if (decided || !enabled || hidden || !listed) return;
     if (!wanted || budgetSpent(health)) {
@@ -401,7 +488,8 @@ export function useRecap({ api, session, health, listed, hidden, toast, delayFro
       () => {
         fired = true;
         setDecided(true);
-        post(true);
+        if (asks.current()) post(true);
+        else setPhase((current) => (current === 'queued' ? 'idle' : current));
       },
       cssTime(delayFrom?.() ?? undefined, '--pw-delay-attach', ATTACH_DELAY_MS),
     );

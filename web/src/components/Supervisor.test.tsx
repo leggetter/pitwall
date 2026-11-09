@@ -11,7 +11,10 @@ import {
   SPAWN_PROMPT_MAX,
   SUPERVISOR_INTERRUPT_PATH,
   SUPERVISOR_MESSAGE_MAX,
+  SUPERVISOR_MESSAGE_FOOTER,
+  SUPERVISOR_PROPOSAL_MAX,
   SUPERVISOR_MESSAGE_PATH,
+  SUPERVISOR_NEW_CONVERSATION_PATH,
   SUPERVISOR_START_PATH,
   supervisorApprovalPath,
   type ConversationEntry,
@@ -24,10 +27,10 @@ import type { ConnectionView } from '../connection.js';
 import { draftKey } from '../drafts.js';
 import type { StorageSource } from '../groupState.js';
 import type { NavigationEnv } from '../selection.js';
-import { SUPERVISOR_DRAFT_ID, needsReason } from '../supervisor.js';
+import { NEW_CONVERSATION_CONFIRM, NEW_CONVERSATION_DONE, SUPERVISOR_CONTEXT_INFO, SUPERVISOR_DRAFT_ID, needsReason } from '../supervisor.js';
 import { group, minutesAgo, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
-import { descriptionOf, hover } from '../test/tooltips.js';
+import { descriptionOf, hover, tooltipText } from '../test/tooltips.js';
 import { Dashboard } from './Dashboard.js';
 import { QUEUED_TEXT, SUPERVISOR_SEND_HELD } from './SupervisorBox.js';
 import { HELD_TITLE, NO_SUPERVISOR, SUGGESTIONS, SUPERVISOR_EMPTY } from './SupervisorView.js';
@@ -386,6 +389,132 @@ describe('its states', () => {
   });
 });
 
+describe('its context and New conversation (W136)', () => {
+  const page = { sessionId: 'sup-1', entries: [{ kind: 'user' as const, text: 'Which sessions need me?', at: minutesAgo(2) }] };
+  const newButton = () => viewOf().getByRole('button', { name: 'New conversation' });
+  const confirmation = () => view()!.querySelector<HTMLElement>('[data-supervisor-new-confirm] .inline-confirm');
+
+  it('shows its context in the header once its first call has said, as the session view does, flagged over 200K', async () => {
+    const { update } = renderDashboard(snap({ status: 'idle', approvals: [] }), { search: '?view=all&supervisor' });
+    await settle();
+    const meta = view()!.querySelector('.session-view-meta')!;
+    expect(meta.querySelector('[data-supervisor-context]')).toBeNull();
+    update(snap({ status: 'idle', approvals: [], contextTokens: 84_010 }));
+    await settle();
+    const gauge = meta.querySelector<HTMLElement>('[data-supervisor-context]')!;
+    expect(gauge.querySelector('.session-view-context-value')?.textContent).toBe('Context 84K');
+    expect(gauge.querySelector('.badge')).toBeNull();
+    expect(await tooltipText(gauge.querySelector('button')!)).toBe(SUPERVISOR_CONTEXT_INFO);
+    update(snap({ status: 'idle', approvals: [], contextTokens: 412_000 }));
+    await settle();
+    expect(meta.querySelector('[data-supervisor-context] .badge')?.textContent).toBe('Context 412K, over 400K');
+  });
+
+  it('asks in the page first: Cancel takes focus, and Cancel or Escape sends nothing, keeps the view and gives focus back', async () => {
+    const fetch = fakeServer({ page });
+    renderDashboard(snap({ status: 'idle', sessionId: 'sup-1', approvals: [], lastTurnAt: minutesAgo(2) }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    // Never a browser dialog.
+    const confirmSpy = vi.fn(() => true);
+    Object.defineProperty(window, 'confirm', { configurable: true, writable: true, value: confirmSpy });
+    fireEvent.click(newButton());
+    await settle();
+    expect(confirmation()?.querySelector('.inline-confirm-question')?.textContent).toBe(NEW_CONVERSATION_CONFIRM.question);
+    expect(document.activeElement?.textContent).toBe('Cancel');
+    expect(newButton().getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(within(confirmation()!).getByRole('button', { name: 'Cancel' }));
+    await settle();
+    expect(confirmation()).toBeNull();
+    expect(document.activeElement).toBe(newButton());
+    fireEvent.click(newButton());
+    await settle();
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    await settle();
+    expect(confirmation()).toBeNull();
+    expect(view()).toBeDefined();
+    expect(posts(fetch)).toEqual([]);
+    expect(confirmSpy).not.toHaveBeenCalled();
+    delete (window as { confirm?: unknown }).confirm;
+  });
+
+  it('confirmed: POSTs it, says so, draws the conversation afresh as a new one, and puts focus in the box', async () => {
+    let cleared = false;
+    const fetch = vi.fn<FetchLike>(async (url, init) => {
+      if (init.method === 'POST') {
+        cleared = url === SUPERVISOR_NEW_CONVERSATION_PATH;
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      if (url.startsWith('/api/supervisor/conversation') && !cleared) return new Response(JSON.stringify(page), { status: 200 });
+      return new Response('{}', { status: 404 });
+    });
+    renderDashboard(snap({ status: 'off', approvals: [] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    const conversation = () => viewOf().getByRole('region', { name: 'Conversation' });
+    expect(within(conversation()).getByText('Which sessions need me?')).toBeDefined();
+    fireEvent.click(newButton());
+    await settle();
+    fireEvent.click(within(confirmation()!).getByRole('button', { name: NEW_CONVERSATION_CONFIRM.confirm }));
+    await settle();
+    await settle();
+    expect(fetch.mock.calls.filter(([, init]) => init.method === 'POST').map(([url, init]) => [url, init.body])).toEqual([[SUPERVISOR_NEW_CONVERSATION_PATH, '{}']]);
+    expect(confirmation()).toBeNull();
+    expect(screen.getByText(NEW_CONVERSATION_DONE)).toBeDefined();
+    expect(within(conversation()).queryByText('Which sessions need me?')).toBeNull();
+    expect(viewOf().getByText(SUPERVISOR_EMPTY.title)).toBeDefined();
+    expect(view()!.textContent).not.toContain('no longer available');
+    expect(document.activeElement).toBe(box());
+  });
+
+  it('a refusal says why, in pitwall’s words, and focus goes back to the button', async () => {
+    // Another tab pressed Start in between: a refusal this tab's snapshot didn't show.
+    const reason = 'The supervisor is starting. Start a new conversation once it has started.';
+    const fetch = fakeServer({ page, post: () => ({ status: 409, body: { ok: false, error: reason } }) });
+    renderDashboard(snap({ status: 'failed', approvals: [], error: 'Made up: it exited.' }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.click(newButton());
+    await settle();
+    fireEvent.click(within(confirmation()!).getByRole('button', { name: NEW_CONVERSATION_CONFIRM.confirm }));
+    await settle();
+    expect(confirmation()).toBeNull();
+    expect(view()!.querySelector('[data-supervisor-new-confirm] [role="alert"]')?.textContent).toBe(`Couldn't start a new conversation. ${reason}`);
+    expect(document.activeElement).toBe(newButton());
+  });
+
+  it('is off, saying why, while it works or drafts wait, and opens nothing', async () => {
+    const { update } = renderDashboard(snap({ status: 'working', approvals: [] }), { search: '?view=all&supervisor' });
+    await settle();
+    expect(newButton().getAttribute('aria-disabled')).toBe('true');
+    await hover(newButton());
+    expect(descriptionOf(newButton())).toBe('It is working on a turn. Stop it, or wait for it to end.');
+    fireEvent.click(newButton());
+    await settle();
+    expect(confirmation()).toBeNull();
+    update(snap({ status: 'idle', approvals: [message('m1', 2)] }));
+    await settle();
+    expect(newButton().getAttribute('aria-disabled')).toBe('true');
+    update(snap({ status: 'idle', approvals: [] }));
+    await settle();
+    expect(newButton().getAttribute('aria-disabled')).toBeNull();
+  });
+
+  it('draws the conversation afresh when another tab started a new one: the snapshot’s session id goes', async () => {
+    let cleared = false;
+    const fetch = vi.fn<FetchLike>(async (url) => {
+      if (url.startsWith('/api/supervisor/conversation') && !cleared) return new Response(JSON.stringify(page), { status: 200 });
+      return new Response('{}', { status: 404 });
+    });
+    const { update } = renderDashboard(snap({ status: 'idle', sessionId: 'sup-1', approvals: [], lastTurnAt: minutesAgo(2) }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    expect(viewOf().getByText('Which sessions need me?')).toBeDefined();
+    cleared = true;
+    update(snap({ status: 'off', approvals: [] }));
+    await settle();
+    await settle();
+    expect(viewOf().queryByText('Which sessions need me?')).toBeNull();
+    expect(viewOf().getByText(SUPERVISOR_EMPTY.title)).toBeDefined();
+  });
+});
+
 describe('its message box', () => {
   it('sends what you type, as you, and clears it; the draft is kept in the tab until then', async () => {
     const fetch = fakeServer();
@@ -431,7 +560,7 @@ describe('its message box', () => {
     renderDashboard(snap({ status: 'idle', approvals: [] }), { search: '?view=all&supervisor' });
     await settle();
     fireEvent.change(box(), { target: { value: 'x'.repeat(SUPERVISOR_MESSAGE_MAX + 1) } });
-    expect(view()!.querySelector('.relay-count.over')?.textContent).toBe('1 character over the 20,000 limit');
+    expect(view()!.querySelector('.relay-count.over')?.textContent).toBe('1 character over the 100,000 limit');
     expect(sendButton().getAttribute('aria-disabled')).toBe('true');
   });
 
@@ -485,6 +614,100 @@ describe('its message box', () => {
   });
 });
 
+describe('attaching a file (W135)', () => {
+  const attachInput = () => view()!.querySelector<HTMLInputElement>('input[type="file"]')!;
+  async function choose(file: File) {
+    await act(async () => {
+      fireEvent.change(attachInput(), { target: { files: [file] } });
+    });
+    await settle();
+  }
+
+  it('is a button that opens the file picker, which takes any type', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [] }), { search: '?view=all&supervisor' });
+    await settle();
+    const click = vi.spyOn(attachInput(), 'click');
+    fireEvent.click(viewOf().getByRole('button', { name: 'Attach file' }));
+    expect(click).toHaveBeenCalledOnce();
+    expect(attachInput().hasAttribute('accept')).toBe(false);
+    expect(attachInput().tabIndex).toBe(-1);
+  });
+
+  it('puts a text file in the box under its name, after what’s there, keeps the draft, and gives the box focus', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [] }), { search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.change(box(), { target: { value: 'What do you make of this brief?' } });
+    await choose(new File(['# Brief\n\nMade-up plan.\n'], 'brief.md', { type: 'text/markdown' }));
+    const expected = 'What do you make of this brief?\n\nFile: brief.md\n```\n# Brief\n\nMade-up plan.\n```\n\n';
+    expect(box().value).toBe(expected);
+    expect(document.activeElement).toBe(box());
+    expect(box().selectionStart).toBe(expected.length);
+    expect(view()!.querySelector('.supervisor-box [role="status"]')?.textContent).toBe('Attached brief.md to your message.');
+    expect(viewOf().queryByRole('alert')).toBeNull();
+    expect(JSON.parse(window.sessionStorage.getItem(draftKey(SUPERVISOR_DRAFT_ID)) ?? '{}').text).toBe(expected);
+  });
+
+  it('goes in at the caret, keeping the text on either side', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [] }), { search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.change(box(), { target: { value: 'Read this:\nThen tell me.' } });
+    box().focus();
+    box().setSelectionRange(11, 11);
+    fireEvent.select(box());
+    await choose(new File(['notes'], 'n.txt', { type: 'text/plain' }));
+    expect(box().value).toBe('Read this:\n\nFile: n.txt\n```\nnotes\n```\n\nThen tell me.');
+  });
+
+  it('refuses a file that isn’t UTF-8 text, or has NUL bytes, saying so, and leaves the box as it was', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [] }), { search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.change(box(), { target: { value: 'Keep me' } });
+    await choose(new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff])], 'diagram.png', { type: 'image/png' }));
+    expect(viewOf().getByRole('alert').textContent).toBe("Couldn't attach diagram.png. It isn't UTF-8 text: only text files can be attached.");
+    expect(box().value).toBe('Keep me');
+    await choose(new File(['a\u0000b'], 'odd.txt', { type: 'text/plain' }));
+    expect(viewOf().getByRole('alert').textContent).toBe("Couldn't attach odd.txt. It has NUL bytes, so it isn't text: only text files can be attached.");
+    expect(box().value).toBe('Keep me');
+  });
+
+  it('refuses a file that wouldn’t fit the limit with what’s in the box', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [] }), { search: '?view=all&supervisor' });
+    await settle();
+    const draft = 'y'.repeat(SUPERVISOR_MESSAGE_MAX - 100);
+    fireEvent.change(box(), { target: { value: draft } });
+    await choose(new File(['x'.repeat(200)], 'log.txt', { type: 'text/plain' }));
+    expect(viewOf().getByRole('alert').textContent).toBe("Couldn't attach log.txt. With it, the message would be 124 characters over the 100,000 limit.");
+    expect(box().value).toBe(draft);
+  });
+  it('holds Send while a file is read, and refuses the file if the box changed meanwhile', async () => {
+    const fetch = fakeServer();
+    renderDashboard(snap({ status: 'idle', approvals: [] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    fireEvent.change(box(), { target: { value: 'hello' } });
+    let finish: (buffer: ArrayBuffer) => void = () => {};
+    const slow = new File(['notes'], 'slow.txt', { type: 'text/plain' });
+    Object.defineProperty(slow, 'arrayBuffer', { value: () => new Promise<ArrayBuffer>((resolve) => (finish = resolve)) });
+    await act(async () => {
+      fireEvent.change(attachInput(), { target: { files: [slow] } });
+    });
+    expect(box().readOnly).toBe(true);
+    fireEvent.click(sendButton());
+    fireEvent.keyDown(box(), { key: 'Enter', metaKey: true });
+    await settle();
+    expect(posts(fetch)).toEqual([]);
+    // As a suggested question or a send would, the text changes before the read ends.
+    box().readOnly = false;
+    fireEvent.change(box(), { target: { value: 'something else' } });
+    await act(async () => {
+      finish(new TextEncoder().encode('notes').buffer as ArrayBuffer);
+    });
+    await settle();
+    expect(box().value).toBe('something else');
+    expect(viewOf().getByRole('alert').textContent).toBe("Couldn't attach slow.txt. The message changed while the file was read: attach it again.");
+    expect(box().readOnly).toBe(false);
+  });
+});
+
 describe('its draft cards', () => {
   const cards = () => [...view()!.querySelectorAll<HTMLElement>('li.approval-card')];
 
@@ -504,6 +727,28 @@ describe('its draft cards', () => {
     expect(cards()[0]!.textContent).toContain('Not sent unless you answer by');
     // Above the message box.
     expect(region.compareDocumentPosition(box()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("show pitwall's line under a message, apart from its text, in the editor's place too, and never on a new session or a resume (W138)", async () => {
+    const fetch = fakeServer();
+    renderDashboard(snap({ status: 'idle', approvals: [message('m1', 6), spawn] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    const [card, spawnCard] = cards();
+    const footer = within(card!).getByRole('group', { name: 'Then pitwall adds, after a blank line' });
+    expect(footer.querySelector('.approval-footer-text')?.textContent).toBe(SUPERVISOR_MESSAGE_FOOTER);
+    // Not part of the model's text, which is what Edit opens.
+    expect(card!.querySelector('.approval-text')?.textContent).toBe('Please rerun the made-up tests, then tell me what failed.');
+    expect(spawnCard!.querySelector('.approval-footer')).toBeNull();
+    fireEvent.click(within(card!).getByRole('button', { name: 'Edit' }));
+    await settle();
+    const editor = within(cards()[0]!).getByRole('textbox', { name: 'Edit the message' }) as HTMLTextAreaElement;
+    expect(editor.value).not.toContain(SUPERVISOR_MESSAGE_FOOTER);
+    expect(within(cards()[0]!).getByRole('group', { name: 'Then pitwall adds, after a blank line' }).textContent).toContain(SUPERVISOR_MESSAGE_FOOTER);
+    fireEvent.change(editor, { target: { value: 'Only this.' } });
+    fireEvent.click(within(cards()[0]!).getByRole('button', { name: 'Send edit' }));
+    await settle();
+    // The edit alone goes to pitwall, which adds its line.
+    expect(posts(fetch)).toEqual([{ url: supervisorApprovalPath('m1'), body: { decision: 'edit', text: 'Only this.' } }]);
   });
 
   it('show the exact text that goes, never filtered: what wouldn’t show as itself drawn as its code, named in a note (W120)', async () => {
@@ -527,14 +772,29 @@ describe('its draft cards', () => {
     expect(document.getElementById(box.getAttribute('aria-describedby')!)).toBe(second!.querySelector('.approval-length'));
   });
 
-  it('say how long a text taller than the card shows is, and nothing for a short one (W120)', async () => {
+  it('say how long a text taller than its box is, as measured, and nothing for one that fits, however many lines (W120, W136)', async () => {
     const long = Array.from({ length: 12 }, (_, line) => `Line ${line + 1}.`).join('\n');
-    renderDashboard(snap({ status: 'idle', approvals: [message('m1', 3, long), message('m2', 2)] }), { search: '?view=all&supervisor' });
-    await settle();
-    const [first, second] = cards();
-    expect(first!.querySelector('.approval-text bdi')!.textContent).toBe(long);
-    expect(first!.querySelector('.approval-length')?.textContent).toBe(`12 lines, ${long.length} characters: scroll to read it all before you send it.`);
-    expect(second!.querySelector('.approval-length')).toBeNull();
+    // happy-dom lays nothing out: the first card's text box is taller than it shows, the second's 12 lines fit (W136's taller box).
+    const scroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight');
+    const client = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight');
+    const overflows = (element: HTMLElement) => element.classList.contains('approval-text') && element.closest('[data-approval="m1"]') !== null;
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get(this: HTMLElement) { return overflows(this) ? 600 : 300; } });
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get() { return 300; } });
+    try {
+      renderDashboard(snap({ status: 'idle', approvals: [message('m1', 3, long), message('m2', 2, long), message('m3', 1)] }), { search: '?view=all&supervisor' });
+      await settle();
+      const [first, second, third] = cards();
+      expect(first!.querySelector('.approval-text bdi')!.textContent).toBe(long);
+      expect(first!.querySelector('.approval-length')?.textContent).toBe(`12 lines, ${long.length} characters: scroll to read it all before you send it.`);
+      expect(second!.querySelector('.approval-length')).toBeNull();
+      expect(third!.querySelector('.approval-length')).toBeNull();
+    } finally {
+      // happy-dom has them on Element.prototype: put back what HTMLElement.prototype had, which is nothing.
+      if (scroll) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', scroll);
+      else delete (HTMLElement.prototype as { scrollHeight?: number }).scrollHeight;
+      if (client) Object.defineProperty(HTMLElement.prototype, 'clientHeight', client);
+      else delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight;
+    }
   });
 
   it('Send: the decision, busy until the snapshot drops the card, then focus on the next card’s heading', async () => {
@@ -615,7 +875,7 @@ describe('its draft cards', () => {
     const editor = within(cards()[0]!).getByRole('textbox', { name: 'Edit the message' });
     fireEvent.change(editor, { target: { value: '  ' } });
     expect(within(cards()[0]!).getByRole('button', { name: 'Send edit' }).getAttribute('aria-disabled')).toBe('true');
-    fireEvent.change(editor, { target: { value: 'x'.repeat(SUPERVISOR_MESSAGE_MAX + 2) } });
+    fireEvent.change(editor, { target: { value: 'x'.repeat(SUPERVISOR_PROPOSAL_MAX + 2) } });
     expect(cards()[0]!.querySelector('.relay-count.over')?.textContent).toBe('2 characters over the 20,000 limit');
   });
 

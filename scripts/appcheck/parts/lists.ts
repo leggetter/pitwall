@@ -1,12 +1,15 @@
 // The lists (docs/design-system.md, 3: Repo list, Root tabs, Session list; 4: Session rows): the repo
 // list's Needs you, All sessions and Starred, then its groups; two-line rows; the session list's
 // filter, chips and sort, and a filter bar that turning a filter on or off never moves (W75), with
-// Clear filters as an icon button and the bar's lines at each window (W91); and, with two roots, a
-// tab per root.
+// Clear filters as an icon button and the bar's lines at each window (W91); a group that keeps the
+// open session only if it lists it (W139); a session started in a directory in no repo that worked
+// in one repo, listed under that repo (W145); and, with two roots, a tab per root, a session that
+// changed another root's repo most kept in its own root's tab, its row "also in" that repo (W149);
+// and a session's proposal for a new session, a card over Needs you's rows, counted there (W163).
 
-import { API_SERVER, CODE, DEMO_APP, NAMES, OSS } from '../fixtures.js';
+import { API_SERVER, CODE, DEMO_APP, DEMO_APP_WEB, DOCS_SITE, NAMES, OSS, SDK_CLI, SPIN_OFF, SPIN_OFF_PROMPT } from '../fixtures.js';
 import type { Part } from '../runner.js';
-import { chooseInRepoList, focused, listHeading, openRepoList, repoItem, repoLabels, row, rowNames, selectedRepo } from './_dom.js';
+import { chooseInRepoList, focused, listHeading, openFromRow, openRepoList, repoItem, repoLabels, row, rowNames, selectedRepo, viewName, VIEW } from './_dom.js';
 
 const q = JSON.stringify;
 const FIELD = `document.querySelector('.session-list input.filter-input')`;
@@ -128,6 +131,50 @@ const part: Part = {
       // W69: every reason ranks alike, so it's by activity: waiting 3 minutes ago, asked 6, the job 21.
       t.expectEqual(names, [NAMES.waiting, NAMES.asked, NAMES.prompting], 'by their last activity');
       t.expect(await page.evaluate(`[...document.querySelectorAll('.session-list li.session')].every((li) => li.dataset.attention === 'true')`), 'each row is marked as needing you');
+    });
+
+    await t.step("a session's proposal for a new session is a card over Needs you's rows, counted in Needs you and the title, until dismissed (W163)", async () => {
+      const card = `document.querySelector('.session-list li.spin-off-card')`;
+      const titleCount = `Number(/^\\((\\d+)\\)/.exec(document.title)?.[1] ?? 0)`;
+      const before = await page.evaluate<number>(titleCount);
+      const rowsBefore = await page.evaluate<string[]>(rowNames);
+      t.server.world.spinOff(t.server.world.byName(NAMES.conversation).sessionId, SPIN_OFF);
+      t.server.broadcast();
+      await page.waitFor('the card', `!!${card}`);
+      const look = await page.evaluate<{ heading: string; where: string; prompt: string; buttons: string[]; overRows: boolean; left: number; right: number; textHeight: number; textScrolls: boolean; listScrollsSideways: boolean }>(`(() => {
+        const li = ${card};
+        const r = li.getBoundingClientRect();
+        const text = li.querySelector('.approval-text');
+        const list = document.querySelector('.session-list');
+        const firstRow = document.querySelector('.session-list li.session');
+        return {
+          heading: li.querySelector('h4').textContent,
+          where: li.querySelector('.approval-where').textContent,
+          prompt: text.textContent,
+          buttons: [...li.querySelectorAll('.approval-actions button')].map((b) => b.textContent.trim()),
+          overRows: !firstRow || r.bottom <= firstRow.getBoundingClientRect().top + 0.5,
+          left: r.left,
+          right: r.right,
+          textHeight: text.getBoundingClientRect().height,
+          textScrolls: text.scrollHeight > text.clientHeight,
+          listScrollsSideways: list.scrollWidth > list.clientWidth + 0.5,
+        };
+      })()`);
+      t.expectEqual(look.heading, `${NAMES.conversation} proposes a new session`, 'it names the session that asked');
+      t.expectEqual(look.where, `In ${DEMO_APP_WEB}, named pitwall-test-spin-off.`, 'the folder, whole, and the name');
+      t.expectEqual(look.prompt, SPIN_OFF_PROMPT, 'the whole prompt, as text');
+      t.expectEqual(look.buttons, ['Start…', 'Open session', 'Dismiss'], 'Start, Open session and Dismiss');
+      t.expect(look.overRows, 'over the rows', look);
+      t.expect(look.left >= 0 && look.right <= t.viewport.width, 'inside the window', look);
+      t.expect(look.textScrolls, 'a long prompt scrolls in its box', look);
+      t.expect(!look.listScrollsSideways, "the list doesn't scroll sideways", look);
+      t.expectEqual(await page.evaluate(rowNames), rowsBefore, 'the rows are as they were');
+      t.expectEqual(await page.evaluate(titleCount), before + 1, "the page title's count has it");
+      if (t.layout !== 'drawer') t.expectEqual(await page.evaluate(`${repoItem('Needs you')}.querySelector('.badge-attention')?.textContent`), `${before + 1} need you`, "Needs you's badge has it");
+      await t.shot('spin-off');
+      await page.click('Dismiss', `${card}.querySelector('.approval-actions button:last-child')`);
+      await page.waitFor('the card to go', `!${card}`);
+      t.expectEqual(await page.evaluate(titleCount), before, 'and leaves the count when dismissed');
     });
 
     await t.step('rows are two lines: name, title and status; then where and what', async () => {
@@ -359,6 +406,61 @@ const part: Part = {
       t.expect(await page.evaluate(`!!document.querySelector('.session-list button[aria-label="Hide from repo list"]')`), 'a group has Hide from repo list');
     });
 
+    // W139 (selecting a repo or directory keeps the open session only if it's in that group).
+    await t.step("a group keeps the open session only if it lists it: another group's closes the view to Select a session, and Back brings it back", async () => {
+      await openFromRow(t, NAMES.inApi);
+      const sessionId = await page.evaluate<string>(`new URLSearchParams(location.search).get('session')`);
+      // From 900 to 999 px the view over the list reaches into the repo list, which is inert while it's
+      // open and has no drawer to reach it by (docs/design-system.md, Session view), so no group can be
+      // chosen with a session open there: the step checks that, as shell's does, and ends.
+      if (t.layout === 'sidebar' && t.viewport.width < 1000) {
+        t.expect(await page.evaluate<boolean>(`!!document.querySelector('.columns > nav.repo-list')?.closest('[inert]')`), 'below 1,000 px the repo list under the view is inert, so no group can be chosen');
+        return;
+      }
+      await chooseInRepoList(t, 'api-server');
+      t.expectEqual(await page.evaluate(viewName), NAMES.inApi, 'its own group keeps it open');
+      t.expectEqual(await page.evaluate('location.search'), `?repo=${API_SERVER}&session=${sessionId}`, 'the URL keeps it');
+      await chooseInRepoList(t, 'demo-app');
+      await page.waitFor('the view to close', `!${VIEW}`);
+      t.expectEqual(await page.evaluate('location.search'), `?repo=${DEMO_APP}`, 'the URL has the group and no session');
+      t.expectEqual(await page.evaluate(listHeading), 'demo-app', 'demo-app is selected');
+      const empty = await page.evaluate<string | null>(`document.querySelector('.session-view-empty')?.textContent ?? null`);
+      t.expect(t.layout === 'three-columns' ? (empty ?? '').startsWith('Select a session') : empty === null, 'the third column says "Select a session" from 1,200 px', empty);
+      await t.shot('group-closes-session');
+      await page.evaluate('history.back()');
+      await page.waitFor(`the ${NAMES.inApi} view again`, `${viewName} === ${q(NAMES.inApi)}`);
+      t.expectEqual(await page.evaluate('location.search'), `?repo=${API_SERVER}&session=${sessionId}`, 'Back returns to the session and its group');
+      t.expectEqual(await page.evaluate(listHeading), 'api-server', 'under api-server');
+    });
+
+    // W145 (a session started in a root's folder, or a directory in no repo, that works in one repo it cloned is listed under that repo).
+    await t.step('a session started in a directory in no repo that worked in one repo it cloned is listed under that repo, and its view says where it started', async () => {
+      await t.fresh({ search: '?view=all', cloned: true });
+      await openRepoList(t);
+      const labels = await page.evaluate<string[]>(repoLabels);
+      t.expect(labels.includes('sdk-cli'), 'sdk-cli, which nothing started in, has a group', labels);
+      // docs-site's only other session ended 20 days ago, so with this one moved it's listed only with Show older on.
+      t.expect(!labels.includes('docs-site'), 'docs-site has no item', labels);
+      await chooseInRepoList(t, 'sdk-cli');
+      t.expectEqual(await page.evaluate('location.search'), `?repo=${SDK_CLI}`, 'the URL names the repo');
+      t.expectEqual(await page.evaluate(rowNames), [NAMES.cloned], 'its session');
+      await openFromRow(t, NAMES.cloned);
+      const text = await page.evaluate<string | null>(`document.querySelector('.session-view-worked-text')?.textContent ?? null`);
+      const line = text?.replace(/\s+/g, ' ').trim() ?? null;
+      t.expect((line ?? '').startsWith('Started in docs-site') && (line ?? '').includes('sdk-cli'), "the view's line 3 says it started in docs-site and worked in sdk-cli", line);
+      await t.shot('cloned-repo-group');
+    });
+
+    await t.step('grouped by where it started, the same session is under docs-site, and sdk-cli has no item', async () => {
+      await t.fresh({ search: '?view=all', cloned: true, storage: { 'pitwall.group-by.v1': 'where-started' } });
+      await openRepoList(t);
+      const labels = await page.evaluate<string[]>(repoLabels);
+      t.expect(labels.includes('docs-site') && !labels.includes('sdk-cli'), 'docs-site has an item, sdk-cli none', labels);
+      await chooseInRepoList(t, 'docs-site');
+      t.expectEqual(await page.evaluate('location.search'), `?repo=${DOCS_SITE}`, 'the URL names the directory');
+      t.expectEqual(await page.evaluate(rowNames), [NAMES.cloned], 'its session, the one started there');
+    });
+
     await t.step('two roots: a tab per root, and a badge on the one that needs you', async () => {
       await t.fresh({ search: `?view=all&root=${CODE}`, roots: 2 });
       const tabs = await page.evaluate<Array<{ label: string; selected: string | null; badge: string | null }>>(
@@ -379,6 +481,19 @@ const part: Part = {
       await openRepoList(t);
       t.expectEqual(await page.evaluate(repoLabels), ['Needs you', 'All sessions', 'Starred', 'Pull requests', 'blog'], "its repo list, with the page's Pull requests");
       if (t.layout === 'drawer') await page.key('Escape');
+    });
+
+    await t.step("two roots: a session started in ~/code that changed two repos under ~/oss most stays in ~/code's tab, under api-server, its row also in them (W149)", async () => {
+      await t.fresh({ search: `?repo=${API_SERVER}&root=${CODE}`, roots: 2 });
+      t.expect((await page.evaluate<string[]>(rowNames)).includes(NAMES.fromRoot), 'api-server lists it', await page.evaluate(rowNames));
+      const also = await page.evaluate<string | null>(`${row(NAMES.fromRoot)}?.closest('li.session')?.querySelector('.session-elsewhere')?.textContent ?? null`);
+      t.expectEqual(also?.replace(/^ · /, '') ?? null, 'also in pitwall-test-a-made-up-repository-with-a-long-name +1 and 1 more repo', 'its line 2 ends "also in" the most changed, "+1", read out as "and 1 more repo"');
+      // With "· 12 sub-agents running" before it: it gives way with an ellipsis, inside its row, never past it.
+      const box = await page.evaluate<{ fits: boolean; inside: boolean }>(
+        `(() => { const li = ${row(NAMES.fromRoot)}?.closest('li.session'); const what = li?.querySelector('.session-what'); const el = li?.querySelector('.session-elsewhere'); if (!what || !el) return { fits: false, inside: false }; const w = what.getBoundingClientRect(), e = el.getBoundingClientRect(); return { fits: li.scrollWidth <= li.clientWidth + 1, inside: e.right <= w.right + 1 }; })()`,
+      );
+      t.expect(box.fits && box.inside, 'line 2 fits its row, "also in" inside it', box);
+      await t.shot('also-in-other-root');
     });
 
     await t.step('in forced colours, as a Windows contrast theme sets them, turning a filter on or off moves nothing either', async () => {

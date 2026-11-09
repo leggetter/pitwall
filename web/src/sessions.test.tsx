@@ -12,6 +12,7 @@ import {
   filterNeedle,
   groupLabel,
   holdOrder,
+  isBusy,
   isRootGroup,
   listScope,
   matchesChips,
@@ -246,6 +247,23 @@ describe('needsAttention, with no idle badge in the list', () => {
     const idleAsked = session({ status: 'idle', askedYou: asked });
     expect(needsAttention(idleAsked)).toBe(true);
     expect(rowStatusBadge(idleAsked)?.label).toBe('Asked you');
+  });
+});
+
+describe('busy, for a PR that needs you (W161)', () => {
+  it('is Claude Code’s busy, or a running job that works, never a finished or ended one', () => {
+    expect(isBusy(session({ status: 'busy' }))).toBe(true);
+    expect(isBusy(session({ kind: 'background', shortId: 'b1', status: 'busy', state: 'blocked' }))).toBe(true);
+    expect(isBusy(session({ kind: 'background', shortId: 'b1', status: undefined, state: 'working' }))).toBe(true);
+    expect(isBusy(session({ kind: 'background', shortId: 'b1', status: undefined, state: 'working', alive: false, pid: undefined }))).toBe(false);
+    expect(isBusy(session({ status: 'idle' }))).toBe(false);
+    expect(isBusy(session({ status: 'waiting', waitingFor: 'permission prompt' }))).toBe(false);
+    expect(isBusy(session({ status: 'busy', finished: true }))).toBe(false);
+    expect(isBusy(session({ status: 'busy', ended: true }))).toBe(false);
+    // A plugin's monitor keeps the status at busy after the turn ends; the transcript says it has ended.
+    expect(isBusy(session({ status: 'busy', turnEnded: true }))).toBe(false);
+    // A job blocked for days is stale, not at work.
+    expect(isBusy(session({ kind: 'background', shortId: 'b1', status: 'busy', state: 'blocked', stale: true }))).toBe(false);
   });
 });
 

@@ -14,6 +14,8 @@ import { attachStatus, focused, inTerminal, openFinished, openFromRow, row, show
 const q = JSON.stringify;
 const TYPE_HINT = 'Click the terminal, or Tab to it, to type to the session';
 const SCREEN = `${VIEW}?.querySelector('.attach-terminal')`;
+/** Whether the screen shows the focus ring (W151): --pw-ring-focus's 4 px spread, where its own edge is 1 px. */
+const RING = `getComputedStyle(${SCREEN}).boxShadow.includes(' 4px')`;
 
 /** Where the screen's last row and column are, and the box they must be inside (FIT). */
 interface Fit {
@@ -205,6 +207,21 @@ const part: Part = {
       await page.settle(100);
       t.expectEqual(keys(), [`${NAMES.prompting}: "y"`], 'a key reaches the session');
       t.expectEqual(resizes(), before, 'focus coming in resized nothing');
+      t.expect(await page.evaluate(RING), 'the screen shows the focus ring', await page.evaluate(`getComputedStyle(${SCREEN}).boxShadow`));
+    });
+
+    await t.step('⌘+Backspace, ⌘+← and ⌘+→ send Ctrl+U, Ctrl+A and Ctrl+E (W151)', async () => {
+      server.clearRecords();
+      for (const key of ['Backspace', 'ArrowLeft', 'ArrowRight']) await page.key(key, { meta: true });
+      await page.settle(100);
+      t.expectEqual(keys(), ['\u0015', '\u0001', '\u0005'].map((data) => `${NAMES.prompting}: ${q(data)}`), 'each reaches the session as its readline key');
+      await page.key('Backspace');
+      await page.settle(100);
+      t.expectEqual(keys().at(-1), `${NAMES.prompting}: ${q('\u007f')}`, 'a plain Backspace is still DEL');
+      // The next step expects the one "y" a key on the screen sent.
+      server.clearRecords();
+      await page.key('y');
+      await page.settle(100);
     });
 
     await t.step('F6 takes the keyboard back to the Terminal tab, without resizing it', async () => {
@@ -216,6 +233,22 @@ const part: Part = {
       await page.settle(100);
       t.expectEqual(keys(), [`${NAMES.prompting}: "y"`], 'the next key reaches nothing');
       t.expectEqual(resizes(), before, 'focus going out resized nothing');
+      t.expect(!(await page.evaluate(RING)), 'the focus ring has gone', await page.evaluate(`getComputedStyle(${SCREEN}).boxShadow`));
+    });
+
+    await t.step('a paste on the Terminal tab goes to the terminal, which takes the keyboard (W151)', async () => {
+      server.clearRecords();
+      // A paste event as the browser fires one for ⌘V, on what has focus: the Terminal tab, after F6.
+      const unhandled = await page.evaluate<boolean>(`(() => {
+        const data = new DataTransfer();
+        data.setData('text/plain', 'pasted');
+        return document.activeElement.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+      })()`);
+      await page.settle(100);
+      t.expect(!unhandled, 'the page took the paste');
+      t.expectEqual(keys(), [`${NAMES.prompting}: "pasted"`], 'it reaches the session');
+      t.expect(await page.evaluate(inTerminal), 'the terminal has the keyboard', await page.evaluate(focused));
+      t.expect(await page.evaluate(RING), 'the screen shows the focus ring again');
     });
 
     await t.step('j passing through attaches only the session it rests on, with no keyboard', async () => {

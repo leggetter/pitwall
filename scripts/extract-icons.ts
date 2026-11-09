@@ -90,11 +90,14 @@ const ICONS: Readonly<Record<string, string | readonly [glyph: string, style: ty
   // A session's star, off and on (W53): the same glyph, outlined, then filled, as Material Symbols draws a toggle's two states.
   star: 'star',
   starred: ['star', FILLED],
-  // A session's Not needed now toggle, off and on (W88): snoozed until what it needs changes, outlined, then
-  // filled, as the star is. And the actions menu's Put back in Needs you, which undoes it.
-  'not-needed': 'snooze',
-  'not-needed-on': ['snooze', FILLED],
+  // A session's snooze, off and on (W154, which took W88's Not needed now's place), outlined, then filled,
+  // as the star is. And undo, for the actions menu's Wake now, which takes it off.
+  snooze: 'snooze',
+  'snooze-on': ['snooze', FILLED],
   undo: 'undo',
+  // A session's flag, "It doesn't need me" (W153), off and on: a flag on Needs you's call, outlined, then filled.
+  flag: 'flag',
+  'flag-on': ['flag', FILLED],
   // The session view's Sub-agents tab (W77): a session and the sub-agents it started, some of them by another.
   subagents: 'account_tree',
   // The repo list's Supervisor item and its view (W114): a headset, the pit wall's race engineer on the radio.

@@ -15,7 +15,6 @@
 import { useEffect, useId, useRef, useState, type FocusEvent, type ReactNode, type RefObject } from 'react';
 import { ENDED_SHOWN_DAYS, type PullRequestSummary, type SessionGroup, type SessionSummary } from '../../../src/shared/protocol.js';
 import { plainText } from '../format.js';
-import type { NotNeeded } from '../notNeeded.js';
 import { prKey } from '../prs.js';
 import { holdOrder, needYou, sessionCount, type Listed } from '../sessions.js';
 import { isPrRow, rowKey, type ListRow } from '../work.js';
@@ -85,10 +84,10 @@ export interface SessionListProps {
   starred?: ReadonlySet<string> | undefined;
   /** Stars or unstars a session from its row. Rows have no star toggle without it. */
   onStar?: ((sessionId: string, on: boolean) => void) | undefined;
-  /** The viewer's Not needed now marks (W88), for each row. */
-  notNeeded?: NotNeeded | undefined;
-  /** Marks a session not needed now from its row, or takes the mark away. Rows have no Not needed now toggle without it. */
-  onNotNeeded?: ((session: SessionSummary, on: boolean) => void) | undefined;
+  /** Snoozes a session from its row until a time, or Later, or with `false` takes the snooze off (W154). Rows have no snooze menu without it. */
+  onSnooze?: ((session: SessionSummary, until: Date | undefined | false) => void) | undefined;
+  /** Flags a session as not needing you from its row, or takes the flag away (W153). Rows have no flag toggle without it. */
+  onFlag?: ((session: SessionSummary, on: boolean) => void) | undefined;
   /** Covered by the session view over the list: nothing in it can take focus or a click (Dashboard.tsx). */
   inert?: boolean;
   /**
@@ -140,11 +139,11 @@ const rowButtons = (list: HTMLElement) => [...list.querySelectorAll<HTMLElement>
 /** The row a name button opens, as rowKey() names it. */
 const buttonRow = (button: HTMLElement) => button.dataset.openSession ?? `pr:${button.dataset.openPr ?? ''}`;
 
-/** A row's own control that can have focus: its name's button, its star toggle (W53), or its Not needed now toggle (W88). */
-type RowPart = 'open' | 'star' | 'not-needed';
+/** A row's own control that can have focus: its name's button, its star toggle (W53), or its snooze menu or toggle (W154). */
+type RowPart = 'open' | 'star' | 'snooze';
 
 /** Each toggle's data attribute, which holds its session's id. */
-const PART_SELECTOR: Readonly<Record<Exclude<RowPart, 'open'>, string>> = { star: '[data-star-session]', 'not-needed': '[data-not-needed-session]' };
+const PART_SELECTOR: Readonly<Record<Exclude<RowPart, 'open'>, string>> = { star: '[data-star-session]', snooze: '[data-snooze-session]' };
 
 /** The control in `row`'s row that's `part`, or its name's button when it has no such control. */
 function partOf(row: HTMLElement, part: RowPart): HTMLElement {
@@ -154,7 +153,7 @@ function partOf(row: HTMLElement, part: RowPart): HTMLElement {
 /** Which of its row's controls `target` is, and its row's key (rowKey()), or undefined for anything else. */
 function rowPart(target: HTMLElement | undefined): { part: RowPart; id: string } | undefined {
   if (target?.dataset.starSession !== undefined) return { part: 'star', id: target.dataset.starSession };
-  if (target?.dataset.notNeededSession !== undefined) return { part: 'not-needed', id: target.dataset.notNeededSession };
+  if (target?.dataset.snoozeSession !== undefined) return { part: 'snooze', id: target.dataset.snoozeSession };
   if (target?.dataset.openSession !== undefined || target?.dataset.openPr !== undefined) return { part: 'open', id: buttonRow(target) };
   return undefined;
 }
@@ -204,8 +203,7 @@ export interface FinishedSectionProps {
   openSessionId?: string | undefined;
   starred?: ReadonlySet<string> | undefined;
   onStar?: ((sessionId: string, on: boolean) => void) | undefined;
-  notNeeded?: NotNeeded | undefined;
-  onNotNeeded?: ((session: SessionSummary, on: boolean) => void) | undefined;
+  onSnooze?: ((session: SessionSummary, until: Date | undefined | false) => void) | undefined;
   /** Show older, after the rows, while the selection has older ended sessions (W67). */
   older?: OlderEnded | undefined;
 }
@@ -215,7 +213,7 @@ export interface FinishedSectionProps {
  * selection has ended sessions older than ENDED_SHOWN_DAYS, Show older, which lists them, or Hide older
  * once they're listed. It's the same button with its other name, so focus stays on it.
  */
-export function FinishedSection({ finished, collapsed, onToggle, showGroup = false, onOpen, onStep, openSessionId, starred, onStar, notNeeded, onNotNeeded, older }: FinishedSectionProps) {
+export function FinishedSection({ finished, collapsed, onToggle, showGroup = false, onOpen, onStep, openSessionId, starred, onStar, onSnooze, older }: FinishedSectionProps) {
   const listId = useId();
   const olderNoteId = useId();
   // Counted here, so a question isn't hidden behind the collapse. Never as "need you".
@@ -239,8 +237,7 @@ export function FinishedSection({ finished, collapsed, onToggle, showGroup = fal
             isOpen={session.sessionId === openSessionId}
             starred={starred?.has(session.sessionId) ?? false}
             onStar={onStar}
-            notNeeded={notNeeded}
-            onNotNeeded={onNotNeeded}
+            onSnooze={onSnooze}
           />
         ))}
         {older && older.count > 0 && (
@@ -281,8 +278,8 @@ export function SessionList({
   openSessionId,
   starred,
   onStar,
-  notNeeded,
-  onNotNeeded,
+  onSnooze,
+  onFlag,
   inert = false,
   older,
   owned,
@@ -304,8 +301,8 @@ export function SessionList({
   // (W34), takes focus with it, and no blur says so. Focus goes to the row that took its place, or
   // the one before it if it was last, or else the list's heading, rather than to the page. So does a
   // row unstarred in Starred (W53), from its star toggle: focus goes to the star toggle of the row
-  // that took its place, so the next can be unstarred too; and a row marked not needed now in Needs
-  // you (W88), whose focus goes to the next row's Not needed now toggle.
+  // that took its place, so the next can be unstarred too; and a row snoozed in Needs you (W154),
+  // whose focus goes to the next row's snooze menu.
   const focusedRow = useRef<{ id: string; index: number; part: RowPart } | undefined>(undefined);
   useEffect(() => {
     if (!focusInside || main.current?.contains(document.activeElement)) return;
@@ -403,8 +400,8 @@ export function SessionList({
                   isOpen={row.session.sessionId === openSessionId}
                   starred={starred?.has(row.session.sessionId) ?? false}
                   onStar={onStar}
-                  notNeeded={notNeeded}
-                  onNotNeeded={onNotNeeded}
+                  onSnooze={onSnooze}
+                  onFlag={onFlag}
                   owned={owned?.get(row.session.sessionId)}
                   offerResume={offerResume}
                 />
@@ -421,8 +418,7 @@ export function SessionList({
                 openSessionId={openSessionId}
                 starred={starred}
                 onStar={onStar}
-                notNeeded={notNeeded}
-                onNotNeeded={onNotNeeded}
+                onSnooze={onSnooze}
                 older={older}
               />
             )}

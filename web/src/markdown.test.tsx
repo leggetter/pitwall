@@ -20,6 +20,7 @@ import {
   type Block,
   type Inline,
 } from './markdown.js';
+import { bestTimes, slowBound, type SlowBound } from './test/timing.js';
 
 const text = (value: string): Inline => ({ type: 'text', text: value });
 const para = (...children: Inline[]): Block => ({ type: 'paragraph', children });
@@ -383,24 +384,23 @@ describe('nesting caps', () => {
   });
 });
 
-// Retried: CI's shared runners flaked on these after M4 added test files.
-// A slowdown to quadratic time fails every try; a busy moment passes on the next.
-describe('bounded on hostile input', { retry: 2 }, () => {
-  /** The best of five runs, so a pause elsewhere doesn't count. */
-  function bestOf5(fn: () => unknown): number {
-    let best = Number.POSITIVE_INFINITY;
-    for (let run = 0; run < 5; run++) {
-      const start = performance.now();
-      fn();
-      best = Math.min(best, performance.now() - start);
-    }
-    return best;
-  }
+/** Dense everyday markdown: the ordinary reply a hostile one is timed against. */
+const EVERYDAY = 'A **made-up** reply with `code`, a [link](https://example.com/a) and *emphasis*.\n\n- one item\n- two items\n\n';
+/**
+ * A frame at 60 Hz on a quiet machine; each input parses in 6 ms or less on a 2026 laptop. On a busy one,
+ * 16 times 32 KiB of everyday markdown (about 1 ms on that laptop, so the frame there): the slowest
+ * input takes about 6 times as long, quadratic time hundreds. Never over 250 ms, so a slowdown in all
+ * parsing, which everyday markdown would share, still fails.
+ */
+const BOUND: SlowBound = { floorMs: 16, ratio: 16, ceilingMs: 250 };
 
-  /** A frame at 60 Hz. Each input parses in well under it (5 ms or less on a 2026 laptop). */
-  const FRAME_MS = 16;
+// CI's shared runners flaked on a fixed bound while other test files kept them busy (W149), so each
+// input is timed against everyday markdown of the same size, in turn with it. Retried as well:
+// a slowdown to quadratic time fails every try; a busy moment passes on the next.
+describe('bounded on hostile input', { retry: 2 }, () => {
   const N = 32 * 1024;
   const fill = (unit: string) => unit.repeat(Math.ceil(N / unit.length)).slice(0, N);
+  const everyday = fill(EVERYDAY);
   const ticks: string[] = [];
   for (let n = 1, total = 0; total < N; n++, total += n + 1) ticks.push('`'.repeat(n));
 
@@ -430,9 +430,10 @@ describe('bounded on hostile input', { retry: 2 }, () => {
     ['images that never close', fill('![')],
     ['spaces before a break', `${' '.repeat(N - 2)}x\n`],
     ['fences', fill('```\n')],
-  ])('parses 32 KiB of %s within a frame', (_name, hostile) => {
+  ])(`parses 32 KiB of %s within a frame, or ${BOUND.ratio} times everyday markdown on a busy machine`, (_name, hostile) => {
     expect(hostile.length).toBeLessThanOrEqual(N);
-    expect(bestOf5(() => parseMarkdown(hostile))).toBeLessThan(FRAME_MS);
+    const [hostileMs, everydayMs] = bestTimes([() => parseMarkdown(hostile), () => parseMarkdown(everyday)]);
+    expect(hostileMs).toBeLessThan(slowBound(everydayMs!, BOUND));
   });
 
   it('shows hostile text as text: nothing is lost', () => {
@@ -450,8 +451,7 @@ describe('bounded on hostile input', { retry: 2 }, () => {
     expect(elementCount(parseMarkdown('```\ncode\n```'))).toBe(10);
     expect(elementCount(parseMarkdown('- a\n- b'))).toBe(1 + 2 + 2);
     // 32 KiB of dense everyday markdown fits; 32 KiB of hostile input doesn't.
-    const everyday = 'A **made-up** reply with `code`, a [link](https://example.com/a) and *emphasis*.\n\n- one item\n- two items\n\n';
-    expect(elementCount(parseMarkdown(everyday.repeat(Math.ceil(N / everyday.length)).slice(0, N)))).toBeLessThanOrEqual(MAX_ELEMENTS);
+    expect(elementCount(parseMarkdown(everyday))).toBeLessThanOrEqual(MAX_ELEMENTS);
     for (const hostile of [fill('*a* '), fill('- a\n'), fill('```\na\n```\n'), `${'|a'.repeat(16)}|\n${'|-'.repeat(16)}|\n${fill(`${'|x'.repeat(16)}|\n`)}`]) {
       expect(elementCount(parseMarkdown(hostile.slice(0, N)), MAX_ELEMENTS)).toBeGreaterThan(MAX_ELEMENTS);
     }
@@ -630,21 +630,11 @@ describe('links in code (W37)', () => {
   });
 });
 
-// Retried: CI's shared runners flaked on these after M4 added test files.
-// A slowdown to quadratic time fails every try; a busy moment passes on the next.
+// Timed against everyday markdown and retried, as the block above is (W149).
 describe('links in code, bounded on hostile input (W37)', { retry: 2 }, () => {
-  function bestOf5(fn: () => unknown): number {
-    let best = Number.POSITIVE_INFINITY;
-    for (let run = 0; run < 5; run++) {
-      const start = performance.now();
-      fn();
-      best = Math.min(best, performance.now() - start);
-    }
-    return best;
-  }
-  const FRAME_MS = 16;
   const N = 32 * 1024;
   const fill = (unit: string) => unit.repeat(Math.ceil(N / unit.length)).slice(0, N);
+  const everyday = fill(EVERYDAY);
   const fence = (body: string) => `\`\`\`\n${body.slice(0, N - 8)}\n\`\`\``;
 
   it.each([
@@ -657,9 +647,10 @@ describe('links in code, bounded on hostile input (W37)', { retry: 2 }, () => {
     ['a code block of URLs after letters', fence(fill('xhttps://a.example/'))],
     ['thousands of code spans holding URLs', fill('`https://a.example/x` ')],
     ['a code span holding thousands of URLs', `\`${fill('https://a.example/x ').slice(0, N - 2)}\``],
-  ])('parses 32 KiB of %s within a frame', (_name, hostile) => {
+  ])(`parses 32 KiB of %s within a frame, or ${BOUND.ratio} times everyday markdown on a busy machine`, (_name, hostile) => {
     expect(hostile.length).toBeLessThanOrEqual(N);
-    expect(bestOf5(() => parseMarkdown(hostile))).toBeLessThan(FRAME_MS);
+    const [hostileMs, everydayMs] = bestTimes([() => parseMarkdown(hostile), () => parseMarkdown(everyday)]);
+    expect(hostileMs).toBeLessThan(slowBound(everydayMs!, BOUND));
   });
 
   it('shows a code block packed with URLs as written, and formats one of long URLs, under the cap', () => {

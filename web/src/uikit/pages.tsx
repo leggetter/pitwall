@@ -15,7 +15,6 @@ import { PreferencesDialog, RepoListPreferences, SessionViewPreferences, WorkPre
 import { ShortcutsDialog } from '../components/ShortcutsDialog.js';
 import { NoTokenNotice, TokenRejectedNotice } from '../components/Notice.js';
 import { shortenHome } from '../format.js';
-import { DRAFT_HINTS, DRAFT_LABEL, draftText, type FromSession } from '../fromSession.js';
 import type { GroupBy } from '../groupBy.js';
 import { PANEL_WIDTH_KEY } from '../panelWidth.js';
 import { memoryNavigation } from '../selection.js';
@@ -73,24 +72,24 @@ function field<T extends HTMLElement>(root: HTMLElement, label: string): Promise
   });
 }
 
+/** `directory` is typed in Directory, then Enter takes the first match it highlights (W142); `path` is typed and left as typed. */
 async function fill(root: HTMLElement, values: { directory?: string; path?: string; name?: string; model?: string; alias?: string; prompt?: string }) {
-  if (values.directory) choose(await field<HTMLSelectElement>(root, 'Directory'), values.directory);
-  if (values.path !== undefined) type(await element<HTMLInputElement>(root, 'input[aria-label="Directory path"]'), values.path);
+  if (values.directory) await directoryList(root, values.directory, values.directory, ['Enter']);
+  if (values.path !== undefined) type(await field<HTMLInputElement>(root, 'Directory'), values.path);
   if (values.name !== undefined) type(await field<HTMLInputElement>(root, 'Name'), values.name);
   if (values.model) choose(await field<HTMLSelectElement>(root, 'Model'), values.model);
   if (values.alias !== undefined) type(await element<HTMLInputElement>(root, 'input[aria-label="Model alias or full name"]'), values.alias);
   if (values.prompt !== undefined) type(await field<HTMLTextAreaElement>(root, 'First prompt'), values.prompt);
 }
 
-const OTHER_DIRECTORY = 'Another directory under a root…';
-
 /**
- * Chooses "Another directory under a root…", which reveals the combobox with focus in it, waits for
- * `ready` inside the dialog, then types `typed` and presses `keys` there, as a person would (W70).
+ * Clicks in Directory, which opens its list, waits for `ready` inside the dialog, then types `typed`
+ * and presses `keys` there, as a person would (W70, W140).
  */
-async function another(root: HTMLElement, ready: string, typed?: string, keys: string[] = []): Promise<HTMLInputElement> {
-  choose(await field<HTMLSelectElement>(root, 'Directory'), OTHER_DIRECTORY);
-  const input = await element<HTMLInputElement>(root, 'input[role="combobox"]');
+async function directoryList(root: HTMLElement, ready: string, typed?: string, keys: string[] = []): Promise<HTMLInputElement> {
+  const input = await field<HTMLInputElement>(root, 'Directory');
+  input.focus();
+  input.click();
   await text(root, ready);
   // A moment between each, as between a person's keys, so each sees what the last one did.
   const next = () => new Promise((resolve) => setTimeout(resolve, 16));
@@ -172,8 +171,10 @@ interface DialogCase {
   /** A waiting state's spinner shows at once. */
   waited?: 'shown';
   run?: (root: HTMLElement) => Promise<unknown>;
-  /** Opened from a session's New session from here (W118): its directory, name and the text selected in its conversation. */
-  from?: FromSession;
+  /** Opened with a repo or directory selected in the repo list (W147, D27): its directory, chosen. */
+  cwd?: string;
+  /** Opened from a view (W147): no directory chosen. */
+  noDirectory?: boolean;
 }
 
 const DIALOG_CASES: DialogCase[] = [
@@ -187,48 +188,49 @@ const DIALOG_CASES: DialogCase[] = [
   },
   {
     title: 'A typed directory and model',
-    note: 'The two choices that reveal a field.',
-    run: (root) => fill(root, { directory: OTHER_DIRECTORY, path: `${ROOT}/pitwall-test-new-dir`, model: 'Other…', alias: 'sonnet', prompt: PROMPT }),
+    note: 'A directory typed in Directory, not chosen from its list, and the Model choice that reveals a field.',
+    run: (root) => fill(root, { path: `${ROOT}/pitwall-test-new-dir`, model: 'Other…', alias: 'sonnet', prompt: PROMPT }),
   },
   {
-    title: 'Another directory: the list',
-    note: 'Choosing "Another directory under a root…" reveals the combobox, with focus in it and its list open: the directories under the root, three levels down, repos marked, shallower first. ↓ ↑ move, Enter or a click chooses, Escape closes the list and a second closes the dialog, Tab leaves without choosing. A long path is cut in the middle.',
-    run: (root) => another(root, '~/code/pitwall-test-api'),
+    title: 'Directory: the list',
+    note: "A click in the field, or ↓, opens its list. While the field shows the chosen directory, the list offers every one, as a select would: the groups' directories and the root first, then the directories under the root, three levels down, repos marked, shallower first. ↓ ↑ move, Enter or a click chooses (typing highlights the first match, so Enter takes it), Escape closes the list and a second closes the dialog, Tab leaves without choosing. A long path is cut in the middle.",
+    run: (root) => directoryList(root, '~/code/pitwall-test-api'),
   },
   {
-    title: 'Another directory: narrowed, one highlighted',
-    note: 'Every typed term must be in the path under the root, or in the whole path when it starts with ~ or /. A last segment that is the text comes first, then one that starts with it. ↓ highlights an option; the field keeps focus. Enter or a click puts it in the field as the shortened path, and the request sends the absolute one. With nothing matching, a typed path still works, as before.',
-    run: (root) => another(root, '~/code/pitwall-test-api', 'app', ['ArrowDown', 'ArrowDown']),
+    title: 'Directory: narrowed, one highlighted',
+    note: "Focus selects the chosen directory's text, so typing replaces it. Every typed term must be in the path under the root, or in the whole path when it starts with ~ or /. A last segment that is the text comes first, then one that starts with it, the groups' directories first on a tie. Typing highlights the first match, so Enter takes it (W142); ↓ ↑ move from there, and the field keeps focus. Enter or a click puts it in the field as the shortened path, and the request sends the absolute one. With nothing matching, or the text emptied, none is highlighted, and a typed path still works, as before.",
+    run: (root) => directoryList(root, '~/code/pitwall-test-api', 'app'),
   },
   {
-    title: 'Another directory: loading',
-    note: 'The list is fetched once per opening of the dialog, the first time this is chosen. Typing narrows it in the page, with no requests.',
+    title: 'Directory: loading',
+    note: "The list is fetched once per opening of the dialog, as it opens. The groups' directories and the root are there meanwhile. Typing narrows it in the page, with no requests.",
     options: { directories: 'loading' },
     waited: 'shown',
-    run: (root) => another(root, DIRECTORY_TEXT.loading),
+    run: (root) => directoryList(root, DIRECTORY_TEXT.loading),
   },
   {
-    title: 'Another directory: many',
+    title: 'Directory: many',
     note: 'The best 50, then how many there are. A screen reader hears the count a moment after the typing stops.',
     options: { directories: 'many' },
-    run: (root) => another(root, DIRECTORY_TEXT.narrow),
+    run: (root) => directoryList(root, DIRECTORY_TEXT.narrow),
   },
   {
-    title: 'Another directory: none to list',
+    title: 'Directory: none under the root',
+    note: "The groups' directories and the root are still offered.",
     options: { directories: 'empty' },
-    run: (root) => another(root, DIRECTORY_TEXT.empty),
+    run: (root) => directoryList(root, '~/code'),
   },
   {
-    title: 'Another directory: not every one listed',
+    title: 'Directory: not every one listed',
     note: 'The server stops a root at 5,000 directories or after 2 seconds.',
     options: { directories: 'truncated' },
-    run: (root) => another(root, DIRECTORY_TEXT.truncated),
+    run: (root) => directoryList(root, DIRECTORY_TEXT.truncated),
   },
   {
-    title: "Another directory: couldn't list them",
-    note: 'The field still takes a typed path, with the hint linked to it.',
+    title: "Directory: couldn't list them",
+    note: "The groups' directories and the root are still offered, and the field takes a typed path, with the hint linked to it.",
     options: { directories: 'failed' },
-    run: (root) => another(root, DIRECTORY_TEXT.failed, '~/code/pitwall-test-new-dir'),
+    run: (root) => directoryList(root, DIRECTORY_TEXT.failed, '~/code/pitwall-test-new-dir'),
   },
   {
     title: 'Submitted empty',
@@ -241,7 +243,7 @@ const DIALOG_CASES: DialogCase[] = [
   {
     title: 'Every field wrong',
     run: async (root) => {
-      await fill(root, { directory: OTHER_DIRECTORY, path: 'pitwall-test-relative', name: '-pitwall test ', model: 'Other…', alias: 'not a model!' });
+      await fill(root, { path: 'pitwall-test-relative', name: '-pitwall test ', model: 'Other…', alias: 'not a model!' });
       await press(root, 'Start session');
       await until('four problems', () => root.querySelectorAll('.field-problem').length === 4);
     },
@@ -356,26 +358,14 @@ const DIALOG_CASES: DialogCase[] = [
     },
   },
   {
-    title: 'From a session: text selected',
-    note: "New session from here (W118), with text selected in the session's conversation: its directory chosen, the prompt blank, and Draft from this session on, saying what it adds.",
-    frame: 'dialog-tall',
-    from: { cwd: JOBS_DIR, sessionId: '00000000-0000-4000-8000-000000000118', name: 'pitwall-test-nightly-export', selection: 'The export retries three times, then gives up.\n\nThe timeout is 30 s.' },
+    title: 'With a repo selected',
+    note: '+ New session or n with a repo or directory selected in the repo list (W147): its directory chosen, whatever session is open. The rest is as usual.',
+    cwd: APP_DIR,
   },
   {
-    title: 'From a session: drafted',
-    note: "After Draft from this session: the line with the session's ID and the selection, quoted, at the start of the prompt, with focus at its end. The button is off while the draft is there.",
-    frame: 'dialog-tall',
-    from: { cwd: JOBS_DIR, sessionId: '00000000-0000-4000-8000-000000000118', name: 'pitwall-test-nightly-export', selection: 'The export retries three times, then gives up.\n\nThe timeout is 30 s.' },
-    run: async (root) => {
-      await press(root, DRAFT_LABEL);
-      await text(root, DRAFT_HINTS.added);
-    },
-  },
-  {
-    title: 'From a session: nothing selected',
-    note: 'With no text selected in its conversation, Draft from this session is off, and says to select text there first.',
-    frame: 'dialog-tall',
-    from: { cwd: JOBS_DIR, sessionId: '00000000-0000-4000-8000-000000000118', name: 'pitwall-test-nightly-export', selection: '' },
+    title: 'From a view',
+    note: '+ New session or n with a view selected, such as All sessions (W147): no directory chosen, the placeholder showing the root, and Start session asks for one.',
+    noDirectory: true,
   },
 ];
 
@@ -387,11 +377,14 @@ export function Dialogs() {
           <Stubbed options={dialog.options}>
             <Reopenable>
               {(close) => {
-                const from = dialog.from;
-                const shown = from ? (
-                  <NewSessionDialog snapshot={DIALOG_SNAPSHOT} onClose={close} onStarted={close} prefill={{ cwd: from.cwd }} draft={{ text: draftText(from) }} />
-                ) : (
-                  <NewSessionDialog snapshot={DIALOG_SNAPSHOT} onClose={close} onStarted={close} />
+                const shown = (
+                  <NewSessionDialog
+                    snapshot={DIALOG_SNAPSHOT}
+                    onClose={close}
+                    onStarted={close}
+                    prefill={dialog.cwd === undefined ? undefined : { cwd: dialog.cwd }}
+                    noDirectory={dialog.noDirectory}
+                  />
                 );
                 return dialog.run ? <Scenario run={dialog.run}>{shown}</Scenario> : shown;
               }}
@@ -628,7 +621,7 @@ const PAGES: PageCase[] = [
   },
   {
     title: "The root's group",
-    note: 'Every session started in the root, one that worked in pitwall-test-api and pitwall-test-docs too. The directory below it, pitwall-test-scratch, keeps its own group.',
+    note: 'Every session started in the root, one that worked in pitwall-test-api and pitwall-test-docs too. The directory below it, pitwall-test-scratch, has no group in Main repo: its one session worked in pitwall-test-docs alone, so it’s listed there (W145).',
     search: repo(ROOT),
     view: { state: 'live', snapshot: WORKED_SNAPSHOT },
   },
@@ -704,6 +697,8 @@ const PAGES: PageCase[] = [
   {
     title: 'Session started',
     note: 'After Start session in the dialog: a toast, at the bottom right, and the view opens when the session shows up in the list. The toast stays here.',
+    // A directory selected, so New session opens with it chosen (W147).
+    search: repo(NOTES_DIR),
     view: { state: 'live', snapshot: CALM_SNAPSHOT },
     lasting: true,
     run: async (root) => {

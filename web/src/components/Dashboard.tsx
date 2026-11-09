@@ -29,12 +29,13 @@
 // Starring never selects or opens a session. Unstarred in Starred, a row leaves at once, and focus
 // goes to the star toggle of the row that took its place (SessionList.tsx).
 //
-// A session that needs you can be marked not needed now (W88, notNeeded.ts), from the toggle on its
-// row or its view's actions menu, and it leaves everything needsAttention() drives: Needs you, the
-// repo list's badges, the session list's "N need you", the root tabs' badges, the document title's
-// count and the urgency sort. Each snapshot drops the marks whose sessions need something else now,
-// so they're back in Needs you by themselves. Each mark says so in a toast with Undo; a row marked in
-// Needs you leaves at once, and focus goes to the toggle of the row that took its place.
+// A session that needs you can be snoozed (W154, snooze.ts), from the snooze menu on its row or its
+// view's actions menu, and it leaves everything needsAttention() drives: Needs you, the repo list's
+// badges, the session list's "N need you", the root tabs' badges, the document title's count and the
+// urgency sort, as a flagged one does (W153). The server keeps it, and ends it when its time is up or
+// the session is woken, so it's back in Needs you by itself. Each snooze says so in a toast with Undo;
+// a row snoozed in Needs you leaves once the snapshot says so, and focus goes to the snooze menu of
+// the row that took its place. W88's marks, which the browser kept, are removed once, as it loads.
 //
 // The single-key shortcuts (6.2) are handled here: `/` focuses the filter field, `n` opens the New
 // session dialog, `?` the keyboard shortcuts dialog, `j` and `k` move through the session list as
@@ -110,7 +111,10 @@
 // title; Needs you says they're there, with a way to open the view. While it's held or has failed, the
 // app strip says so, with Open.
 
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ApiContext } from '../api.js';
+import { flaggedText, flagSession, UNDO_FLAG, unflaggedText, unflagSession } from '../flags.js';
+import { dropOldMarks, snoozedToast, snoozeSession, UNDO_SNOOZE, unsnoozeSession, wokenText } from '../snooze.js';
 import type { PullRequestRelation, PullRequestSummary, SessionSummary } from '../../../src/shared/protocol.js';
 import {
   composeWork,
@@ -118,6 +122,7 @@ import {
   countRows,
   filterRows,
   hiddenOwners,
+  isPrRow,
   listWork,
   matchesRelations,
   notClonedKey,
@@ -137,12 +142,10 @@ import type { ConnectionView } from '../connection.js';
 import { focusGesture, type FocusGesture } from '../focusGesture.js';
 import { useTerminalFocus } from '../terminalFocus.js';
 import { formatRoots, plainText, shortenHome } from '../format.js';
-import { draftText, type FromSession } from '../fromSession.js';
 import { everyGroupId, groupByPhrase, groupSessions, useGroupBy, type GroupBy } from '../groupBy.js';
 import { browserStorage, FINISHED_STATE_KEY, readGroupState, writeGroupState, type GroupState, type StorageSource } from '../groupState.js';
 import { absentGroup, useHiddenGroups, type HiddenGroup } from '../hidden.js';
 import { useLayout } from '../layout.js';
-import { useNotNeeded } from '../notNeeded.js';
 import { useOpenSession, withSession, type OpenSession } from '../openSession.js';
 import { useOpenPr, withPr } from '../openPr.js';
 import { approvalsWaiting, asSupervisorState, SUPERVISOR_DRAFT_ID, useOpenSupervisor, withSupervisor } from '../supervisor.js';
@@ -152,16 +155,19 @@ import { pendingLink, prPrefill, withPendingLinks, type PendingLinks } from '../
 import { createPanelWidthStore } from '../panelWidth.js';
 import { relayAlertText } from '../relay.js';
 import { tabAttention, tabGroups, writeStoredTab } from '../rootTabs.js';
+import { openSpinOffs, spinOffCount, useDismissedSpinOffs } from '../spinOff.js';
 import {
   browserNavigation,
   findGroup,
   finishedStateId,
   groupSelection,
   isPrsSelection,
+  keepsOpenSession,
   sameSelection,
   scopeFor,
   selectionHref,
   selectionName,
+  selectionShowing,
   useSelection,
   viewIn,
   withSelection,
@@ -174,7 +180,6 @@ import {
   filterNeedle,
   groupLabel,
   isOlderEnded,
-  needsAttention,
   NO_FILTERS,
   noMatchText,
   sessionsIn,
@@ -186,7 +191,7 @@ import {
 import { useSort } from '../sort.js';
 import { isTyping, shortcutFor, useShortcutsStore, type Shortcut } from '../shortcuts.js';
 import { useStarred } from '../starred.js';
-import { useOpenWhenListed } from '../spawn.js';
+import { newSessionDirectory, useOpenWhenListed } from '../spawn.js';
 import { Alert, Detail } from './Alert.js';
 import { AppStrips } from './AppStrip.js';
 import { Button } from './Button.js';
@@ -199,6 +204,7 @@ import { HighlightContext } from './Highlight.js';
 import { closeMenus } from './Menu.js';
 import { ClonedNotice, CloneDialog } from './CloneDialog.js';
 import { NewSessionDialog } from './NewSessionDialog.js';
+import { SpinOffCards, type CheckedSpinOff } from './SpinOffCards.js';
 import { NO_RELATION, PrListFilters, PrListFoot, PrNotices, prSourceBody, RefreshAction } from './PrList.js';
 import { PrView, UnlistedPrView, WaitingPrView, type PrMissing } from './PrView.js';
 import { PreferencesDialog } from './Preferences.js';
@@ -250,26 +256,8 @@ const startedKey = (shortId: string) => `started:${shortId}`;
 /** The toast for `s`, which stars or unstars the open session while focus is elsewhere (W53). */
 export const starredText = (name: string, on: boolean) => `${on ? 'Starred' : 'Unstarred'} ${plainText(name)}.`;
 
-/**
- * The toast once a session is marked not needed now (W88), with UNDO_NOT_NEEDED: it has left Needs you,
- * and says when it comes back.
- */
-export const notNeededText = (name: string) => `Marked ${plainText(name)} not needed now. It comes back to Needs you when what it needs changes.`;
-
-/**
- * The same toast for a session that also needs you through an open PR it owns (W106): the mark is
- * for what the session needs, so it stays in Needs you while the PR does.
- */
-export const notNeededStaysText = (name: string, number: number) => `Marked ${plainText(name)} not needed now. It stays in Needs you while #${number} needs you.`;
-
-/** That toast's action: it takes the mark away, so the session is back in Needs you. */
-export const UNDO_NOT_NEEDED = 'Undo';
-
-/** The toast once the session view's Put back in Needs you takes a mark away, since the menu has closed (W88). */
-export const putBackText = (name: string) => `Put ${plainText(name)} back in Needs you.`;
-
-/** What a session's Not needed now toasts are about, so each replaces the last. */
-const notNeededKey = (sessionId: string) => `not-needed:${sessionId}`;
+/** What a session's snooze toasts are about, so each replaces the last (W154). */
+const snoozeKey = (sessionId: string) => `snooze:${sessionId}`;
 
 /** Starred's empty state, with nothing starred under the root (W53, 4: Empty states). */
 export const NO_STARRED = { title: 'No starred sessions', sentence: 'Star a session from its row or its view to keep it here.' } as const;
@@ -328,10 +316,10 @@ const prSubtitle = (pr: PullRequestSummary) => (
   </>
 );
 
-/** New session's subtitle from a session (W118): which one's directory it opens in. */
-const fromSessionSubtitle = (name: string) => (
+/** New session's subtitle for a spin-off proposal (W163): which session proposed it. */
+const spinOffSubtitle = (from: string) => (
   <>
-    Starts a background session with <code>claude --bg</code> in <bdi>{plainText(name)}</bdi>&apos;s directory, which you can change.
+    Starts a background session with <code>claude --bg</code>, as <bdi>{from}</bdi> proposed. Read the prompt and change anything before you start it.
   </>
 );
 
@@ -496,16 +484,17 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const everySession = useMemo(() => sessionsIn(groups), [groups]);
   // How many rows the open tab lists: its sessions, and its PR rows (W106).
   const tabRows = useMemo(() => countRows(shownGroups), [shownGroups]);
-  // The sessions marked not needed now (W88), every root's, whether or not they're in the snapshot.
-  // Each snapshot drops those it lists as needing something else now; never those it doesn't list.
-  const notNeeded = useNotNeeded(storage);
-  const marks = notNeeded.entries;
-  const { prune } = notNeeded;
-  useEffect(() => {
-    if (startGroups) prune(sessionsIn(startGroups));
-  }, [startGroups, prune]);
+  // W88's Not needed now marks, which W154's snoozes replaced: removed once, not carried over.
+  useEffect(() => dropOldMarks(storage), [storage]);
   // Every root's rows that need you, a PR's included (W106): the page title's count.
-  const attention = countNeeds(groups, marks, work);
+  const attention = countNeeds(groups, work);
+  // The proposals for new sessions that wait on you (W163), every root's for the title and the root
+  // tabs, and the open tab's for Needs you, its cards and its count. Dismissed ones are the browser's.
+  const dismissedSpinOffs = useDismissedSpinOffs(storage);
+  const spinOffs = useMemo(() => openSpinOffs(groups, dismissedSpinOffs.set), [groups, dismissedSpinOffs.set]);
+  const tabSpinOffs = useMemo(() => openSpinOffs(shownGroups, dismissedSpinOffs.set), [shownGroups, dismissedSpinOffs.set]);
+  // Start on a proposal, once the server has checked it: New session, filled in with it.
+  const [spinOffStart, setSpinOffStart] = useState<CheckedSpinOff>();
   const selectedGroup = findGroup(groups, selection);
   // Groups hidden from the repo list, under these roots, whether or not they're in the snapshot (W35).
   // The repo list shows the open tab's.
@@ -520,10 +509,10 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // The root tab's older PR rows (W106): only the Pull requests view lists them, with Show older on, and nothing counts them.
   const olderPrs = useMemo(() => olderPrRows(shownGroups, work, tab), [shownGroups, work, tab]);
   const listed = useMemo(() => {
-    const base = scope ? listWork(shownGroups, scope, sort, grouped.home, marks, work) : { current: [], finished: [] };
+    const base = scope ? listWork(shownGroups, scope, sort, grouped.home, work) : { current: [], finished: [] };
     if (scope?.kind !== 'prs' || !showOlderPrs || olderPrs.length === 0) return base;
-    return { current: [...base.current, ...olderPrs].sort(rowOrder('urgency', marks, work)), finished: [] };
-  }, [shownGroups, scope?.kind, selectedGroup, sort, grouped.home, starred.set, marks, work, showOlderPrs, olderPrs]);
+    return { current: [...base.current, ...olderPrs].sort(rowOrder('urgency', work)), finished: [] };
+  }, [shownGroups, scope?.kind, selectedGroup, sort, grouped.home, starred.set, work, showOlderPrs, olderPrs]);
   const [prFilter, setPrFilter] = useState('');
   // The Pull requests view's chips (W101): the page's, none on at each load, never stored, as the filter's text.
   const [prRelations, setPrRelations] = useState<ReadonlySet<PullRequestRelation>>(() => new Set());
@@ -542,7 +531,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     const every = tabGroups(groupedAll.groups, tab);
     const everyScope = scopeOf(every);
     if (!everyScope) return 0;
-    const old = listWork(every, everyScope, sort, groupedAll.home, undefined, work).finished.filter(({ session }) => older(session));
+    const old = listWork(every, everyScope, sort, groupedAll.home, work).finished.filter(({ session }) => older(session));
     return filterRows(old, filters, work).length;
   }, [anyOlder, prsSelected, groupedAll, tab, selection, starred.set, sort, endedNow, filters, work, owners]);
   // Every session pitwall lists, the older ended ones too, each once: the session view shows one
@@ -620,13 +609,14 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // hidden takes focus or a click. The header stays usable above it, and j and k still change the session.
   const overlaid = layout !== 'three-columns' && (openId !== undefined || prOpen !== undefined || supervisorOpen);
   const reposCovered = overlaid && overlayCoversRepos;
-  // The New session dialog, and the session it started, selected once it's listed (W63).
-  const [newSession, setNewSession] = useState(false);
+  // The New session dialog, and the session it started, selected once it's listed (W63). Opened in
+  // the repo or directory selected in the repo list, or with none chosen from a view, never the open
+  // session's (W147, D27), taken as it opens.
+  const [newSession, setNewSession] = useState<{ cwd: string | undefined }>();
+  const openNewSessionDialog = () => setNewSession({ cwd: snapshot ? newSessionDirectory(selection, snapshot.roots, tab) : undefined });
   // New session for a PR (W107): for a cloned repo, the dialog prefilled in its directory; for one
   // that isn't, Clone and start's confirmation first, then the dialog in the new clone.
   const [prStart, setPrStart] = useState<PrStart>();
-  // New session from here (W118): the dialog in a session's directory, with Draft from this session.
-  const [fromSession, setFromSession] = useState<FromSession>();
   const startPr = useCallback((pr: PullRequestSummary) => {
     if (pr.place?.kind === 'cloned') setPrStart({ pr, step: 'new', cwd: pr.place.key });
     else if (pr.place?.kind === 'not-cloned') setPrStart({ pr, step: 'clone' });
@@ -846,8 +836,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const stepByKey = (root: HTMLElement, by: 1 | -1): boolean => {
     const buttons = rowButtons();
     const active = document.activeElement;
-    // A row's name button, its star toggle (W53), or its Not needed now toggle (W88).
-    const toggleOf = active instanceof HTMLElement ? (active.dataset.starSession ?? active.dataset.notNeededSession) : undefined;
+    // A row's name button, its star toggle (W53), or its snooze menu or toggle (W154).
+    const toggleOf = active instanceof HTMLElement ? (active.dataset.starSession ?? active.dataset.snoozeSession) : undefined;
     const onRow =
       active instanceof HTMLElement && active.closest('.session-list') !== null
         ? buttons.includes(active)
@@ -1035,11 +1025,29 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     return () => cancelAnimationFrame(frame);
   }, [supervisorOpen, openId, prOpen, layout, tab]);
 
-  // A session from the PR view's Sessions: its view takes the PR's place, with focus on its heading.
-  // No focus gesture (W57): its terminal, if it opens on one, leaves focus where it is.
+  // A session from the PR view's Sessions or the supervisor's Sent and started: its view takes the
+  // PR's or the supervisor's place, with focus on its heading. No focus gesture (W57): its terminal, if
+  // it opens on one, leaves focus where it is. Its root tab and a group that lists it come with it, in
+  // the one pushed entry, unless the selection already lists it (W144, selectionShowing(); Starred
+  // and Needs you only if they do, W148); one no group lists yet opens alone.
   const openSessionFromPr = (sessionId: string) => {
     focusView.current = { id: sessionId, on: 'heading' };
-    opened.open(sessionId, 'push');
+    // Starred or Needs you gives way when it doesn't list the session (W148), whatever the filters
+    // and Show older show: so every session, as olderCount reads them.
+    const every = tabGroups(groupedAll.groups, tab);
+    const everyScope = scopeOf(every);
+    const inView = everyScope ? listWork(every, everyScope, sort, groupedAll.home, work) : { current: [], finished: [] };
+    const viewLists = [...inView.current, ...inView.finished].some((row) => !isPrRow(row) && row.session.sessionId === sessionId);
+    const next = snapshot ? selectionShowing({ roots, groups: groupedAll.groups }, selection, tab, sessionId, groupedAll.home, viewLists) : undefined;
+    if (next === undefined) {
+      opened.open(sessionId, 'push');
+      return;
+    }
+    const { pathname, search, hash } = navigation.location;
+    navigation.history.pushState(navigation.history.state, '', `${pathname}${withSession(withSelection(search, next), sessionId)}${hash}`);
+    writeStoredSelection(next, storage);
+    followSelection();
+    opened.follow();
   };
   // Show older for PRs: the same button with its other name keeps focus, or the list's heading once it's gone.
   const focusOlderPrs = useRef(false);
@@ -1055,8 +1063,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
 
   // The count is every root's, each session once, so what needs you under a tab that isn't open shows
   // in the browser's tab too; with root tabs, the open one's root follows the name (W38).
-  // The supervisor's drafts count too (W114): each waits on you.
-  const titleCount = attention + approvals;
+  // The supervisor's drafts count too (W114): each waits on you. So does each proposal (W163), but a
+  // session already counted as a row needing you counts once.
+  const titleCount = attention + approvals + spinOffCount(spinOffs, work);
   useEffect(() => {
     document.title = `${titleCount > 0 ? `(${titleCount}) ` : ''}pitwall${tab === undefined ? '' : ` · ${plainText(shortenHome(tab))}`}`;
     return () => {
@@ -1142,7 +1151,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const openNewSession = (root: HTMLElement): boolean => {
     if (!snapshot) return false;
     closeMenus(root);
-    setNewSession(true);
+    openNewSessionDialog();
     return true;
   };
 
@@ -1162,57 +1171,84 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     return true;
   };
 
-  // Not needed now (W88): from a row's toggle or the view's actions menu. A mark is a toast with Undo,
-  // since the session has left Needs you, where it may not be in sight; a later one about the same
-  // session replaces it. Taking a mark away from the row needs no toast, as the toggle shows it, and
-  // the mark's toast goes, with nothing left to undo; from the menu, which has closed, it's a toast.
-  const undoFocus = useRef<string | undefined>(undefined);
-  const undoNotNeeded = useRef<(sessionId: string) => void>(() => {});
-  // The sessions whose mark's toast, with Undo, may still show: it goes once the mark goes by itself,
-  // as what the session needs changes or another tab takes it away, since Undo would have nothing to do.
-  const markToasts = useRef(new Set<string>());
-  const { dismiss: dismissToast } = toasts;
-  useEffect(() => {
-    for (const sessionId of markToasts.current) {
-      if (marks.has(sessionId)) continue;
-      markToasts.current.delete(sessionId);
-      dismissToast(notNeededKey(sessionId));
-    }
-  }, [marks, dismissToast]);
-  const setNotNeeded = (session: SessionSummary, on: boolean, from: 'row' | 'menu') => {
-    const key = notNeededKey(session.sessionId);
+  // Flag, "It doesn't need me" (W153): from a row's flag toggle or the view's actions menu. The server
+  // keeps it, so the snapshot says it's flagged as soon as it is; the toast says what came of asking
+  // the session, with Undo. Taking it away from the row needs no toast, as the toggle shows it.
+  const api = useContext(ApiContext);
+  const flagKey = (sessionId: string) => `flag:${sessionId}`;
+  const setFlag = (session: SessionSummary, on: boolean, from: 'row' | 'menu') => {
+    if (!api) return;
+    const key = flagKey(session.sessionId);
     if (!on) {
-      markToasts.current.delete(session.sessionId);
-      notNeeded.unmark(session.sessionId);
-      if (from === 'menu') toasts.show({ tone: 'success', key, message: putBackText(session.name) });
-      else toasts.dismiss(key);
+      void unflagSession(api, session.sessionId).then((error) => {
+        if (error !== undefined) toasts.show({ tone: 'error', key, message: error });
+        else if (from === 'menu') toasts.show({ tone: 'success', key, message: unflaggedText(session.name) });
+        else toasts.dismiss(key);
+      });
       return;
     }
-    // Only one the index says needs you: the toggle and the menu item are on no other.
-    if (!needsAttention(session)) return;
-    notNeeded.mark(session);
-    markToasts.current.add(session.sessionId);
-    const stays = prNeeding(session, work);
-    const message = stays === undefined ? notNeededText(session.name) : notNeededStaysText(session.name, stays.number);
-    toasts.show({ tone: 'success', key, message, action: { label: UNDO_NOT_NEEDED, onAction: () => undoNotNeeded.current(session.sessionId) } });
+    void flagSession(api, session, from === 'menu' ? 'view' : 'row').then((outcome) => {
+      if (outcome.kind === 'failed') {
+        toasts.show({ tone: 'error', key, message: outcome.error });
+        return;
+      }
+      const { tone, message } = flaggedText(session.name, outcome.asked);
+      toasts.show({ tone, key, message, action: { label: UNDO_FLAG, onAction: () => setFlag(session, false, 'row') } });
+    });
   };
-  // Undo takes its toast away, so focus it had goes to the session's toggle, back in the list and
-  // unpressed, or where focusList() puts it when the list doesn't show it or the view covers it.
-  // Focus that wasn't in the toast, as after a click that doesn't focus, stays where it is.
-  undoNotNeeded.current = (sessionId) => {
-    const active = document.activeElement;
-    markToasts.current.delete(sessionId);
-    notNeeded.unmark(sessionId);
-    if (active instanceof Element && active.closest('.toasts') !== null) undoFocus.current = sessionId;
+  // Snooze (W154): from a row's snooze menu or the view's actions menu. The server keeps it, so the
+  // snapshot says it's snoozed as soon as it is; the toast says until when, with Undo. Taking it off
+  // from the row needs no toast, as the toggle shows it; from the menu, which has closed, it's a toast.
+  // A snooze's toast goes once the snooze ends by itself, since Undo would have nothing to do.
+  const snoozeToasts = useRef(new Map<string, string>());
+  const { dismiss: dismissToast } = toasts;
+  useEffect(() => {
+    for (const [sessionId, at] of snoozeToasts.current) {
+      const ended = everySession.find((session) => session.sessionId === sessionId)?.snoozeEnded;
+      if (ended === undefined || Date.parse(ended.at) < Date.parse(at)) continue;
+      snoozeToasts.current.delete(sessionId);
+      dismissToast(snoozeKey(sessionId));
+    }
+  }, [everySession, dismissToast]);
+  // Undo from the toast puts focus, which the toast took with it, on the session's snooze menu, back
+  // in the list, once the snapshot says it's woken, or where focusList() puts it when the list doesn't
+  // show it or the view covers it. Focus that wasn't in the toast stays where it is.
+  const [wakeFocus, setWakeFocus] = useState<string | undefined>(undefined);
+  const setSnooze = (session: SessionSummary, until: Date | undefined | false, from: 'row' | 'menu' | 'toast') => {
+    if (!api) return;
+    const { sessionId } = session;
+    const key = snoozeKey(sessionId);
+    if (until === false) {
+      snoozeToasts.current.delete(sessionId);
+      const active = document.activeElement;
+      const inToast = from === 'toast' && active instanceof Element && active.closest('.toasts') !== null;
+      void unsnoozeSession(api, sessionId).then((error) => {
+        if (error !== undefined) toasts.show({ tone: 'error', key, message: error });
+        else if (from === 'menu') toasts.show({ tone: 'success', key, message: wokenText(session.name) });
+        else toasts.dismiss(key);
+        if (error === undefined && inToast) setWakeFocus(sessionId);
+      });
+      return;
+    }
+    void snoozeSession(api, sessionId, until).then((outcome) => {
+      if (outcome.kind === 'failed') {
+        toasts.show({ tone: 'error', key, message: outcome.error });
+        return;
+      }
+      snoozeToasts.current.set(sessionId, outcome.snoozed.at);
+      const message = snoozedToast(session.name, outcome.snoozed, new Date(), prNeeding(session, work)?.number);
+      toasts.show({ tone: 'success', key, message, action: { label: UNDO_SNOOZE, onAction: () => setSnooze(session, false, 'toast') } });
+    });
   };
   useEffect(() => {
-    const sessionId = undoFocus.current;
-    if (sessionId === undefined) return;
-    undoFocus.current = undefined;
+    if (wakeFocus === undefined) return;
+    // The snapshot hasn't said it's woken yet: its row isn't back.
+    if (everySession.find((session) => session.sessionId === wakeFocus)?.snoozed !== undefined) return;
+    setWakeFocus(undefined);
     const toggle = overlaid
       ? undefined
-      : [...(app.current?.querySelectorAll<HTMLElement>('.session-list [data-not-needed-session]') ?? [])].find(
-          (button) => button.dataset.notNeededSession === sessionId && !button.closest('[hidden]'),
+      : [...(app.current?.querySelectorAll<HTMLElement>('.session-list [data-snooze-session]') ?? [])].find(
+          (button) => button.dataset.snoozeSession === wakeFocus && !button.closest('[hidden]'),
         );
     if (toggle) toggle.focus();
     else focusList();
@@ -1253,8 +1289,22 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     };
   }, [shortcuts]);
 
+  /**
+   * Choosing a selection in the repo list. A group keeps the open session only if it lists it, in the
+   * chosen grouping, whatever the filter, Finished or Show older hides (W139, Phil's option B): otherwise
+   * the view closes to "Select a session", in the same pushed history entry, so the back button returns
+   * to the session and the group it was under. A view keeps it, as before.
+   */
   const select = (next: Selection, from: 'list' | 'drawer' | 'elsewhere' = 'elsewhere') => {
-    choose(next);
+    if (snapshot && openId !== undefined && !keepsOpenSession(groupedAll.groups, next, openId)) {
+      const { pathname, search, hash } = navigation.location;
+      navigation.history.pushState(navigation.history.state, '', `${pathname}${withSession(withSelection(search, next), undefined)}${hash}`);
+      writeStoredSelection(next, storage);
+      followSelection();
+      opened.follow();
+    } else {
+      choose(next);
+    }
     if (from === 'drawer') {
       focusHeading.current = true;
       setDrawerOpen(false);
@@ -1413,6 +1463,15 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     </div>
   );
 
+  // Needs you's notices: each proposal's card (W163), then the supervisor's notice.
+  const needsYouNotices =
+    tabSpinOffs.length > 0 || approvals > 0 ? (
+      <>
+        <SpinOffCards items={tabSpinOffs} onStart={setSpinOffStart} onDismiss={dismissedSpinOffs.dismiss} onOpen={(sessionId) => openSession(sessionId)} />
+        {approvals > 0 && supervisorNotice}
+      </>
+    ) : undefined;
+
   const name = selectionName(groups, selection, roots);
   const heading: SessionListHeading =
     'view' in selection
@@ -1463,7 +1522,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     tabRows > 0 &&
     !((scope.kind === 'needs-you' || scope.kind === 'starred' || scope.kind === 'prs') && total === 0) &&
     (scope.kind !== 'prs' || prsListed);
-  const summaryAttention = listed.current.filter((row) => rowNeedsYou(row, marks, work)).length;
+  const summaryAttention = listed.current.filter((row) => rowNeedsYou(row, work)).length;
   // The Pull requests view's Clear filters: its text and its chips, and focus in its field, since the button goes.
   const clearPrFilters = () => {
     setPrFilter('');
@@ -1566,7 +1625,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         sentence="Start one here, or start Claude Code in any terminal under these directories and it appears here."
         actions={
           <>
-            <Button variant="primary" icon="add" aria-haspopup="dialog" onClick={() => setNewSession(true)}>
+            <Button variant="primary" icon="add" aria-haspopup="dialog" onClick={openNewSessionDialog}>
               New session
             </Button>
             {/* Every session under the roots is an older ended one (W67). */}
@@ -1598,7 +1657,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     empty = (
       <EmptyState
         icon="success"
-        title={approvals > 0 ? 'Nothing else needs you right now' : 'Nothing needs you right now'}
+        title={approvals > 0 || tabSpinOffs.length > 0 ? 'Nothing else needs you right now' : 'Nothing needs you right now'}
         sentence="Sessions that are waiting for you, or asked you something, show here."
         actions={showAll}
       />
@@ -1665,9 +1724,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       hidden={{ groups: shownHidden, open: hidden.open, onToggle: () => hidden.setOpen(!hidden.open), onUnhide: unhide }}
       tab={tab}
       starred={starred.set}
-      notNeeded={marks}
       prs={repoListPrs}
       work={work}
+      spinOffs={spinOffCount(tabSpinOffs, work)}
       supervisor={
         supervisor && {
           status: supervisor.status,
@@ -1718,14 +1777,14 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         prompts.current.set(session.sessionId, open);
       }}
       star={{ starred: starred.set.has(session.sessionId), onStar: starred.star }}
-      notNeeded={{ entries: marks, onChange: (changed, on) => setNotNeeded(changed, on, 'menu') }}
+      onSnooze={api ? (changed, until) => setSnooze(changed, until, 'menu') : undefined}
+      onFlag={api ? (changed, on) => setFlag(changed, on, 'menu') : undefined}
       backgroundTab={backgroundTab}
       stepped={hiddenIn === undefined && stepped.current === session.sessionId}
       openedBy={hiddenIn === undefined && opener.current?.sessionId === session.sessionId ? opener.current.gesture : undefined}
       terminalFocus={terminalFocus}
       polledAt={updatedAt}
       recaps={snapshot?.recaps}
-      onNewSession={snapshot ? setFromSession : undefined}
       backLabel={hiddenIn === undefined ? backLabel : undefined}
       prs={{
         owned: work.owned.get(session.sessionId) ?? [],
@@ -1775,7 +1834,6 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         missing={prMissing}
         sessions={sessionsFor(shownPr, everyListed)}
         ownerId={work.ownerOf.get(prOpen)?.sessionId}
-        notNeeded={marks}
         onStart={snapshot && prMissing === undefined && work.ownerOf.get(prOpen) === undefined ? startPr : undefined}
         onOpenSession={openSessionFromPr}
         onClose={closePr}
@@ -1839,7 +1897,6 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
           drafts.current.set(SUPERVISOR_DRAFT_ID, has);
         }}
         sessions={supervisorSessions}
-        notNeeded={notNeeded.entries}
         onOpenSession={openSessionFromPr}
         prs={prList?.prs}
         onOpenPr={openPrView}
@@ -1904,7 +1961,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         state={state}
         roots={snapshot?.roots}
         updatedAt={snapshot ? updatedAt : undefined}
-        onNewSession={snapshot ? () => setNewSession(true) : undefined}
+        onNewSession={snapshot ? openNewSessionDialog : undefined}
         onRepos={layout === 'drawer' ? () => setDrawerOpen(true) : undefined}
         reposOpen={drawerOpen}
         reposRef={reposButton}
@@ -1913,7 +1970,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         tabs={
           tab === undefined
             ? undefined
-            : { tabs: roots.map((root) => ({ root, attention: tabAttention(groups, root, marks, work) })), active: tab, onSelect: switchTab, panelId, tabId }
+            : { tabs: roots.map((root) => ({ root, attention: tabAttention(groups, root, work) + spinOffCount(openSpinOffs(tabGroups(groups, root), dismissedSpinOffs.set), work) })), active: tab, onSelect: switchTab, panelId, tabId }
         }
       />
 
@@ -1949,7 +2006,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
                 )
               )
             }
-            notices={prsSelected ? <PrNotices list={prList} /> : scope?.kind === 'needs-you' && approvals > 0 ? supervisorNotice : undefined}
+            notices={prsSelected ? <PrNotices list={prList} /> : scope?.kind === 'needs-you' ? needsYouNotices : undefined}
             foot={prsSelected ? prsFoot : undefined}
             className={prsSelected ? 'pr-list' : undefined}
             current={current}
@@ -1965,8 +2022,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             openSessionId={openId}
             starred={starred.set}
             onStar={starred.star}
-            notNeeded={marks}
-            onNotNeeded={(changed, on) => setNotNeeded(changed, on, 'row')}
+            onSnooze={api ? (changed, until) => setSnooze(changed, until, 'row') : undefined}
+            onFlag={api ? (changed, on) => setFlag(changed, on, 'row') : undefined}
             inert={overlaid}
             older={olderCount > 0 ? { count: olderCount, shown: showOlder, onToggle: toggleOlder } : undefined}
             owned={work.owned}
@@ -2021,16 +2078,18 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         />
       )}
 
-      {fromSession && snapshot && (
+      {spinOffStart && snapshot && (
         <NewSessionDialog
+          key={`spin-off:${spinOffStart.sessionId}:${spinOffStart.key}`}
           snapshot={dialogSnapshot ?? snapshot}
           tab={tab}
-          prefill={{ cwd: fromSession.cwd }}
-          subtitle={fromSessionSubtitle(fromSession.name)}
-          draft={{ text: draftText(fromSession) }}
-          onClose={() => setFromSession(undefined)}
+          prefill={{ cwd: spinOffStart.cwd, prompt: spinOffStart.prompt, ...(spinOffStart.name === undefined ? {} : { name: spinOffStart.name }) }}
+          subtitle={spinOffSubtitle(spinOffStart.from)}
+          onClose={() => setSpinOffStart(undefined)}
           onStarted={(session) => {
-            setFromSession(undefined);
+            // Started: its card goes, as a dismissed one does.
+            dismissedSpinOffs.dismiss(spinOffStart.sessionId, spinOffStart.key);
+            setSpinOffStart(undefined);
             started.wait(session);
             toasts.show({ tone: 'success', key: startedKey(session.shortId), message: startedText(session.name) });
           }}
@@ -2041,9 +2100,11 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         <NewSessionDialog
           snapshot={dialogSnapshot ?? snapshot}
           tab={tab}
-          onClose={() => setNewSession(false)}
+          prefill={newSession.cwd === undefined ? undefined : { cwd: newSession.cwd }}
+          noDirectory
+          onClose={() => setNewSession(undefined)}
           onStarted={(session) => {
-            setNewSession(false);
+            setNewSession(undefined);
             started.wait(session);
             toasts.show({ tone: 'success', key: startedKey(session.shortId), message: startedText(session.name) });
           }}

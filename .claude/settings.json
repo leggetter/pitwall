@@ -1,0 +1,17 @@
+{
+  "disableClaudeAiConnectors": true,
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/handoffNudge.mjs"],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

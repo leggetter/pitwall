@@ -188,7 +188,8 @@ export function replyInConversation(exchange: RelayExchange, entries: readonly C
   if (reply === '') return false;
   const sent = Date.parse(exchange.sentAt);
   const since = (at: string | undefined) => at !== undefined && Date.parse(at) >= sent;
-  if (entries.some((entry) => entry.kind === 'to-pitwall' && since(entry.at) && isReply(entry, reply, cut))) return true;
+  // Only one to the relay: one to the supervisor (W138) is never the relay's reply.
+  if (entries.some((entry) => entry.kind === 'to-pitwall' && entry.recipient === undefined && since(entry.at) && isReply(entry, reply, cut))) return true;
   return entries.some((entry) => {
     if (entry.kind !== 'assistant') return false;
     if (entry.at !== undefined && Date.parse(entry.at) < sent) return false;

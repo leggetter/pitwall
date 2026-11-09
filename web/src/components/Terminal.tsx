@@ -10,10 +10,17 @@
 // is an inline alert above the screen, neutral when it ended as asked and danger when it failed.
 //
 // Keys: every key goes to the terminal, Escape included (it interrupts Claude), so Escape never
-// closes the view from here. Two are taken before xterm.js sees them. F6 moves focus to the Terminal
+// closes the view from here. Some are taken before xterm.js sees them. F6 moves focus to the Terminal
 // tab, so the terminal isn't a keyboard trap (WCAG 2.1.2), and never reaches the session. Shift+Enter
 // sends a line feed (Ctrl+J), a new line in Claude Code's prompt (W41), where xterm.js would send
-// Enter's carriage return, which submits.
+// Enter's carriage return, which submits. ⌘+Backspace, ⌘+← and ⌘+→ send Ctrl+U, Ctrl+A and Ctrl+E,
+// as a Mac text field would have them: delete to the line's start, go to its start, go to its end
+// (W151), where xterm.js sends a plain Backspace for the first and nothing for the others.
+//
+// Focus shows as the focus ring around the screen (Terminal.css), since Claude Code seems to draw its
+// own cursor, so xterm.js's unfocused outline cursor doesn't show. A paste while the terminal is attached
+// and focus is in the session view but not in a field, or nowhere after a click in the view, goes to
+// the terminal and gives it focus, so a paste never just vanishes; not while a modal dialog is open (W151).
 //
 // A session that isn't running asks first, as an inline confirmation under the bar (W24): Cancel
 // takes focus, and goes back to the conversation; "Restart and attach" stays busy until the attach
@@ -67,6 +74,8 @@ export interface TerminalHandle {
   write(data: Uint8Array): void;
   /** Keystrokes and pastes. */
   onData(listener: (data: string) => void): void;
+  /** Pastes text as xterm.js does, bracketed when the program asked for it; it arrives through onData. */
+  paste(data: string): void;
   /** Resizes the terminal to fill its container. */
   fit(): void;
   focus(): void;
@@ -137,6 +146,53 @@ function isNewLineKey(event: KeyboardEvent): boolean {
   return event.key === 'Enter' && event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && !isComposing(event);
 }
 
+/**
+ * What ⌘ with Backspace, ← or → sends (W151): Ctrl+U, Ctrl+A and Ctrl+E, the readline keys Claude
+ * Code's prompt and shells share for delete to the line's start, the line's start and its end. The
+ * same as iTerm2's "Natural Text Editing" preset. xterm.js 6.0.0 sends a plain Backspace's DEL for
+ * ⌘+Backspace, and nothing for ⌘+← or ⌘+→.
+ */
+export const LINE_EDIT_KEYS: Readonly<Record<string, string>> = {
+  Backspace: '\u0015',
+  ArrowLeft: '\u0001',
+  ArrowRight: '\u0005',
+};
+
+/**
+ * The bytes for ⌘ (Meta) with Backspace, ← or →, and no other modifier, not while an input method
+ * composes; undefined for any other key, which goes to xterm.js.
+ */
+export function lineEditKey(event: KeyboardEvent): string | undefined {
+  if (!event.metaKey || event.altKey || event.ctrlKey || event.shiftKey || isComposing(event)) return undefined;
+  return Object.hasOwn(LINE_EDIT_KEYS, event.key) ? LINE_EDIT_KEYS[event.key] : undefined;
+}
+
+/** Whether focus is in a field of its own, which keeps its paste. */
+function isEditable(element: Element): boolean {
+  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) return true;
+  return (element instanceof HTMLElement && element.isContentEditable) || element.closest('[contenteditable]:not([contenteditable="false"])') !== null;
+}
+
+/**
+ * Whether a paste with focus on `active` goes to the terminal in `screen` (W151): only when the screen
+ * is shown, not in a hidden root tab's view, and no modal dialog or the repo drawer is open (the rule
+ * the dashboard's shortcuts follow); and focus is in the same session view, but not in the screen,
+ * whose own paste xterm.js handles, in a field, which keeps its own, or in the message box's footer,
+ * whose paste is the message box's; or focus is nowhere (the page's body) and the last click wasn't
+ * outside the view (`clickedOutside`), since a click on text in the session list or the supervisor
+ * leaves focus nowhere too. Focus anywhere else, such as the session list or the supervisor, keeps its
+ * paste.
+ */
+export function pasteGoesToTerminal(active: Element | null, screen: HTMLElement, clickedOutside = false): boolean {
+  if (!screen.isConnected || screen.closest('[hidden]') !== null) return false;
+  const doc = screen.ownerDocument;
+  if (doc.querySelector('[aria-modal="true"]') !== null) return false;
+  if (active === null || active === doc.body || active === doc.documentElement) return !clickedOutside;
+  if (screen.contains(active) || isEditable(active) || active.closest('.session-view-foot') !== null) return false;
+  const view = screen.closest('.session-view');
+  return view !== null && view.contains(active);
+}
+
 export interface SessionTerminalProps {
   sessionId: string;
   /** The token and socket factory for the attach. The view shows the Terminal tab only when it has one. */
@@ -178,6 +234,8 @@ export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, on
   const onAskRef = useRef(onAsk);
   onAskRef.current = onAsk;
   const session = useRef<AttachSession | undefined>(undefined);
+  // The open terminal, for a paste from outside it (W151).
+  const screenTerminal = useRef<TerminalHandle | undefined>(undefined);
   const [status, setStatus] = useState<AttachStatus>({ kind: 'connecting' });
   const onStatusRef = useRef(onStatus);
   onStatusRef.current = onStatus;
@@ -281,6 +339,7 @@ export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, on
             return;
           }
           terminal = created;
+          screenTerminal.current = created;
           // Keys before the attach has started go nowhere, as every key does then.
           created.onData((data) => session.current?.input(data));
           if (typeof ResizeObserver !== 'undefined') {
@@ -303,6 +362,7 @@ export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, on
       observer?.disconnect();
       session.current?.detach();
       session.current = undefined;
+      screenTerminal.current = undefined;
       terminal?.dispose();
     };
   }, [env, sessionId, attempt, hintId]);
@@ -326,6 +386,14 @@ export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, on
         event.preventDefault();
         event.stopPropagation();
         session.current?.input(NEW_LINE);
+      } else {
+        // ⌘+Backspace, ⌘+← and ⌘+→, as a Mac text field has them (W151); before the attach has
+        // started, or after it has ended, they go nowhere, as every key does then.
+        const edit = lineEditKey(event);
+        if (edit === undefined) return;
+        event.preventDefault();
+        event.stopPropagation();
+        session.current?.input(edit);
       }
     };
     // Escape belongs to the terminal (it interrupts Claude), so it doesn't close the view.
@@ -339,6 +407,35 @@ export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, on
       element.removeEventListener('keydown', onKey);
     };
   }, []);
+
+  // A paste while it's attached and focus isn't in the screen: to the terminal, which takes focus,
+  // when pasteGoesToTerminal() says so (W151). A paste in the screen is xterm.js's own, and stops there.
+  const attached = status.kind === 'attached';
+  useEffect(() => {
+    if (!attached) return;
+    // Where the last click since the attach was: outside the session view, a paste with focus nowhere stays there.
+    let clickedOutside = false;
+    const onPointer = (event: PointerEvent) => {
+      const view = container.current?.closest('.session-view');
+      clickedOutside = !(event.target instanceof Node && view?.contains(event.target));
+    };
+    const onPaste = (event: ClipboardEvent) => {
+      const element = container.current;
+      const terminal = screenTerminal.current;
+      if (event.defaultPrevented || !element || !terminal || !pasteGoesToTerminal(document.activeElement, element, clickedOutside)) return;
+      const text = event.clipboardData?.getData('text/plain') ?? '';
+      if (text === '') return;
+      event.preventDefault();
+      terminal.paste(text);
+      terminal.focus();
+    };
+    document.addEventListener('pointerdown', onPointer, true);
+    document.addEventListener('paste', onPaste);
+    return () => {
+      document.removeEventListener('pointerdown', onPointer, true);
+      document.removeEventListener('paste', onPaste);
+    };
+  }, [attached]);
 
   const ended = status.kind === 'ended';
   const notice = ended ? endMessage(status.end) : undefined;

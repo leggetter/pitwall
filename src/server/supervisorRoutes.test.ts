@@ -16,6 +16,7 @@ import {
   SUPERVISOR_INTERRUPT_PATH,
   SUPERVISOR_MESSAGE_MAX,
   SUPERVISOR_MESSAGE_PATH,
+  SUPERVISOR_NEW_CONVERSATION_PATH,
   SUPERVISOR_START_PATH,
   supervisorApprovalPath,
   supervisorConversationPath,
@@ -30,7 +31,7 @@ import { pitwallOrigin, proofFor } from '../test/proof.js';
 import { fakeSupervisor, type FakeSupervisor } from '../test/supervisor.js';
 import type { RunningServer } from './index.js';
 import { startServerWithInternals } from './server.js';
-import { SUPERVISOR_OFF_ERROR } from './supervisorRoutes.js';
+import { SUPERVISOR_MAX_BODY_BYTES, SUPERVISOR_OFF_ERROR } from './supervisorRoutes.js';
 
 const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
 const NOW = Date.parse('2026-10-29T12:00:00.000Z');
@@ -156,6 +157,7 @@ describe('the supervisor’s routes', () => {
     expect(SUPERVISOR_MESSAGE_PATH).toBe('/api/supervisor/message');
     expect(SUPERVISOR_START_PATH).toBe('/api/supervisor/start');
     expect(SUPERVISOR_INTERRUPT_PATH).toBe('/api/supervisor/interrupt');
+    expect(SUPERVISOR_NEW_CONVERSATION_PATH).toBe('/api/supervisor/new-conversation');
     expect(supervisorConversationPath()).toBe('/api/supervisor/conversation');
     expect(MCP_PATH).toBe('/mcp');
   });
@@ -164,7 +166,7 @@ describe('the supervisor’s routes', () => {
     const supervisor = fakeSupervisor();
     const server = await start(supervisor);
     const { apiKey, ws } = await authedClient(server.port);
-    for (const urlPath of [SUPERVISOR_MESSAGE_PATH, SUPERVISOR_START_PATH, SUPERVISOR_INTERRUPT_PATH]) {
+    for (const urlPath of [SUPERVISOR_MESSAGE_PATH, SUPERVISOR_START_PATH, SUPERVISOR_INTERRUPT_PATH, SUPERVISOR_NEW_CONVERSATION_PATH]) {
       const body = JSON.stringify({ text: 'hello' });
       const json = { 'content-type': 'application/json' };
       expect((await request(server.port, urlPath, 'POST', { ...json }, body)).status, urlPath).toBe(401);
@@ -176,6 +178,7 @@ describe('the supervisor’s routes', () => {
     expect(supervisor.sent).toEqual([]);
     expect(supervisor.starts).toBe(0);
     expect(supervisor.interrupts).toBe(0);
+    expect(supervisor.newConversations).toBe(0);
     ws.close();
   });
 
@@ -194,10 +197,16 @@ describe('the supervisor’s routes', () => {
     expect((await post(server.port, SUPERVISOR_MESSAGE_PATH, apiKey, { text: 'a\u0000b' })).status).toBe(400);
     const long = await post(server.port, SUPERVISOR_MESSAGE_PATH, apiKey, { text: 'x'.repeat(SUPERVISOR_MESSAGE_MAX + 1) });
     expect(long.status).toBe(413);
-    expect(JSON.parse(long.body)).toEqual({ ok: false, error: 'A message to the supervisor can be at most 20,000 characters.' });
+    expect(JSON.parse(long.body)).toEqual({ ok: false, error: 'A message to the supervisor can be at most 100,000 characters.' });
     expect((await post(server.port, SUPERVISOR_MESSAGE_PATH, apiKey, { text: '"'.repeat(SUPERVISOR_MESSAGE_MAX) })).status).toBe(200);
-    expect((await post(server.port, SUPERVISOR_MESSAGE_PATH, apiKey, JSON.stringify({ text: 'x'.repeat(200 * 1024) }))).status).toBe(413);
-    expect(supervisor.sent).toHaveLength(2);
+    // W134: the longest message, every character escaped as \uXXXX in its JSON, fits the body limit.
+    const escaped = '\u0001'.repeat(SUPERVISOR_MESSAGE_MAX);
+    expect(JSON.stringify({ text: escaped }).length).toBeGreaterThan(6 * SUPERVISOR_MESSAGE_MAX);
+    expect((await post(server.port, SUPERVISOR_MESSAGE_PATH, apiKey, { text: escaped })).status).toBe(200);
+    const huge = await post(server.port, SUPERVISOR_MESSAGE_PATH, apiKey, JSON.stringify({ text: 'x'.repeat(SUPERVISOR_MAX_BODY_BYTES) }));
+    expect(huge.status).toBe(413);
+    expect(JSON.parse(huge.body)).toEqual({ ok: false, error: 'The message is too large.' });
+    expect(supervisor.sent).toHaveLength(3);
     ws.close();
   });
 
@@ -233,6 +242,26 @@ describe('the supervisor’s routes', () => {
     const idle = await post(server.port, SUPERVISOR_INTERRUPT_PATH, apiKey);
     expect(idle.status).toBe(409);
     expect(JSON.parse(idle.body)).toEqual({ ok: false, error: "The supervisor isn't working on anything." });
+    ws.close();
+  });
+
+  it('new conversation (W136): 200 when done, 409 with pitwall’s reason when refused, 503 while closing', async () => {
+    const supervisor = fakeSupervisor();
+    const server = await start(supervisor);
+    const { apiKey, ws } = await authedClient(server.port);
+    const done = await post(server.port, SUPERVISOR_NEW_CONVERSATION_PATH, apiKey);
+    expect(done.status).toBe(200);
+    expect(done.headers['cache-control']).toBe('no-store');
+    expect(JSON.parse(done.body)).toEqual({ ok: true });
+    supervisor.newConversationOutcome = { kind: 'refused', error: "A draft from this conversation waits for you. Send or don't send it first, then start a new conversation." };
+    const refused = await post(server.port, SUPERVISOR_NEW_CONVERSATION_PATH, apiKey);
+    expect(refused.status).toBe(409);
+    expect(JSON.parse(refused.body)).toEqual({ ok: false, error: "A draft from this conversation waits for you. Send or don't send it first, then start a new conversation." });
+    supervisor.newConversationOutcome = { kind: 'closed' };
+    expect((await post(server.port, SUPERVISOR_NEW_CONVERSATION_PATH, apiKey)).status).toBe(503);
+    expect(supervisor.newConversations).toBe(3);
+    // It starts nothing.
+    expect(supervisor.starts).toBe(0);
     ws.close();
   });
 
@@ -288,7 +317,7 @@ describe('--no-supervisor', () => {
     const snapshot = JSON.parse((await request(server.port, SNAPSHOT_PATH, 'GET', { authorization: `Bearer ${TOKEN}` })).body) as IndexSnapshot;
     expect('supervisor' in snapshot).toBe(false);
     const { apiKey, ws } = await authedClient(server.port);
-    for (const urlPath of [SUPERVISOR_START_PATH, SUPERVISOR_INTERRUPT_PATH]) {
+    for (const urlPath of [SUPERVISOR_START_PATH, SUPERVISOR_INTERRUPT_PATH, SUPERVISOR_NEW_CONVERSATION_PATH]) {
       const res = await post(server.port, urlPath, apiKey);
       expect(res.status, urlPath).toBe(409);
       expect(JSON.parse(res.body)).toEqual({ ok: false, error: SUPERVISOR_OFF_ERROR });

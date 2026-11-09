@@ -11,6 +11,7 @@ import { Dashboard } from './components/Dashboard.js';
 import { SessionRow } from './components/SessionRow.js';
 import type { ConnectionView } from './connection.js';
 import {
+  asksOnOpen,
   budgetSpent,
   budgetText,
   cutText,
@@ -19,6 +20,7 @@ import {
   parseRecap,
   quietWaitingOn,
   readRecapCollapsed,
+  recapForYou,
   RECAP_COLLAPSED_KEY,
   recapsStripText,
   TODO_OWNER_TEXT,
@@ -27,7 +29,7 @@ import {
   writeRecapCollapsed,
 } from './recap.js';
 import { countAttention, needsAttention, rowStatusBadge, statusBadge } from './sessions.js';
-import { group, minutesAgo, session, snapshot } from './test/fixtures.js';
+import { group, minutesAgo, pr, session, snapshot } from './test/fixtures.js';
 
 const NEXT = 'Say whether to mark #42 ready';
 const RECAP: SessionRecap = {
@@ -47,6 +49,30 @@ const RECAP: SessionRecap = {
 
 const summary = (extra: Partial<RecapSummary> = {}): RecapSummary => ({ waitingOn: 'you', title: 'Fix the made-up export', forYou: 2, at: minutesAgo(4), source: 'pitwall', ...extra });
 const HEALTH: RecapHealth = { calls: 3, budget: RECAP_DAILY_BUDGET, costUsd: 0.003 };
+
+describe('asking as the view opens (W132)', () => {
+  const summary: RecapSummary = { waitingOn: 'you', title: 'Fix the made-up export', forYou: 1, at: '2026-11-03T11:00:00.000Z', source: 'pitwall' };
+  it('asks with no recap, whether or not the session works', () => {
+    expect(asksOnOpen(session({ status: 'idle' }), true, undefined)).toBe(true);
+    expect(asksOnOpen(session({ status: 'busy' }), true, false)).toBe(true);
+  });
+  it('asks for a stale recap only once the turn has ended, by the working line’s rule', () => {
+    const stale = { ...summary, stale: true as const };
+    expect(asksOnOpen(session({ status: 'idle', recap: stale }), true, undefined)).toBe(true);
+    expect(asksOnOpen(session({ status: 'busy', recap: stale }), true, undefined)).toBe(false);
+    expect(asksOnOpen(session({ status: 'busy', recap: stale }), true, false)).toBe(false);
+    expect(asksOnOpen(session({ kind: 'background', status: undefined, state: 'working', recap: stale }), true, undefined)).toBe(false);
+    // The page's mark wins over a status a plugin's monitor keeps at busy.
+    expect(asksOnOpen(session({ status: 'busy', recap: stale }), true, true)).toBe(true);
+    // Waiting on you, ended, or no longer running: not working.
+    expect(asksOnOpen(session({ status: 'waiting', waitingFor: 'permission prompt', recap: stale }), true, undefined)).toBe(true);
+    expect(asksOnOpen(session({ ended: true, finished: true, alive: false, pid: undefined, status: undefined, recap: stale }), true, undefined)).toBe(true);
+  });
+  it('never asks for a current recap', () => {
+    expect(asksOnOpen(session({ status: 'idle', recap: summary }), true, true)).toBe(false);
+    expect(asksOnOpen(session({ status: 'busy', recap: summary }), true, false)).toBe(false);
+  });
+});
 
 describe('parseRecap', () => {
   it('reads a recap', () => {
@@ -215,6 +241,44 @@ describe('what an idle session waits on, when it isn’t you', () => {
   });
 });
 
+describe('your first to-do, for a row that needs you through a PR (W161)', () => {
+  it('is the current recap’s first For you item, with how many there are', () => {
+    expect(recapForYou(session({ recap: summary({ waitingOn: 'CI', forYou: 3, next: ` ${NEXT} ` }) }))).toEqual({ next: NEXT, count: 3 });
+  });
+
+  it('is none without a recap, a to-do of yours or its text, nor from a stale recap or Claude Code’s', () => {
+    expect(recapForYou(session())).toBeUndefined();
+    expect(recapForYou(session({ recap: summary({ forYou: 0 }) }))).toBeUndefined();
+    expect(recapForYou(session({ recap: summary({ next: '  ' }) }))).toBeUndefined();
+    expect(recapForYou(session({ recap: summary({ next: NEXT, stale: true }) }))).toBeUndefined();
+    expect(recapForYou(session({ recap: summary({ next: NEXT, source: 'claude-code' }) }))).toBeUndefined();
+  });
+
+  it('is line 2 of a row that needs you through its PR, in place of the PR’s state, while you haven’t set it aside', () => {
+    const review = pr({ number: 57, relation: 'review-requested', reviewRequest: { via: 'direct' } }, 20);
+    const line2 = (s: SessionSummary) => {
+      const shown = group({ sessions: [s] });
+      const { unmount } = render(
+        <ul>
+          <SessionRow session={s} group={shown} owned={[review]} />
+        </ul>,
+      );
+      const row = document.querySelector<HTMLElement>('li.session')!;
+      const what = [row.classList.contains('attention'), row.querySelector('.session-what-text')?.textContent];
+      unmount();
+      return what;
+    };
+    const recap = summary({ waitingOn: 'someone else', forYou: 3, next: NEXT });
+    expect(line2(session({ status: 'idle', recap, lastUserPrompt: 'Review #57.' }))).toEqual([true, `For you (3): ${NEXT}`]);
+    expect(line2(session({ status: 'idle', lastUserPrompt: 'Review #57.' }))).toEqual([true, 'Needs you for example/demo-app#57: review requested']);
+    // Busy: no bar, and what it was asked, whatever the PR or the recap says.
+    expect(line2(session({ status: 'busy', recap, lastUserPrompt: 'Review #57.' }))).toEqual([false, 'You: Review #57.']);
+    // Snoozed: only its PR keeps it in Needs you, so that's what line 2 says.
+    const snoozed = session({ status: 'waiting', waitingFor: 'permission prompt', recap, snoozed: { at: minutesAgo(1) } });
+    expect(line2(snoozed)).toEqual([true, "Snoozed until it's woken · Needs you for example/demo-app#57: review requested"]);
+  });
+});
+
 describe('the app strip’s recap line', () => {
   it('says nothing while recaps are fine or off', () => {
     expect(recapsStripText(undefined)).toBeUndefined();
@@ -229,7 +293,7 @@ describe('the app strip’s recap line', () => {
     expect(recapsStripText(spent)).toBe(`${budgetText(RECAP_DAILY_BUDGET)} Each session keeps its last recap.`);
     render(<AppStrips relayOff={undefined} recaps={spent} />);
     expect(document.querySelector('[data-strip="recaps"]')?.textContent).toBe(
-      "Today's 200 recaps are used up, so pitwall makes no more until midnight. Each session keeps its last recap.",
+      "Today's 500 recaps are used up, so pitwall makes no more until midnight. Each session keeps its last recap.",
     );
   });
 
@@ -249,6 +313,6 @@ describe('the Dashboard', () => {
   it('shows the app strip’s recap line from the snapshot', () => {
     const view: ConnectionView = { state: 'live', snapshot: snapshot([group({ sessions: [session({ name: 'pitwall-test-one' })] })], { recaps: { ...HEALTH, calls: RECAP_DAILY_BUDGET } }) };
     render(<Dashboard view={view} />);
-    expect(screen.getByText(/Today's 200 recaps are used up/)).toBeTruthy();
+    expect(screen.getByText(/Today's 500 recaps are used up/)).toBeTruthy();
   });
 });

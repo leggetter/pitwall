@@ -3,7 +3,6 @@
 
 import { ENDED_SHOWN_DAYS, type SessionGroup, type SessionKind, type SessionSummary } from '../../src/shared/protocol.js';
 import { shortenHome } from './format.js';
-import { markedNow, type NotNeeded } from './notNeeded.js';
 
 /**
  * A session the index says needs Phil (SessionSummary.needsYou, W69), for one of NeedsYou's reasons,
@@ -13,21 +12,70 @@ import { markedNow, type NotNeeded } from './notNeeded.js';
  * checked here too: a finished session's question still shows on its row, muted, but it isn't
  * counted anywhere. Nor an ended interactive session (W67), which is finished too, whatever it asked.
  *
- * With `notNeeded`, the viewer's marks (W88, notNeeded.ts), nor one marked not needed now that still
- * needs what it needed when it was marked: Needs you, every need-you count and the urgency sort leave
- * it out. Without them, as for what a row says it needs, whether the index says it needs you.
+ * Nor one you flagged as not needing you (W153, SessionSummary.flagged), which the server sets only
+ * while it still needs what it needed when you flagged it, nor one you snoozed (W154,
+ * SessionSummary.snoozed), which the server keeps until its time or a wake: Needs you, every need-you
+ * count and the urgency sort leave them out. For what a row says it needs, whether the index says it
+ * needs you, flagged or snoozed, is indexNeedsYou().
  */
-export function needsAttention(session: SessionSummary, notNeeded?: NotNeeded): boolean {
-  if (session.stale || session.finished || session.ended) return false;
-  return session.needsYou !== undefined && !markedNow(session, notNeeded);
+export function needsAttention(session: SessionSummary): boolean {
+  return indexNeedsYou(session) && session.flagged === undefined && session.snoozed === undefined;
 }
 
 /**
- * A session that needs you, by the index, but is marked not needed now for what it needs (W88): its
- * row keeps its badge, outlined, and says "Not needed now", with its toggle pressed.
+ * Whether the index says it needs you, whatever you flagged or snoozed: for what its row says it needs,
+ * its badge's status, and the controls that hide it (W153's flag, W154's snooze). Never a stale,
+ * finished or ended one.
  */
-export function isNotNeeded(session: SessionSummary, notNeeded: NotNeeded | undefined): boolean {
-  return needsAttention(session) && markedNow(session, notNeeded);
+export function indexNeedsYou(session: SessionSummary): boolean {
+  if (session.stale || session.finished || session.ended) return false;
+  return session.needsYou !== undefined;
+}
+
+/**
+ * A session that needs you, by the index, but that you flagged as not needing you (W153), for what
+ * it needs now: the server sets `flagged` only while that holds. Its row keeps its badge, outlined,
+ * and says "You flagged this", with its flag toggle pressed.
+ */
+export function isFlagged(session: SessionSummary): boolean {
+  return indexNeedsYou(session) && session.flagged !== undefined;
+}
+
+/**
+ * Whether pitwall can flag it (W153): it needs you, isn't flagged, and is running, since the flag asks
+ * it what it needs. A finished background session would need a resume, which is the approval path's.
+ */
+export function canFlag(session: SessionSummary): boolean {
+  return indexNeedsYou(session) && session.flagged === undefined && session.alive && session.pid !== undefined;
+}
+
+/**
+ * A session that needs you, by the index, but that you snoozed (W154): its row keeps its badge,
+ * outlined, and says until when, with its snooze toggle pressed.
+ */
+export function isSnoozed(session: SessionSummary): boolean {
+  return indexNeedsYou(session) && session.snoozed !== undefined;
+}
+
+/** Whether it can be snoozed (W154): it needs you, by the index, and isn't flagged or snoozed already. */
+export function canSnooze(session: SessionSummary): boolean {
+  return indexNeedsYou(session) && session.flagged === undefined && session.snoozed === undefined;
+}
+
+/**
+ * A flag (W153) or a snooze (W154) has set it aside: it needs you, by the index, but not by you. Its
+ * row is quiet and its badge outlined, whatever its status, which it keeps.
+ */
+export function isSetAside(session: SessionSummary): boolean {
+  return isFlagged(session) || isSnoozed(session);
+}
+
+/**
+ * Why it's back in Needs you after a snooze ended by itself (W154, SessionSummary.snoozeEnded), while
+ * it needs you and the server still says so: its time was up, or a turn you didn't start woke it.
+ */
+export function snoozeBack(session: SessionSummary): 'time' | 'woken' | undefined {
+  return needsAttention(session) ? session.snoozeEnded?.why : undefined;
 }
 
 /**
@@ -61,8 +109,8 @@ export interface StatusBadge {
   look: BadgeLook;
   /** An 8 px status dot before the label: busy and working. */
   dot?: boolean;
-  /** Marked not needed now (W88): outlined, whatever its status, which it keeps, as its label does. */
-  notNeeded?: true;
+  /** Flagged (W153) or snoozed (W154): outlined, whatever its status, which it keeps, as its label does. */
+  setAside?: true;
 }
 
 /**
@@ -81,18 +129,18 @@ export interface StatusBadge {
  * (W67), whose process has exited, shows Ended, as a stopped one shows Stopped: it has no status or
  * state.
  *
- * One marked not needed now (W88, `notNeeded`) keeps its badge's text, outlined, as a stale blocked
- * job's is: solid is for needing you only.
+ * One flagged (W153) or snoozed (W154) keeps its badge's text, outlined, as a stale blocked job's is:
+ * solid is for needing you only.
  */
-export function statusBadge(session: SessionSummary, notNeeded?: NotNeeded): StatusBadge {
+export function statusBadge(session: SessionSummary): StatusBadge {
   const badge = needsBadge(session);
-  return isNotNeeded(session, notNeeded) ? { ...badge, look: 'outline', notNeeded: true } : badge;
+  return isSetAside(session) ? { ...badge, look: 'outline', setAside: true } : badge;
 }
 
 function needsBadge(session: SessionSummary): StatusBadge {
   if (session.ended) return { status: 'ended', label: 'Ended', look: 'subtle-neutral' };
   const reason = session.waitingFor ? `: ${session.waitingFor}` : '';
-  switch (needsAttention(session) ? session.needsYou?.reason : undefined) {
+  switch (indexNeedsYou(session) ? session.needsYou?.reason : undefined) {
     case 'prompt':
       return { status: 'waiting', label: `Waiting${reason}`, look: 'solid-warning' };
     case 'claude-code':
@@ -123,7 +171,7 @@ function needsBadge(session: SessionSummary): StatusBadge {
  * a question it asked would go: set only while it's why the session needs you ('claude-code').
  */
 export function needsText(session: SessionSummary): string | undefined {
-  if (!needsAttention(session) || session.needsYou?.reason !== 'claude-code') return undefined;
+  if (!indexNeedsYou(session) || session.needsYou?.reason !== 'claude-code') return undefined;
   const text = session.needsYou.text?.trim();
   return text === undefined || text === '' ? undefined : text;
 }
@@ -134,7 +182,7 @@ export function needsText(session: SessionSummary): string | undefined {
  * undefined, and line 2 says "Waiting on you" alone.
  */
 export function recapNeedsText(session: SessionSummary): string | undefined {
-  if (!needsAttention(session) || session.needsYou?.reason !== 'recap') return undefined;
+  if (!indexNeedsYou(session) || session.needsYou?.reason !== 'recap') return undefined;
   const text = (session.needsYou.text ?? session.recap?.next)?.trim();
   return text === undefined || text === '' ? undefined : text;
 }
@@ -144,9 +192,21 @@ export function recapNeedsText(session: SessionSummary): string | undefined {
  * quiet, and "Idle" is in the session view. Whether a session needs you never depends on this; it
  * comes from needsAttention().
  */
-export function rowStatusBadge(session: SessionSummary, notNeeded?: NotNeeded): StatusBadge | undefined {
-  const badge = statusBadge(session, notNeeded);
+export function rowStatusBadge(session: SessionSummary): StatusBadge | undefined {
+  const badge = statusBadge(session);
   return badge.status === 'idle' ? undefined : badge;
+}
+
+/**
+ * Whether it's at work (W161): Claude Code says it's busy, or its running background job is working,
+ * as quietWaitingOn() has it, and it hasn't finished or ended. Not when the transcript says its turn has
+ * ended (turnEnded), since a plugin's monitor can keep the status at busy (spike 007, finding 6), nor when
+ * it's stale, as a job blocked for days. A PR it owns doesn't put it in Needs you
+ * while it is (work.ts' prNeeding()): it may be doing what the PR needs, and its own needs still do.
+ */
+export function isBusy(session: SessionSummary): boolean {
+  if (session.finished || session.ended || session.stale === true || session.turnEnded === true) return false;
+  return session.status === 'busy' || (session.alive && session.state === 'working');
 }
 
 /**
@@ -419,14 +479,14 @@ function compareIds(a: SessionSummary, b: SessionSummary): number {
 }
 
 /**
- * The Urgency sort, with the viewer's Not needed now marks (W88): needs you first, whatever the reason
- * (W69), then busy, then most recently active. Stale sessions after those, and finished sessions last,
- * by activity alone. A session marked not needed now sorts as if it didn't need you: by its status.
+ * The Urgency sort: needs you first, whatever the reason (W69), then busy, then most recently active.
+ * Stale sessions after those, and finished sessions last, by activity alone. A session flagged (W153)
+ * or snoozed (W154) sorts as if it didn't need you: by its status.
  */
-export function urgencyOrder(notNeeded?: NotNeeded): (a: SessionSummary, b: SessionSummary) => number {
+export function urgencyOrder(): (a: SessionSummary, b: SessionSummary) => number {
   const bucket = (session: SessionSummary) => (session.finished ? 2 : session.stale ? 1 : 0);
   const rank = (session: SessionSummary) => {
-    if (needsAttention(session, notNeeded)) return 0;
+    if (needsAttention(session)) return 0;
     if (session.status === 'busy') return 1;
     return 2;
   };
@@ -439,8 +499,8 @@ export function urgencyOrder(notNeeded?: NotNeeded): (a: SessionSummary, b: Sess
 }
 
 /**
- * The index's own order (src/index/summaries.ts, compareSessions), which is the Urgency sort with no
- * marks: needs you first, whatever the reason (W69), then busy, then most recently active. Stale
+ * The index's own order (src/index/summaries.ts, compareSessions), but for flagged and snoozed
+ * sessions, which sort by their status here: needs you first, whatever the reason (W69), then busy, then most recently active. Stale
  * sessions after those, and finished sessions last, by activity alone.
  */
 export const compareSessions: (a: SessionSummary, b: SessionSummary) => number = urgencyOrder();
@@ -472,12 +532,11 @@ export function compareLabels(a: string, b: string): number {
 /**
  * How an order sorts a selection's unfinished sessions, and its finished ones. Finished sessions
  * follow the setting too, except that Urgency orders them by activity alone: none of them needs you.
- * Urgency leaves out what's marked not needed now (W88).
  */
-export function sessionOrder(order: SortOrder, finished: boolean, notNeeded?: NotNeeded): (a: SessionSummary, b: SessionSummary) => number {
+export function sessionOrder(order: SortOrder, finished: boolean): (a: SessionSummary, b: SessionSummary) => number {
   if (order === 'name') return compareNames;
   if (order === 'recent' || finished) return compareRecent;
-  return notNeeded === undefined || notNeeded.size === 0 ? compareSessions : urgencyOrder(notNeeded);
+  return compareSessions;
 }
 
 /**
@@ -486,15 +545,14 @@ export function sessionOrder(order: SortOrder, finished: boolean, notNeeded?: No
  * session, finished ones in one section at the end; Starred is the starred ones among them, finished
  * ones in its own Finished section, as All sessions has (W53). Each lists each session once, under its
  * home group in `home` (groupBy.ts), or the first group that lists it. The index's order is Urgency,
- * so it's sorted here. With `notNeeded` (W88), Needs you and Urgency leave out what's marked not
- * needed now, which stays in every other list.
+ * so it's sorted here. Needs you and Urgency leave out what's flagged or snoozed, which stays in every
+ * other list.
  */
 export function listScope(
   groups: readonly SessionGroup[],
   scope: Scope,
   order: SortOrder = 'urgency',
   home?: ReadonlyMap<string, SessionGroup>,
-  notNeeded?: NotNeeded,
 ): { current: Listed[]; finished: Listed[] } {
   const listed: Listed[] =
     scope.kind === 'group'
@@ -502,10 +560,10 @@ export function listScope(
       : // Each session once, under its home group, which its row names.
         listedOnce(groups, home);
   const sorted = (items: Listed[], finished: boolean) => {
-    const compare = sessionOrder(order, finished, notNeeded);
+    const compare = sessionOrder(order, finished);
     return items.sort((a, b) => compare(a.session, b.session));
   };
-  if (scope.kind === 'needs-you') return { current: sorted(listed.filter(({ session }) => needsAttention(session, notNeeded)), false), finished: [] };
+  if (scope.kind === 'needs-you') return { current: sorted(listed.filter(({ session }) => needsAttention(session)), false), finished: [] };
   const shown = scope.kind === 'starred' ? listed.filter(({ session }) => scope.ids.has(session.sessionId)) : listed;
   return {
     current: sorted(shown.filter(({ session }) => !session.finished), false),
@@ -567,9 +625,9 @@ export function filterListed(listed: readonly Listed[], filters: Filters, hasPr?
   });
 }
 
-/** How many of `sessions` need you, without those marked not needed now (W88). */
-export function countAttention(sessions: readonly SessionSummary[], notNeeded?: NotNeeded): number {
-  return sessions.reduce((count, session) => count + (needsAttention(session, notNeeded) ? 1 : 0), 0);
+/** How many of `sessions` need you, without those flagged or snoozed. */
+export function countAttention(sessions: readonly SessionSummary[]): number {
+  return sessions.reduce((count, session) => count + (needsAttention(session) ? 1 : 0), 0);
 }
 
 /** "1 needs you", "3 need you". */

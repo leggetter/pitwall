@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AskedYou, SessionSummary } from '../shared/protocol.js';
+import type { AskedYou, SessionSummary, SpinOff } from '../shared/protocol.js';
 import type { AgentRow } from './agents.js';
 import { buildGroups, compareGroups, compareSessions, isFinished, isStale, restartHolds, toSessionSummary, type PlacedSession } from './summaries.js';
 import { titleText, type TranscriptInfo } from './transcripts.js';
@@ -117,7 +117,7 @@ describe('toSessionSummary', () => {
   it('maps an interactive row with a readable transcript', () => {
     const summary = toSessionSummary(
       row({ status: 'busy' }),
-      { transcript: 'ok', lastActivityAt: iso(NOW - 1000), lastUserPrompt: 'go' },
+      { transcript: 'ok', lastActivityAt: iso(NOW - 1000), lastUserPrompt: 'go', contextTokens: 212_000 },
       NOW,
     );
     expect(summary).toEqual({
@@ -133,6 +133,7 @@ describe('toSessionSummary', () => {
       finished: false,
       lastActivityAt: iso(NOW - 1000),
       lastUserPrompt: 'go',
+      contextTokens: 212_000,
       transcript: 'ok',
     });
   });
@@ -227,6 +228,35 @@ describe('toSessionSummary', () => {
       const summary = toSessionSummary(row(), { transcript: 'ok' }, NOW);
       expect(summary).not.toHaveProperty('title');
       expect(summary).not.toHaveProperty('titleSource');
+    });
+  });
+
+  it('sets turnEnded only when the transcript says the turn has ended (W161)', () => {
+    const base: TranscriptInfo = { transcript: 'ok', lastActivityAt: iso(NOW - 1000) };
+    expect(toSessionSummary(row({ status: 'busy' }), { ...base, turnEnded: true }, NOW).turnEnded).toBe(true);
+    expect(toSessionSummary(row({ status: 'busy' }), { ...base, turnEnded: false }, NOW)).not.toHaveProperty('turnEnded');
+    expect(toSessionSummary(row({ status: 'idle' }), base, NOW)).not.toHaveProperty('turnEnded');
+  });
+
+  describe('spinOff (W163)', () => {
+    const spinOff: SpinOff = { kind: 'proposal', key: '0123456789abcdef', folder: '/work/repo', prompt: 'Tidy the README.' };
+    const transcript: TranscriptInfo = { transcript: 'ok', lastActivityAt: iso(NOW - 1000), spinOff };
+
+    it('is kept once the turn has ended, finished and ended sessions too, and adds no reason to need you', () => {
+      const idle = toSessionSummary(row({ status: 'idle' }), transcript, NOW);
+      expect(idle.spinOff).toEqual(spinOff);
+      expect(idle).not.toHaveProperty('needsYou');
+      expect(toSessionSummary(row({ status: 'busy' }), { ...transcript, turnEnded: true }, NOW).spinOff).toEqual(spinOff);
+      expect(toSessionSummary(row({ kind: 'background', shortId: 'ab12', status: undefined, pid: undefined, state: 'done' }), transcript, NOW).spinOff).toEqual(spinOff);
+      expect(toSessionSummary(row(), transcript, NOW, { ended: true }).spinOff).toEqual(spinOff);
+    });
+
+    it('is dropped while its turn runs, a prompt is on screen, or the session is stale', () => {
+      expect(toSessionSummary(row({ status: 'busy' }), transcript, NOW)).not.toHaveProperty('spinOff');
+      expect(toSessionSummary(row({ status: 'idle' }), { ...transcript, turnEnded: false }, NOW)).not.toHaveProperty('spinOff');
+      expect(toSessionSummary(row({ status: 'waiting' }), { ...transcript, turnEnded: true }, NOW)).not.toHaveProperty('spinOff');
+      const stale = row({ kind: 'background', shortId: 'ab12', status: undefined, pid: undefined, state: 'blocked' });
+      expect(toSessionSummary(stale, { ...transcript, lastActivityAt: iso(NOW - 9 * DAY) }, NOW)).not.toHaveProperty('spinOff');
     });
   });
 

@@ -8,15 +8,18 @@
 // - What the card shows is what goes (W120, W116's F1): the exact string, never through a filter that
 //   removes text, as plainText() would. The server refuses text with a character that wouldn't show
 //   as itself (src/shared/hiddenText.ts); anything unusual left, such as a no-break space, is drawn as
-//   its code, U+00A0, with a note naming it. Taller than the box shows (8 lines, 4 on a short
-//   window), the card says how many lines and characters it has, to scroll through before Send. A
+//   its code, U+00A0, with a note naming it. Taller than the box shows (half the window, at least 8
+//   lines, W136; 4 on a short window), the card says how many lines and characters it has, to scroll through before Send. A
 //   text that starts with `/` or has `@` before a path says it may run a slash command or attach a
 //   file (W129, the re-review's I2), since it reaches Claude Code as a typed prompt.
 // - A resume card (W129, M2, L1) shows, as text, the session's folder, home as ~, and its last
 //   activity; how many listed sessions share its name when others do, since names aren't unique; and
 //   that it resumes with its own saved settings, its permission mode included, with a warning when
-//   that mode is bypassPermissions. Edit opens the text in place, up to SUPERVISOR_MESSAGE_MAX for a message and
+//   that mode is bypassPermissions. Edit opens the text in place, up to SUPERVISOR_PROPOSAL_MAX for a message and
 // SPAWN_PROMPT_MAX for a new session's first prompt (editLimit()), with Send edit and Cancel.
+// - A message card (W138) shows, under the text and under the editor alike, the line pitwall adds at
+//   the end of what goes, SUPERVISOR_MESSAGE_FOOTER, labelled as pitwall's, apart from the text: it's
+//   pitwall's fixed text, not the model's, so it isn't in the editor and an edit can't remove it.
 //
 // - Each decision POSTs a SupervisorDecision to supervisorApprovalPath(). The card stays busy until the
 //   snapshot drops it, since that's when pitwall has acted, or STUCK_MS passes. A failure is an inline
@@ -27,8 +30,8 @@
 //   before, or, with none left, to the caller (onEmpty), which puts it in the message box. Edit puts it
 //   in the editor, and Cancel or Escape back on Edit.
 
-import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { SPAWN_PROMPT_MAX, type SupervisorApproval, type SupervisorDecision } from '../../../src/shared/protocol.js';
+import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
+import { SPAWN_PROMPT_MAX, SUPERVISOR_MESSAGE_FOOTER, type SupervisorApproval, type SupervisorDecision } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { useAutoGrow } from '../autoGrow.js';
 import { visibleParts, visibleString, type VisiblePart } from '../../../src/shared/hiddenText.js';
@@ -42,7 +45,7 @@ import {
   resumeBypassed,
   resumePermissionText,
   resumeWhereLead,
-  SUPERVISOR_TEXT_MAX,
+  SUPERVISOR_EDIT_MAX,
   typedPromptNotes,
 } from '../supervisor.js';
 import { Alert } from './Alert.js';
@@ -59,19 +62,16 @@ export const STUCK_TEXT = "pitwall took your answer, but this card is still wait
 
 /** The editor's Send edit while it can't send, for its tooltip. */
 export const EDIT_EMPTY = 'Type the text to send, or Cancel to keep the draft.';
-export const editTooLong = (over: number, limit: number = SUPERVISOR_TEXT_MAX) =>
+export const editTooLong = (over: number, limit: number = SUPERVISOR_EDIT_MAX) =>
   `Shorten it by ${over.toLocaleString('en')} ${over === 1 ? 'character' : 'characters'} to send it: the limit is ${limit.toLocaleString('en')}.`;
 
-/** The longest edit of each kind: a message's, a resumed session's included (W127), SUPERVISOR_MESSAGE_MAX; a new session's first prompt, SPAWN_PROMPT_MAX (W115). */
+/** The longest edit of each kind: a message's, a resumed session's included (W127), SUPERVISOR_PROPOSAL_MAX, which stayed at 20,000 when what you send the supervisor grew (W134); a new session's first prompt, SPAWN_PROMPT_MAX (W115). */
 export function editLimit(kind: SupervisorApproval['kind']): number {
-  return kind === 'spawn' ? SPAWN_PROMPT_MAX : SUPERVISOR_TEXT_MAX;
+  return kind === 'spawn' ? SPAWN_PROMPT_MAX : SUPERVISOR_EDIT_MAX;
 }
 
 /** What each kind's text is, as the card labels it. */
 const TEXT_LABELS = { message: 'Message', spawn: 'First prompt', resume: 'Message' } as const;
-
-/** The most lines the card's text box shows before it scrolls, on a tall window (supervisor.css). */
-export const APPROVAL_TEXT_LINES = 8;
 
 /** What the card says under text taller than its box. */
 export function lengthNote(text: string): string {
@@ -88,7 +88,7 @@ export function hiddenNote(parts: readonly VisiblePart[]): string | undefined {
 }
 
 /** The text as it goes, each character that wouldn't show as itself drawn as its code. */
-function ExactText({ parts }: { parts: readonly VisiblePart[] }) {
+export function ExactText({ parts }: { parts: readonly VisiblePart[] }) {
   return (
     <>
       {parts.map((part, index) =>
@@ -104,11 +104,94 @@ function ExactText({ parts }: { parts: readonly VisiblePart[] }) {
   );
 }
 
+/** The label of the line pitwall adds to a message (W138), on its card. */
+export const FOOTER_LABEL = 'Then pitwall adds, after a blank line';
+
+/** The line pitwall adds at the end of a message to a session (W138): fixed, pitwall's own, shown apart from the text you can edit. */
+function MessageFooter({ id }: { id: string }) {
+  return (
+    <div className="approval-footer" role="group" aria-labelledby={id}>
+      <p className="approval-label" id={id}>
+        {FOOTER_LABEL}
+      </p>
+      <p className="approval-footer-text">{SUPERVISOR_MESSAGE_FOOTER}</p>
+    </div>
+  );
+}
+
 /** What a spawn card adds under its heading: how the session starts. */
 export const SPAWN_NOTE = 'Starts a background session there with claude --bg, its first prompt as below.';
 
 /** What a resume card adds under its heading (W127): how the finished session comes back, and what it reads. */
 export const RESUME_NOTE = 'Resumes this finished session in the background with claude --resume, in its own folder, and sends the message below as its next turn.';
+
+/**
+ * Each card's text box, or its editor, at most as tall as leaves the whole card in the band's visible
+ * list (W143), so a card first in view shows its buttons: half the window, as W136 has it, could be
+ * taller than the band, and the wheel over the text scrolls the text, not the band. The room is
+ * measured with no box bounded, so a card that fits keeps its height and a bound never ratchets down.
+ * Never below two lines: on a window too short even for that, the buttons stick to the band's bottom
+ * edge instead (supervisor.css). An inline max-height, under the stylesheet's, since a stylesheet
+ * names only tokens.
+ */
+function useTextRoom(list: RefObject<HTMLUListElement | null>, count: number): void {
+  useLayoutEffect(() => {
+    const cards = list.current;
+    const scroller = cards?.parentElement;
+    if (!cards || !scroller) return;
+    const fit = () => {
+      const each = [...cards.querySelectorAll<HTMLElement>(':scope > .approval-card')].map((card) => ({
+        card,
+        box: card.querySelector<HTMLElement>('.approval-text, .approval-editor'),
+      }));
+      // Where each box, and the list, had been read to: removing the bounds clamps scrollTop, and a fit
+      // runs on every new draft, note or resize, so put it back after (W143's review).
+      const read = each.map(({ box }) => box?.scrollTop ?? 0);
+      const listTop = scroller.scrollTop;
+      for (const { box } of each) box?.style.removeProperty('max-height');
+      const style = getComputedStyle(scroller);
+      const room = scroller.clientHeight - px(style.paddingTop) - px(style.paddingBottom);
+      for (const { card, box } of each) {
+        if (!box) continue;
+        const own = getComputedStyle(box);
+        const height = box.getBoundingClientRect().height;
+        const rest = card.getBoundingClientRect().height - height;
+        const floor = 2 * px(own.lineHeight) + px(own.paddingTop) + px(own.paddingBottom) + px(own.borderTopWidth) + px(own.borderBottomWidth);
+        const bound = Math.max(floor, Math.floor(room - rest));
+        if (bound < height) box.style.maxHeight = `${bound}px`;
+        // Too short for the card even at two lines: only then do its buttons stick to the band's bottom,
+        // so a card peeking under another never shows its buttons over its own unread text (W143's review).
+        card.toggleAttribute('data-cramped', floor + rest > room);
+      }
+      each.forEach(({ box }, i) => {
+        if (box) box.scrollTop = read[i] ?? 0;
+      });
+      scroller.scrollTop = listTop;
+    };
+    fit();
+    if (typeof ResizeObserver !== 'function') return;
+    // The band's room changing (the window, the message box, the header) or a card's content (Edit, the
+    // editor growing, a note or an alert): fit again in the next frame, since doing it in the callback
+    // would change what it observes in this one.
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(fit);
+    });
+    observer.observe(scroller);
+    observer.observe(cards);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [list, count]);
+}
+
+/** A computed length in px, or 0 for one that isn't, such as line-height: normal. */
+function px(value: string): number {
+  const parsed = parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 
 export interface ApprovalCardsProps {
   approvals: readonly SupervisorApproval[];
@@ -122,6 +205,7 @@ export function ApprovalCards({ approvals, onEmpty }: ApprovalCardsProps) {
   // The card focus was last in, by id, while it's still in one.
   const focusedCard = useRef<string | undefined>(undefined);
   const shownIds = useRef(approvals.map((each) => each.id));
+  useTextRoom(list, approvals.length);
 
   useLayoutEffect(() => {
     const was = shownIds.current;
@@ -149,7 +233,7 @@ export function ApprovalCards({ approvals, onEmpty }: ApprovalCardsProps) {
       <h3 className="supervisor-approvals-title" id={headingId}>
         Drafts for you <span className="supervisor-approvals-count">({approvals.length})</span>
       </h3>
-      {/* At most 40% of the view, then it scrolls: a Tab stop while it does, so the message box keeps its room. */}
+      {/* At most 70% of the view, then it scrolls: a Tab stop while it does, so the message box keeps its room. */}
       <ScrollBox className="supervisor-approvals-scroll" label="Drafts for you">
       <ul
         ref={list}
@@ -176,7 +260,7 @@ type Phase = { kind: 'idle' } | { kind: 'deciding'; decision: SupervisorDecision
 
 function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
   const api = useContext(ApiContext);
-  const ids = { heading: useId(), text: useId(), editor: useId(), count: useId(), notes: useId() };
+  const ids = { heading: useId(), text: useId(), editor: useId(), count: useId(), notes: useId(), footer: useId() };
   const [textBox, setTextBox] = useState<HTMLElement | null>(null);
   const overflowing = useOverflowing(textBox);
   const alive = useRef(true);
@@ -277,7 +361,8 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
   const directory = approval.kind === 'message' ? undefined : visibleString(approval.directory);
   const text = approvalText(approval);
   const parts = visibleParts(text);
-  const notes = [overflowing || text.split('\n').length > APPROVAL_TEXT_LINES ? lengthNote(text) : undefined, hiddenNote(parts), ...(approval.kind === 'message' ? [] : typedPromptNotes(text))].filter(
+  // Only when the text is taller than its box, as measured: the box grows to half the window (W136), so a line count can't say.
+  const notes = [overflowing ? lengthNote(text) : undefined, hiddenNote(parts), ...(approval.kind === 'message' ? [] : typedPromptNotes(text))].filter(
     (note) => note !== undefined,
   );
   return (
@@ -329,7 +414,7 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
           <p className="approval-label" id={ids.text}>
             {TEXT_LABELS[approval.kind]}
           </p>
-          {/* The model's text, exactly as it goes: three to eight lines, then it scrolls, a Tab stop while it does. */}
+          {/* The model's text, exactly as it goes: up to half the window, then it scrolls, a Tab stop while it does. */}
           <ScrollBox ref={setTextBox} as="p" className="approval-text" label={TEXT_LABELS[approval.kind]} aria-describedby={notes.length > 0 ? ids.notes : undefined}>
             <bdi>
               <ExactText parts={parts} />
@@ -340,6 +425,7 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
               {notes.join(' ')}
             </p>
           )}
+          {approval.kind === 'message' && <MessageFooter id={ids.footer} />}
         </div>
       ) : (
         <div className="approval-body approval-editing">
@@ -364,6 +450,8 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
               {count.text}
             </p>
           )}
+          {/* Not in the editor: pitwall's line goes whatever the edit says (W138). */}
+          {approval.kind === 'message' && <MessageFooter id={ids.footer} />}
         </div>
       )}
       {error !== undefined && (

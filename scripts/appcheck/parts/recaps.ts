@@ -4,10 +4,13 @@
 // once as the view opens, an ended session's included (D26); Refresh, busy until the new one comes,
 // and off while the day's budget is spent; Claude Code's recap; the rows' recap reasons on line 2,
 // and an outline Waiting on you on an ended one; the app strip's recap lines; Plan status (W123),
-// beside Refresh, busy while it's made, then the plan, its items' states and the changes, Close,
-// no plan, and the budget spent; and, with recaps off, no strip and nothing asked.
+// busy while it's made, then the plan, its items' states and the changes, Close, no plan, and the
+// budget spent; the picture (W150): Refresh right after the age, Goal, Working on, on one line when
+// collapsed, Plan with Show plan, which opens the plan status under it, only your to-dos, a quiet
+// line for what else it waits on, and Plan status in the body of a recap without the picture; and,
+// with recaps off, no strip and nothing asked.
 
-import { NAMES, NO_PLAN, PLANNED, RECAP_CALL_MS, RECAPPED, RECAPS_ERROR } from '../fixtures.js';
+import { NAMES, NO_PLAN, PLANNED, RECAP_CALL_MS, RECAP_PICTURE, RECAPPED, RECAPS_ERROR } from '../fixtures.js';
 import type { Part } from '../runner.js';
 import { attachStatus, openFinished, openFromRow, row, VIEW, viewClose, viewName } from './_dom.js';
 
@@ -25,7 +28,24 @@ const strip = `(() => {
   const refresh = strip.querySelector('[data-recap-refresh]');
   const text = strip.querySelector('.recap-summary-text');
   const forYou = strip.querySelector('.recap-for-you');
+  const line = (name) => strip.querySelector('.recap-line[data-line="' + name + '"]');
+  const lineText = (name) => {
+    const each = line(name);
+    return each && !each.closest('[hidden]') ? each.querySelector('.recap-line-text')?.textContent ?? null : null;
+  };
+  const working = line('working-on')?.querySelector('.recap-line-text');
   return {
+    picture: strip.dataset.picture !== undefined,
+    goal: lineText('goal'),
+    workingOn: lineText('working-on'),
+    workingOnOneLine: working ? working.getBoundingClientRect().height <= 21 : null,
+    plan: lineText('plan'),
+    showPlanOnPlanLine: !!line('plan')?.querySelector('[data-plan-status]'),
+    forYouLabel: line('for-you')?.querySelector('.recap-label')?.textContent ?? null,
+    waiting: strip.querySelector('.recap-waiting')?.textContent ?? null,
+    planInBody: !!strip.querySelector('.recap-body .recap-plan-action [data-plan-status]'),
+    refreshAfterAge: !!strip.querySelector('.recap-head .recap-age + .recap-refresh'),
+    planOnLine1: !!strip.querySelector('.recap-head [data-plan-status]'),
     kind: strip.dataset.recap,
     title: strip.querySelector('h3')?.textContent ?? null,
     expanded: toggle?.getAttribute('aria-expanded') ?? null,
@@ -35,7 +55,7 @@ const strip = `(() => {
     todos: [...strip.querySelectorAll('.recap-todo')].map((li) => [li.querySelector('.recap-todo-text')?.textContent ?? '', li.querySelector('.recap-owner')?.textContent ?? '']),
     bodyHidden: body ? body.hidden : null,
     stale: !!strip.querySelector('.recap-stale'),
-    staleOnLine1: !!strip.querySelector('.recap-head .recap-age + .recap-stale'),
+    staleOnLine1: !!strip.querySelector('.recap-head .recap-age + .recap-refresh + .recap-stale'),
     busy: refresh?.getAttribute('aria-busy') === 'true',
     off: refresh?.getAttribute('aria-disabled') === 'true',
     age: strip.querySelector('.recap-age')?.textContent ?? null,
@@ -47,6 +67,17 @@ const strip = `(() => {
   };
 })()`;
 type Strip = {
+  picture: boolean;
+  goal: string | null;
+  workingOn: string | null;
+  workingOnOneLine: boolean | null;
+  plan: string | null;
+  showPlanOnPlanLine: boolean;
+  forYouLabel: string | null;
+  waiting: string | null;
+  planInBody: boolean;
+  refreshAfterAge: boolean;
+  planOnLine1: boolean;
   kind: string;
   title: string | null;
   expanded: string | null;
@@ -80,7 +111,9 @@ const plan = `(() => {
     label: button?.textContent ?? null,
     expanded: button?.getAttribute('aria-expanded') ?? null,
     busy: button?.getAttribute('aria-busy') === 'true',
-    besideRefresh: !!b && !!r && Math.abs(b.top - r.top) < 6 && b.right <= r.left + 0.5,
+    onPlanLine: !!button?.closest('.recap-line[data-line="plan"]'),
+    panelUnderPlanLine: !!panel && panel.previousElementSibling === button?.closest('.recap-line[data-line="plan"]'),
+    notOnLine1: !button?.closest('.recap-head') && !!b && !!r && b.top > r.bottom - 0.5,
     buttonInside: !!b && b.left >= box.left - 0.5 && b.right <= box.right + 0.5,
     state: panel && !panel.hidden ? panel.dataset.planState ?? null : null,
     line: panel?.querySelector('.recap-plan-line')?.textContent ?? null,
@@ -98,7 +131,9 @@ type Plan = {
   label: string | null;
   expanded: string | null;
   busy: boolean;
-  besideRefresh: boolean;
+  onPlanLine: boolean;
+  panelUnderPlanLine: boolean;
+  notOnLine1: boolean;
   buttonInside: boolean;
   state: string | null;
   line: string | null;
@@ -137,20 +172,27 @@ const part: Part = {
       return page.waitFor<Strip>(`its recap strip, ${kind}`, `(() => { const s = ${strip}; return s && s.kind === ${JSON.stringify(kind)} ? s : null; })()`);
     };
 
-    await t.step('the strip: the summary, then the to-dos in order with their owners, between the header and the tabs', async () => {
+    await t.step('the strip: the picture, the goal, what it is working on, the plan and only your to-dos, between the header and the tabs (W150)', async () => {
       await t.fresh({ search: '?view=all', recaps: 'ok' });
       const shown = await open(NAMES.conversation);
       t.expectEqual(shown.title, 'Recap', 'its title');
-      t.expect(shown.summary?.startsWith('You asked it to add a made-up health route') ?? false, 'the summary: why it started and where it is', shown.summary);
+      t.expect(shown.refreshAfterAge && !shown.planOnLine1, 'line 1: Refresh right after the age, and no Plan status on it', shown);
+      t.expectEqual(shown.picture, true, 'the picture');
+      t.expectEqual(shown.goal, RECAP_PICTURE.goal, 'Goal: why it was started');
+      t.expectEqual(shown.workingOn, RECAP_PICTURE.workingOn, 'Working on: the item and why');
+      t.expectEqual(shown.plan, RECAP_PICTURE.plan, "Plan: the plan's line");
+      t.expectEqual(shown.showPlanOnPlanLine, true, 'Show plan on the Plan line');
+      t.expectEqual(shown.forYouLabel, 'For you (2):', 'For you, with how many');
       t.expectEqual(
         shown.todos,
         [
-          ['Say whether to fix the lint errors on #51 now, or leave them for the made-up follow-up', 'You'],
-          ['Fix the lint errors, if you say now', 'Session'],
-          ['Say whether to mark #51 ready', 'You'],
+          ['Say whether to fix the lint errors on #51 now, or leave them for the made-up follow-up', ''],
+          ['Say whether to mark #51 ready', ''],
         ],
-        'then the to-dos, in order, each with its owner',
+        "only your to-dos, in order, with no tags; the session's own is the conversation's",
       );
+      t.expectEqual(shown.summary, null, 'no summary beside the picture');
+      t.expectEqual(shown.waiting, null, 'no quiet line: it waits on you');
       t.expectEqual(shown.forYou, null, 'no count while it is open: the list shows them');
       t.expectEqual(shown.expanded, 'true', 'open, by default');
       t.expect(shown.between && shown.inside, 'between the header and the tabs, inside the view', shown);
@@ -165,11 +207,11 @@ const part: Part = {
       await t.shot('strip');
     });
 
-    await t.step('collapsed, it keeps the summary’s first line and how many to-dos are yours, and stays collapsed after a reload', async () => {
+    await t.step('collapsed, it keeps Working on’s first line and how many to-dos are yours, and stays collapsed after a reload', async () => {
       await page.click('the Recap toggle', `${STRIP}?.querySelector('.recap-toggle')`);
       const collapsed = await page.waitFor<Strip>('the strip to collapse', `(() => { const s = ${strip}; return s && s.expanded === 'false' ? s : null; })()`);
-      t.expect(collapsed.bodyHidden === true && collapsed.summary !== null, 'the to-dos hidden, the summary kept', collapsed);
-      t.expectEqual(collapsed.oneLine, true, 'the summary on one line');
+      t.expect(collapsed.bodyHidden === true && collapsed.goal === null && collapsed.plan === null && collapsed.workingOn === RECAP_PICTURE.workingOn, 'the goal, the plan and the to-dos hidden, Working on kept', collapsed);
+      t.expectEqual(collapsed.workingOnOneLine, true, 'Working on, on one line');
       t.expectEqual(collapsed.forYou, '2 for you', 'how many to-dos are yours');
       t.expectEqual(collapsed.forYouInside, true, 'the count inside the strip, however narrow');
       t.expectEqual(await page.evaluate(`localStorage.getItem('pitwall.recap-collapsed.v1')`), 'true', 'kept as a boolean');
@@ -198,7 +240,19 @@ const part: Part = {
       );
       t.expect(onTerminal.between, 'still between the header and the tabs', onTerminal);
       t.expect(shown.summary?.startsWith('You asked it to make the made-up retry worker back off.') ?? false, 'its summary', shown.summary);
+      t.expect(!onTerminal.picture && onTerminal.planInBody && !onTerminal.planOnLine1, 'a recap without the picture: its summary and to-dos, and Plan status in the body (W150)', onTerminal);
       await t.shot('terminal');
+    });
+
+    await t.step('the picture with no plan, waiting on someone else: None named., Show plan, and a quiet line (W150)', async () => {
+      const shown = await open(RECAPPED.someoneElse);
+      t.expectEqual(shown.plan, 'None named.', 'the Plan line names none');
+      t.expectEqual(shown.showPlanOnPlanLine, true, 'Show plan can still look');
+      t.expectEqual(shown.forYouLabel, null, 'nothing for you');
+      t.expectEqual(shown.todos, [], "someone else's to-do isn't shown");
+      t.expectEqual(shown.waiting, 'Waiting on someone else.', 'a quiet line says what it waits on');
+      t.expect(shown.inside, 'inside the view', shown);
+      await t.shot('picture-someone-else');
     });
 
     await t.step('Claude Code’s recap: a summary only, with nothing to open', async () => {
@@ -258,15 +312,15 @@ const part: Part = {
       t.expectEqual(asked(NAMES.conversation), [{ name: NAMES.conversation, status: 200 }], 'one request');
     });
 
-    await t.step('Plan status: beside Refresh; pressed, busy, then the plan, its items in order with their states, and the changes', async () => {
+    await t.step('Show plan: on the Plan line; pressed, busy, then the plan status under it, its items in order with their states, and the changes', async () => {
       const before = await page.evaluate<Plan>(plan);
-      t.expectEqual(before.label, 'Plan status', 'named Plan status');
-      t.expect(before.besideRefresh, 'beside Refresh, before it', before);
+      t.expectEqual(before.label, 'Show plan', 'named Show plan (W150)');
+      t.expect(before.onPlanLine && before.notOnLine1 && before.panelUnderPlanLine, 'on the Plan line, below line 1, its panel right under it', before);
       t.expect(before.buttonInside && before.noOverflow, 'inside the strip, however narrow', before);
       t.expectEqual(before.expanded, 'false', 'closed until pressed');
       t.expect(server.records.planMakes.length === 0 && server.records.planFetches.length === 0, 'nothing fetched or made until pressed', server.records.planMakes);
-      await page.click('Plan status', PLAN_BUTTON);
-      await page.waitFor('Plan status to be busy', `${plan}?.busy === true`);
+      await page.click('Show plan', PLAN_BUTTON);
+      await page.waitFor('Show plan to be busy', `${plan}?.busy === true`);
       const busy = await page.evaluate<Plan>(plan);
       t.expectEqual(busy.state, 'making', 'the panel says one is being made');
       t.expectEqual(busy.said, '', 'its live region says nothing meanwhile');
@@ -280,21 +334,29 @@ const part: Part = {
       );
       t.expectEqual(shown.changes, `Changes: ${PLANNED.changes}`, 'how the plan changed');
       t.expectEqual(shown.age, 'just now', 'its age');
-      t.expectEqual(shown.said, PLAN_STATUS_READY, 'its live region says it is ready, once');
+      // The live region's text comes from an effect, a commit after the panel first shows, so wait for it
+      // rather than read it from the same snapshot (it raced at 900 px, 2026-11-07); a timeout still fails.
+      const said = await page.waitFor<string>(
+        'its live region to say something',
+        `(() => { const s = (${plan})?.said; return s ? s : null; })()`,
+        2_000,
+      );
+      t.expectEqual(said, PLAN_STATUS_READY, 'its live region says it is ready, once');
       t.expect(shown.panelInside && shown.noOverflow, 'the panel inside the strip, nothing wider than it', shown);
       t.expectEqual(server.records.planMakes, [{ name: NAMES.conversation, status: 200 }], 'one made');
       await t.shot('plan');
       await page.click('Close the plan status', `${STRIP}?.querySelector('.recap-plan-close')`);
       const closed = await page.waitFor<Plan>('the panel to close', `(() => { const p = ${plan}; return p && p.state === null ? p : null; })()`);
-      t.expect(closed.focused && closed.expanded === 'false', 'focus back on Plan status, closed', closed);
-      await page.click('Plan status', PLAN_BUTTON);
+      t.expect(closed.focused && closed.expanded === 'false', 'focus back on Show plan, closed', closed);
+      await page.click('Show plan', PLAN_BUTTON);
       const again = await page.waitFor<Plan>('the plan status again', `(() => { const p = ${plan}; return p && p.state === 'shown' ? p : null; })()`);
       t.expectEqual(again.items.length, PLANNED.items.length, 'the same one');
       t.expect(server.records.planMakes.length === 1 && server.records.planFetches.length === 0, 'shown again without asking', server.records.planFetches);
     });
 
-    await t.step('Plan status for a session whose transcript shows no plan', async () => {
-      await open(NO_PLAN);
+    await t.step('Plan status, in the body of a recap without the picture, for a session whose transcript shows no plan', async () => {
+      const shown = await open(NO_PLAN);
+      t.expect(!shown.picture && shown.planInBody, 'Plan status in the body, under the note', shown);
       await page.click('Plan status', PLAN_BUTTON);
       const none = await page.waitFor<Plan>('no plan', `(() => { const p = ${plan}; return p && p.state === 'shown' && !p.busy ? p : null; })()`, 8_000);
       t.expectEqual(none.note, 'No plan found in this session.', 'says so');
@@ -319,7 +381,7 @@ const part: Part = {
 
     await t.step('the day’s budget spent: the app strip says so, Refresh is off, and nothing is asked for', async () => {
       await t.fresh({ search: '?view=all', recaps: 'spent' });
-      t.expect((await page.evaluate<string | null>(APP_STRIP))?.startsWith("Today's 200 recaps are used up") ?? false, 'the app strip', await page.evaluate(APP_STRIP));
+      t.expect((await page.evaluate<string | null>(APP_STRIP))?.startsWith("Today's 500 recaps are used up") ?? false, 'the app strip', await page.evaluate(APP_STRIP));
       const shown = await open(RECAPPED.stale);
       t.expect(shown.stale && shown.staleOnLine1 && shown.summary?.startsWith('You asked it to review the made-up retry change.') === true, 'its stale recap, which says so on line 1, beside its age', shown);
       t.expectEqual(shown.off, true, 'Refresh is off');
@@ -328,7 +390,7 @@ const part: Part = {
       t.expectEqual(server.records.recapRefreshes.length, 0, 'nothing asked for');
       await page.click('Plan status', PLAN_BUTTON);
       const spent = await page.waitFor<Plan>('Plan status to say why', `(() => { const p = ${plan}; return p && p.state === 'error' ? p : null; })()`);
-      t.expect(spent.note?.startsWith("Today's 200 recaps are used up") ?? false, 'Plan status says the budget is spent', spent.note);
+      t.expect(spent.note?.startsWith("Today's 500 recaps are used up") ?? false, 'Plan status says the budget is spent', spent.note);
       t.expectEqual(server.records.planMakes.length, 0, 'and makes none');
       await t.shot('budget');
     });

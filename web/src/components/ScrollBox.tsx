@@ -1,5 +1,5 @@
 // A box that scrolls inside itself, such as the page alerts past half the session list or a long
-// relayed reply above the message box, or sideways, as a code block or a table in a message does
+// relayed reply above the message box, or sideways, as a table in a message does
 // (docs/design-system.md, 6.1 rule 3). Safari and Firefox
 // scroll a box from the keyboard only once it has focus, and a box that isn't a control can't take
 // any, so while its content overflows it's a Tab stop: a named region, with the inset focus ring.

@@ -6,7 +6,8 @@
 // sessions with the one that owns it first, Open on GitHub, which leaves for the PR's own page, and
 // Copy link; a session opened from it and the PR from the session's header, with the back button; the
 // session view's Pull requests tab; Has PR; Refresh, its spinner, its minute (W100) and a 429; each
-// source state; a ?pr= link; and `j` and `k` through session and PR rows. Made-up PRs only
+// source state; a ?pr= link; `j` and `k` through session and PR rows; and a busy session whose PR
+// needs you, left out of Needs you and its counts until it stops (W161). Made-up PRs only
 // (fixtures.ts, PRS).
 
 import { NAMES, PR_TEAM, PRS, PRS_ERRORS, PRS_SEARCH_ERRORS, type PrsState } from '../fixtures.js';
@@ -311,27 +312,56 @@ const part: Part = {
       await page.waitFor('the filters to clear', `!${MAIN}.querySelector('.filter-chips .chip[aria-pressed="true"]')`);
     });
 
-    await t.step('Needs you lists the PR rows that need you, with the sessions; one marked not needed now stays while its PR needs you, and says why', async () => {
+    await t.step('Needs you lists the PR rows that need you, with the sessions; one snoozed stays while its PR needs you, and says why (W154)', async () => {
       await chooseInRepoList(t, 'Needs you');
       t.expectEqual(await page.evaluate(rows), [NAMES.waiting, NAMES.asked, NAMES.prompting, n(PRS.review), n(PRS.teamReview)], 'the sessions, then the PR rows, by activity');
-      const toggle = `${row(NAMES.asked)}?.closest('li').querySelector('[data-not-needed-session]')`;
-      await page.click(`the toggle on ${NAMES.asked}`, toggle);
-      await page.waitFor('it marked', `${toggle}?.getAttribute('aria-pressed') === 'true'`);
+      const toggle = `${row(NAMES.asked)}?.closest('li').querySelector('[data-snooze-session]')`;
+      await page.click(`the snooze menu on ${NAMES.asked}`, toggle);
+      await page.waitFor('its menu', `!!${row(NAMES.asked)}?.closest('li').querySelector('[role="menu"]')`);
+      await page.click('Later', `[...${row(NAMES.asked)}.closest('li').querySelectorAll('[role="menuitem"]')].find((item) => item.textContent.startsWith('Later'))`);
+      await page.waitFor('it snoozed', `${toggle}?.getAttribute('aria-pressed') === 'true'`);
       await page.settle(150);
       t.expect((await page.evaluate<string[]>(rows)).includes(NAMES.asked), '#612 still needs you, so it stays');
-      t.expectEqual(await page.evaluate(`${row(NAMES.asked)}?.closest('li').querySelector('.session-what-text')?.textContent`), 'demo-app · Not needed now · Needs you for example/event-relay#612: conflicts', 'line 2 says why, naming the PR (W128)');
-      t.expect(await page.evaluate<boolean>(`${toasts}.includes(${q(`Marked ${NAMES.asked} not needed now. It stays in Needs you while #612 needs you.`)})`), 'the toast says it stays, and why');
-      const colours = await page.evaluate<{ reason: string; muted: string }>(`(() => { const li = ${row(NAMES.asked)}.closest('li'); return { reason: getComputedStyle(li.querySelector('.pr-reason')).color, muted: getComputedStyle(li.querySelector('.session-not-needed')).color }; })()`);
+      t.expectEqual(await page.evaluate(`${row(NAMES.asked)}?.closest('li').querySelector('.session-what-text')?.textContent`), "demo-app · Snoozed until it's woken · Needs you for example/event-relay#612: conflicts", 'line 2 says why, naming the PR (W128)');
+      t.expect(await page.evaluate<boolean>(`${toasts}.includes(${q(`Snoozed ${NAMES.asked} until it's woken: a turn you didn't start, such as a message or a finished task. It stays in Needs you while #612 needs you.`)})`), 'the toast says it stays, and why');
+      const colours = await page.evaluate<{ reason: string; muted: string }>(`(() => { const li = ${row(NAMES.asked)}.closest('li'); return { reason: getComputedStyle(li.querySelector('.pr-reason')).color, muted: getComputedStyle(li.querySelector('.session-set-aside')).color }; })()`);
       t.expect(colours.reason !== colours.muted, "the PR's reason isn't muted: it still holds", colours);
-      await t.shot('marked-with-pr');
+      await t.shot('snoozed-with-pr');
       // Its view says so too, the PR a link (W128).
       await openFromRow(t, NAMES.asked);
       const need = await page.evaluate<{ text: string; link: string } | null>(`(() => { const p = ${SESSION_VIEW}.querySelector('.session-view-pr-need'); return p ? { text: p.textContent, link: p.querySelector('button.pr-link')?.getAttribute('aria-label') ?? '' } : null; })()`);
       t.expectEqual(need, { text: 'Needs you for example/event-relay#612: conflicts', link: 'Pull request example/event-relay#612' }, 'its view says why, the PR a link');
       await t.shot('view-pr-need');
       await closeView();
-      await page.click(`the toggle on ${NAMES.asked} again`, toggle);
-      await page.waitFor('the mark gone', `${toggle}?.getAttribute('aria-pressed') === 'false'`);
+      await page.click(`the snooze toggle on ${NAMES.asked}`, toggle);
+      await page.waitFor('the snooze gone', `${toggle}?.getAttribute('aria-haspopup') === 'menu'`);
+    });
+
+    await t.step("a busy session's PR doesn't put it in Needs you, and keeps its badge; it's back once the session stops (W161)", async () => {
+      const id = server.world.byName(NAMES.asked).sessionId;
+      const { needsYou, askedYou, status, state, waitingFor } = server.world.byName(NAMES.asked);
+      server.world.need(id, { needsYou: undefined, askedYou: undefined, status: 'busy' });
+      server.broadcast();
+      await page.waitFor('it to leave Needs you', `!${rows}.includes(${q(NAMES.asked)})`);
+      t.expectEqual(await page.evaluate(rows), [NAMES.waiting, NAMES.prompting, n(PRS.review), n(PRS.teamReview)], 'the others stay');
+      await chooseInRepoList(t, 'Pull requests');
+      await page.waitFor('its row', `!!${row(NAMES.asked)}`);
+      const look = await page.evaluate<{ badge: string | null; bar: boolean }>(`(() => { const li = ${row(NAMES.asked)}.closest('li'); return { badge: li.querySelector('.pr-badge')?.textContent ?? null, bar: li.classList.contains('attention') }; })()`);
+      t.expectEqual(look, { badge: 'Pull request #612, conflicts, needs attention', bar: false }, 'its PR badge stays, with no bar');
+      t.expectEqual(await page.evaluate(summary), '10 sessions3 need you', "the view's summary leaves it out");
+      await openRepoList(t);
+      t.expectEqual(await page.evaluate(`${repoItem('Pull requests')}?.querySelector('.badge')?.textContent`), '3 need you', "and so does the item's count");
+      await closeDrawer();
+      await t.shot('busy-with-pr');
+      server.world.need(id, { status: 'idle' });
+      server.broadcast();
+      await chooseInRepoList(t, 'Needs you');
+      await page.waitFor('it back in Needs you', `${rows}.includes(${q(NAMES.asked)})`);
+      // Its recap is older than its latest turn, so line 2 says what the PR needs, not the recap's For you.
+      t.expectEqual(await page.evaluate(`${row(NAMES.asked)}?.closest('li').querySelector('.session-what-text')?.textContent`), 'demo-app · Needs you for example/event-relay#612: conflicts', 'line 2 says why, naming the PR');
+      server.world.need(id, { needsYou, askedYou, status, state, waitingFor });
+      server.broadcast();
+      await page.waitFor('it as it was', `${row(NAMES.asked)}?.closest('li').querySelector('.session-what-text')?.textContent.includes('Asked: ')`);
     });
 
     await t.step('Refresh fetches once, with its spinner, then is off for a minute', async () => {

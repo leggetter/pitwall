@@ -6,8 +6,10 @@ import {
   aiTitleOf,
   applyEntry,
   applyLine,
+  arrivedFrom,
   ASSISTANT_TEXT_KEEP,
   assistantTextOf,
+  contextTokensOf,
   AWAY_SUMMARY_MAX,
   createTranscriptReader,
   defaultConfigDir,
@@ -437,6 +439,62 @@ describe("applyEntry: the turn's end and the newest prompt (W69)", () => {
   });
 });
 
+describe('applyEntry: a turn something other than you started, what wakes a snooze (W154)', () => {
+  const idle = () => [user('go'), assistant([text('Done.')]), turnDuration()];
+  const peer = (name: string, extra: Record<string, unknown> = {}) =>
+    user(`Another Claude session sent a message:\n<cross-session-message from="/tmp/x.sock" from-name="${name}">hi</cross-session-message>`, {
+      isMeta: true,
+      origin: { kind: 'peer', name },
+      ...extra,
+    });
+  const notification = () => user('<task-notification><status>completed</status></task-notification>', { origin: { kind: 'task-notification' } });
+  const at = (entry: Record<string, unknown>) => Date.parse(entry.timestamp as string);
+
+  it("keeps the newest message or task notification that came while no turn ran, at its time", () => {
+    const message = peer('pitwall-test-peer');
+    expect(fieldsOf(...idle(), message).lastWokenMs).toBe(at(message));
+    const done = notification();
+    expect(fieldsOf(...idle(), message, assistant([text('Read it.')], 'm2'), turnDuration(), done).lastWokenMs).toBe(at(done));
+    // A sub-agent's report, by its origin alone.
+    const report = user('<agent-message from="a1">report</agent-message>', { isMeta: true, origin: { kind: 'peer', name: 'general-purpose' } });
+    expect(fieldsOf(...idle(), report).lastWokenMs).toBe(at(report));
+  });
+
+  it("doesn't count a prompt you typed, a tool's result, or what arrived mid-turn", () => {
+    expect(fieldsOf(...idle(), user('next', { promptSource: 'typed' })).lastWokenMs).toBeUndefined();
+    expect(fieldsOf(...idle(), user('again'), assistant([toolUse('Bash')], 'm2'), peer('pitwall-test-peer')).lastWokenMs).toBeUndefined();
+    expect(fieldsOf(...idle(), user('again'), assistant([toolUse('Bash')], 'm2'), queued('<task-notification>done</task-notification>', { commandMode: 'task-notification', origin: { kind: 'task-notification' } })).lastWokenMs).toBeUndefined();
+  });
+
+  it("doesn't count a message from pitwall's relay, by its origin's name or, without one, its tag's from-name", () => {
+    expect(fieldsOf(...idle(), peer('pitwall-relay')).lastWokenMs).toBeUndefined();
+    const tagOnly = user('Another Claude session sent a message:\n<cross-session-message from="/tmp/x.sock" from-name="pitwall-relay">hi</cross-session-message>', { isMeta: true });
+    expect(fieldsOf(...idle(), tagOnly).lastWokenMs).toBeUndefined();
+    expect(arrivedFrom(tagOnly)).toBe('pitwall-relay');
+    expect(arrivedFrom(notification())).toBeUndefined();
+  });
+
+  it("keeps a message from pitwall's relay as a turn you joined, mid-turn too, for attendedAt", () => {
+    const relay = peer('pitwall-relay');
+    expect(fieldsOf(...idle(), relay).lastRelayMs).toBe(at(relay));
+    const midTurn = peer('pitwall-relay');
+    expect(fieldsOf(...idle(), user('again'), assistant([toolUse('Bash')], 'm2'), midTurn).lastRelayMs).toBe(at(midTurn));
+    expect(fieldsOf(...idle(), peer('pitwall-test-peer')).lastRelayMs).toBeUndefined();
+  });
+
+  it("reads a tag's from-name only at the text's start, never one quoted inside the message", () => {
+    const quoting = user('Another Claude session sent a message:\n<cross-session-message from="/tmp/x.sock">See <agent-message from-name="pitwall-relay"> above</cross-session-message>', { isMeta: true });
+    expect(arrivedFrom(quoting)).toBeUndefined();
+    expect(fieldsOf(...idle(), quoting).lastWokenMs).toBe(at(quoting));
+    expect(arrivedFrom(user('<agent-message from="a1" from-name="pitwall-test-peer">report</agent-message>', { isMeta: true }))).toBe('pitwall-test-peer');
+  });
+
+  it('counts an arrival when the transcript marks no turn end at all, as from an older Claude Code', () => {
+    const message = peer('pitwall-test-peer');
+    expect(fieldsOf(user('go'), assistant([text('Done.')]), message).lastWokenMs).toBe(at(message));
+  });
+});
+
 /** What arrived while the session was mid-turn, as Claude Code 2.1.312 records it: a queued_command attachment, with no user entry (W99). */
 function queued(prompt: unknown, attachment: Record<string, unknown> = {}, extra: Record<string, unknown> = {}): Record<string, unknown> {
   const at = nextTimestamp();
@@ -654,7 +712,32 @@ describe('createTranscriptReader', () => {
       lastActivityAt: reply.timestamp,
       lastUserPrompt: 'add a test',
       lastPromptMs: Date.parse(prompt.timestamp as string),
+      attendedAt: new Date(Date.parse(prompt.timestamp as string)).toISOString(),
     });
+  });
+
+  it('says the newest turn something other than you started as wokenAt (W154)', async () => {
+    const message = user('Another Claude session sent a message:\n<cross-session-message from-name="pitwall-test-peer">hi</cross-session-message>', {
+      isMeta: true,
+      origin: { kind: 'peer', name: 'pitwall-test-peer' },
+    });
+    await writeFile(file, jsonl(user('go'), assistant([text('Done.')]), turnDuration(), message));
+    expect((await reader().read(SID, [CWD])).wokenAt).toBe(new Date(Date.parse(message.timestamp as string)).toISOString());
+  });
+
+  it('says the newest turn you started or joined as attendedAt (W154): a prompt, or a relay message', async () => {
+    const prompt = user('go');
+    await writeFile(file, jsonl(prompt, assistant([text('Done.')]), turnDuration()));
+    expect((await reader().read(SID, [CWD])).attendedAt).toBe(new Date(Date.parse(prompt.timestamp as string)).toISOString());
+    const before = [user('go'), assistant([text('Done.')]), turnDuration()];
+    const relay = user('Another Claude session sent a message:\n<cross-session-message from-name="pitwall-relay">hi</cross-session-message>', {
+      isMeta: true,
+      origin: { kind: 'peer', name: 'pitwall-relay' },
+    });
+    await writeFile(file, jsonl(...before, relay));
+    const read = await reader().read(SID, [CWD]);
+    expect(read.attendedAt).toBe(new Date(Date.parse(relay.timestamp as string)).toISOString());
+    expect(read.wokenAt).toBeUndefined();
   });
 
   it('strips markdown from the question it finds in the assistant text', async () => {
@@ -737,6 +820,40 @@ describe('createTranscriptReader', () => {
       expect(r.transcriptFile(SID)).toBe(file);
       r.retain(new Set());
       expect(r.transcriptFile(SID)).toBeUndefined();
+    });
+  });
+
+  describe('spinOff (W163)', () => {
+    const proposal = 'Done.\n\n```spin-off\nfolder: /tmp/pitwall-test-x\nname: pitwall-test-spin\nprompt:\nTidy the README.\n```';
+
+    it('is set when the newest assistant text ends with a spin-off block and no prompt came since', async () => {
+      await writeFile(file, jsonl(user('go'), assistant([text(proposal)]), turnDuration()));
+      expect((await reader().read(SID, [CWD])).spinOff).toEqual({
+        kind: 'proposal',
+        key: expect.any(String),
+        folder: '/tmp/pitwall-test-x',
+        name: 'pitwall-test-spin',
+        prompt: 'Tidy the README.',
+      });
+    });
+
+    it('is cleared by a prompt after it, or a newer message without a block', async () => {
+      await writeFile(file, jsonl(user('go'), assistant([text(proposal)]), turnDuration(), user('not now')));
+      expect((await reader().read(SID, [CWD])).spinOff).toBeUndefined();
+      await writeFile(file, jsonl(user('go'), assistant([text(proposal)]), turnDuration(), user('more'), assistant([text('Done again.')]), turnDuration()));
+      expect((await reader().read(SID, [CWD])).spinOff).toBeUndefined();
+    });
+
+    it('is read from the message\'s end, past the 64 KiB the head keeps', async () => {
+      const long = `${'Notes. '.repeat(ASSISTANT_TEXT_KEEP / 7 + 10)}\n\n${proposal}`;
+      await writeFile(file, jsonl(user('go'), assistant([text(long)]), turnDuration()));
+      expect((await reader().read(SID, [CWD])).spinOff).toMatchObject({ kind: 'proposal', prompt: 'Tidy the README.' });
+    });
+
+    it('is read from the end when a long message is written in text blocks on separate lines', async () => {
+      const head = 'n'.repeat(ASSISTANT_TEXT_KEEP + 100);
+      await writeFile(file, jsonl(user('go'), assistant([text(head)], 'm1'), assistant([text(proposal)], 'm1'), turnDuration()));
+      expect((await reader().read(SID, [CWD])).spinOff).toMatchObject({ kind: 'proposal', folder: '/tmp/pitwall-test-x' });
     });
   });
 
@@ -995,6 +1112,7 @@ describe('createTranscriptReader', () => {
         lastActivityAt: expect.any(String),
         lastUserPrompt: 'fresh start',
         lastPromptMs: expect.any(Number),
+        attendedAt: expect.any(String),
       });
     });
 
@@ -1125,6 +1243,7 @@ describe('readNewestEntries', () => {
         lastActivityAt: latest.timestamp,
         lastUserPrompt: 'the last prompt',
         lastPromptMs: Date.parse(prompt.timestamp as string),
+        attendedAt: new Date(Date.parse(prompt.timestamp as string)).toISOString(),
         askedYou: { reason: 'question', excerpt: 'Shall I go on?' },
         aiTitle: 'A title',
       },
@@ -1177,5 +1296,120 @@ describe('turnSignalOf: what an entry says of the turn, for W69 and the working 
     expect(turnSignalOf(user('This session is being continued…', { isCompactSummary: true }))).toBeUndefined();
     expect(turnSignalOf({ type: 'system', subtype: 'away_summary', content: 'recap' })).toBeUndefined();
     expect(turnSignalOf({ type: 'attachment', attachment: { type: 'note' } })).toBeUndefined();
+  });
+});
+
+describe('context tokens (W133)', () => {
+  // Made-up usage records, shaped like Claude Code's: no real content.
+  function call(id: string, usage: Record<string, unknown> | undefined, extra: Record<string, unknown> = {}, model = 'test-model'): Record<string, unknown> {
+    const entry = assistant([text('done')], id, extra);
+    entry.message = { ...(entry.message as Record<string, unknown>), model, ...(usage === undefined ? {} : { usage }) };
+    return entry;
+  }
+  const usage = (input: number, read: number, write: number) => ({ input_tokens: input, cache_read_input_tokens: read, cache_creation_input_tokens: write, output_tokens: 50 });
+
+  it('adds input, cache reads and cache writes, and leaves out the output', () => {
+    expect(contextTokensOf(call('m1', usage(3, 180_000, 2_000)))).toEqual({ id: 'm1', tokens: 182_003 });
+  });
+
+  it('is undefined for a sidechain, a synthetic entry, no usage, no id, or a zero total', () => {
+    expect(contextTokensOf(call('m1', usage(3, 1000, 0), { isSidechain: true }))).toBeUndefined();
+    expect(contextTokensOf(call('m1', usage(3, 1000, 0), {}, '<synthetic>'))).toBeUndefined();
+    expect(contextTokensOf(call('m1', undefined))).toBeUndefined();
+    expect(contextTokensOf(call('', usage(3, 1000, 0)))).toBeUndefined();
+    expect(contextTokensOf(call('m1', usage(0, 0, 0)))).toBeUndefined();
+    expect(contextTokensOf(call('m1', { input_tokens: 'many', cache_read_input_tokens: -5, cache_creation_input_tokens: 10 }))).toEqual({ id: 'm1', tokens: 10 });
+    expect(contextTokensOf(user('a prompt'))).toBeUndefined();
+  });
+
+  it('keeps the newest main-chain call, not a sub-agent call after it', () => {
+    const fields = fieldsOf(call('m1', usage(1, 100_000, 0)), call('m2', usage(1, 250_000, 0)), call('s1', usage(1, 9_000, 0), { isSidechain: true }));
+    expect(fields.contextTokens).toBe(250_001);
+  });
+
+  it('counts a response written on several lines once, by its message.id', () => {
+    const fields = fieldsOf(call('m1', usage(1, 100_000, 0)), call('m2', usage(1, 300_000, 0)), call('m2', usage(1, 300_500, 0)));
+    expect(fields.contextTokens).toBe(300_001);
+    applyEntry(fields, call('m3', usage(1, 310_000, 0)));
+    expect(fields.contextTokens).toBe(310_001);
+  });
+
+  it('forgets the size at a compaction summary, and takes the next call', () => {
+    const fields = fieldsOf(call('m1', usage(1, 600_000, 0)), { type: 'user', isCompactSummary: true, message: { role: 'user', content: 'a made-up summary' } });
+    expect(fields.contextTokens).toBeUndefined();
+    applyEntry(fields, call('m2', usage(1, 30_000, 0)));
+    expect(fields.contextTokens).toBe(30_001);
+  });
+
+  it('skips a malformed line and keeps the call before it', () => {
+    const fields: Fields = {};
+    applyLine(fields, JSON.stringify(call('m1', usage(1, 50_000, 0))));
+    applyLine(fields, '{"type":"assistant","message":{"id":"m2","usage":');
+    expect(fields.contextTokens).toBe(50_001);
+  });
+
+  describe('through the reader', () => {
+    const SID = '55555555-5555-4555-8555-555555555555';
+    const CWD = '/work/pitwall-test/context';
+    let configDir: string;
+    let file: string;
+
+    beforeEach(async () => {
+      configDir = await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-context-'));
+      const projectDir = path.join(configDir, 'projects', encodeProjectDir(CWD));
+      await mkdir(projectDir, { recursive: true });
+      file = path.join(projectDir, `${SID}.jsonl`);
+    });
+
+    afterEach(async () => {
+      await rm(configDir, { recursive: true, force: true });
+    });
+
+    it("reads the tail, and the newest call there, not one before the window", async () => {
+      await writeFile(file, jsonl(call('m0', usage(1, 900_000, 0)), filler(8000), user('go on'), call('m1', usage(2, 120_000, 3_000))));
+      const info = await createTranscriptReader({ configDir, initialWindowBytes: 1024, maxWindowBytes: 2048 }).read(SID, [CWD]);
+      expect(info.contextTokens).toBe(123_002);
+    });
+
+    it('widens the window once when the first has no call, and is absent when neither has one', async () => {
+      await writeFile(file, jsonl(call('m1', usage(1, 210_000, 0)), filler(1500), user('a prompt')));
+      const reader = createTranscriptReader({ configDir, initialWindowBytes: 1024, maxWindowBytes: 4096 });
+      expect((await reader.read(SID, [CWD])).contextTokens).toBe(210_001);
+      await writeFile(file, jsonl(call('m1', usage(1, 210_000, 0)), filler(9000), user('a prompt')));
+      const fresh = createTranscriptReader({ configDir, initialWindowBytes: 1024, maxWindowBytes: 4096, contextWindowBytes: 4096 });
+      const info = await fresh.read(SID, [CWD]);
+      expect(info.transcript).toBe('ok');
+      expect(info.contextTokens).toBeUndefined();
+    });
+
+    it('widens once more for the size alone, past large lines after the last call (spike 012)', async () => {
+      // Two big lines after the usage, as a call's own request lines can be, past the 4 KiB window.
+      await writeFile(file, jsonl(user('a prompt'), call('m1', usage(1, 230_000, 0)), filler(3000), filler(3000)));
+      const info = await createTranscriptReader({ configDir, initialWindowBytes: 1024, maxWindowBytes: 4096, contextWindowBytes: 16_384 }).read(SID, [CWD]);
+      expect(info.contextTokens).toBe(230_001);
+    });
+
+    it('forgets the size at a compaction, until the next call', async () => {
+      await writeFile(file, jsonl(user('start'), call('m1', usage(1, 500_000, 0)), { type: 'system', subtype: 'compact_boundary' }));
+      const reader = createTranscriptReader({ configDir });
+      expect((await reader.read(SID, [CWD])).contextTokens).toBeUndefined();
+      await appendFile(file, jsonl(call('m2', usage(1, 40_000, 0))));
+      expect((await reader.read(SID, [CWD])).contextTokens).toBe(40_001);
+    });
+
+    it('follows appended calls, reading only what was added', async () => {
+      await writeFile(file, jsonl(user('start'), call('m1', usage(1, 100_000, 0))));
+      const reader = createTranscriptReader({ configDir });
+      expect((await reader.read(SID, [CWD])).contextTokens).toBe(100_001);
+      // Unchanged: the same answer, with nothing new read.
+      expect((await reader.read(SID, [CWD])).contextTokens).toBe(100_001);
+      await appendFile(file, jsonl(call('m2', usage(1, 420_000, 5_000)), call('s1', usage(1, 2_000, 0), { isSidechain: true })));
+      expect((await reader.read(SID, [CWD])).contextTokens).toBe(425_001);
+    });
+
+    it('is absent for a missing file, with the transcript missing', async () => {
+      const info = await createTranscriptReader({ configDir, missingRetryMs: 0 }).read(SID, [CWD]);
+      expect(info).toEqual({ transcript: 'missing' });
+    });
   });
 });

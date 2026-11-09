@@ -5,10 +5,11 @@
 import { open, readdir, stat, type FileHandle } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import type { AskedYou, TranscriptStatus } from '../shared/protocol.js';
+import { RELAY_NAME, type AskedYou, type SpinOff, type TranscriptStatus } from '../shared/protocol.js';
 import { detectAskedYou } from './asked.js';
 import { isRecord } from './guards.js';
-import { cap, truncate } from './text.js';
+import { detectSpinOff } from './spinOff.js';
+import { cap, tail, truncate } from './text.js';
 
 export interface TranscriptInfo {
   transcript: TranscriptStatus;
@@ -22,6 +23,11 @@ export interface TranscriptInfo {
    * session's status when the transcript marks no turn's end.
    */
   askedYou?: AskedYou;
+  /**
+   * A new session the newest assistant text proposes (W163, spinOff.ts), with no prompt since: a
+   * `spin-off` block that ends it. Whether its turn is over is `toSessionSummary`'s, as for askedYou.
+   */
+  spinOff?: SpinOff;
   /**
    * The newest title Claude Code generated for the session (an `ai-title`
    * entry), on one line, at most 120 characters. Internal and undocumented.
@@ -49,6 +55,26 @@ export interface TranscriptInfo {
    * pitwall has one of its own (SessionRecap's 'claude-code' source); the snapshot doesn't carry it.
    */
   awaySummary?: AwaySummary;
+  /**
+   * How many tokens of context the session's newest call carried (W133): the newest main-chain
+   * assistant entry's `message.usage`, `input_tokens + cache_read_input_tokens +
+   * cache_creation_input_tokens` (contextTokensOf()). Internal and undocumented. Undefined when the
+   * entries read have no such usage.
+   */
+  contextTokens?: number;
+  /**
+   * ISO 8601: the newest turn something other than you started (W154, SessionSummary.wokenAt): a
+   * message from another session or a sub-agent, or a task notification (turnSignalOf()'s
+   * 'arrived'), that came while no turn ran, not one from pitwall's relay (RELAY_NAME). Undefined
+   * when the entries read have none.
+   */
+  wokenAt?: string;
+  /**
+   * ISO 8601: the newest turn you started or joined (W154, SessionSummary.attendedAt): a prompt
+   * (lastPromptMs), or a message from pitwall's relay (RELAY_NAME), which you sent or approved.
+   * Undefined when the entries read have neither.
+   */
+  attendedAt?: string;
 }
 
 /** Claude Code's own short recap of a session, an `away_summary` entry (TranscriptInfo.awaySummary). */
@@ -73,6 +99,11 @@ export interface TranscriptReaderOptions {
    * a file may grow between polls before it's read afresh. Default 2 MiB.
    */
   maxWindowBytes?: number;
+  /**
+   * The widest first read, made only when the wider window still has no context size (W133): a call
+   * can append several lines of 1.5 to 1.9 MB after the line with its usage (spike 012). Default 8 MiB.
+   */
+  contextWindowBytes?: number;
   /** How long a transcript that couldn't be found anywhere is not searched for again. Default 30000. */
   missingRetryMs?: number;
 }
@@ -146,6 +177,7 @@ export function createTranscriptReader(options: TranscriptReaderOptions = {}): T
   const now = options.now ?? Date.now;
   const initialWindow = options.initialWindowBytes ?? 256 * KIB;
   const maxWindow = Math.max(options.maxWindowBytes ?? 2 * MIB, initialWindow);
+  const contextWindow = Math.max(options.contextWindowBytes ?? 8 * MIB, maxWindow);
   const missingRetryMs = options.missingRetryMs ?? 30_000;
 
   const files = new Map<string, FileState>();
@@ -212,7 +244,7 @@ export function createTranscriptReader(options: TranscriptReaderOptions = {}): T
         info.size < state.offset ||
         info.size - state.offset > maxWindow;
       if (reset || state === undefined) {
-        state = await firstRead(handle, file, info.size, info.ino, info.dev, initialWindow, maxWindow);
+        state = await firstRead(handle, file, info.size, info.ino, info.dev, initialWindow, maxWindow, contextWindow);
         files.set(sessionId, state);
       } else if (info.size > state.offset) {
         const chunk = await readRange(handle, state.offset, info.size);
@@ -308,7 +340,10 @@ export async function readNewestEntries(
 
 // --- Reading -----------------------------------------------------------------
 
-/** The last `initialWindow` bytes, or `maxWindow` when those lack a field. */
+/**
+ * The last `initialWindow` bytes, or `maxWindow` when those lack a field, or `contextWindow` when those
+ * still lack the context size (W133).
+ */
 async function firstRead(
   handle: FileHandle,
   file: string,
@@ -317,10 +352,19 @@ async function firstRead(
   dev: number,
   initialWindow: number,
   maxWindow: number,
+  contextWindow: number = maxWindow,
 ): Promise<FileState> {
   let state = await readWindow(handle, file, size, ino, dev, Math.min(size, initialWindow));
   if (size > initialWindow && !isComplete(state.fields)) {
     state = await readWindow(handle, file, size, ino, dev, Math.min(size, maxWindow));
+  }
+  if (size > maxWindow && contextWindow > maxWindow && state.fields.contextTokens === undefined) {
+    // Only the size is taken from it: the other fields keep the narrower window's reading.
+    const wide = await readWindow(handle, file, size, ino, dev, Math.min(size, contextWindow));
+    if (wide.fields.contextTokens !== undefined) {
+      state.fields.contextTokens = wide.fields.contextTokens;
+      state.fields.contextMessageId = wide.fields.contextMessageId;
+    }
   }
   return state;
 }
@@ -336,13 +380,15 @@ interface FileState {
   /** Drop bytes up to the next newline: the read started mid-line, or a line was too long to keep. */
   skipToNewline: boolean;
   fields: Fields;
-  /** What was worked out from `fields.assistantText`, kept until the text changes. */
+  /** What was worked out from `fields.assistantText` and `assistantTail`, kept until the text changes. */
   derived?: Derived;
 }
 
 interface Derived {
   source: string;
+  tailSource: string;
   askedYou: AskedYou | undefined;
+  spinOff: SpinOff | undefined;
 }
 
 async function readWindow(
@@ -430,6 +476,11 @@ export interface Fields {
   assistantMessageId?: string;
   /** The newest assistant message's raw text, its text blocks joined, capped at 64 KiB. */
   assistantText?: string;
+  /**
+   * The same text's last 64 KiB, which the spin-off check reads (W163), since its block ends the
+   * message: past 64 KiB, `assistantText` has lost it. The same string as `assistantText` until then.
+   */
+  assistantTail?: string;
   userPrompt?: string;
   /** True when a prompt came after the newest assistant text, in file order. */
   promptAfterText?: boolean;
@@ -461,6 +512,14 @@ export interface Fields {
   lastPromptMs?: number;
   /** The newest `away_summary` with a time, in file order (TranscriptInfo.awaySummary). */
   awaySummary?: AwaySummary;
+  /** The newest main-chain call's context, in file order (TranscriptInfo.contextTokens). */
+  contextTokens?: number;
+  /** That call's `message.id`, so the same response written on several lines counts once. */
+  contextMessageId?: string;
+  /** The newest wake's timestamp, in file order (TranscriptInfo.wokenAt). */
+  lastWokenMs?: number;
+  /** The newest message from pitwall's relay, in file order (TranscriptInfo.attendedAt, with lastPromptMs). */
+  lastRelayMs?: number;
 }
 
 /** Applies one JSONL line. Lines that don't parse, and entry types the index doesn't use, are skipped. */
@@ -475,7 +534,8 @@ export function applyLine(fields: Fields, line: string): void {
     !line.includes('"agent-name"') &&
     !line.includes('"continued-in"') &&
     !line.includes('"turn_duration"') &&
-    !line.includes('"away_summary"')
+    !line.includes('"away_summary"') &&
+    !line.includes('"compact_boundary"')
   ) {
     return;
   }
@@ -514,6 +574,12 @@ export function applyEntry(fields: Fields, entry: unknown): void {
     if (name !== undefined) fields.setName = name;
     return;
   }
+  if (entry.isCompactSummary === true || (type === 'system' && entry.subtype === 'compact_boundary')) {
+    // A compaction (W133): the size before it no longer holds, and the next call's says what's left.
+    // Until then it's unknown, as the hand-off hook reads it (.claude/hooks/handoffNudge.mjs).
+    delete fields.contextTokens;
+    delete fields.contextMessageId;
+  }
   if (type === 'system') {
     // Claude Code writes it when a turn ends, after the turn's last entry (spike 007, finding 4). Not activity.
     if (turnSignalOf(entry) === 'ended') fields.turnEnded = true;
@@ -539,17 +605,34 @@ export function applyEntry(fields: Fields, entry: unknown): void {
     // A turn is running again, once the transcript has marked one's end. A sidechain's entries are a
     // sub-agent's, which can run on after the main turn has ended.
     if (fields.turnEnded !== undefined && turnSignalOf(entry) === 'running') fields.turnEnded = false;
+    const context = contextTokensOf(entry);
+    // Claude Code writes a response once per content block, each line with its usage: the first counts.
+    if (context !== undefined && context.id !== fields.contextMessageId) {
+      fields.contextTokens = context.tokens;
+      fields.contextMessageId = context.id;
+    }
     const text = assistantTextOf(entry);
     if (text === undefined) return;
     const sameMessage =
       text.id !== undefined && text.id === fields.assistantMessageId && fields.assistantText !== undefined;
     const joined = sameMessage ? `${fields.assistantText}\n${text.text}` : text.text;
+    const joinedTail = sameMessage ? `${fields.assistantTail ?? fields.assistantText}\n${text.text}` : text.text;
     if (!sameMessage) fields.assistantMessageId = text.id;
     fields.assistantText = cap(joined, ASSISTANT_TEXT_KEEP);
+    fields.assistantTail = tail(joinedTail, ASSISTANT_TEXT_KEEP);
     fields.promptAfterText = false;
     return;
   }
 
+  // A turn something other than you started (W154): what arrived while no turn ran. Before the turn's
+  // state changes below, though an arrival doesn't change it. Mid-turn arrivals, attachments, don't count.
+  if (at !== undefined && turnSignalOf(entry) === 'arrived') {
+    if (arrivedFrom(entry) === RELAY_NAME) {
+      if (fields.lastRelayMs === undefined || at > fields.lastRelayMs) fields.lastRelayMs = at;
+    } else if (fields.turnEnded !== false && (fields.lastWokenMs === undefined || at > fields.lastWokenMs)) {
+      fields.lastWokenMs = at;
+    }
+  }
   const prompt = userPromptOf(entry);
   if (prompt !== undefined) {
     fields.userPrompt = prompt;
@@ -564,6 +647,28 @@ export function applyEntry(fields: Fields, entry: unknown): void {
   if ((prompt !== undefined || typed) && at !== undefined && (fields.lastPromptMs === undefined || at > fields.lastPromptMs)) {
     fields.lastPromptMs = at;
   }
+}
+
+/**
+ * How many tokens of context an assistant entry's call carried (W133): its `message.usage`'s
+ * `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`, what the model read, from
+ * the cache or not, with the response's `message.id`. Undefined for a sidechain's entry (an older
+ * Claude Code's sub-agent, in the main file), a `<synthetic>` one Claude Code writes itself, one with
+ * no id or usage, and one whose total isn't a positive number. Follows src/usage/scan.ts's reading.
+ */
+export function contextTokensOf(entry: Record<string, unknown>): { id: string; tokens: number } | undefined {
+  if (entry.type !== 'assistant' || entry.isSidechain === true) return undefined;
+  const message = entry.message;
+  if (!isRecord(message) || typeof message.id !== 'string' || message.id === '') return undefined;
+  if (message.model === '<synthetic>') return undefined;
+  const usage = message.usage;
+  if (!isRecord(usage)) return undefined;
+  const tokens = tokenCount(usage.input_tokens) + tokenCount(usage.cache_read_input_tokens) + tokenCount(usage.cache_creation_input_tokens);
+  return tokens > 0 && Number.isSafeInteger(tokens) ? { id: message.id, tokens } : undefined;
+}
+
+function tokenCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
 /**
@@ -785,6 +890,28 @@ function arrived(entry: Record<string, unknown>): boolean {
   return text.startsWith(CROSS_SESSION_PREFIX) || text.startsWith('<task-notification>') || CROSS_SESSION_TAGS.some((tag) => text.startsWith(`<${tag}`));
 }
 
+/**
+ * The sender's name on what arrived (W154): `origin.name`, which Claude Code writes on a message from
+ * another session (with `from-name` in its tag, spike 003) and a sub-agent's report; otherwise the
+ * tag's `from-name` attribute, from a tag at the text's start (after Claude Code's own line, if any), as older entries carry it. Undefined for a
+ * task notification and anything without one. Internal and undocumented.
+ */
+export function arrivedFrom(entry: Record<string, unknown>): string | undefined {
+  const origin = entry.origin;
+  if (isRecord(origin) && typeof origin.name === 'string') return origin.name;
+  const message = entry.message;
+  const raw = isRecord(message) ? textOf(message.content) : undefined;
+  if (raw === undefined) return undefined;
+  let text = stripSystemReminders(cap(raw, ARRIVED_READ_MAX)).trim();
+  if (text.startsWith(CROSS_SESSION_PREFIX)) text = text.slice(CROSS_SESSION_PREFIX.length).trimStart();
+  // The tag at the text's start, as arrived() reads it, never one quoted further into the message.
+  const tag = CROSS_SESSION_TAGS.find((name) => text.startsWith(`<${name}`));
+  if (tag === undefined) return undefined;
+  const end = text.indexOf('>');
+  const attributes = text.slice(0, end === -1 ? text.length : end);
+  return /\sfrom-name="([^"]*)"/.exec(attributes)?.[1];
+}
+
 /** A user entry carrying a tool's result, from the main conversation rather than a sub-agent's: part of a running turn. */
 function isToolResult(entry: Record<string, unknown>): boolean {
   if (entry.type !== 'user' || entry.isSidechain === true) return false;
@@ -833,7 +960,8 @@ function isComplete(fields: Fields): boolean {
     fields.lastActivityMs !== undefined &&
     fields.assistantText !== undefined &&
     fields.userPrompt !== undefined &&
-    fields.aiTitle !== undefined
+    fields.aiTitle !== undefined &&
+    fields.contextTokens !== undefined
   );
 }
 
@@ -842,21 +970,32 @@ function toInfo(state: FileState): TranscriptInfo {
   const info: TranscriptInfo = { transcript: 'ok' };
   if (fields.lastActivityMs !== undefined) info.lastActivityAt = new Date(fields.lastActivityMs).toISOString();
   if (fields.assistantText !== undefined) {
-    const derived = derive(state, fields.assistantText);
+    const derived = derive(state, fields.assistantText, fields.assistantTail ?? fields.assistantText);
     if (derived.askedYou !== undefined && fields.promptAfterText !== true) info.askedYou = derived.askedYou;
+    if (derived.spinOff !== undefined && fields.promptAfterText !== true) info.spinOff = derived.spinOff;
   }
   if (fields.userPrompt !== undefined) info.lastUserPrompt = fields.userPrompt;
   if (fields.aiTitle !== undefined) info.aiTitle = fields.aiTitle;
   if (fields.turnEnded !== undefined) info.turnEnded = fields.turnEnded;
   if (fields.lastPromptMs !== undefined) info.lastPromptMs = fields.lastPromptMs;
   if (fields.awaySummary !== undefined) info.awaySummary = { ...fields.awaySummary };
+  if (fields.contextTokens !== undefined) info.contextTokens = fields.contextTokens;
+  if (fields.lastWokenMs !== undefined) info.wokenAt = new Date(fields.lastWokenMs).toISOString();
+  const attended = Math.max(fields.lastPromptMs ?? -Infinity, fields.lastRelayMs ?? -Infinity);
+  if (Number.isFinite(attended)) info.attendedAt = new Date(attended).toISOString();
   return info;
 }
 
 /** Checks the assistant text once per change, not on every poll. */
-function derive(state: FileState, source: string): Derived {
-  if (state.derived?.source !== source) {
-    state.derived = { source, askedYou: detectAskedYou(source) };
+function derive(state: FileState, source: string, tailSource: string): Derived {
+  const derived = state.derived;
+  if (derived === undefined || derived.source !== source || derived.tailSource !== tailSource) {
+    return (state.derived = {
+      source,
+      tailSource,
+      askedYou: derived?.source === source ? derived.askedYou : detectAskedYou(source),
+      spinOff: derived?.tailSource === tailSource ? derived.spinOff : detectSpinOff(tailSource, os.homedir()),
+    });
   }
-  return state.derived;
+  return derived;
 }

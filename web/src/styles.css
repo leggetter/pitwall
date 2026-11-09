@@ -1234,10 +1234,10 @@ h2.empty-state-title:focus {
 }
 
 /*
- * Marked not needed now (W88): outlined, as a stale Blocked is, whatever its status, which keeps its
+ * Flagged (W153) or snoozed (W154): outlined, as a stale Blocked is, whatever its status, which keeps its
  * text. After the rules above, so it takes the place of the solid look: solid is for needing you.
  */
-.badge.state-not-needed {
+.badge.state-set-aside {
   background: none;
   box-shadow: none;
   outline: 1px dashed var(--pw-state-offline-border);
@@ -1839,11 +1839,11 @@ mark.match {
 }
 
 /*
- * A row's Not needed now toggle (section 4: Not needed now, W88), on the rows of sessions that need
- * you, or are marked: at the end of line 2, under the star, so line 1, the session's identity, gives
- * none of its room to it. Line 2 gives way before it, as it does before the sub-agents count. It shows
- * while its session is marked, and otherwise on the row's hover and focus, always on a touch screen,
- * as the star does. 24 px in a 20 px line: the negative block margins keep line 2, and the row, as tall
+ * A row's flag toggle (W153) and snooze menu or toggle (section 4: Snooze, W154), on the rows of
+ * sessions that need you, or are set aside: at the end of line 2, under the star, so line 1, the
+ * session's identity, gives none of its room to them. Line 2 gives way before them, as it does before
+ * the sub-agents count. Each shows while its session is flagged or snoozed, and otherwise on the row's
+ * hover and focus, or while its menu is open, always on a touch screen, as the star does. 24 px in a 20 px line: the negative block margins keep line 2, and the row, as tall
  * as before, and the end margin puts its icon under the star's.
  */
 .session-line-2 {
@@ -1857,20 +1857,30 @@ mark.match {
   flex: 1 1 auto;
 }
 
-.session-not-needed-toggle {
+.session-set-aside-toggle {
   margin-block: calc((var(--pw-leading-s) - var(--pw-control-sm)) / 2);
   margin-inline: auto calc(-1 * var(--pw-space-1));
   transition: opacity var(--pw-duration-fast) var(--pw-ease-standard);
 }
 
+/* W153's flag toggle, before the snooze menu when both show: the pair sits at the end, one gap apart. */
+.session-flag-toggle:not(:last-child) {
+  margin-inline-end: 0;
+}
+
+.session-flag-toggle + .session-set-aside-toggle {
+  margin-inline-start: 0;
+}
+
 @media (hover: hover) {
-  .session-not-needed-toggle[aria-pressed='false'],
+  .session-set-aside-toggle[aria-pressed='false'],
+  .snooze-menu.session-set-aside-toggle,
   .session-row-resume:not([aria-busy='true']) {
     opacity: 0;
   }
 
-  .session:hover .session-not-needed-toggle,
-  .session:focus-within .session-not-needed-toggle {
+  .session:hover .session-set-aside-toggle,
+  .session:focus-within .session-set-aside-toggle {
     opacity: 1;
   }
 }
@@ -1904,6 +1914,21 @@ mark.match {
   white-space: pre;
 }
 
+/*
+ * "· also in phil-skills" (W149): a repo it worked in under another root, after the running count, in
+ * --pw-text-subtle, up to half the line. Its tiny shrink keeps its room until what it wants or did last
+ * has given way entirely; then it gives way too, with an ellipsis, so line 2 never overflows.
+ */
+.session-elsewhere {
+  flex: 0 0.001 auto;
+  min-width: 0;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--pw-text-subtle);
+  white-space: pre;
+}
+
 .session-group {
   color: var(--pw-text-subtle);
 }
@@ -1917,8 +1942,8 @@ mark.match {
   font-weight: var(--pw-weight-medium);
 }
 
-/* "Not needed now" (W88), as quiet as the group's label, before what it needs. */
-.session-not-needed {
+/* "You flagged this" (W153), "Snoozed until 14:30" or "Snooze ended" (W154), as quiet as the group's label, before what it needs. */
+.session-set-aside {
   color: var(--pw-text-subtle);
 }
 
@@ -1958,9 +1983,9 @@ mark.match {
   color: var(--pw-text-muted);
 }
 
-/* Marked not needed now (W88): what it needs or asked in muted, with nothing in a tone colour, as it doesn't need you now. */
-.session.not-needed .asked,
-.session.not-needed .asked-label {
+/* Flagged or snoozed: what it needs or asked in muted, with nothing in a tone colour, as it doesn't need you now. */
+.session.set-aside .asked,
+.session.set-aside .asked-label {
   color: var(--pw-text-muted);
 }
 
@@ -2280,8 +2305,29 @@ mark.match {
   font-variant-ligatures: none;
 }
 
-/* "Not needed now" after the outlined status badge (W88), in line 2's meta text, as the row says it. */
-.session-view-not-needed {
+/* The row's context badge (W133): "ctx" before its number, so a red "612K" isn't read as PR "#612" beside it.
+   Visual only, with empty alternative text: the visually hidden "Context " already says it to a screen reader. */
+.context-badge-row::before {
+  content: "ctx\00a0" / "";
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+/* Its context (W133): "Context 85K" in line 2's meta text, or its badge over 200K, then its info button. */
+.session-view-context {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--pw-space-1);
+  white-space: nowrap;
+}
+
+.session-view-context-value {
+  font-variant-numeric: tabular-nums;
+}
+
+/* "You flagged this" or "Snoozed until …" after the outlined status badge, in line 2's meta text, as the row says it. */
+.session-view-set-aside {
   flex: none;
   white-space: nowrap;
 }
@@ -2300,13 +2346,15 @@ mark.match {
  */
 .session-view-waiting-note,
 .session-view-cwd-note,
+.session-view-context-note,
 .session-view-note {
   color: var(--pw-text-muted);
   font-size: var(--pw-text-s);
   line-height: var(--pw-leading-s);
 }
 
-.session-view-cwd-note code {
+.session-view-cwd-note code,
+.session-view-context-note code {
   padding: 0 var(--pw-space-1);
   line-height: 1;
   border-radius: var(--pw-radius-sm);
@@ -2567,9 +2615,11 @@ mark.match {
 /*
  * The recap strip (section 4: Recap strip, W111): between the session view's header and its tabs, on
  * --pw-surface-muted, as the footer is, with a bottom --pw-border. Line 1: the disclosure button, the
- * age, "May be out of date" while it's stale, and Refresh. Then the summary, always, on one line with an
- * ellipsis while it's collapsed; then, while it's open, the to-dos (W121). At most 35% of the view's height, scrolling inside itself
- * past that, as the footer does at half, so the body always keeps its room.
+ * age, Refresh right after it (W150), and "May be out of date" while it's stale. Then the picture
+ * (W150): Goal, Working on, on one line with an ellipsis while it's collapsed, Plan with Show plan, and
+ * your to-dos; or, for a recap without one, the summary and, while it's open, the to-dos (W121). At
+ * most 35% of the view's height, scrolling inside itself past that, as the footer does at half, so the
+ * body always keeps its room.
  */
 .session-recap {
   flex: none;
@@ -2595,10 +2645,7 @@ mark.match {
   min-width: 0;
 }
 
-/*
- * Plan status and Refresh (W123), together at the end of line 1, so they wrap onto a line of their own
- * together when line 1 is too narrow for them, as at 375 px with "May be out of date".
- */
+/* The plan status panel's Make a new one and Close (W123), together at the end of its line 1. */
 .recap-actions {
   flex: none;
   display: inline-flex;
@@ -2607,10 +2654,89 @@ mark.match {
   margin-left: auto;
 }
 
-/* Plan status: a ghost sm text button, its block margins taken back so line 1 stays 24 px. */
+/*
+ * Plan status, or Show plan on the picture's Plan line (W150): a ghost sm text button, a disclosure
+ * with the chevron, turned down while the panel is open, its block margins taken back so its line
+ * keeps its height.
+ */
 .button.recap-plan-button {
   flex: none;
   margin-block: calc(-1 * var(--pw-space-0-5));
+  vertical-align: baseline;
+}
+
+.recap-plan-button .chevron {
+  flex: none;
+  transition: transform var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+.recap-plan-button[aria-expanded='true'] .chevron {
+  transform: rotate(90deg);
+}
+
+/* Plan status's own line in a recap without the picture (W150), under the to-dos. */
+.recap-plan-action {
+  margin: 0;
+}
+
+.recap-plan-action .button.recap-plan-button {
+  margin-left: calc(-1 * var(--pw-space-2));
+}
+
+/*
+ * The picture's lines (W150): "Goal:", "Working on:", "Plan:" and "For you (n):", each label in 500
+ * --pw-text, then its text, wrapping while the strip is open.
+ */
+.recap-line {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.recap-line[hidden] {
+  display: none;
+}
+
+.recap-label {
+  font-weight: var(--pw-weight-medium);
+}
+
+/* Working on: wrapping under its label while it's open, as Goal does; collapsed, its label, its first line and "2 for you" on one baseline. */
+.session-recap[data-collapsed='true'] .recap-working-on {
+  display: flex;
+  align-items: baseline;
+  gap: var(--pw-space-1);
+}
+
+.recap-working-on .recap-label,
+.recap-working-on .badge {
+  flex: none;
+}
+
+.recap-working-on .badge {
+  margin-left: var(--pw-space-0-5);
+}
+
+.recap-working-on .recap-line-text {
+  min-width: 0;
+}
+
+/* Collapsed: Working on's first line, its whole in a tooltip when it's cut. */
+.session-recap[data-collapsed='true'] .recap-working-on .recap-line-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Inside the picture's body: 4 px between its lines, as between the strip's. */
+.session-recap[data-picture] .recap-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+}
+
+.session-recap[data-picture] .recap-body[hidden] {
+  display: none;
 }
 
 .recap-heading {
@@ -2673,7 +2799,7 @@ mark.match {
   flex: none;
 }
 
-/* At the end of line 1, its block margins taken back so the line stays 24 px. */
+/* Right after the age (W150), its block margins taken back so the line stays 24 px. */
 .icon-button.recap-refresh {
   flex: none;
   margin-block: calc(-1 * var(--pw-space-0-5));
@@ -2746,7 +2872,7 @@ mark.match {
 }
 
 /*
- * The plan status panel (W123): under the summary and the to-dos, a top --pw-border, its heading, age,
+ * The plan status panel (W123): under its button, a top --pw-border, its heading, age,
  * Make a new one and Close on its line 1; then the plan's one line, its items in order, each with its
  * state as a small tag, and how the plan changed.
  */
@@ -3448,6 +3574,22 @@ mark.match {
   flex-direction: column;
 }
 
+.combobox-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.combobox-field .combobox-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* A combobox that stands in for a select (W140): the select's chevron, and room for it. */
+.combobox-chevroned .combobox-input {
+  padding-right: var(--pw-space-8);
+}
+
 .combobox-popup {
   position: absolute;
   top: calc(100% + var(--pw-space-1));
@@ -3768,8 +3910,8 @@ mark.match {
 
 /*
  * Markdown in messages (section 4: Markdown in messages): Claude's messages, its messages to pitwall
- * and other sessions' as pitwall's own elements. Text wraps as the message's text does; only a code block and a table
- * scroll sideways, each in its own box. The spacing between blocks is at the end of this part, after
+ * and other sessions' as pitwall's own elements. Text wraps as the message's text does, and so does a
+ * code block's (W137); only a table scrolls sideways, in its own box. The spacing between blocks is at the end of this part, after
  * the elements' own margins.
  */
 .entry-markdown {
@@ -3951,7 +4093,9 @@ ol.md-list {
   line-height: var(--pw-leading-s);
   font-variant-ligatures: none;
   tab-size: 4;
-  white-space: pre;
+  /* Long lines wrap, spaces and indents kept, so a block never needs scrolling sideways (W137). */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .md-code-scroll code {

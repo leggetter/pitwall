@@ -105,6 +105,12 @@ export interface Records {
   /** Each DELETE of attachmentPath() (W82), by the id asked for, and the status it got: 204, 404 or 409. */
   deletes: Array<{ id: string; status: number }>;
   relays: Array<{ name: string; length: number }>;
+  /** Each flag and unflag the server answered (W153), by the session's name, with the flag's reason and where it came from. */
+  flags: Array<{ action: 'flag' | 'unflag'; name: string; reason?: string; from?: string }>;
+  /** Each snooze and unsnooze the server answered (W154), by the session's name, with its `until`, if any. */
+  snoozes: Array<{ action: 'snooze' | 'unsnooze'; name: string; until?: string }>;
+  /** Each spin-off check the server answered (W163), by the asking session's name, with the key asked for and the status. */
+  spinOffChecks: Array<{ name: string; key: unknown; status: number }>;
   actions: Array<{ action: 'stop' | 'remove'; name: string }>;
   /** Each resume of an ended session the server answered (W67), by the session's name. */
   resumes: string[];
@@ -129,6 +135,8 @@ export interface Records {
   /** Each Start and Stop of the supervisor, and each decision for one of its drafts, with the status each got (W114). */
   supervisorStarts: number[];
   supervisorStops: number[];
+  /** Each New conversation (W136), with the status it got. */
+  supervisorNewConversations: number[];
   decisions: Array<{ id: string; decision: string; length?: number; status: number }>;
   /** Every HTTP request and upgrade, as `METHOD /path status`. */
   requests: string[];
@@ -141,6 +149,9 @@ const emptyRecords = (): Records => ({
   spawns: [],
   workPosts: [],
   relays: [],
+  flags: [],
+  snoozes: [],
+  spinOffChecks: [],
   actions: [],
   resumes: [],
   opens: [],
@@ -154,6 +165,7 @@ const emptyRecords = (): Records => ({
   supervisorMessages: [],
   supervisorStarts: [],
   supervisorStops: [],
+  supervisorNewConversations: [],
   decisions: [],
   uploads: [],
   deletes: [],
@@ -257,6 +269,8 @@ export interface FakeServer {
 }
 
 const MAX_BODY_BYTES = 64 * 1024;
+/** A message to the supervisor's body limit, as the real server's SUPERVISOR_MAX_BODY_BYTES (W134), so the fake takes a 100,000-character message. */
+const SUPERVISOR_MESSAGE_BODY_BYTES = 800 * 1024;
 /** The real server's handshake limit (DEFAULT_AUTH_TIMEOUT_MS). */
 const AUTH_TIMEOUT_MS = 5000;
 
@@ -377,7 +391,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     const planMake = /^\/api\/sessions\/([^/]+)\/plan-status\/refresh$/.exec(url.pathname);
     if (planMake && method === 'POST') return makePlanStatus(req, res, decodeURIComponent(planMake[1]!));
 
-    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|stop|remove|resume|open|subagents|end|recap|plan-status)$/.exec(url.pathname);
+    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|flag|unflag|snooze|unsnooze|spin-off|stop|remove|resume|open|subagents|end|recap|plan-status)$/.exec(url.pathname);
     if (!match) return end(res, 404);
     const session = world.session(decodeURIComponent(match[1]!));
     if (!session) return end(res, 404);
@@ -407,6 +421,55 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
         json(res, 200, { status: 'delivered' } satisfies RelayResult);
         broadcast();
       });
+    }
+    if (route === 'flag' && method === 'POST') {
+      // flagPath(id) (W153): flagged at once, and the ask delivered, as the real route says.
+      const body = await readJson(req);
+      if (!isRecord(body) || typeof body.reason !== 'string' || typeof body.from !== 'string') return json(res, 400, { ok: false, error: 'Made up: not a FlagRequest.' });
+      if (session.needsYou?.reason !== body.reason) return json(res, 409, { ok: false, error: 'What it needs you for has just changed. Look again before you flag it.' });
+      records.flags.push({ action: 'flag', name: session.name, reason: body.reason, from: body.from });
+      world.flag(session.sessionId, { at: new Date().toISOString() });
+      broadcast();
+      return json(res, 200, { ok: true, asked: { status: 'delivered' } });
+    }
+    if (route === 'unflag' && method === 'POST') {
+      records.flags.push({ action: 'unflag', name: session.name });
+      world.flag(session.sessionId, undefined);
+      broadcast();
+      return json(res, 200, { ok: true });
+    }
+    if (route === 'spin-off' && method === 'POST') {
+      // spinOffPath(id) (W163): the session's own proposal, by its key, checked as the real route does,
+      // here only that the folder is under a root; never the request's text.
+      const body = await readJson(req);
+      const key = isRecord(body) ? body.key : undefined;
+      const answer = (status: number, result: Record<string, unknown>) => {
+        records.spinOffChecks.push({ name: session.name, key, status });
+        return json(res, status, result);
+      };
+      const proposal = session.spinOff;
+      if (typeof key !== 'string') return answer(400, { ok: false, error: 'The body must be { key }, the proposal’s key.' });
+      if (proposal === undefined || proposal.key !== key) return answer(409, { ok: false, error: 'That session has proposed something else since. Read its new proposal first.' });
+      if (proposal.kind !== 'proposal') return answer(409, { ok: false, error: proposal.problem });
+      if (world.rootFor(proposal.folder) === undefined) return answer(409, { ok: false, error: `The directory ${proposal.folder} isn't under one of your roots.` });
+      return answer(200, { ok: true, cwd: proposal.folder, prompt: proposal.prompt, ...(proposal.name === undefined ? {} : { name: proposal.name }) });
+    }
+    if (route === 'snooze' && method === 'POST') {
+      // snoozePath(id) (W154): snoozed at once, as the real route says, with `until` or Later.
+      const body = await readJson(req);
+      if (!isRecord(body) || (body.until !== undefined && (typeof body.until !== 'string' || Number.isNaN(Date.parse(body.until))))) return json(res, 400, { ok: false, error: 'Made up: not a SnoozeRequest.' });
+      if (session.needsYou === undefined) return json(res, 409, { ok: false, error: "It doesn't need you now, so there's nothing to snooze." });
+      const snoozed = { at: new Date().toISOString(), ...(typeof body.until === 'string' ? { until: body.until } : {}) };
+      records.snoozes.push({ action: 'snooze', name: session.name, ...(typeof body.until === 'string' ? { until: body.until } : {}) });
+      world.snooze(session.sessionId, snoozed);
+      broadcast();
+      return json(res, 200, { ok: true, snoozed });
+    }
+    if (route === 'unsnooze' && method === 'POST') {
+      records.snoozes.push({ action: 'unsnooze', name: session.name });
+      world.snooze(session.sessionId, undefined);
+      broadcast();
+      return json(res, 200, { ok: true });
     }
     if ((route === 'stop' || route === 'remove') && method === 'POST') {
       if (session.kind !== 'background') return json(res, 409, { ok: false, error: 'Made up: background sessions only.' });
@@ -562,7 +625,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
    * The supervisor's routes (W114), as the contract answers them, in made-up words, running no claude:
    * its conversation, 404 while it has none; a message, `{ text }` as JSON, 409 with none or while it's
    * held, 413 over SUPERVISOR_MESSAGE_MAX, then the made-up turn's steps a moment apart; Start, 409 the
-   * same; Stop; and a decision for a draft, 404 for one it doesn't have, then the draft gone a moment later.
+   * same; Stop; New conversation (W136), 409 with the world's reason; and a decision for a draft, 404 for one it doesn't have, then the draft gone a moment later.
    */
   async function supervisor(req: IncomingMessage, res: ServerResponse, method: string, url: URL) {
     // A step, then a longer one, so a part sees each state: working lasts twice as long as starting.
@@ -580,7 +643,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (method !== 'POST') return end(res, 405);
     if (url.pathname === protocol.SUPERVISOR_MESSAGE_PATH) {
       if (!/^application\/json\s*(;|$)/i.test(req.headers['content-type'] ?? '')) return json(res, 415, { ok: false, error: 'Send the request as application/json.' } satisfies ActionResult);
-      const body = await readJson(req);
+      const body = await readJson(req, SUPERVISOR_MESSAGE_BODY_BYTES);
       const text = isRecord(body) && typeof body.text === 'string' ? body.text : undefined;
       const answer = (status: number, result: ActionResult) => {
         records.supervisorMessages.push({ length: text?.length ?? 0, status });
@@ -617,6 +680,16 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       later(SUPERVISOR_STEP_MS, () => {
         if (world.supervisorInterrupt()) broadcast();
       });
+      return;
+    }
+    if (url.pathname === protocol.SUPERVISOR_NEW_CONVERSATION_PATH) {
+      await readJson(req);
+      // As the real route (W136): 409 with pitwall's reason when refused, else done, starting nothing.
+      const taken = world.supervisorNewConversation();
+      records.supervisorNewConversations.push(taken.result === 'refused' ? 409 : 200);
+      if (taken.result === 'refused') return json(res, 409, { ok: false, error: taken.error } satisfies ActionResult);
+      json(res, 200, { ok: true } satisfies ActionResult);
+      broadcast();
       return;
     }
     const approval = /^\/api\/supervisor\/approvals\/([^/]+)$/.exec(url.pathname);
@@ -1031,17 +1104,17 @@ function json(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(text) }).end(text);
 }
 
-function readJson(req: IncomingMessage): Promise<unknown> {
+function readJson(req: IncomingMessage, maxBytes = MAX_BODY_BYTES): Promise<unknown> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     let size = 0;
     req.on('data', (chunk: Buffer) => {
       size += chunk.length;
-      if (size <= MAX_BODY_BYTES) chunks.push(chunk);
+      if (size <= maxBytes) chunks.push(chunk);
     });
     req.on('end', () => {
       try {
-        resolve(size > MAX_BODY_BYTES ? undefined : JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        resolve(size > maxBytes ? undefined : JSON.parse(Buffer.concat(chunks).toString('utf8')));
       } catch {
         resolve(undefined);
       }

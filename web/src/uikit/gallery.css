@@ -497,9 +497,9 @@
   background: var(--pw-surface-hover);
 }
 
-/* A hovered row shows its star toggle, and its Not needed now toggle, as the pointer would (W53, W88). */
+/* A hovered row shows its star toggle, and its flag and snooze controls, as the pointer would (W53, W153, W154). */
 .uikit-hovered .session-star,
-.uikit-hovered .session-not-needed-toggle {
+.uikit-hovered .session-set-aside-toggle {
   opacity: 1;
 }
 

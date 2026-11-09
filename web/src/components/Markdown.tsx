@@ -5,8 +5,8 @@
 // - Headings are styled text, not h1 to h6: the page's outline is pitwall's own (6.1, rule 6), and a
 //   message's headings would sit in it among the session list's rows, as many and as deep as the
 //   session wrote them.
-// - A code block scrolls sideways in its own box, with its language and a Copy button above it; a
-//   table scrolls sideways in its own box too. Each box is a Tab stop while it scrolls (ScrollBox).
+// - A code block wraps its long lines, spaces and indents kept (W137), with its language and a Copy
+//   button above it; a table scrolls sideways in its own box, a Tab stop while it scrolls (ScrollBox).
 // - A link opens in a new tab with noopener and noreferrer, and its tooltip, on hover and on focus,
 //   is the URL it opens, as the browser parsed it, since its text can say anything (links.ts).
 // - A link whose text isn't its own address asks first (W55, W48's F6): a click, Enter or a middle
@@ -312,8 +312,8 @@ function Link({ href, asks, children }: { href: string; asks: boolean; children:
 }
 
 /**
- * A fenced code block: its language and a Copy button above the code, which scrolls sideways on its
- * own. Its bare URLs are links (`linked`), but Copy always copies `text`, the code as written.
+ * A fenced code block: its language and a Copy button above the code, which wraps its long lines
+ * (W137); its box is still a ScrollBox, in case anything in it can't wrap. Its bare URLs are links (`linked`), but Copy always copies `text`, the code as written.
  */
 function CodeBlock({ language, text, linked }: { language: string; text: string; linked: Inline[] | undefined }) {
   const code = useRef<HTMLElement>(null);

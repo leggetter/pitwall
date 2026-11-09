@@ -7,6 +7,7 @@ import type { ConnectionView } from '../connection.js';
 import { directoryChoices, directoryProblem, modelProblem, nameProblem, promptProblem, rootOf } from '../spawn.js';
 import { block, declarations, withoutComments } from '../test/css.js';
 import { group, NOW, session, snapshot } from '../test/fixtures.js';
+import { chooseFirstDirectory } from '../test/newSession.js';
 import { hover, unhover } from '../test/tooltips.js';
 import { Dashboard } from './Dashboard.js';
 import dialogCss from './Dialog.css?raw';
@@ -67,9 +68,15 @@ function renderDashboard(fetch: FetchLike | undefined, first: IndexSnapshot = sn
 
 const settle = () => act(async () => {});
 
-function openDialog(): HTMLElement {
+/**
+ * New session from the header. These tests start in All sessions, a view, where it opens with no
+ * directory chosen (W147), so it chooses the first, as a person would, unless `choose` is false.
+ */
+function openDialog({ choose = true }: { choose?: boolean } = {}): HTMLElement {
   fireEvent.click(screen.getByRole('button', { name: 'New session' }));
-  return screen.getByRole('dialog', { name: 'New session' });
+  const dialog = screen.getByRole('dialog', { name: 'New session' });
+  if (choose) chooseFirstDirectory(dialog);
+  return dialog;
 }
 
 /** Fills in a first prompt and returns the dialog, for a submit. */
@@ -81,6 +88,15 @@ function fill2(dialog: HTMLElement): HTMLElement {
 function fill(dialog: HTMLElement, fields: { prompt?: string; name?: string }) {
   if (fields.prompt !== undefined) fireEvent.change(within(dialog).getByLabelText('First prompt'), { target: { value: fields.prompt } });
   if (fields.name !== undefined) fireEvent.change(within(dialog).getByLabelText(/^Name/), { target: { value: fields.name } });
+}
+
+const directory = (dialog: HTMLElement) => within(dialog).getByRole('combobox', { name: 'Directory' }) as HTMLInputElement;
+
+/** Types `text` in Directory, then accepts the first option it offers, which typing highlights, with Enter (W142). */
+function chooseDirectory(dialog: HTMLElement, text: string) {
+  const input = directory(dialog);
+  fireEvent.change(input, { target: { value: text } });
+  fireEvent.keyDown(input, { key: 'Enter' });
 }
 
 async function submit(dialog: HTMLElement) {
@@ -98,18 +114,21 @@ beforeEach(() => {
 describe('New session: the dialog', () => {
   it('opens from the header, with the directory picker focused, offering the groups under a root, then the roots', () => {
     renderDashboard(fakeServer(started));
-    const dialog = openDialog();
+    const dialog = openDialog({ choose: false });
 
     expect(dialog.getAttribute('aria-modal')).toBe('true');
-    const picker = within(dialog).getByLabelText('Directory') as HTMLSelectElement;
+    const picker = directory(dialog);
     expect(document.activeElement).toBe(picker);
-    expect([...picker.options].map((option) => [option.value, option.textContent])).toEqual([
-      [REPO, '~/code/demo-app'],
-      [OTHER_REPO, '~/code/demo-api'],
-      [ROOT, '~/code'],
-      ['\u0000other', 'Another directory under a root…'],
+    // From All sessions, a view, no directory is chosen (W147): the field shows its placeholder.
+    expect(picker.value).toBe('');
+    expect(picker.placeholder).toBe('~/code/…');
+    fireEvent.click(picker);
+    // This fake server has no directory list: the groups' directories and the root alone.
+    expect(within(within(dialog).getByRole('listbox', { name: 'Directories' })).getAllByRole('option').map((option) => option.textContent)).toEqual([
+      '~/code/demo-app',
+      '~/code/demo-api',
+      '~/code',
     ]);
-    expect(picker.value).toBe(REPO);
     expect(within(dialog).getByText('Under ~/code.')).toBeTruthy();
   });
 
@@ -217,7 +236,8 @@ describe('New session: the dialog', () => {
     renderDashboard(fakeServer(started));
     const button = screen.getByRole('button', { name: 'New session' });
     button.focus();
-    let dialog = openDialog();
+    // Choosing a directory is a change, as typing is, so this one leaves Directory as it opened.
+    let dialog = openDialog({ choose: false });
     const backdrop = () => document.querySelector('.dialog-backdrop')!;
     // A click inside the card isn't one on the backdrop.
     fireEvent.pointerDown(dialog);
@@ -236,7 +256,7 @@ describe('New session: the dialog', () => {
     expect(document.activeElement).toBe(button);
 
     // A press that starts in the card and ends on the backdrop, as when selecting text, isn't a click on it.
-    dialog = openDialog();
+    dialog = openDialog({ choose: false });
     fireEvent.pointerDown(dialog);
     fireEvent.click(backdrop());
     expect(screen.getByRole('dialog', { name: 'New session' })).toBe(dialog);
@@ -267,7 +287,8 @@ describe('New session: starting one', () => {
     const server = fakeServer(started);
     const { update } = renderDashboard(server);
     const dialog = openDialog();
-    fireEvent.change(within(dialog).getByLabelText('Directory'), { target: { value: OTHER_REPO } });
+    chooseDirectory(dialog, 'api');
+    expect(directory(dialog).value).toBe('~/code/demo-api');
     fill(dialog, { prompt: 'Reply with: ready', name: 'pitwall-test-spawn' });
     fireEvent.change(within(dialog).getByLabelText(/^Model/), { target: { value: 'haiku' } });
     await submit(dialog);
@@ -299,6 +320,7 @@ describe('New session: starting one', () => {
     fromEmpty.focus();
     fireEvent.click(fromEmpty);
     const dialog = screen.getByRole('dialog', { name: 'New session' });
+    chooseFirstDirectory(dialog);
     fill(dialog, { prompt: 'Reply with: ready' });
     await submit(dialog);
     expect(document.activeElement).toBe(fromEmpty);
@@ -332,8 +354,7 @@ describe('New session: starting one', () => {
     await submit(dialog);
 
     dialog = openDialog();
-    fireEvent.change(within(dialog).getByLabelText('Directory'), { target: { value: '\u0000other' } });
-    fireEvent.change(within(dialog).getByLabelText('Directory path'), { target: { value: `  ${ROOT}/new-thing  ` } });
+    fireEvent.change(directory(dialog), { target: { value: `  ${ROOT}/new-thing  ` } });
     fireEvent.change(within(dialog).getByLabelText(/^Model/), { target: { value: '\u0000other' } });
     fireEvent.change(within(dialog).getByLabelText('Model alias or full name'), { target: { value: 'claude-haiku-4-5' } });
     fill(dialog, { prompt: 'second' });
@@ -359,7 +380,7 @@ describe('New session: starting one', () => {
     expect(within(dialog).getByText(/Letters, digits, spaces/)).toBeTruthy();
 
     fill(dialog, { name: '' });
-    fireEvent.change(within(dialog).getByLabelText('Directory'), { target: { value: '\u0000other' } });
+    fireEvent.change(directory(dialog), { target: { value: '' } });
     await submit(dialog);
     expect(within(dialog).getByText('Choose a directory.')).toBeTruthy();
     for (const [path, problem] of [
@@ -368,10 +389,10 @@ describe('New session: starting one', () => {
       ['/Users/example/codex', 'Use a directory under ~/code.'],
       ['/etc', 'Use a directory under ~/code.'],
     ]) {
-      fireEvent.change(within(dialog).getByLabelText('Directory path'), { target: { value: path } });
+      fireEvent.change(directory(dialog), { target: { value: path } });
       expect(within(dialog).getByText(problem as string)).toBeTruthy();
     }
-    fireEvent.change(within(dialog).getByLabelText('Directory path'), { target: { value: `${REPO}/sub` } });
+    fireEvent.change(directory(dialog), { target: { value: `${REPO}/sub` } });
 
     fireEvent.change(within(dialog).getByLabelText(/^Model/), { target: { value: '\u0000other' } });
     await submit(dialog);

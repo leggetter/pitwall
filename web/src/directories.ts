@@ -1,17 +1,19 @@
-// The directory list behind New session's "Another directory under a root…" field (W70): one GET of
+// The directory list behind New session's Directory combobox (W70, W140): one GET of
 // DIRECTORIES_PATH per opening of the dialog, then the options narrowed in the page as you type, so
 // typing makes no requests. The server walks the roots (src/server/directories.ts); the spawn still
 // checks the directory it gets, so the list only helps to type one.
 //
-// - Options: the open root tab's directories (W38), or every root's without tabs, each read as the
-//   root shortened with shortenHome(), then `/` and the path under it: `~/code/outpost`.
+// - Options: the groups' directories and the roots (directoryChoices(), choiceOptions()), first, in
+//   their order, then the open root tab's directories (W38), or every root's without tabs, each read
+//   as the root shortened with shortenHome(), then `/` and the path under it: `~/code/outpost`.
 // - Matching: case-insensitive, and on NFC, so a name stored decomposed (NFD), as some file systems
 //   and tools write it, matches the same text typed composed. Every whitespace-separated term must appear in the path under the
 //   root, or, when the text starts with `~` or `/`, in the whole shortened path; one that starts with
 //   `/` may match the absolute path instead, so a pasted path finds its option.
 // - Ranking, on the last term, from its last `/`: the last segment equal to it, then the last segment
-//   starting with it, then any segment starting with it, then the rest; ties go to the shallower,
-//   then alphabetically. At most MAX_SHOWN are shown.
+//   starting with it, then any segment starting with it, then the rest; ties go to the groups'
+//   directories, in their order, then the shallower, then alphabetically. With nothing typed, that's
+//   the groups' directories, then the rest, shallower first. At most MAX_SHOWN are shown.
 // - The value: an accepted option sends its absolute path, root plus `/` plus the path. Typed text
 //   works as before: an absolute path as it is, and a `~/` path whose start is a root's shortened
 //   form maps to that root.
@@ -19,7 +21,7 @@
 import { DIRECTORIES_PATH, type DirectoryList } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
 import { shortenHome } from './format.js';
-import { directoryProblem, rootOf } from './spawn.js';
+import { directoryProblem, rootOf, type DirectoryChoice } from './spawn.js';
 
 /** How many options the list shows at once. */
 export const MAX_SHOWN = 50;
@@ -36,8 +38,10 @@ export interface DirectoryOption {
   rel: string;
   root: string;
   repo: boolean;
-  /** Levels below the root: 1 for its own folders. */
+  /** Levels below the root: 1 for its own folders, 0 for the root. */
   depth: number;
+  /** A group's directory or a root (directoryChoices()): its place among them, which comes first on a tie. */
+  choice?: number;
   /** For matching: composed (NFC) and lower-cased. */
   search: { rel: string; label: string; path: string; segments: string[] };
 }
@@ -111,6 +115,36 @@ export function directoryOptions(list: DirectoryList, roots: readonly string[], 
   return { options, truncated };
 }
 
+/**
+ * The groups' directories and the roots, as directoryChoices() gives them, as options that come
+ * first, then the listed ones that aren't among them. A choice the list has takes its "repo"; a root
+ * is matched on its last segment, since it has no path under itself. A choice under no root, which
+ * directoryChoices() never gives, is left out.
+ */
+export function withChoices(choices: readonly DirectoryChoice[], listed: readonly DirectoryOption[], roots: readonly string[]): DirectoryOption[] {
+  const byPath = new Map(listed.map((option) => [option.path, option]));
+  const first: DirectoryOption[] = [];
+  for (const { path, label } of choices) {
+    const root = rootOf(path, roots);
+    if (root === undefined || first.some((option) => option.path === path)) continue;
+    const under = path.slice(root.length).replace(/^\/+|\/+$/g, '');
+    const rel = under === '' ? (root.replace(/\/+$/, '').split('/').pop() ?? '') : under;
+    const lower = searchable(rel);
+    first.push({
+      path,
+      label,
+      rel,
+      root,
+      repo: byPath.get(path)?.repo ?? false,
+      depth: under === '' ? 0 : under.split('/').length,
+      choice: first.length,
+      search: { rel: lower, label: searchable(label), path: searchable(path), segments: lower.split('/') },
+    });
+  }
+  const taken = new Set(first.map((option) => option.path));
+  return [...first, ...listed.filter((option) => !taken.has(option.path))];
+}
+
 export interface DirectoryMatches {
   /** The best MAX_SHOWN, in order. */
   shown: DirectoryOption[];
@@ -133,7 +167,7 @@ export function matchDirectories(options: readonly DirectoryOption[], text: stri
     const matches = terms.every((term) => haystack.includes(term)) || (query.startsWith('/') && terms.every((term) => search.path.includes(term)));
     if (matches) ranked.push({ option, rank: rank(search.segments, key) });
   }
-  ranked.sort((a, b) => a.rank - b.rank || a.option.depth - b.option.depth || compareLabels(a.option, b.option));
+  ranked.sort((a, b) => a.rank - b.rank || (a.option.choice ?? Infinity) - (b.option.choice ?? Infinity) || a.option.depth - b.option.depth || compareLabels(a.option, b.option));
   return { shown: ranked.slice(0, limit).map((each) => each.option), total: ranked.length };
 }
 

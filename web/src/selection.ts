@@ -104,6 +104,50 @@ export function findGroup<T extends SessionGroup>(groups: readonly T[], selectio
   return groups.find((group) => group.key === selection.repo && (selection.root === undefined || group.root === selection.root));
 }
 
+/**
+ * Whether choosing `selection` keeps `sessionId`, the open session, open (W139, Phil's option B,
+ * 2026-11-04). A view always does, as before. A group does only when it lists the session, in
+ * `groups` as the chosen grouping has them: so in Every repo it worked in, any group that lists it,
+ * not only its home group. Listing is what counts, whatever the filter, a collapsed Finished section
+ * or Show older hides, so `groups` should hold every session, the older ended ones too. A group that
+ * isn't in `groups` lists nothing, and closes it.
+ */
+export function keepsOpenSession(groups: readonly SessionGroup[], selection: Selection, sessionId: string): boolean {
+  if ('view' in selection) return true;
+  return findGroup(groups, selection)?.sessions.some((session) => session.sessionId === sessionId) ?? false;
+}
+
+/**
+ * The selection to show `sessionId` under when it opens from outside the list, the supervisor's Sent
+ * and started or a PR view's Sessions (W144), or undefined to keep `selection`. With root tabs, `tab`
+ * is the open one. The selection stays when the open tab lists the session and it keeps the session,
+ * as keepsOpenSession() says: so a view in the tab, or a group that lists it. Otherwise it's a group
+ * that lists it, in the open tab when one there does: its home group in `home`, the one the chosen
+ * grouping lists it under (groupBy.ts, W42), or else the first group that lists it. A session no group
+ * lists yet keeps the selection too, and opens as before. `groups` are the chosen grouping's, with every
+ * session, the older ended ones too, as for keepsOpenSession(). Starred and Needs you are kept only
+ * when `viewLists` says the view lists the session; All sessions and Pull requests always (W148, Phil,
+ * 2026-11-05: you came from a PR, and All sessions lists every one).
+ */
+export function selectionShowing(
+  snapshot: Pick<IndexSnapshot, 'roots' | 'groups'>,
+  selection: Selection,
+  tab: string | undefined,
+  sessionId: string,
+  home?: ReadonlyMap<string, SessionGroup>,
+  viewLists = true,
+): Selection | undefined {
+  const listing = snapshot.groups.filter((group) => group.sessions.some((session) => session.sessionId === sessionId));
+  if (listing.length === 0) return undefined;
+  const inTab = tab === undefined ? listing : listing.filter((group) => group.root === tab);
+  const narrowView = 'view' in selection && (selection.view === 'starred' || selection.view === 'needs-you');
+  if (inTab.length > 0 && (tab === undefined || selection.root === tab) && keepsOpenSession(inTab, selection, sessionId) && !(narrowView && !viewLists)) return undefined;
+  const homeGroup = home?.get(sessionId);
+  const listsHome = homeGroup !== undefined && listing.some((group) => group.key === homeGroup.key && group.root === homeGroup.root);
+  const chosen = listsHome && (tab === undefined || inTab.length === 0 || homeGroup.root === tab) ? homeGroup : (inTab[0] ?? listing[0]!);
+  return groupSelection(chosen, snapshot.roots);
+}
+
 /** Whether the selection is Pull requests (W95), whose list is your open PRs rather than sessions. */
 export function isPrsSelection(selection: Selection): boolean {
   return 'view' in selection && selection.view === 'prs';

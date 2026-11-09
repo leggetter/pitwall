@@ -19,12 +19,13 @@
 // - Finished: a finished session that owns an open PR isn't finished work, so it stays in the main
 //   list, not in Finished, until the PR closes, and older ended ones like it stay in the window.
 // - Needs you: a session's row needs you when the session does (needsAttention()) or when a PR it
-//   owns needs attention (prNeedsAttention()); a PR row when its PR does. Both count wherever Needs
-//   you counts. A mark of Not needed now (W88) is for what the session needs, never for its PRs.
+//   owns needs attention (prNeedsAttention()) while the session isn't busy (W161, isBusy()); a PR row
+//   when its PR does. Both count wherever Needs you counts, the Pull requests item's badge too. A busy
+//   session's PR keeps its badge on the row, and the session is back in Needs you when it stops, if
+//   the PR still needs you. A flag (W153) or a snooze (W154) is for what the session needs, never for its PRs.
 
 import { prNeedsAttention, prOwner, type PullRequestRelation, type PullRequestSummary, type SessionGroup, type SessionSummary } from '../../src/shared/protocol.js';
 import { plainText } from './format.js';
-import type { NotNeeded } from './notNeeded.js';
 import { comparePrs, filterPrs, isOlderPr, prKey, prUpdatedMs } from './prs.js';
 import {
   activityMs,
@@ -32,6 +33,7 @@ import {
   filterNeedle,
   groupId,
   groupLabel,
+  isBusy,
   listedOnce,
   needsAttention,
   sessionOrder,
@@ -141,17 +143,29 @@ export function isDone(session: SessionSummary, work: Work): boolean {
   return session.finished && !ownsPr(session, work);
 }
 
-/** The most urgent open PR a session owns that needs attention, or undefined: its row's line 2 says why (prReason()). */
-export function prNeeding(session: Pick<SessionSummary, 'sessionId'>, work: Work): PullRequestSummary | undefined {
-  return work.owned.get(session.sessionId)?.find(prNeedsAttention);
+/**
+ * The most urgent open PR a session owns that needs attention, or undefined: what puts its row in Needs
+ * you when the session itself doesn't (prNeedOf()).
+ */
+export function prNeeding(session: SessionSummary, work: Work): PullRequestSummary | undefined {
+  return prNeedOf(session, work.owned.get(session.sessionId));
 }
 
 /**
- * Whether a session's row needs you (W106): the session does (needsAttention(), without what's marked
- * not needed now), or a PR it owns needs attention, whatever the session's state, ended included.
+ * The most urgent of `owned` that needs attention, or undefined while the session is busy (W161,
+ * isBusy()): Phil, 2026-11-06, saw a session at work on the PR that asks his review listed in Needs
+ * you for that review, which said nothing of what the session needed.
  */
-export function sessionNeedsYou(session: SessionSummary, notNeeded: NotNeeded | undefined, work: Work): boolean {
-  return needsAttention(session, notNeeded) || prNeeding(session, work) !== undefined;
+export function prNeedOf(session: SessionSummary, owned: readonly PullRequestSummary[] | undefined): PullRequestSummary | undefined {
+  return isBusy(session) ? undefined : owned?.find(prNeedsAttention);
+}
+
+/**
+ * Whether a session's row needs you (W106): the session does (needsAttention(), without what's flagged or
+ * snoozed), or a PR it owns needs attention while it isn't busy (prNeeding(), W161), ended included.
+ */
+export function sessionNeedsYou(session: SessionSummary, work: Work): boolean {
+  return needsAttention(session) || prNeeding(session, work) !== undefined;
 }
 
 /**
@@ -204,12 +218,16 @@ export function countRows(groups: readonly ListGroup[]): number {
  * How many of the groups' rows need you, each session and PR row once (W106): what Needs you, its
  * badges, the root tabs' and the page title count.
  */
-export function countNeeds(groups: readonly ListGroup[], notNeeded: NotNeeded | undefined, work: Work): number {
-  const sessions = sessionsIn(groups).filter((session) => sessionNeedsYou(session, notNeeded, work)).length;
+export function countNeeds(groups: readonly ListGroup[], work: Work): number {
+  const sessions = sessionsIn(groups).filter((session) => sessionNeedsYou(session, work)).length;
   return sessions + prRowsIn(groups).filter(({ pr }) => prNeedsAttention(pr)).length;
 }
 
-/** The rows with an open PR, and those that need you through one: the Pull requests item's count and badge (W106). */
+/**
+ * The rows with an open PR, and those that need you through one: the Pull requests item's count and
+ * badge (W106), as the view's summary counts them. Not a busy session's (W161), whose row keeps its PR
+ * badge but not the bar.
+ */
 export function prRowCounts(groups: readonly ListGroup[], work: Work): { count: number; attention: number } {
   const sessions = sessionsIn(groups).filter((session) => ownsPr(session, work));
   const rows = prRowsIn(groups);
@@ -264,9 +282,9 @@ export const prRowKey = (key: string): string => `pr:${key}`;
 export type WorkScope = Exclude<Scope, { kind: 'group' }> | { kind: 'group'; group: ListGroup } | { kind: 'prs' };
 
 /** Whether a row needs you (sessionNeedsYou(), prNeedsAttention()). */
-export function rowNeedsYou(row: ListRow, notNeeded: NotNeeded | undefined, work: Work): boolean {
+export function rowNeedsYou(row: ListRow, work: Work): boolean {
   if (isPrRow(row)) return row.older !== true && prNeedsAttention(row.pr);
-  return sessionNeedsYou(row.session, notNeeded, work);
+  return sessionNeedsYou(row.session, work);
 }
 
 /** A row's activity: its session's, or when its PR was last updated. */
@@ -289,17 +307,17 @@ const compareKeys = (a: ListRow, b: ListRow) => {
  * activity alone; Name by a session's name or a PR's title. A list with no PR rows and no owned PRs
  * sorts exactly as sessionOrder() does.
  */
-export function rowOrder(order: SortOrder, notNeeded: NotNeeded | undefined, work: Work): (a: ListRow, b: ListRow) => number {
+export function rowOrder(order: SortOrder, work: Work): (a: ListRow, b: ListRow) => number {
   if (order === 'name') return (a, b) => compareLabels(rowName(a), rowName(b)) || compareKeys(a, b);
   if (order === 'recent') return (a, b) => rowActivity(b) - rowActivity(a) || compareKeys(a, b);
   // A row that needs you is with the rest, whatever its session's state: a stale job whose PR's CI
   // fails needs you through the PR, so it sorts with the rows that need you, not after the calm ones.
   const bucket = (row: ListRow) => {
-    if (isPrRow(row) || rowNeedsYou(row, notNeeded, work)) return 0;
+    if (isPrRow(row) || rowNeedsYou(row, work)) return 0;
     return isDone(row.session, work) ? 2 : row.session.stale ? 1 : 0;
   };
   const rank = (row: ListRow) => {
-    if (rowNeedsYou(row, notNeeded, work)) return 0;
+    if (rowNeedsYou(row, work)) return 0;
     return !isPrRow(row) && row.session.status === 'busy' ? 1 : 2;
   };
   return (a, b) => {
@@ -327,19 +345,18 @@ export function listWork(
   scope: WorkScope,
   order: SortOrder,
   home: ReadonlyMap<string, SessionGroup> | undefined,
-  notNeeded: NotNeeded | undefined,
   work: Work,
 ): { current: ListRow[]; finished: Listed[] } {
   const sessions: Listed[] = scope.kind === 'group' ? scope.group.sessions.map((session) => ({ session, group: scope.group })) : listedOnce(groups, home);
   const prs: ListedPr[] = scope.kind === 'group' ? (scope.group.prs ?? []).map((pr) => ({ pr, group: scope.group })) : prRowsIn(groups);
-  const sorted = (rows: ListRow[], by: SortOrder = order) => rows.sort(rowOrder(by, notNeeded, work));
+  const sorted = (rows: ListRow[], by: SortOrder = order) => rows.sort(rowOrder(by, work));
   const done = (rows: Listed[]) => {
-    const compare = sessionOrder(order, true, notNeeded);
+    const compare = sessionOrder(order, true);
     return rows.filter(({ session }) => isDone(session, work)).sort((a, b) => compare(a.session, b.session));
   };
   switch (scope.kind) {
     case 'needs-you':
-      return { current: sorted([...sessions, ...prs].filter((row) => rowNeedsYou(row, notNeeded, work))), finished: [] };
+      return { current: sorted([...sessions, ...prs].filter((row) => rowNeedsYou(row, work))), finished: [] };
     case 'prs':
       return { current: sorted([...sessions.filter(({ session }) => ownsPr(session, work)), ...prs], 'urgency'), finished: [] };
     case 'starred': {

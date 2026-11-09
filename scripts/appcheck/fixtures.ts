@@ -25,6 +25,7 @@ import type {
   SessionRecap,
   SessionSummary,
   SpawnRequest,
+  SpinOff,
   SubagentList,
   SubagentSummary,
   SupervisorApproval,
@@ -33,6 +34,8 @@ import type {
   SupervisorState,
   SupervisorStatus,
 } from '../../src/shared/protocol.js';
+import { withSupervisorFooter } from '../../src/shared/protocol.js';
+import { REFUSED_TO_SUPERVISOR_NOTICE } from '../../src/index/conversation.js';
 
 export const CODE = '/Users/example/code';
 export const OSS = '/Users/example/oss';
@@ -43,6 +46,17 @@ export const BLOG = `${OSS}/blog`;
 export const DOCS_SITE = `${CODE}/docs-site`;
 /** A directory no session has worked in, which New session's autocomplete offers (W70). */
 export const DEMO_APP_WEB = `${DEMO_APP}/web`;
+/**
+ * A made-up proposal for a new session (W163), which a part puts on NAMES.conversation with
+ * world.spinOff(): in demo-app/web, named, with a prompt of twelve lines, so its card's box scrolls.
+ */
+export const SPIN_OFF_PROMPT = [
+  'Rework the made-up web app’s settings page so each section saves on its own.',
+  '',
+  ...Array.from({ length: 9 }, (_, index) => `- Step ${index + 1}: a made-up step for the app check.`),
+  'Run npm test in web/ when it’s done, and tell me what changed.',
+].join('\n');
+export const SPIN_OFF: SpinOff = { kind: 'proposal', key: '5f1a0c7e9b3d2a41', folder: DEMO_APP_WEB, name: 'pitwall-test-spin-off', prompt: SPIN_OFF_PROMPT };
 /** A cloned repo with no session (W106): the server places its PRs under it, so the page builds its group. */
 export const EVENT_RELAY = `${CODE}/event-relay`;
 
@@ -103,7 +117,16 @@ export const NAMES = {
    * isn't finished, so it's listed with the rest, not in Finished.
    */
   endedPr: 'pitwall-test-ended-pr',
+  /**
+   * With `cloned` only (W145): started in docs-site, a directory below the root in no repo, then
+   * cloned sdk-cli there and worked in it alone, so Main repo lists it under sdk-cli, which nothing
+   * started in.
+   */
+  cloned: 'pitwall-test-cloned',
 } as const;
+
+/** The repo NAMES.cloned cloned and worked in (W145): it has no group in the snapshot. */
+export const SDK_CLI = `${CODE}/sdk-cli`;
 
 /** The short id the copy Claude Code starts in place of NAMES.endedCopy has. */
 export const COPY_SHORT_ID = 'pt67copy';
@@ -223,6 +246,13 @@ export const RECAP_CALL_MS = 600;
 /** How long a made-up plan status call takes (W123), so Plan status shows its spinner. */
 export const PLAN_CALL_MS = 700;
 
+/** The picture of RECAPPED.you's recap (W150): the goal, what it's on and why, and the plan's line. */
+export const RECAP_PICTURE = {
+  goal: 'Give the made-up API a health route that the load balancer can check.',
+  workingOn: '#51: the health route and its test, which the load balancer needs before the old ping can go.',
+  plan: 'The made-up API plan: #51, then the load balancer, then retiring the ping; on #51 now',
+} as const;
+
 /** The sessions whose made-up transcript shows no plan (W123): the rest work through PLANNED's. */
 export const NO_PLAN = NAMES.finished;
 
@@ -278,6 +308,14 @@ export const SUPERVISOR_HELD_ERROR =
   "A background session is running the supervisor's conversation, so pitwall can't resume it. Run `claude stop pt114bg1` to hand it back, then press Start. pitwall won't stop it for you.";
 export const SUPERVISOR_FAILED_ERROR = 'The supervisor stopped as it started (exit code 1). Press Start to try again.';
 
+/** What its error adds while a message of yours waits for its next start (W114's review), and what New conversation's refusal then says (W136). */
+export const SUPERVISOR_QUEUED_NOTE = 'Your message waits to be sent when it starts.';
+/** New conversation's refusal when the snapshot didn't predict it: another tab pressed Start in between (W136). */
+export const SUPERVISOR_RACE_REFUSAL = 'The supervisor is starting. Start a new conversation once it has started.';
+
+/** The made-up context of a conversation with history (W136): "Context 84K" in its header. */
+export const SUPERVISOR_CONTEXT = 84_010;
+
 /** The made-up reply each message gets, in markdown, naming made-up sessions and example/* repos. */
 export const SUPERVISOR_REPLY =
   'Two sessions need you:\n\n1. **pitwall-test-docs** waits on a permission prompt to run the made-up docs build.\n2. **pitwall-test-review** asked whether to retry the failed batch on `example/api-server` now or tonight.\n\nNothing else needs you.';
@@ -287,6 +325,7 @@ export const SUPERVISOR_APPROVALS = {
   message: 'pt114-approval-message',
   spawn: 'pt114-approval-spawn',
   resume: 'pt127-approval-resume',
+  longer: 'pt136-approval-longer',
 } as const;
 
 /** The cursor of SUBAGENTS.drafting's newest page, for its Load earlier. */
@@ -309,12 +348,19 @@ export interface ResetOptions {
   /** The supervisor (W114): 'none', as with --no-supervisor, by default. */
   supervisor?: SupervisorWorldState;
   /**
-   * Whether it has made-up drafts waiting on you, a message and a new session (W114), or 'long', one
-   * message of 14 lines with a no-break space, which the card draws as its code (W120).
+   * Whether it has made-up drafts waiting on you, a message and a new session (W114), or 'long', a
+   * message of 14 lines with a no-break space, which the card draws as its code (W120), then one of 60
+   * lines, longer than half the window (W136).
    */
   approvals?: boolean | 'long' | 'resume';
   /** Whether its conversation has made-up turns already, with a page behind Load earlier, or none, a new one. */
   supervisorHistory?: boolean;
+  /** Whether a message of yours waits for its next start, as after it failed mid-turn: New conversation drops it (W136's review). */
+  supervisorQueued?: boolean;
+  /** Whether New conversation is refused as if another tab had pressed Start in between: a refusal the snapshot didn't show (W136). */
+  supervisorRaced?: boolean;
+  /** Whether NAMES.cloned is listed too (W145), a session that started in docs-site and worked in sdk-cli alone. */
+  cloned?: boolean;
 }
 
 /** The made-up index: a snapshot, conversations, and what POSTs have changed since the last reset. */
@@ -361,6 +407,11 @@ export class World {
   #supervisorOlder: ConversationEntry[] = [];
   #supervisorCost = 0;
   #supervisorTurnAt: string | undefined;
+  /** Its newest call's context (W136), once a turn has said. */
+  #supervisorContext: number | undefined;
+  /** A message of yours waits for its next start (W136's refusal). */
+  #supervisorQueued = false;
+  #supervisorRaced = false;
   /** Each made-up turn's number: Stop and a reset end the one running, so its later steps do nothing. */
   #supervisorTurn = 0;
 
@@ -389,7 +440,7 @@ export class World {
     this.#cloned = new Map();
     this.#cloneFails = false;
     this.#relations = new Map();
-    this.#sessions = new Map(this.#baseSessions().map((each) => [each.sessionId, each]));
+    this.#sessions = new Map(this.#baseSessions(options.cloned ?? false).map((each) => [each.sessionId, each]));
     this.#recapsState = options.recaps ?? 'off';
     this.#recapCalls = this.#recapsState === 'spent' ? this.#recapBudget : 37;
     this.#recapping = new Set();
@@ -400,12 +451,15 @@ export class World {
     this.#supervisorTurn += 1;
     this.#supervisor = options.supervisor ?? 'none';
     this.#handoffs = [];
-    this.#approvals = options.approvals === 'long' ? [this.#longApproval()] : options.approvals === 'resume' ? [this.#resumeApproval()] : options.approvals ? this.#baseApprovals() : [];
+    this.#approvals = options.approvals === 'long' ? [this.#longApproval(), this.#longerApproval()] : options.approvals === 'resume' ? [this.#resumeApproval()] : options.approvals ? this.#baseApprovals() : [];
     const history = options.supervisorHistory ?? (this.#supervisor !== 'none' && this.#supervisor !== 'off');
     this.#supervisorEntries = history ? this.#supervisorTurns() : [];
     this.#supervisorOlder = history ? this.#supervisorOlderTurns() : [];
     this.#supervisorCost = history ? 0.0425 : 0;
     this.#supervisorTurnAt = history ? this.#ago(4) : undefined;
+    this.#supervisorContext = history ? SUPERVISOR_CONTEXT : undefined;
+    this.#supervisorQueued = options.supervisorQueued ?? false;
+    this.#supervisorRaced = options.supervisorRaced ?? false;
   }
 
   // --- The supervisor (W114) ---------------------------------------------------------------------
@@ -416,10 +470,11 @@ export class World {
     const state: SupervisorState = { status: this.#supervisor, approvals: [...this.#approvals] };
     if (this.#supervisorEntries.length > 0) state.sessionId = 'pt114-supervisor-session';
     if (this.#supervisor === 'held') state.error = SUPERVISOR_HELD_ERROR;
-    if (this.#supervisor === 'failed') state.error = SUPERVISOR_FAILED_ERROR;
+    if (this.#supervisor === 'failed') state.error = this.#supervisorQueued ? `${SUPERVISOR_FAILED_ERROR} ${SUPERVISOR_QUEUED_NOTE}` : SUPERVISOR_FAILED_ERROR;
     if (this.#supervisorTurnAt !== undefined) state.lastTurnAt = this.#supervisorTurnAt;
     if (this.#supervisorCost > 0) state.costUsd = this.#supervisorCost;
     if (this.#handoffs.length > 0) state.handoffs = [...this.#handoffs];
+    if (this.#supervisorContext !== undefined) state.contextTokens = this.#supervisorContext;
     return state;
   }
 
@@ -456,6 +511,8 @@ export class World {
       this.#supervisor = 'idle';
       this.#supervisorTurnAt = new Date().toISOString();
       this.#supervisorCost += 0.0099;
+      // Its newest call read the conversation again, a little longer each turn.
+      this.#supervisorContext = (this.#supervisorContext ?? 18_000) + 3_200;
     });
     return { result: 'taken', steps };
   }
@@ -473,6 +530,30 @@ export class World {
         },
       ],
     };
+  }
+
+  /**
+   * New conversation (SUPERVISOR_NEW_CONVERSATION_PATH, W136), as src/supervisor/supervisor.ts answers:
+   * refused, with its reason, while it's held, starting or working, while drafts wait, your messages waiting dropped;
+   * otherwise off, with the conversation, its last turn, its context and its hand-offs gone, and this
+   * run's cost kept.
+   */
+  supervisorNewConversation(): { result: 'refused'; error: string } | { result: 'done' } {
+    if (this.#supervisor === 'none') return { result: 'refused', error: 'The supervisor is off: pitwall was started with --no-supervisor.' };
+    if (this.#supervisor === 'held') return { result: 'refused', error: "Another session is running the supervisor's conversation, so pitwall leaves it alone. Free it as the alert says, then start a new conversation." };
+    if (this.#supervisor === 'starting') return { result: 'refused', error: 'The supervisor is starting. Start a new conversation once it has started.' };
+    if (this.#supervisor === 'working') return { result: 'refused', error: 'The supervisor is working on a turn of this conversation. Stop it, or wait for it to end, then start a new conversation.' };
+    if (this.#approvals.length > 0) return { result: 'refused', error: `${this.#approvals.length} drafts from this conversation wait for you. Send or don't send each one first, then start a new conversation.` };
+    if (this.#supervisorRaced) return { result: 'refused', error: SUPERVISOR_RACE_REFUSAL };
+    this.#supervisorQueued = false;
+    this.#supervisorTurn += 1;
+    this.#supervisor = 'off';
+    this.#supervisorEntries = [];
+    this.#supervisorOlder = [];
+    this.#supervisorTurnAt = undefined;
+    this.#supervisorContext = undefined;
+    this.#handoffs = [];
+    return { result: 'done' };
   }
 
   /** Stop (SUPERVISOR_INTERRUPT_PATH): its running turn stops, with Claude Code's notice. */
@@ -584,6 +665,19 @@ export class World {
       text: ['Please work through these before tonight\u00a0and tell me what failed:', ...steps, 'Thanks.'].join('\n'),
       at: this.#ago(3),
       expiresAt: this.#ago(-26),
+    };
+  }
+
+  /** A message longer than half the window shows (W136): 60 made-up lines, which scroll, with the length note. */
+  #longerApproval(): SupervisorApproval {
+    const steps = Array.from({ length: 58 }, (_, index) => `${index + 1}. Re-run the made-up check ${index + 1} and note what it says.`);
+    return {
+      id: SUPERVISOR_APPROVALS.longer,
+      kind: 'message',
+      to: NAMES.asked,
+      text: ['Here is the whole made-up checklist:', ...steps, 'Thanks.'].join('\n'),
+      at: this.#ago(2),
+      expiresAt: this.#ago(-27),
     };
   }
 
@@ -771,7 +865,8 @@ export class World {
       },
     });
     return [
-      made(RECAPPED.you, {}),
+      // W150's picture: the goal, what it's on and why, and the plan's line.
+      made(RECAPPED.you, { ...RECAP_PICTURE }),
       made(RECAPPED.stale, {
         summary: 'You asked it to review the made-up retry change. It reviewed it and asked whether to retry the failed batch now.',
         todos: [{ text: 'Say whether to retry the made-up failed batch now, or wait for tonight', owner: 'you' }],
@@ -784,6 +879,10 @@ export class World {
         todos: [{ text: 'Approve #19', owner: 'someone else' }],
         waitingOn: 'someone else',
         title: 'Tidy both made-up services',
+        // A picture with no plan (W150).
+        goal: 'Tidy both made-up services so they share one config loader.',
+        workingOn: '#19: the shared loader, which both services need before the old one can go.',
+        plan: '',
       }),
       made(RECAPPED.anotherSession, {
         summary: 'You asked it to add a made-up route. Its sub-agents are drafting the route and its tests.',
@@ -945,7 +1044,14 @@ export class World {
     const session = this.#sessions.get(sessionId);
     if (!session) return undefined;
     if (session.name === NAMES.running) return { sessionId, ...this.#working(sessionId) };
-    const entries = session.name === NAMES.conversation ? this.#everyKind() : session.name === NAMES.inApi ? this.#namingSubagents() : this.#short(session);
+    const entries =
+      session.name === NAMES.conversation
+        ? this.#everyKind()
+        : session.name === NAMES.inApi
+          ? this.#namingSubagents()
+          : session.name === NAMES.asked
+            ? [...this.#short(session), ...this.#repliedToSupervisor()]
+            : this.#short(session);
     return { sessionId, entries };
   }
 
@@ -1096,11 +1202,6 @@ export class World {
     this.#sessions.set(sessionId, { ...open, pid: 42_001, alive: true, status: 'idle', finished: false, lastActivityAt: new Date().toISOString() });
   }
 
-  /** Until the next reset, the session isn't listed, as after its transcript went (W118: an open view keeps what it showed). */
-  unlist(sessionId: string): void {
-    this.#sessions.delete(sessionId);
-  }
-
   /**
    * Until the next reset, the session's directory is `cwd`, as for one whose path has a `'` (W87). A
    * path under its group's `.claude/` keeps it in that group, as a worktree's does.
@@ -1120,6 +1221,33 @@ export class World {
     if (session) this.#sessions.set(sessionId, { ...session, ...change });
   }
 
+  /**
+   * Until the next reset, the session is flagged as not needing you (W153), or not. The real server
+   * drops a flag once what the session needs changes; need() leaves that to the part.
+   */
+  /** Snoozes it (W154), or takes the snooze off; with `ended`, as when the server ended it by itself. */
+  snooze(sessionId: string, snoozed: SessionSummary['snoozed'], ended?: SessionSummary['snoozeEnded']): void {
+    const session = this.#sessions.get(sessionId);
+    if (!session) return;
+    const { snoozed: _old, snoozeEnded: _end, ...rest } = session;
+    this.#sessions.set(sessionId, { ...rest, ...(snoozed === undefined ? {} : { snoozed }), ...(ended === undefined ? {} : { snoozeEnded: ended }) });
+  }
+
+  /** Until the next reset, the session proposes a new session (W163), or proposes nothing. */
+  spinOff(sessionId: string, spinOff: SessionSummary['spinOff']): void {
+    const session = this.#sessions.get(sessionId);
+    if (!session) return;
+    const { spinOff: _old, ...rest } = session;
+    this.#sessions.set(sessionId, spinOff === undefined ? rest : { ...rest, spinOff });
+  }
+
+  flag(sessionId: string, flagged: SessionSummary['flagged']): void {
+    const session = this.#sessions.get(sessionId);
+    if (!session) return;
+    const { flagged: _old, ...rest } = session;
+    this.#sessions.set(sessionId, flagged === undefined ? rest : { ...rest, flagged });
+  }
+
   /** What the index shows on a session's row after a relayed message: its latest exchange. */
   relayed(sessionId: string, exchange: RelayExchange): void {
     const session = this.#sessions.get(sessionId);
@@ -1134,7 +1262,7 @@ export class World {
     return new Date(this.#now - minutes * MINUTE).toISOString();
   }
 
-  #baseSessions(): SessionSummary[] {
+  #baseSessions(cloned: boolean): SessionSummary[] {
     let n = 0;
     const session = (name: string, extra: Partial<SessionSummary> = {}): SessionSummary => {
       n += 1;
@@ -1178,13 +1306,32 @@ export class World {
         relay: { sentAt: this.#ago(30), status: 'delivered', reply: { at: this.#ago(29), text: 'Thanks, looking at it now.' } },
         prLinks: [this.#link('opened', PRS.conflicts, 70), this.#link('opened', PRS.approved, 9 * 60), this.#link('mentioned', PRS.failing, 15)],
       }),
-      session(NAMES.conversation, { title: 'Add a made-up health route', lastUserPrompt: 'Add a made-up health route to the API, with a test.', prLinks: [this.#link('opened', PRS.failing, 26)] }),
+      // Context (W133): below the 200K threshold here, between the two on running2, over 400K on
+      // running3, and none on the rest, so their session view says "unavailable".
+      session(NAMES.conversation, { title: 'Add a made-up health route', lastUserPrompt: 'Add a made-up health route to the API, with a test.', contextTokens: 85_000, prLinks: [this.#link('opened', PRS.failing, 26)] }),
       job(NAMES.running, { prLinks: [this.#link('pushed', PRS.approved, 8 * 60)] }),
-      job(NAMES.running2),
-      job(NAMES.running3),
+      job(NAMES.running2, { contextTokens: 245_000 }),
+      job(NAMES.running3, { contextTokens: 612_000 }),
       job(NAMES.prompting, { status: 'waiting', state: 'blocked', waitingFor: 'permission prompt', needsYou: { reason: 'prompt' } }),
       job(NAMES.finished, { state: 'done', alive: false, pid: undefined, finished: true, lastActivityAt: this.#ago(95) }),
-      session(NAMES.fromRoot, { cwd: CODE, title: 'Tidy both made-up services', workedIn: [worked('api-server', 12, 140), worked('demo-app', 3, 60)], prLinks: [this.#link('pushed', PRS.quiet, 3 * 60)] }),
+      // With two roots it changed two repos under ~/oss most too, one with a long name, and runs 12 sub-agents (W149): Main repo still lists it
+      // under api-server, in ~/code's tab, its line 2 ending "also in" that repo "+1", which gives way rather than overflow at 375.
+      session(NAMES.fromRoot, {
+        cwd: CODE,
+        title: 'Tidy both made-up services',
+        workedIn: [
+          worked('api-server', 12, 140),
+          worked('demo-app', 3, 60),
+          ...(this.#roots === 2
+            ? [
+                { key: BLOG, label: 'blog', root: OSS, calls: 90, changes: 30, lastAt: this.#ago(2) },
+                { key: `${OSS}/pitwall-test-a-made-up-repository-with-a-long-name`, label: 'pitwall-test-a-made-up-repository-with-a-long-name', root: OSS, calls: 95, changes: 40, lastAt: this.#ago(2) },
+              ]
+            : []),
+        ],
+        ...(this.#roots === 2 ? { subagentsRunning: 12 } : {}),
+        prLinks: [this.#link('pushed', PRS.quiet, 3 * 60)],
+      }),
       session(NAMES.inApi, { cwd: API_SERVER, title: 'Add a made-up route', subagentsRunning: 2, prLinks: [this.#link('mentioned', PRS.conflicts, 60)] }),
       session(NAMES.blog, { cwd: BLOG, title: 'Draft the made-up release notes', status: 'waiting', waitingFor: 'input needed', needsYou: { reason: 'prompt' } }),
       ended(NAMES.ended, 2, { title: 'Tidy the made-up release notes', prLinks: [this.#link('prompted', PRS.quiet, 2 * 24 * 60)] }),
@@ -1199,6 +1346,8 @@ export class World {
       ended(NAMES.endedOldOnly, 20, { cwd: DOCS_SITE }),
       ended(NAMES.endedPr, 3, { cwd: API_SERVER, title: 'Add a made-up retry header', prLinks: [this.#link('opened', PRS.endedWork, 3 * 24 * 60)] }),
     ];
+    // Last, so every other session keeps its id.
+    if (cloned) all.push(session(NAMES.cloned, { cwd: DOCS_SITE, title: 'Try the made-up CLI', lastUserPrompt: 'Clone the made-up CLI here and run its tests.', workedIn: [worked('sdk-cli', 2, 40)] }));
     return all;
   }
 
@@ -1309,6 +1458,20 @@ export class World {
     return { entries: [...entries.slice(0, -1), done, { kind: 'assistant', at: new Date().toISOString(), markdown: true, text: 'The made-up export tests pass now.' }], turnEnded: true };
   }
 
+  /**
+   * NAMES.asked's exchange with the supervisor (W138), as the server reads it from a transcript: its
+   * message, ending with pitwall's line; the session's reply to it, To pitwall-supervisor; Claude
+   * Code's refusal, in pitwall's words; and the question the session ended its turn with.
+   */
+  #repliedToSupervisor(): ConversationEntry[] {
+    return [
+      { kind: 'cross-session', at: this.#ago(10), from: 'pitwall-supervisor', markdown: true, text: withSupervisorFooter('The user asked me to pass this on: please check the made-up CI run.') },
+      { kind: 'to-pitwall', recipient: 'supervisor', at: this.#ago(9), markdown: true, text: 'Checked: the made-up CI run is **green**.' },
+      { kind: 'notice', at: this.#ago(9), text: REFUSED_TO_SUPERVISOR_NOTICE },
+      { kind: 'assistant', at: this.#ago(8), markdown: true, text: 'The made-up CI run is green. Shall I merge it?' },
+    ];
+  }
+
   #short(session: SessionSummary): ConversationEntry[] {
     return [
       { kind: 'user', at: this.#ago(12), text: `A made-up prompt for ${session.name}: tidy the export job.` },
@@ -1322,7 +1485,13 @@ export class World {
       { kind: 'user', at: this.#ago(40), text: 'Add a made-up health route to the API, with a test.' },
       { kind: 'assistant', at: this.#ago(39), markdown: true, text: "I'll start with the routes file.\n\n- read `src/routes.ts`\n- add `GET /health`\n- add a test" },
       { kind: 'tool', at: this.#ago(38), toolName: 'Read', text: 'Read: src/routes.ts' },
-      { kind: 'assistant', at: this.#ago(37), markdown: true, text: 'The route is in. Running the tests now.' },
+      {
+        kind: 'assistant',
+        at: this.#ago(37),
+        markdown: true,
+        // A code block with a line longer than any window, which wraps rather than scrolling sideways (W137).
+        text: "The route is in. Running the tests now:\n\n```sh\nnpx vitest run src/routes.test.ts --reporter=verbose --testNamePattern='GET /health answers 200 with a small JSON body, and 405 for any other method'\n  # indented, kept as typed\n```",
+      },
       { kind: 'tool', at: this.#ago(36), toolName: 'Bash', text: 'Bash: npm test', toolError: true },
       { kind: 'tool', at: this.#ago(35), toolName: 'Edit', text: 'Edit: src/routes.test.ts' },
       { kind: 'tool', at: this.#ago(34), toolName: 'Bash', text: 'Bash: npm test' },

@@ -21,7 +21,7 @@ import { Stubbed } from './views.js';
 const noop = () => {};
 const ALL: Selection = { view: 'all' };
 
-const IDLE: SupervisorState = { status: 'idle', sessionId: 'pitwall-test-supervisor', approvals: [], lastTurnAt: ago(3), costUsd: 0.042 };
+const IDLE: SupervisorState = { status: 'idle', sessionId: 'pitwall-test-supervisor', approvals: [], lastTurnAt: ago(3), costUsd: 0.042, contextTokens: 84_010 };
 const HELD_ERROR =
   'A background session, 1a2b3c4d, is running the supervisor’s conversation, so pitwall can’t resume it. Stop it with `claude stop 1a2b3c4d`, then start the supervisor here.';
 const FAILED_ERROR = 'Made up: claude exited with code 1 as it started. pitwall keeps the conversation; Start runs it again.';
@@ -153,7 +153,7 @@ export function SupervisorSpecimens() {
       <Specimen title="Draft cards" note="Above the message box, oldest first: a message to a session, a new session in a directory, named, and a finished session resumed with a message (W127). Each one's text as text, in <bdi>, never markdown; when it's declined if you don't answer; Send, Edit and Don't send." frame="view">
         <View state={{ ...IDLE, approvals: APPROVALS }} />
       </Specimen>
-      <Specimen title="A long draft" note="Eight lines, then its text scrolls, a Tab stop while it does; past 40% of the view, the cards scroll under their heading." frame="view">
+      <Specimen title="A long draft" note="Eight lines, then its text scrolls, a Tab stop while it does; past 70% of the view, the cards scroll under their heading." frame="view">
         <View state={{ ...IDLE, approvals: [LONG_DRAFT, SUPERVISOR_SPAWN] }} />
       </Specimen>
       <Specimen title="Editing" note="Edit: the text in place, with focus in it, its count from 80% of 20,000, and Send edit and Cancel. Escape cancels the edit, not the view." frame="view">

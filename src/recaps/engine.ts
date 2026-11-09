@@ -1,15 +1,17 @@
 // The recap engine (M5, W110; spike 010; W121): a short `claude -p` call per session that sums up
 // why it was started and where it is now, and lists its to-dos in order, each with who it waits on,
-// kept in memory only.
+// kept in memory and, since W132, on disk (store.ts), so a restart doesn't make them all again.
 //
 // Which sessions, and when:
 //
 //   automatically   a listed session whose process is running (`alive`), not ended or finished, with
 //                   a readable transcript, once its turn has ended (the transcript's turn mark, as
 //                   W69 reads it, SessionFacts.turnEnded; Claude Code's status when the transcript
-//                   has none) and it's been idle RECAP_DEBOUNCE_MS since activity newer than its
-//                   last recap's `throughAt`. pitwall's own sessions (the relay, recap calls) are
-//                   never listed, and sub-agents aren't sessions in the snapshot
+//                   has none) and it's been idle since activity newer than its last recap's
+//                   `throughAt`: RECAP_DEBOUNCE_MS for its first recap, RECAP_UPDATE_DEBOUNCE_MS for
+//                   an update (W132), or RECAP_DEBOUNCE_MS for an update too when it's a background
+//                   job whose state is `done` with its process alive (W162). pitwall's own sessions
+//                   (the relay, recap calls) are never listed, and sub-agents aren't sessions in the snapshot
 //   for its PR      a listed session that has finished or ended, isn't stale, has a readable
 //                   transcript and owns an open PR that needs you (prOwner(), prNeedsAttention(), as
 //                   the page's Needs you counts it, W106), by the PR list start() is given (W128):
@@ -25,9 +27,22 @@
 // PAUSE_AFTER_FAILURES failures in a row nothing automatic runs for a while, so a broken `claude`
 // can't spend the day's budget.
 //
+// Kept recaps (W132, store.ts): each recap pitwall makes, and each `throughAt` moved on without a
+// call, is written to `$PITWALL_HOME/recap-store/<session id>.json`, and they're loaded when the
+// engine is made, so a session whose transcript hasn't moved past its recap's `throughAt` isn't
+// recapped again after a restart, a finished one for its PR included. A kept recap is dropped when
+// its session, listed in an earlier snapshot of this run, leaves a snapshot whose listing worked, and
+// at load once it's older than RECAP_KEEP_MS. With `--no-recaps` there's no engine, so nothing is
+// read or written.
+//
 // The call is an update (the previous recap and the turns since) when there's a previous recap and
 // turns since it, else a first recap (src/recaps/input.ts). Activity with no turn the input shows,
-// such as a tool's result, moves the recap's `throughAt` on without a call.
+// such as a tool's result, moves the recap's `throughAt` on without a call. Since W150 (the recap
+// strip gives the picture) a first recap reads as much as a plan status does, up to PLAN_TURNS_CAP,
+// and a previous recap without W150's goal, working on and plan, or a compaction summary newer than
+// the previous recap's `throughAt`, makes the call a first recap, so the picture is read again.
+// Both calls, and a plan status, also name the session's PRs from the PR list start() is given
+// (input.ts sessionPrs()), which runs no gh of its own.
 //
 // The call runs from one fixed 0700 directory, `$PITWALL_HOME/recap`, with recapArgs() and
 // recapEnvironment() (prompt.ts), no shell and a timeout, once `claude --version` says it's at
@@ -61,6 +76,7 @@ import {
   RECAP_DAILY_BUDGET,
   RECAP_DEBOUNCE_MS,
   RECAP_FIELD_MAX,
+  RECAP_UPDATE_DEBOUNCE_MS,
   PLAN_TURNS_CAP,
   prNeedsAttention,
   prOwner,
@@ -79,7 +95,8 @@ import { modelRejectedMessage } from '../server/work.js';
 import { checkClaudeVersion, prepareRelayDir } from '../server/relay.js';
 import { budgetFile, type BudgetStore } from './budget.js';
 import { runRecapCall, spawnRecapChild, type CallOutcome, type RecapSpawner } from './call.js';
-import { firstRecapInput, planStatusInput, TurnCollector, updateRecapInput, type RelayMessages } from './input.js';
+import { recapStoreDir, type RecapStore } from './store.js';
+import { firstRecapInput, planStatusInput, sessionPrs, TurnCollector, updateRecapInput, type RelayMessages, type SessionPrs } from './input.js';
 import {
   CALL_FAILED,
   ENVELOPE_UNREADABLE,
@@ -87,6 +104,8 @@ import {
   PLAN_ANSWER_INVALID,
   parseEnvelope,
   parsePlanAnswer,
+  hasPicture,
+  leadTodo,
   readRecapAnswer,
   RECAP_REFUSALS,
   type RecapRepair,
@@ -103,7 +122,7 @@ import {
 /** What the engine reads from the index. */
 export type RecapIndex = Pick<Indexer, 'latest' | 'subscribe' | 'conversation'>;
 
-/** What the engine reads of your open PRs (src/prs, PrSource), for a finished session's recap (W128). */
+/** What the engine reads of your open PRs (src/prs, PrSource): for a finished session's recap (W128), and each input's PRs (W150). */
 export interface RecapPrs {
   latest(): PullRequestList;
   subscribe(listener: (list: PullRequestList) => void): () => void;
@@ -192,8 +211,10 @@ export interface RecapEngineOptions {
   prepareDir?: (dir: string) => string;
   /** Milliseconds since the epoch. */
   now?: () => number;
-  /** Default RECAP_DEBOUNCE_MS. */
+  /** How long a session with no recap waits after its turn ends. Default RECAP_DEBOUNCE_MS. */
   debounceMs?: number;
+  /** How long a session with a recap waits after its turn ends for an update. Default RECAP_UPDATE_DEBOUNCE_MS. */
+  updateDebounceMs?: number;
   /** Default RECAP_DAILY_BUDGET. */
   budget?: number;
   /** Default 2. */
@@ -207,7 +228,9 @@ export interface RecapEngineOptions {
   relay?: RelayMessages;
   /** Where the day's count is kept. Default `recap-budget.json` beside `dir`, in pitwall's home (budget.ts). */
   budgetStore?: BudgetStore;
-  /** How many conversation pages a recap reads at most. Default 8. */
+  /** Where recaps are kept across restarts (W132). Default `recap-store/` beside `dir`, in pitwall's home (store.ts). */
+  recapStore?: RecapStore;
+  /** How many conversation pages a recap reads at most. Default 8; a first recap twice it, an update four times (W152). */
   maxPages?: number;
   /** Default: console.error with a `pitwall: recaps:` prefix. Never given session content. */
   log?: (message: string) => void;
@@ -315,12 +338,14 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   const prepareDir = options.prepareDir ?? prepareRelayDir;
   const now = options.now ?? Date.now;
   const debounceMs = options.debounceMs ?? RECAP_DEBOUNCE_MS;
+  const updateDebounceMs = options.updateDebounceMs ?? RECAP_UPDATE_DEBOUNCE_MS;
   const budget = options.budget ?? RECAP_DAILY_BUDGET;
   const maxConcurrent = Math.max(1, options.maxConcurrent ?? 2);
   const timeoutMs = options.timeoutMs ?? 60_000;
   const maxPages = Math.max(1, options.maxPages ?? 8);
   const log = options.log ?? ((message: string) => console.error(`pitwall: recaps: ${message}`));
   const store = options.budgetStore ?? budgetFile(path.dirname(dir), log);
+  const kept = options.recapStore ?? recapStoreDir(path.dirname(dir), log);
 
   let index: RecapIndex | undefined;
   let unsubscribe: (() => void) | undefined;
@@ -329,8 +354,10 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   let closed = false;
   let changes = 0;
   const listeners = new Set<() => void>();
-  /** pitwall's recaps, by session id: source 'pitwall', never `stale`, which is worked out when shown. */
-  const recaps = new Map<string, SessionRecap>();
+  /** pitwall's recaps, by session id: source 'pitwall', never `stale`, which is worked out when shown. Loaded from `kept` (W132). */
+  const recaps = loadKept();
+  /** Sessions listed in a snapshot of this run whose listing worked: one that leaves such a snapshot has left for good. */
+  let seen = new Set<string>();
   /** Each session's newest plan status (W123), by session id, in memory only. */
   const plans = new Map<string, PlanStatus>();
   /** Plan status calls running, by session id: at most one each. */
@@ -362,6 +389,19 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   /** Aborted by close(), which stops the calls that are running. */
   const closing = new AbortController();
   sync();
+
+  /** The recaps kept on disk (W132), with what couldn't be used counted in the log, never shown. */
+  function loadKept(): Map<string, SessionRecap> {
+    const loaded = kept.load(now());
+    if (loaded.ignored > 0) log(`ignored ${loaded.ignored} kept recap${loaded.ignored === 1 ? '' : 's'} pitwall couldn't use; those sessions get new ones.`);
+    return loaded.recaps;
+  }
+
+  /** Sets the session's recap, in memory and on disk. */
+  function keep(sessionId: string, recap: SessionRecap): void {
+    recaps.set(sessionId, recap);
+    kept.save(sessionId, recap);
+  }
 
   function addRealpath(candidate: string): void {
     try {
@@ -431,9 +471,21 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     // A finished session gets no new activity, so a call that keeps failing would retry every
     // RETRY_AFTER_FAILURE_MS all day (#130's review): for one, a failure waits for new activity, or a refresh.
     if (failed !== undefined && failed.throughMs >= activity && (forPr || nowMs - failed.atMs < RETRY_AFTER_FAILURE_MS)) return false;
-    if (nowMs - activity < debounceMs) return false;
+    // A first recap 5 minutes after the turn ends; an update, which a recap stands in for meanwhile, 15 (W132),
+    // unless the job says it's done (W162): it won't take another turn until you prompt it, so 5.
+    if (nowMs - activity < (previous === undefined || jobDone(session) ? debounceMs : updateDebounceMs)) return false;
     // A finished session has no turn running, whatever its transcript's last mark says.
     return forPr || turnOver(session);
+  }
+
+  /**
+   * A background job that says `done` while its process is alive (W162); due() checks its turn has ended.
+   * A finished job's last message often asks you to act, and the out-of-date recap can't say so
+   * (needsYouOf()), so its update shouldn't wait for the 15 minutes meant for sessions that take a
+   * turn every few minutes. A `working` or `blocked` job keeps the long wait.
+   */
+  function jobDone(session: SessionSummary): boolean {
+    return session.kind === 'background' && session.state === 'done' && session.alive;
   }
 
   /** The turn has ended: by the transcript's mark, or, when it has none, by Claude Code's status. */
@@ -453,12 +505,22 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   function schedule(snapshot: IndexSnapshot): void {
     if (closed) return;
     if (rollDay()) changed();
+    sources.retain(new Set([...facts.values()].flatMap((each) => (each.file === undefined ? [] : [each.file]))));
+    // A failed listing keeps the last sessions, or has none at start: nothing is forgotten by it (W132).
+    if (!snapshot.source.ok) return pump();
     const listed = new Set<string>();
     for (const group of snapshot.groups) for (const session of group.sessions) listed.add(session.sessionId);
-    // Only listed sessions are kept: one that comes back later gets a first recap.
-    for (const map of [recaps, failures, plans]) for (const id of map.keys()) if (!listed.has(id)) map.delete(id);
-    sources.retain(new Set([...facts.values()].flatMap((each) => (each.file === undefined ? [] : [each.file]))));
-    if (!snapshot.source.ok) return pump();
+    // Only listed sessions' failures and plan statuses are kept: one that comes back later starts again.
+    for (const map of [failures, plans]) for (const id of map.keys()) if (!listed.has(id)) map.delete(id);
+    // A recap is forgotten, in memory and on disk, once its session was listed this run and has left.
+    // A kept one whose session isn't listed yet waits: another pitwall on this home may list it, under
+    // other roots, and this one may later. RECAP_KEEP_MS bounds what waits (store.ts).
+    for (const id of seen) {
+      if (listed.has(id)) continue;
+      recaps.delete(id);
+      kept.remove(id);
+    }
+    seen = listed;
     const nowMs = now();
     if (!spent() && nowMs >= pausedUntil) {
       const owners = ownersNeedingYou(snapshot, prSource?.latest());
@@ -548,32 +610,41 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     }
 
     const previous = recaps.get(job.sessionId);
-    const update = previous !== undefined && !(startedActivity <= parseMs(previous.throughAt));
     const read = await sources.read(file);
+    // A first recap when there's no previous one, nothing since it, no picture in it (W150), or a
+    // compaction since it, after which the picture is read again (W150).
+    const compactedSince = previous !== undefined && read.compaction?.at !== undefined && parseMs(read.compaction.at) > parseMs(previous.throughAt);
+    const update = previous !== undefined && !(startedActivity <= parseMs(previous.throughAt)) && hasPicture(previous) && !compactedSince;
     const collector = new TurnCollector({
       ...(options.relay === undefined ? {} : { relay: options.relay }),
-      ...(update ? { after: previous.throughAt } : {}),
+      ...(update ? { after: previous.throughAt } : { cap: PLAN_TURNS_CAP }),
     });
-    await collectTurns(source, job.sessionId, collector);
+    // A first recap reads a plan status's turns, three times an update's, so up to twice its pages.
+    // An update reads back to the previous recap for your lines past its cap (W152), up to four times
+    // its pages; one with less since the previous recap stops there.
+    await collectTurns(source, job.sessionId, collector, update ? 4 * maxPages : 2 * maxPages);
     if (closed) return;
     const throughMs = Math.max(Number.isNaN(startedActivity) ? 0 : startedActivity, collector.newestMs ?? 0);
 
-    if (update && collector.count === 0) {
+    if (update && collector.turns === 0) {
       // New activity, but no turn the input would show: the recap still holds, through it.
-      recaps.set(job.sessionId, { ...previous, throughAt: new Date(throughMs).toISOString() });
+      keep(job.sessionId, { ...previous, throughAt: new Date(throughMs).toISOString() });
       return changed();
     }
-    if (!update && collector.count === 0 && read.firstPrompt === undefined) {
+    if (!update && collector.turns === 0 && read.firstPrompt === undefined) {
       return fail(job.sessionId, throughMs, 'This session has nothing pitwall can recap yet.', 'quiet');
     }
+    const prs = prsOf(session);
+    const withPrs = prs === undefined ? {} : { prs };
     const input = update
-      ? updateRecapInput({ ...(read.firstPrompt === undefined ? {} : { firstPrompt: read.firstPrompt }), previous: answerOf(previous), turns: collector.text() }, options.randomId)
+      ? updateRecapInput({ ...(read.firstPrompt === undefined ? {} : { firstPrompt: read.firstPrompt }), previous: answerOf(previous), turns: collector.text(), ...withPrs }, options.randomId)
       : firstRecapInput(
           {
             ...(read.firstPrompt === undefined ? {} : { firstPrompt: read.firstPrompt }),
             ...(read.awaySummary === undefined ? {} : { awaySummary: read.awaySummary }),
             ...(read.compaction === undefined ? {} : { compaction: read.compaction }),
             turns: collector.text(),
+            ...withPrs,
           },
           options.randomId,
         );
@@ -619,7 +690,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     // What pitwall repaired in the answer rather than refuse it (W126): which repair, never the answer.
     if (result.repaired !== undefined && result.repaired.length > 0) log(`a recap answer was repaired (${result.repaired.join(', ')}).`);
     const at = now();
-    recaps.set(job.sessionId, {
+    keep(job.sessionId, {
       ...result.answer,
       at: new Date(at).toISOString(),
       throughAt: new Date(throughMs).toISOString(),
@@ -631,6 +702,15 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     lastError = undefined;
     lastErrorAt = undefined;
     changed();
+  }
+
+  /** The session's PRs for an input (W150): its strong links matched with the latest PR list, or none. */
+  function prsOf(session: SessionSummary): SessionPrs | undefined {
+    try {
+      return sessionPrs(session.prLinks, prSource?.latest());
+    } catch {
+      return undefined;
+    }
   }
 
   /** The latest turns, newest first through the conversation's pages, until the collector is done. Fails soft. */
@@ -645,10 +725,14 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
       }
       if (read === undefined) break;
       for (let i = read.entries.length - 1; i >= 0; i--) if (!collector.add(read.entries[i]!)) break;
-      if (read.before === undefined) break;
+      if (read.before === undefined) {
+        collector.finish();
+        return;
+      }
       before = read.before;
     }
-    collector.finish();
+    // Out of pages, or a page that couldn't be read, with older turns left: an update marks it (W152).
+    collector.finish(true);
   }
 
   // ---------------------------------------------------------------- one plan status (W123)
@@ -659,7 +743,8 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
    * against the day's budget. Its failures are its own: they don't set RecapHealth's error or pause
    * recaps, since the strip says why at once.
    */
-  async function runPlan(sessionId: string, file: string, throughFrom: number): Promise<PlanStatusOutcome> {
+  async function runPlan(session: SessionSummary, file: string, throughFrom: number): Promise<PlanStatusOutcome> {
+    const { sessionId } = session;
     const source = index;
     if (source === undefined) return { kind: 'failed', reason: "pitwall hasn't read the sessions yet. Try again in a moment." };
     const read = await sources.read(file);
@@ -677,12 +762,14 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
       return { kind: 'made', status };
     };
     // Nothing to read: no plan, without a call.
-    if (collector.count === 0 && read.firstPrompt === undefined && read.compaction === undefined) return keep({ found: false });
+    if (collector.turns === 0 && read.firstPrompt === undefined && read.compaction === undefined) return keep({ found: false });
+    const prs = prsOf(session);
     const input = planStatusInput(
       {
         ...(read.firstPrompt === undefined ? {} : { firstPrompt: read.firstPrompt }),
         ...(read.compaction === undefined ? {} : { compaction: read.compaction }),
         turns: collector.text(),
+        ...(prs === undefined ? {} : { prs }),
       },
       options.randomId,
     );
@@ -789,7 +876,9 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
 
   /** Needs you's 'recap' reason, when it holds and no earlier reason does (NeedsYou's order). */
   function needsYouOf(session: SessionSummary, recap: SessionRecap): NeedsYou | undefined {
-    const next = recap.todos.find((todo) => todo.owner === 'you')?.text;
+    // Only when your step is the next one, not a later to-do of yours behind someone else's (W146).
+    const lead = leadTodo(recap.todos);
+    const next = lead?.owner === 'you' ? lead.text : undefined;
     if (recap.source !== 'pitwall' || recap.stale === true || recap.waitingOn !== 'you' || next === undefined || next === '') return undefined;
     if (session.stale || session.finished || working(session)) return undefined;
     const reason = session.needsYou?.reason;
@@ -847,7 +936,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
       // One call per session, and a few at a time in all, on top of recaps' own maxConcurrent.
       if (planRunning.size >= PLAN_MAX_CONCURRENT) return Promise.resolve({ kind: 'running', retryAfterSeconds: 5, others: true });
       if (spent()) return Promise.resolve({ kind: 'spent', retryAfterSeconds: secondsToMidnight(now()) });
-      const made = runPlan(session.sessionId, file, parseMs(session.lastActivityAt))
+      const made = runPlan(session, file, parseMs(session.lastActivityAt))
         .catch((error: unknown): PlanStatusOutcome => {
           log(`a plan status failed unexpectedly: ${error instanceof Error ? error.message : String(error)}`);
           return { kind: 'failed', reason: 'pitwall hit an unexpected error while making a plan status.' };
@@ -913,9 +1002,11 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   };
 }
 
-/** A stored recap's answer fields, for an update's input. */
+/** A stored recap's answer fields, for an update's input: W150's goal, working on and plan when it has them. */
 function answerOf(recap: SessionRecap): RecapAnswer {
-  return { summary: recap.summary, todos: recap.todos.map(({ text, owner }) => ({ text, owner })), waitingOn: recap.waitingOn, title: recap.title };
+  const answer: RecapAnswer = { summary: recap.summary, todos: recap.todos.map(({ text, owner }) => ({ text, owner })), waitingOn: recap.waitingOn, title: recap.title };
+  if (hasPicture(recap)) Object.assign(answer, { goal: recap.goal, workingOn: recap.workingOn, plan: recap.plan });
+  return answer;
 }
 
 /** What a call's process gave: a recap, or why not, in pitwall's words, with its cost when it reported one. */

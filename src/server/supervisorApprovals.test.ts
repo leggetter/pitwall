@@ -11,7 +11,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import type { AgentRow, AgentsResult } from '../index/agents.js';
 import type { Indexer } from '../index/index.js';
-import { MCP_PATH, supervisorApprovalPath, WS_PATH, type IndexSnapshot, type SavedPermission, type ServerMessage, type SessionSummary } from '../shared/protocol.js';
+import { MCP_PATH, SUPERVISOR_MESSAGE_FOOTER, SUPERVISOR_PROPOSAL_MAX, supervisorApprovalPath, withSupervisorFooter, WS_PATH, type IndexSnapshot, type SavedPermission, type ServerMessage, type SessionSummary } from '../shared/protocol.js';
 import { createApprovalQueue, DECLINED_MESSAGE, timeoutMessage, type ApprovalQueue } from '../supervisor/approvals.js';
 import { pitwallOrigin, proofFor } from '../test/proof.js';
 import { fakeSupervisor, type FakeSupervisor } from '../test/supervisor.js';
@@ -19,7 +19,9 @@ import type { CommandOptions, CommandResult } from './command.js';
 import type { RunningServer } from './index.js';
 import { startServerWithInternals } from './server.js';
 import { checkMessage, recipientNames, sameNameCount } from './supervisorActions.js';
+import { hiddenTextProblem } from '../shared/hiddenText.js';
 import { validateSpawnRequest } from './actions.js';
+import { SUPERVISOR_APPROVAL_MAX_BODY_BYTES } from './supervisorRoutes.js';
 
 const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
 const MCP_TOKEN = 'made-up-mcp-token-0123456789abcdefghijklmnopq';
@@ -247,7 +249,7 @@ describe('a message to a session, behind your click', () => {
     const res = await decide(server.port, apiKey, card.id, { decision: 'send' });
     expect(res.status).toBe(200);
     // Never the model's summary or its content preview: Claude Code fills the preview in from the message.
-    expect(await answer).toEqual({ behavior: 'allow', updatedInput: { to: TARGET, message: 'hello from a test' } });
+    expect(await answer).toEqual({ behavior: 'allow', updatedInput: { to: TARGET, message: withSupervisorFooter('hello from a test') } });
     expect(queue.list()).toEqual([]);
     expect(queue.takeNotes()).toEqual([]);
     // A hand-off the panel opens the session from (W124), on the snapshot too.
@@ -270,8 +272,38 @@ describe('a message to a session, behind your click', () => {
     expect((await decide(server.port, apiKey, id, { decision: 'edit', text: 'a\u0000b' })).status).toBe(400);
     expect(queue.list()).toHaveLength(1);
     expect((await decide(server.port, apiKey, id, { decision: 'edit', text: 'your own words' })).status).toBe(200);
-    expect(await answer).toEqual({ behavior: 'allow', updatedInput: { to: TARGET, message: 'your own words' } });
-    expect(queue.takeNotes()).toEqual([`the user edited your message to "${TARGET}" before it was sent. What was sent: "your own words"`]);
+    expect(await answer).toEqual({ behavior: 'allow', updatedInput: { to: TARGET, message: withSupervisorFooter('your own words') } });
+    expect(queue.takeNotes()).toEqual([`the user edited your message to "${TARGET}" before it was sent. What was sent, before pitwall's line: "your own words"`]);
+    ws.close();
+  });
+
+  it("ends what goes with pitwall's fixed line (W138), after the checks: the card, an edit and the cap are your text alone", async () => {
+    // The line itself: fixed, pitwall's, saying who sent it, that you approved it, and that a reply would be refused.
+    expect(SUPERVISOR_MESSAGE_FOOTER).toBe(
+      "Sent by pitwall's supervisor after the user approved it. The supervisor takes no messages from sessions, so a reply to it will be refused: answer here, in this session, where the user reads it.",
+    );
+    expect(withSupervisorFooter('Hi.')).toBe(`Hi.\n\n${SUPERVISOR_MESSAGE_FOOTER}`);
+    expect(hiddenTextProblem(withSupervisorFooter('Hi.'), 'message')).toBeUndefined();
+    expect(/^[\x20-\x7e]+$/.test(SUPERVISOR_MESSAGE_FOOTER)).toBe(true);
+
+    const { server, queue } = await start();
+    const { ws, apiKey } = await authedClient(server.port);
+    // A message at the cap goes whole, with the line after it: the cap is the text you read.
+    const full = 'x'.repeat(SUPERVISOR_PROPOSAL_MAX);
+    const atCap = approve(server.port, 'SendMessage', sendInput(TARGET, full, { content: undefined }));
+    await until(() => queue.list().length === 1);
+    expect(queue.list()[0]).toMatchObject({ kind: 'message', text: full });
+    expect((await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send' })).status).toBe(200);
+    expect(await atCap).toEqual({ behavior: 'allow', updatedInput: { to: TARGET, message: withSupervisorFooter(full) } });
+
+    // A draft that copies the line still gets pitwall's at the end; an edit can't leave it out.
+    const edited = approve(server.port, 'SendMessage', sendInput(TARGET, `Draft.\n\n${SUPERVISOR_MESSAGE_FOOTER}`, { content: undefined }));
+    await until(() => queue.list().length === 1);
+    const id = queue.list()[0]!.id;
+    expect((await decide(server.port, apiKey, id, { decision: 'edit', text: 'Only this.' })).status).toBe(200);
+    expect(await edited).toEqual({ behavior: 'allow', updatedInput: { to: TARGET, message: withSupervisorFooter('Only this.') } });
+    // What the supervisor is told was sent is your text, as the card showed it.
+    expect(queue.takeNotes()).toEqual([`the user edited your message to "${TARGET}" before it was sent. What was sent, before pitwall's line: "Only this."`]);
     ws.close();
   });
 
@@ -369,11 +401,11 @@ describe('a message to a session, behind your click', () => {
     const answer = approve(server.port, 'SendMessage', sendInput(TARGET, long, { content: `${long.slice(0, 49)}…` }));
     await until(() => queue.list().length === 1);
     await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send' });
-    expect(await answer).toEqual({ behavior: 'allow', updatedInput: { to: TARGET, message: long } });
+    expect(await answer).toEqual({ behavior: 'allow', updatedInput: { to: TARGET, message: withSupervisorFooter(long) } });
     const bare = approve(server.port, 'SendMessage', { to: TARGET, message: 'hi' });
     await until(() => queue.list().length === 1);
     await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send' });
-    expect(await bare).toEqual({ behavior: 'allow', updatedInput: { to: TARGET, message: 'hi' } });
+    expect(await bare).toEqual({ behavior: 'allow', updatedInput: { to: TARGET, message: withSupervisorFooter('hi') } });
     ws.close();
   });
 
@@ -848,7 +880,7 @@ describe('text that doesn’t show as itself (W120, W116’s F1)', () => {
     const answer = approve(server.port, 'SendMessage', sendInput(TARGET, text));
     await until(() => queue.list().length === 1);
     expect((await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send' })).status).toBe(200);
-    expect(await answer).toEqual({ behavior: 'allow', updatedInput: { to: TARGET, message: text } });
+    expect(await answer).toEqual({ behavior: 'allow', updatedInput: { to: TARGET, message: withSupervisorFooter(text) } });
     ws.close();
   });
 });
@@ -933,6 +965,10 @@ describe('the decision route’s checks', () => {
     expect((await decide(server.port, apiKey, id, { decision: 'send', text: 'extra' })).status).toBe(400);
     expect((await decide(server.port, apiKey, id, { decision: 'edit' })).status).toBe(400);
     expect((await decide(server.port, apiKey, id, { decision: 'edit', text: 'x'.repeat(20_001) })).status).toBe(413);
+    // An answer's body stays within 160 KiB when a message's grew (W134), since an edit is at most 20,000 characters.
+    const huge = await decide(server.port, apiKey, id, { decision: 'edit', text: 'x'.repeat(SUPERVISOR_APPROVAL_MAX_BODY_BYTES) });
+    expect(huge.status).toBe(413);
+    expect(JSON.parse(huge.body)).toEqual({ ok: false, error: 'The answer is too large.' });
     expect((await decide(server.port, apiKey, 'ffffffff', { decision: 'send' })).status).toBe(404);
     // None of those answered it.
     expect(queue.list()).toHaveLength(1);

@@ -1,15 +1,14 @@
 // Session rows and the Finished section (W19, W21, W23): the real SessionRow and FinishedSection,
 // with fixture sessions, in the session list's own surface, and rows with their star toggles (W53),
-// rows with their Not needed now toggles, marked and not (W88), ended sessions' rows and Show older
+// rows with their snooze menus, snoozed and not, and back from a snooze (W154), ended sessions' rows and Show older
 // among them (W67). Each row is shown as it is in a group,
 // and as it is in Needs you and All sessions, where line 2 starts with its group's label. Each
 // specimen keeps its own open state, so it can be clicked.
 
 import { useState } from 'react';
-import type { SessionGroup, SessionSummary } from '../../../src/shared/protocol.js';
+import type { SessionGroup, SessionSnooze, SessionSummary } from '../../../src/shared/protocol.js';
 import { FinishedSection, type OlderEnded } from '../components/SessionList.js';
 import { SessionRow } from '../components/SessionRow.js';
-import { withMark, withoutMark, type NotNeeded } from '../notNeeded.js';
 import { listScope, type Listed } from '../sessions.js';
 import { ago, APP_DIR, AWKWARD_ROWS, ENDED_ROWS, FINISHED_ROWS, group, JOBS_DIR, OLDER_ENDED_ROWS, ROOT, session, STATE_ROWS, STATUS_ROWS, statusRow, WORKED_SNAPSHOT } from './fixtures.js';
 import { Specimen } from './kit.js';
@@ -37,29 +36,39 @@ export const acrossGroups = (sessions: SessionSummary[]): Listed[] =>
 /**
  * Rows as the session list shows them; clicking one marks it open. With `starred`, each has its star
  * toggle, the ids in it starred to start with, and pressing one stars or unstars it (W53). With
- * `notNeeded`, each that needs you has its Not needed now toggle, the sessions in it marked to start
- * with, and pressing one marks it or takes the mark away (W88); with `leave` too, a marked row leaves,
- * as in Needs you.
+ * `snoozed`, each that needs you has its snooze menu, the sessions in it snoozed to start with, Later,
+ * and choosing from one snoozes it, or pressing its toggle wakes it (W154), here and nowhere else; with
+ * `leave` too, a snoozed row leaves, as in Needs you.
  */
 export function Rows({
   rows,
   showGroup = false,
   openSessionId,
   starred,
-  notNeeded,
+  snoozed,
   leave = false,
 }: {
   rows: Listed[];
   showGroup?: boolean;
   openSessionId?: string;
   starred?: readonly string[];
-  notNeeded?: readonly SessionSummary[];
+  snoozed?: readonly SessionSummary[];
   leave?: boolean;
 }) {
   const [open, setOpen] = useState(openSessionId);
-  const [marks, setMarks] = useState<NotNeeded>(() => (notNeeded ?? []).reduce<NotNeeded>((current, marked) => withMark(current, marked), new Map()));
-  const onNotNeeded = (session: SessionSummary, on: boolean) => setMarks((current) => (on ? withMark(current, session) : withoutMark(current, session.sessionId)));
-  const shownRows = leave ? rows.filter(({ session }) => !marks.has(session.sessionId)) : rows;
+  const [snoozes, setSnoozes] = useState<ReadonlyMap<string, SessionSnooze>>(() => new Map((snoozed ?? []).map((session) => [session.sessionId, { at: SNOOZED_AT }])));
+  const onSnooze = (session: SessionSummary, until: Date | undefined | false) =>
+    setSnoozes((current) => {
+      const next = new Map(current);
+      if (until === false) next.delete(session.sessionId);
+      else next.set(session.sessionId, { at: SNOOZED_AT, ...(until === undefined ? {} : { until: until.toISOString() }) });
+      return next;
+    });
+  const withSnooze = (session: SessionSummary): SessionSummary => {
+    const snooze = snoozes.get(session.sessionId);
+    return snooze === undefined ? session : { ...session, snoozed: snooze };
+  };
+  const shownRows = leave ? rows.filter(({ session }) => !snoozes.has(session.sessionId)) : rows;
   const [stars, setStars] = useState<ReadonlySet<string>>(() => new Set(starred));
   const onStar = (id: string, on: boolean) =>
     setStars((current) => {
@@ -75,15 +84,14 @@ export function Rows({
           {shownRows.map(({ session, group: shown }) => (
             <SessionRow
               key={session.sessionId}
-              session={session}
+              session={withSnooze(session)}
               group={shown}
               showGroup={showGroup}
               onOpen={(id) => setOpen((current) => (current === id ? undefined : id))}
               isOpen={session.sessionId === open}
               starred={stars.has(session.sessionId)}
               onStar={starred ? onStar : undefined}
-              notNeeded={marks}
-              onNotNeeded={notNeeded ? onNotNeeded : undefined}
+              onSnooze={snoozed ? onSnooze : undefined}
             />
           ))}
         </ul>
@@ -174,32 +182,43 @@ function StarredStates({ showGroup }: { showGroup: boolean }) {
   );
 }
 
-/** The rows that need you, one for each kind of need, for the Not needed now specimens (W88). */
+/** When the gallery's snoozes were made. */
+const SNOOZED_AT = '2026-11-06T10:00:00.000Z';
+
+/** The rows that need you, one for each kind of need, for the snooze specimens (W154). */
 const NEEDING_ROWS = [statusRow('waiting'), statusRow('blocked'), statusRow('asked-you')];
 
+/** The same rows, back from a snooze: one whose time was up, one woken, and one more woken. */
+const BACK_ROWS = NEEDING_ROWS.map((session, index) => ({ ...session, snoozeEnded: { at: SNOOZED_AT, why: index === 0 ? ('time' as const) : ('woken' as const) } }));
+
 /**
- * Not needed now (W88): rows that need you, with the toggle on hover or focus, and rows marked not
- * needed now, quiet: no bar, the badge outlined, "Not needed now" on line 2, the toggle filled.
+ * Snooze (W154): rows that need you, with the snooze menu on hover or focus, rows snoozed, quiet: no
+ * bar, the badge outlined, "Snoozed until it's woken" on line 2, the toggle filled; and rows back
+ * from a snooze, saying why.
  */
-function NotNeededStates({ showGroup }: { showGroup: boolean }) {
-  const rows = (sessions: SessionSummary[]) => (showGroup ? acrossGroups(sessions) : inGroup('pitwall-test-not-needed', sessions));
+function SnoozeStates({ showGroup }: { showGroup: boolean }) {
+  const rows = (sessions: SessionSummary[]) => (showGroup ? acrossGroups(sessions) : inGroup('pitwall-test-snooze', sessions));
   return (
     <div className="uikit-stack">
       <div>
-        <p className="uikit-note">Needs you: no toggle until the row is hovered or focused</p>
-        <Rows rows={rows([STATE_ROWS.needsYou])} showGroup={showGroup} notNeeded={[]} starred={[]} />
+        <p className="uikit-note">Needs you: no snooze menu until the row is hovered or focused</p>
+        <Rows rows={rows([STATE_ROWS.needsYou])} showGroup={showGroup} snoozed={[]} starred={[]} />
       </div>
       <div className="uikit-hovered">
-        <p className="uikit-note">Needs you, hovered: the outlined toggle, under the star</p>
-        <Rows rows={rows([STATE_ROWS.needsYou])} showGroup={showGroup} notNeeded={[]} starred={[]} />
+        <p className="uikit-note">Needs you, hovered: the outlined snooze menu's button, under the star</p>
+        <Rows rows={rows([STATE_ROWS.needsYou])} showGroup={showGroup} snoozed={[]} starred={[]} />
       </div>
       <div>
-        <p className="uikit-note">Not needed now, one for each need: no bar, the badge outlined, "Not needed now" before what it needs, and the filled toggle, always shown</p>
-        <Rows rows={rows(NEEDING_ROWS)} showGroup={showGroup} notNeeded={NEEDING_ROWS} starred={[]} />
+        <p className="uikit-note">Snoozed, one for each need: no bar, the badge outlined, "Snoozed until it's woken" before what it needs, and the filled toggle, always shown</p>
+        <Rows rows={rows(NEEDING_ROWS)} showGroup={showGroup} snoozed={NEEDING_ROWS} starred={[]} />
       </div>
       <div>
-        <p className="uikit-note">Not needed now and open</p>
-        <Rows rows={rows([STATE_ROWS.needsYouOpen])} showGroup={showGroup} notNeeded={[STATE_ROWS.needsYouOpen]} starred={[STATE_ROWS.needsYouOpen.sessionId]} openSessionId={STATE_ROWS.needsYouOpen.sessionId} />
+        <p className="uikit-note">Back from a snooze: in Needs you again, with "Snooze ended" or "Woken: a new turn" before what it needs</p>
+        <Rows rows={rows(BACK_ROWS)} showGroup={showGroup} snoozed={[]} starred={[]} />
+      </div>
+      <div>
+        <p className="uikit-note">Snoozed and open</p>
+        <Rows rows={rows([STATE_ROWS.needsYouOpen])} showGroup={showGroup} snoozed={[STATE_ROWS.needsYouOpen]} starred={[STATE_ROWS.needsYouOpen.sessionId]} openSessionId={STATE_ROWS.needsYouOpen.sessionId} />
       </div>
     </div>
   );
@@ -229,6 +248,22 @@ const RUNNING_ROWS = [
     lastActivityAt: ago(1),
   }),
   session('agents-none', { lastActivityAt: ago(3) }),
+];
+
+/** Sessions' context (W133): nothing at or below 200K or when unknown, a warning badge over it, danger over 400K. */
+const CONTEXT_ROWS = [
+  session('context-85k', { contextTokens: 85_000, lastActivityAt: ago(0.5) }),
+  session('context-unknown', { lastActivityAt: ago(1) }),
+  session('context-212k', { contextTokens: 212_000, lastActivityAt: ago(2) }),
+  session('context-760k', { contextTokens: 760_000, status: 'busy', lastActivityAt: ago(0.1) }),
+  session('context-916k-asked', {
+    contextTokens: 916_000,
+    title: 'A made-up long-running coordinator',
+    askedYou: { reason: 'question', excerpt: 'Shall I merge the made-up PR?' },
+    needsYou: { reason: 'asked' },
+    lastActivityAt: ago(4),
+  }),
+  session('context-ended', { contextTokens: 640_000, ended: true, finished: true, alive: false, pid: undefined, status: undefined, lastActivityAt: ago(60 * 24) }),
 ];
 
 /** Long text and narrow lists, at the widths the session list has from 1,200 px. */
@@ -262,20 +297,20 @@ export function SessionRows() {
         <StarredStates showGroup />
       </Specimen>
       <Specimen
-        title="Not needed now (W88), in a group"
-        note="On the row of a session that needs you, at the end of line 2, under the star: the Not needed now toggle, outlined and shown on hover and focus, filled and always shown while it's marked. A marked row has no bar, its badge keeps its text, outlined, and line 2 says Not needed now, quietly, before what it needs, which is muted. Press a toggle to mark it or take the mark away; it never opens the session."
+        title="Snooze (W154), in a group"
+        note="On the row of a session that needs you, at the end of line 2, under the star: the snooze menu's button, outlined and shown on hover and focus, with For 1 hour, For 3 hours, Until tomorrow, 9:00, Until Monday, 9:00 and Later, until it's woken. While it's snoozed, a filled toggle, always shown, that wakes it. A snoozed row has no bar, its badge keeps its text, outlined, and line 2 says until when, quietly, before what it needs, which is muted. Neither opens the session."
       >
-        <NotNeededStates showGroup={false} />
+        <SnoozeStates showGroup={false} />
       </Specimen>
-      <Specimen title="Not needed now, in All sessions and Starred" note="The same, with line 2 starting with the group's label: Not needed now comes after it.">
-        <NotNeededStates showGroup />
+      <Specimen title="Snooze, in All sessions and Starred" note="The same, with line 2 starting with the group's label: the snooze's words come after it.">
+        <SnoozeStates showGroup />
       </Specimen>
       <Specimen
-        title="Not needed now, in Needs you, 360 px wide"
-        note="Every row needs you, so every row has the toggle. Press one: the row leaves at once, as it leaves Needs you, and focus goes to the next row's toggle in the app. Line 1 still gives way title first, then name."
+        title="Snooze, in Needs you, 360 px wide"
+        note="Every row needs you, so every row has the snooze menu. Choose from one: the row leaves, as it leaves Needs you once the snapshot says so, and focus goes to the next row's snooze menu in the app. Line 1 still gives way title first, then name."
         width={360}
       >
-        <Rows rows={acrossGroups(NEEDING_ROWS)} showGroup notNeeded={[]} starred={[]} leave />
+        <Rows rows={acrossGroups(NEEDING_ROWS)} showGroup snoozed={[]} starred={[]} leave />
       </Specimen>
       <Specimen
         title="Starred rows, 360 px wide"
@@ -307,6 +342,15 @@ export function SessionRows() {
       </Specimen>
       <Specimen title="Sub-agents running, in Needs you and All sessions, 360 px wide" note="After the group's label and what it was last asked, at the session list's width at 1,200 px." width={360}>
         <Rows rows={acrossGroups(RUNNING_ROWS)} showGroup />
+      </Specimen>
+      <Specimen
+        title="Context (W133)"
+        note="Over 200K tokens of context on its last call, a subtle warning badge first among the badges, 212K; over 400K, subtle danger. Nothing at or below 200K, when it can't be read, or on a finished row. Screen readers hear Context 212K, over 200K; the tooltip has the number in full and what to do."
+      >
+        <Rows rows={inGroup('pitwall-test-app', CONTEXT_ROWS)} />
+      </Specimen>
+      <Specimen title="Context, in Needs you and All sessions, 360 px wide" note="The badge stays whole; the title, then the name, give way first." width={360}>
+        <Rows rows={acrossGroups(CONTEXT_ROWS)} showGroup />
       </Specimen>
       <Specimen title="360 px wide" note="The session list's width at 1,200 px. Line 1 stays one line: the title gives way first, then the name." width={360}>
         <Rows rows={acrossGroups(NARROW_ROWS)} showGroup />

@@ -8,7 +8,8 @@
 // Written by rename, so a reader sees the old file or the new one, never half of one. Read
 // strictly: a file that's missing, a symbolic link, not a regular file, too big or not exactly
 // this shape counts as none, and the supervisor starts a new conversation. Writing fails soft: the
-// session id in memory still holds for this run.
+// session id in memory still holds for this run. New conversation (W136) removes the file, which
+// fails soft too: the supervisor remembers for the rest of the run that the conversation was left.
 import { randomBytes } from 'node:crypto';
 import { closeSync, constants, fstatSync, openSync, readSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -34,6 +35,8 @@ export interface SupervisorStateStore {
   read(): SupervisorRecord | undefined;
   /** Replaces it. Never throws; false when it couldn't be written. */
   write(record: SupervisorRecord): boolean;
+  /** Forgets it, for New conversation (W136): no record afterwards. Never throws; false when it couldn't be removed. */
+  clear(): boolean;
 }
 
 /** A store in memory only, for tests. */
@@ -43,6 +46,10 @@ export function memoryState(initial?: SupervisorRecord): SupervisorStateStore & 
     read: () => (record === undefined ? undefined : { ...record }),
     write(next) {
       record = { ...next };
+      return true;
+    },
+    clear() {
+      record = undefined;
       return true;
     },
     current: () => (record === undefined ? undefined : { ...record }),
@@ -107,6 +114,16 @@ export function supervisorStateFile(dir: string, log: (message: string) => void 
           // It wasn't made.
         }
         log(`couldn't save the supervisor's session id in ${file} (${(error as Error).message}), so the next run starts a new conversation.`);
+        return false;
+      }
+    },
+    clear() {
+      try {
+        unlinkSync(file);
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
+        log(`couldn't remove ${file} (${(error as Error).message}), so the next run of pitwall may resume the conversation you left. Delete the file to start afresh then.`);
         return false;
       }
     },

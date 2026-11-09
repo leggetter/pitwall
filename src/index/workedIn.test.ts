@@ -247,6 +247,20 @@ describe('createWorkedInScanner', () => {
       expect(keys(await scan(start({ run: fakeGit().run }), repo('app')))).toEqual([repo('api')]);
     });
 
+    it('a repo cloned into a directory already looked up counts once the clone lands, within seconds (W145)', async () => {
+      const cloned = path.join(code, 'cloned');
+      let clock = AT;
+      const s = start({ run: fakeGit().run, now: () => clock });
+      // Before the clone: the target is in no repo.
+      await writeFile(main, bash(`git clone https://example.com/cloned.git ${cloned}`, code) + call('Read', { file_path: path.join(cloned, 'README.md') }, code));
+      expect(await scan(s, code)).toEqual([]);
+      // The clone lands, and the session works in it a few seconds later.
+      await mkdir(path.join(cloned, '.git'), { recursive: true });
+      clock += 5_000;
+      await appendFile(main, call('Edit', { file_path: path.join(cloned, 'README.md') }, code));
+      expect(keys(await scan(s, code))).toEqual([cloned]);
+    });
+
     it('the root itself, and directories in no repo', async () => {
       await writeFile(main, [call('Write', { file_path: path.join(code, 'notes', 'a.md') }, code), call('Write', { file_path: path.join(code, 'b.md') }, code), bash(`cd ${code}/notes`, code)].join(''));
       expect(await scan(start({ run: fakeGit().run }), code)).toEqual([]);

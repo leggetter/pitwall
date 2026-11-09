@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { createMentions, mentionLabel, MENTION_MAX_LENGTH, MENTION_MIN_LENGTH, type MentionPart } from './mentions.js';
 import { pr, session } from './test/fixtures.js';
+import { bestTimes, slowBound } from './test/timing.js';
 
 /** The parts as short strings: text as itself, a mention as [text→name]. */
 const show = (parts: MentionPart[]) => parts.map((part) => (part.kind === 'text' ? part.text : `[${part.text}→${part.target.name}]`)).join('');
@@ -70,16 +71,23 @@ describe('createMentions: sessions', () => {
     expect(show(turkish.split('i̇stanbul-fix'))).toBe('i̇stanbul-fix');
   });
 
-  it('finds a thousand long names with a shared prefix in a long reply in well under 100 ms', () => {
-    const sessions = Array.from({ length: 1000 }, (_, n) => session({ name: `pitwall-test-session-number-${n}-feature` }));
+  // A fixed 100 ms failed on CI's shared runners while other test files kept them busy (W149), so this
+  // times a thousand names against 250, in turn. On a 2026 laptop splitting takes about 1 ms either way,
+  // and setting up about 4 times as long for 4 times the names. A scan of every name at every place in
+  // the reply would split 4 times slower (about 90 ms), and setting up in quadratic time, 16 times.
+  it('finds a thousand long names with a shared prefix in a long reply as fast as 250, and sets them up in about 4 times as long', () => {
+    const names = (count: number) => Array.from({ length: count }, (_, n) => session({ name: `pitwall-test-session-number-${n}-feature` }));
+    const [thousand, quarter] = [names(1000), names(250)];
     const sentence = 'pitwall-test-session-number-7-feature needs you; pitwall-test-session-number-999-feature, pitwall-test-session-number-1000-feature is not a session, and so on for a while. ';
     const reply = sentence.repeat(120); // about 20 KB
-    const started = performance.now();
-    const mentions = createMentions(sessions);
-    const parts = mentions.split(reply);
-    const took = performance.now() - started;
-    expect(parts.filter((part) => part.kind === 'mention')).toHaveLength(240);
-    expect(took).toBeLessThan(100);
+    const [many, few] = [createMentions(thousand), createMentions(quarter)];
+    expect(many.split(reply).filter((part) => part.kind === 'mention')).toHaveLength(240);
+    expect(few.split(reply).filter((part) => part.kind === 'mention')).toHaveLength(120);
+
+    const [manyMs, fewMs] = bestTimes([() => many.split(reply), () => few.split(reply)]);
+    expect(manyMs).toBeLessThan(slowBound(fewMs!, { floorMs: 5, ratio: 2.5, ceilingMs: 100 }));
+    const [setUpManyMs, setUpFewMs] = bestTimes([() => createMentions(thousand), () => createMentions(quarter)], 3);
+    expect(setUpManyMs).toBeLessThan(slowBound(setUpFewMs!, { floorMs: 0, ratio: 10, ceilingMs: 250 }));
   });
 
   it(`never links a name under ${MENTION_MIN_LENGTH} characters, even in bold`, () => {

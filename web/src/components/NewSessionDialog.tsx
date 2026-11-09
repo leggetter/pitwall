@@ -3,9 +3,11 @@
 // The API call and the server's checks are M2's (spawn.ts); the dialog repeats the checks so it can
 // say what's wrong before sending.
 //
-// - Fields: Directory, a select of the groups' directories plus "Another directory under a root…",
-//   which reveals a combobox of the directories under the roots (W70), fetched once per opening, the
-//   first time it's chosen, and narrowed as you type (directories.ts); Name and Model, optional,
+// - Fields: Directory, one combobox (W70, W140): the groups' directories and the roots first, then
+//   the directories under the roots, fetched once per opening, as the dialog opens, and narrowed as
+//   you type (directories.ts). It opens showing its first choice, whose text focus selects, so typing
+//   replaces it; while it shows the chosen one, the list offers every directory, as a select would.
+//   Name and Model, optional,
 //   Model's "Other…" revealing a field, and Effort (W119), each starting from pitwall's defaults for
 //   sessions, which the first option names once they've loaded, or Claude Code's own, resolved for
 //   the directory chosen (W122, modelEffort.ts); and the first prompt. With a root tab open (W38), the
@@ -31,12 +33,10 @@
 //   change, a subtitle that names the PR, and a notice at the top of the body, as after a clone, which
 //   says how to trust the new folder. What was typed is measured against the prefill, so a click on
 //   the backdrop still closes it until you change something.
-// - From a session (W118, fromSession.ts): New session from here opens it prefilled with that
-//   session's directory, added to the choices when no group has it, as a worktree's, and a blank
-//   prompt. Draft from this session, under the prompt, adds the text you selected in that session's
-//   conversation, quoted, after a line with the session's ID, never its name, at the prompt's start, and puts focus at the
-//   prompt's end; it's off, saying why beside it, with no selection, while the draft is in the prompt,
-//   or when it wouldn't fit.
+// - From the repo list's selection (W147, D27): + New session opens with the selected repo or
+//   directory chosen (newSessionDirectory(), Dashboard), never the open session's, and with a view
+//   selected, with no directory chosen (`noDirectory`): the field is empty, showing its placeholder,
+//   and its list offers every directory. The rest as usual.
 
 import {
   useContext,
@@ -52,11 +52,11 @@ import {
 } from 'react';
 import { EFFORT_LEVELS, WORK_DEFAULT, type DirectoryList, type EffortLevel, type IndexSnapshot, type SpawnRequest, type WorkSettings } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
-import { DRAFT_HINTS, DRAFT_LABEL, draftState, withDraft } from '../fromSession.js';
 import { ATTACH_TEXT, attachmentsProblem, draggingFiles, pastedFiles, useAttachments } from '../attachments.js';
 import {
   directoryCount,
   directoryOptions,
+  withChoices,
   fetchDirectories,
   matchDirectories,
   MAX_SHOWN,
@@ -113,7 +113,7 @@ function NoTrustCommand() {
   );
 }
 
-/** The directory list, fetched the first time "Another directory under a root…" is chosen. */
+/** The directory list, fetched as the dialog opens. */
 type Listing = { kind: 'idle' } | { kind: 'loading' } | { kind: 'ready'; list: DirectoryList } | { kind: 'failed' };
 
 /** What the field says under the list while it loads, when it's cut short, and when nothing matches (4: Combobox). */
@@ -126,9 +126,9 @@ export const DIRECTORY_TEXT = {
   narrow: 'Keep typing to narrow them.',
 } as const;
 
-/** What the dialog opens with (W107): a PR's directory, name and prompt, each one you can change. */
+/** What the dialog opens with: a PR's directory, name and prompt (W107), or the selected group's directory (W147), each one you can change. */
 export interface NewSessionPrefill {
-  /** Absolute: chosen in Directory, and added to its choices when no group has it, as a new clone. */
+  /** Absolute: chosen in Directory, and added to its choices when no group has it, as a new clone's or a worktree's. */
   cwd: string;
   name?: string;
   prompt?: string;
@@ -142,17 +142,14 @@ export interface NewSessionDialogProps {
   onStarted: (started: StartedSession, request: SpawnRequest) => void;
   /** With two or more roots, the open root tab, whose directories alone it offers (W38). */
   tab?: string | undefined;
-  /** Opened for a pull request (W107): the fields it starts with. */
+  /** Opened for a pull request (W107), or with a repo or directory selected (W147): the fields it starts with. */
   prefill?: NewSessionPrefill | undefined;
+  /** Without a prefilled directory, opens with none chosen, as from a view (W147), not the first choice. */
+  noDirectory?: boolean | undefined;
   /** In place of the subtitle, as one that names the pull request. */
   subtitle?: ReactNode;
   /** At the top of the body: what happened before it opened, such as a clone, and what to do next. */
   notice?: ReactNode;
-  /**
-   * Opened from a session (W118): Draft from this session, under the prompt, adds `text`, the quoted
-   * selection and the line with the session's ID (draftText()), or is off when it's undefined.
-   */
-  draft?: { text: string | undefined } | undefined;
 }
 
 /**
@@ -184,7 +181,6 @@ function directoryStatus(listing: Listing, truncated: boolean, listed: number, t
 /** What a screen reader hears once the typing stops: the same, with the count always. */
 function directoryAnnouncement(listing: Listing, truncated: boolean, listed: number, total: number): string | undefined {
   if (listing.kind === 'loading') return DIRECTORY_TEXT.loading;
-  if (listing.kind !== 'ready') return undefined;
   const count =
     listed === 0
       ? 'No directories to list.'
@@ -196,13 +192,13 @@ function directoryAnnouncement(listing: Listing, truncated: boolean, listed: num
   return truncated ? `${count} Not every directory is listed.` : count;
 }
 
-export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, subtitle, notice, draft }: NewSessionDialogProps) {
+export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, noDirectory = false, subtitle, notice }: NewSessionDialogProps) {
   const api = useContext(ApiContext);
-  const ids = { dir: useId(), customDir: useId(), name: useId(), model: useId(), customModel: useId(), effort: useId(), prompt: useId(), draft: useId() };
+  const ids = { dir: useId(), name: useId(), model: useId(), customModel: useId(), effort: useId(), prompt: useId() };
   const alive = useRef(true);
   const submitting = useRef(false);
 
-  // A prefilled directory no group has, as a new clone, goes first.
+  // A prefilled directory no group has, as a new clone or a worktree, goes first.
   const prefilledCwd = prefill?.cwd;
   const choices = useMemo(() => {
     const listed = directoryChoices(snapshot, tab);
@@ -211,15 +207,13 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
   }, [snapshot, tab, prefilledCwd]);
   // The roots it offers directories under: the open tab's, or every one.
   const roots = tab === undefined ? snapshot.roots : [tab];
-  const [dirChoice, setDirChoice] = useState(() => prefilledCwd ?? choices[0]?.path ?? OTHER);
-  const [customDir, setCustomDir] = useState('');
-  // The option chosen from the list, while the field still shows it.
-  const [accepted, setAccepted] = useState<{ label: string; path: string }>();
+  // The directory it opens with: the prefill's, none with `noDirectory`, or the first choice. Taken once, as it opens.
+  const [first] = useState(() => (prefilledCwd === undefined && noDirectory ? undefined : choices.find((choice) => choice.path === (prefilledCwd ?? choices[0]?.path))));
+  const [customDir, setCustomDir] = useState(first?.label ?? '');
+  // The option chosen from the list, or the first, while the field still shows it.
+  const [accepted, setAccepted] = useState<{ label: string; path: string } | undefined>(first);
   const [listing, setListing] = useState<Listing>({ kind: 'idle' });
   const listAbort = useRef<AbortController | undefined>(undefined);
-  const combobox = useRef<HTMLInputElement>(null);
-  // Set when a choice reveals the combobox, so focus moves into it once it's there.
-  const revealing = useRef(false);
   const [name, setName] = useState(prefill?.name ?? '');
   const [modelChoice, setModelChoice] = useState('');
   const [customModel, setCustomModel] = useState('');
@@ -239,9 +233,6 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
   const fileInput = useRef<HTMLInputElement>(null);
   const attachButton = useRef<HTMLButtonElement>(null);
   const fileList = useRef<HTMLUListElement>(null);
-  const promptField = useRef<HTMLTextAreaElement>(null);
-  // Set when Draft from this session adds the draft, so focus goes to the prompt's end once it's there.
-  const drafted = useRef(false);
   // After Remove or Try again, the row whose Remove takes focus, by its place in the list.
   const focusRow = useRef<number | undefined>(undefined);
   const busyNow = useRef(busy);
@@ -273,17 +264,10 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
   };
 
 
-  // With no directory to choose but a typed one, the field is there from the start.
+  // Once, as the dialog opens: focus starts in the field.
   useEffect(() => {
-    if (dirChoice === OTHER) listDirectories();
-    // Only as the dialog opens: a later choice fetches from its change handler.
+    listDirectories();
   }, []);
-
-  useEffect(() => {
-    if (dirChoice !== OTHER || !revealing.current) return;
-    revealing.current = false;
-    combobox.current?.focus();
-  }, [dirChoice]);
 
   // Files dragged over the page while the dialog is open: the drop target shows over the prompt, a
   // drop on it attaches them, and a drop anywhere else does nothing, rather than the browser opening
@@ -348,26 +332,19 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
     (next ?? attachButton.current)?.focus();
   }, [attachments.items]);
 
-  const chooseDirectory = (event: ChangeEvent<HTMLSelectElement>) => {
-    if (busy) return;
-    const value = event.target.value;
-    if (value === OTHER && dirChoice !== OTHER) {
-      revealing.current = true;
-      listDirectories();
-    }
-    setDirChoice(value);
-  };
-
-  const offered = useMemo(() => (listing.kind === 'ready' ? directoryOptions(listing.list, snapshot.roots, tab) : undefined), [listing, snapshot.roots, tab]);
-  const matches = useMemo(() => (offered ? matchDirectories(offered.options, customDir) : undefined), [offered, customDir]);
+  const walked = useMemo(() => (listing.kind === 'ready' ? directoryOptions(listing.list, snapshot.roots, tab) : undefined), [listing, snapshot.roots, tab]);
+  const offered = useMemo(() => withChoices(choices, walked?.options ?? [], snapshot.roots), [choices, walked, snapshot.roots]);
+  // The field shows the chosen directory, untrimmed: the list offers every one, as a select would.
+  const showingChosen = accepted !== undefined && customDir === accepted.label;
+  const matches = useMemo(() => matchDirectories(offered, showingChosen ? '' : customDir), [offered, showingChosen, customDir]);
   const comboOptions = useMemo(
-    () => (matches?.shown ?? []).map((option): DirectoryOption & { marker: string | undefined } => ({ ...option, marker: option.repo ? 'repo' : undefined })),
+    () => matches.shown.map((option): DirectoryOption & { marker: string | undefined } => ({ ...option, marker: option.repo ? 'repo' : undefined })),
     [matches],
   );
 
   const typed = customDir.trim();
   // The chosen option's path only while the field shows exactly its label, untrimmed, so what's sent is what's shown.
-  const cwd = dirChoice !== OTHER ? dirChoice : accepted !== undefined && customDir === accepted.label ? accepted.path : resolveTypedDirectory(typed, snapshot.roots);
+  const cwd = showingChosen ? accepted.path : resolveTypedDirectory(typed, snapshot.roots);
   const model = modelChoice === OTHER ? customModel.trim() : modelChoice;
 
   // The defaults for sessions (W119), and Claude Code's own for the directory chosen (W122), whose
@@ -406,7 +383,7 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
   // The model a session would run on, for its effort's default: the choice, else the default's.
   const effortModel = modelChoice === '' ? undefined : modelChoice === OTHER ? model || undefined : modelChoice;
   const problems = {
-    cwd: dirChoice !== OTHER ? directoryProblem(cwd, snapshot.roots, tab) : typedDirectoryProblem(typed, cwd, snapshot.roots, tab),
+    cwd: showingChosen ? directoryProblem(cwd, snapshot.roots, tab) : typedDirectoryProblem(typed, cwd, snapshot.roots, tab),
     name: nameProblem(name),
     model: modelChoice === OTHER && model === '' ? 'Type a model alias, or choose the default.' : modelProblem(model),
     prompt: promptProblem(prompt),
@@ -415,7 +392,7 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
   const shown: Partial<typeof problems> = checked ? problems : {};
   // Something typed, or a file added: a click on the backdrop leaves the dialog open. A prefill isn't typing.
   const dirty =
-    customDir !== '' || name !== (prefill?.name ?? '') || customModel !== '' || prompt !== (prefill?.prompt ?? '') || attachments.items.length > 0 || dirChoice !== (prefilledCwd ?? dirChoice);
+    customDir !== (first?.label ?? '') || name !== (prefill?.name ?? '') || customModel !== '' || prompt !== (prefill?.prompt ?? '') || attachments.items.length > 0;
   // Why Start session is off: a file uploading or failed. Busy says so itself, with its label.
   const startOff = busy ? undefined : problems.attachments;
 
@@ -429,7 +406,7 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
       return;
     }
     if (firstProblem) {
-      const target = { cwd: dirChoice === OTHER ? ids.customDir : ids.dir, name: ids.name, model: ids.customModel, prompt: ids.prompt }[firstProblem];
+      const target = { cwd: ids.dir, name: ids.name, model: ids.customModel, prompt: ids.prompt }[firstProblem];
       document.getElementById(target)?.focus();
       return;
     }
@@ -496,23 +473,6 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
     event.target.value = '';
     if (!busy) attachments.add(files);
   };
-  // Draft from this session (W118): what it can do now, and adding the draft.
-  const draftNow = draft === undefined ? undefined : draftState(prompt, draft.text);
-  const addDraft = () => {
-    if (busy || draftNow !== 'ready' || draft?.text === undefined) return;
-    drafted.current = true;
-    setPrompt(withDraft(prompt, draft.text));
-  };
-  useEffect(() => {
-    if (!drafted.current) return;
-    drafted.current = false;
-    const field = promptField.current;
-    if (!field) return;
-    field.focus();
-    field.setSelectionRange(field.value.length, field.value.length);
-    field.scrollTop = field.scrollHeight;
-  }, [prompt]);
-
   const removeFile = (key: string) => {
     focusRow.current = attachments.items.findIndex((item) => item.key === key);
     attachments.remove(key);
@@ -561,51 +521,33 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
         <label className="field-label" htmlFor={ids.dir}>
           Directory
         </label>
-        <span className="select">
-          <select
-            id={ids.dir}
-            className="select-input"
-            value={dirChoice}
-            onChange={chooseDirectory}
-            {...disabled}
-            aria-invalid={(dirChoice !== OTHER && shown.cwd !== undefined) || undefined}
-            aria-describedby={describedBy(`${ids.dir}-roots`, dirChoice !== OTHER && shown.cwd && `${ids.dir}-problem`)}
-          >
-            {choices.map((choice) => (
-              <option key={choice.path} value={choice.path}>
-                {plainText(choice.label)}
-              </option>
-            ))}
-            <option value={OTHER}>Another directory under a root…</option>
-          </select>
-          <Icon name="select" className="select-icon" />
-        </span>
-        {dirChoice === OTHER && (
-          <Combobox
-            id={ids.customDir}
-            inputRef={combobox}
-            label="Directory path"
-            listLabel="Directories"
-            placeholder={`${roots[0] === undefined ? '' : shortenHome(roots[0])}/…`}
-            value={customDir}
-            onInput={setCustomDir}
-            options={comboOptions}
-            onAccept={(option) => {
-              setCustomDir(option.label);
-              setAccepted({ label: option.label, path: option.path });
-            }}
-            status={directoryStatus(listing, offered?.truncated ?? false, offered?.options.length ?? 0, matches?.total ?? 0)}
-            announcement={directoryAnnouncement(listing, offered?.truncated ?? false, offered?.options.length ?? 0, matches?.total ?? 0)}
-            openOnMount
-            busy={busy}
-            invalid={shown.cwd !== undefined}
-            describedBy={describedBy(`${ids.dir}-roots`, listing.kind === 'failed' && `${ids.dir}-list`, shown.cwd && `${ids.dir}-problem`)}
-          />
-        )}
+        <Combobox
+          id={ids.dir}
+          label="Directory"
+          listLabel="Directories"
+          placeholder={`${roots[0] === undefined ? '' : shortenHome(roots[0])}/…`}
+          value={customDir}
+          onInput={setCustomDir}
+          options={comboOptions}
+          onAccept={(option) => {
+            setCustomDir(option.label);
+            setAccepted({ label: option.label, path: option.path });
+          }}
+          status={directoryStatus(listing, walked?.truncated ?? false, offered.length, matches.total)}
+          announcement={directoryAnnouncement(listing, walked?.truncated ?? false, offered.length, matches.total)}
+          selectOnFocus={showingChosen}
+          // Typing part of a directory then Enter takes the best match (W142). Not while the text is
+          // the chosen one, typed back to it: the list then offers every directory, unnarrowed.
+          autoSelect={!showingChosen}
+          chevron
+          busy={busy}
+          invalid={shown.cwd !== undefined}
+          describedBy={describedBy(`${ids.dir}-roots`, listing.kind === 'failed' && `${ids.dir}-list`, shown.cwd && `${ids.dir}-problem`)}
+        />
         <p className="field-hint" id={`${ids.dir}-roots`}>
           Under {roots.map((root) => plainText(shortenHome(root))).join(' or ')}.
         </p>
-        {dirChoice === OTHER && listing.kind === 'failed' && (
+        {listing.kind === 'failed' && (
           <p className="field-hint" id={`${ids.dir}-list`}>
             {DIRECTORY_TEXT.failed}
           </p>
@@ -710,7 +652,6 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
         </label>
         <div className="prompt-drop" ref={dropTarget}>
           <textarea
-            ref={promptField}
             id={ids.prompt}
             className="field-input field-prompt"
             rows={6}
@@ -754,16 +695,6 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, s
           <p className="field-problem" id={filesProblem}>
             {shown.attachments}
           </p>
-        )}
-        {draftNow !== undefined && (
-          <div className="attach-row draft-row">
-            <Button size="sm" icon="conversation" disabled={busy || draftNow !== 'ready'} aria-describedby={ids.draft} onClick={addDraft}>
-              {DRAFT_LABEL}
-            </Button>
-            <p className="field-hint" id={ids.draft}>
-              {DRAFT_HINTS[draftNow]}
-            </p>
-          </div>
         )}
         {/* There from the start, empty, so what each file comes to is announced; two taking turns, so a sentence said twice is read twice. */}
         {attachments.announcements.map((text, region) => (

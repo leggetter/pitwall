@@ -103,6 +103,26 @@ export function dialogWidth(t: Case, card: number): number {
   return Math.min(card, t.viewport.width - 32);
 }
 
+/** A made-up path with the made-up home as `~`, as the page shows it (shortenHome()). */
+export const shortPath = (path: string): string => path.replace(/^\/Users\/example(?=\/|$)/, '~');
+
+/**
+ * Chooses `path`, absolute, in a directory combobox (W140): puts it in the field, as a paste would,
+ * which highlights its best option, the first (W142), and Enter takes it. Resolves to what the field
+ * then shows.
+ */
+export async function chooseDirectory(t: Case, combobox: string, path: string): Promise<string> {
+  await t.page.evaluate(`(() => {
+    const field = ${combobox};
+    field.focus();
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, ${q(path)});
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  })()`);
+  await t.page.key('Enter');
+  return t.page.evaluate<string>(`${combobox}.value`);
+}
+
 /** Sets a native select's value as a choice in its list would, since headless Chrome draws no list to click. */
 export function chooseOption(select: string, value: string): string {
   return `(() => {

@@ -16,19 +16,21 @@ M3.1 was built on `m3.1/integration` ([PR #69](https://github.com/leggetter/pitw
 
 M4, Phil's open pull requests, was built on `m4/integration` (W92 to W117) and merged into `main` on 2026-11-02 in [PR #117](https://github.com/leggetter/pitwall/pull/117), after Phil's try-out and W108's security review.
 
-M5, the supervisor, was built on `m5/integration` (W109 to W129) and merged into `main` on 2026-11-02 in [PR #138](https://github.com/leggetter/pitwall/pull/138), after Phil's try-out, W116's security review and the re-review of W124 to W128: per-session recaps, pitwall's MCP server, the supervisor and its panel, approvals for messages, new sessions and resumes, New session from here, and model and effort per kind of work. M5.1, efficiency, is next. See `NOW.md`.
+M5, the supervisor, was built on `m5/integration` (W109 to W129) and merged into `main` on 2026-11-02 in [PR #138](https://github.com/leggetter/pitwall/pull/138), after Phil's try-out, W116's security review and the re-review of W124 to W128: per-session recaps, pitwall's MCP server, the supervisor and its panel, approvals for messages, new sessions and resumes, New session from here (since taken out, W130, D27), and model and effort per kind of work. M5.1, the work after M5, is in progress on `m5.1/integration`, to W163 (spin-off proposals, first piece) and W164 (its security review); M5.2, efficiency, follows (Phil, 2026-11-07). See `NOW.md`.
 
 ## Rules
 
 - **A UI change runs the app check:** `npm run build && npm run appcheck -- --out <dir>`, and adds or extends its part in `scripts/appcheck/parts/`. On macOS, never send key presses to Google Chrome's headless mode: it plays the user's alert sound for each key a page doesn't handle (W64). The harness refuses any browser but the pinned `chrome-headless-shell` there.
 - **The plan is the source of truth.** Update `NOW.md` in the same commit as the work, and `PLAN.md` where the design changed. A settled decision moves to `docs/decisions.md` with its reasoning, under the ID it had in the plan.
 - **Prefer documented Claude Code interfaces:** `claude agents --json`, `claude --bg`, `claude attach`, `claude logs`, and cross-session messaging. Anything internal goes behind one adapter module and fails soft: show "unavailable", never crash. That covers transcript JSONL, sub-agents' `subagents/` folders, `~/.claude/jobs/*/state.json` and the inbox socket wire format.
+- **A pitwall you start for a try-out or a check gets its own `PITWALL_HOME`,** or `--no-recaps` unless recaps are what's being tried: every pitwall on one home shares the recap budget, and on 2026-11-02 try-outs spent about 150 of Phil's 200 (W132).
 - **Never touch a real session.** During development and tests, don't message, stop, attach to or remove a session the user didn't name. Spikes and tests use throwaway sessions named `pitwall-test-*`, and remove them afterwards.
 - **Keep the security rules in `PLAN.md`:** localhost only, a token on every API request and WebSocket, `Host` and `Origin` checks. Don't weaken them for convenience, including in dev mode.
 - **TypeScript in strict mode,** Node >= 22, npm.
 - **Dependencies are pinned exactly and must be at least 14 days old.** Pick the newest version published 14 or more days ago (`npm view <pkg> time --json`) and install with `npm install <pkg>@<version> --before=<date>`, so transitive dependencies follow the same cutoff. `.npmrc` enforces exact versions. Prefer a few lines of code over a new dependency.
 - **Commits and PRs:** conventional commits for commit messages and PR titles. Keep the PR summary short and put detail in a `<details>` block.
-- **Worktrees go in `.worktrees/<name>`** inside the main checkout, which `.gitignore` ignores (Phil, 2026-10-27), not in folders beside it. ripgrep, the editors' search, vitest and tsc leave them alone, and New session's directory list skips hidden folders. A plain `git clean -fdx` skips them as nested repositories; only `-ff` would delete them.
+- **Say what an ID is.** A work item (`W134`), decision (`D4`), spike (`spike 012`), issue or PR (`#143`) gets its title, or a few words of what it is, in parentheses: every time in a reply's Open questions and Next steps, and at its first mention anywhere else, in replies, `NOW.md`, PR descriptions and commit messages. For example: "W134 (work profiles)", "D4 (the supervisor: read-only tools, acts only after your click)", "#143 (Session view: expand the conversation or terminal to the full page)". Look the title up in `PLAN.md`, `docs/decisions.md`, `docs/plan-archive.md` or `gh`; don't guess. Phil (2026-11-04): "I've no idea what W134 is."
+- **Worktrees go in `.worktrees/<name>`** inside the main checkout, which `.gitignore` ignores (Phil, 2026-10-27), not in folders beside it. ripgrep, the editors' search, vitest and tsc leave them alone, and New session's directory list skips hidden folders. A plain `git clean -fdx` skips them as nested repositories; only `-ff` would delete them. After `git worktree add`, run `npm ci` in the worktree, since without its own `node_modules` its tests resolve modules from the main checkout and Vite's file allowlist fails 33 font tests (W140), and copy the main checkout's `.claude/settings.local.json`, if there is one, into the worktree's `.claude/`, so its sessions start as small (Efficiency).
 - **Write for a public repo.** It's going public (Phil, 2026-10-28), so don't commit tokens, transcripts, session content or internal Hookdeck details, including in fixtures. In the docs, `~/work` and `~/oss` stand for Phil's two roots (Phil, 2026-10-23).
 
 ## Efficiency
@@ -40,8 +42,10 @@ Usage limits are weekly, and pitwall's own work should leave room for the weeken
 - **One agent at a time,** unless Phil asks for more in parallel.
 - **Match the model and effort to the work:** high effort for building and ordinary reviews, xhigh only for security reviews. Use a smaller model for mechanical work, such as plan and doc updates, where the session can choose.
 - **Small review fixes are made by the coordinating session,** not by another agent round. Resuming a big agent re-reads its whole context.
-- **Read what you need:** excerpts and `grep`, not whole large files, and counts, not full outputs.
-- **Long sessions get compacted or handed off:** a session whose every turn re-reads a very large context should hand off with the `handoff` skill (`.claude/skills/handoff/SKILL.md`), which updates `NOW.md` and commits, then `/clear` and start the next session with "Read NOW.md". Or compact.
+- **Read what you need:** excerpts and `grep`, not whole large files, and counts, not full outputs. Some lines are very long (`docs/decisions.md`'s entries, up to 3,200 characters; `PLAN.md`'s are under 1,100 since its Security bullets and M5.1 work breakdown were split into sub-bullets), so a `grep` that matches one prints all of it: cut it, `grep -n … | cut -c1-200`, or `grep -o '.\{0,80\}word.\{0,80\}'`, and read the whole line only when you need it.
+- **Keep the starting context small:** `.claude/settings.json` turns off claude.ai connectors in this repo (`disableClaudeAiConnectors`), and an untracked `.claude/settings.local.json` turns off the plugins and skills a person's setup adds that pitwall work doesn't use (`enabledPlugins`, `skillOverrides`, `syncClaudeAiSkills`). Either applies only to sessions whose folder is this repo or one of its worktrees, never to the sessions pitwall watches or starts elsewhere. On 2026-11-04 the two cut a fresh session's first call from 53.1K to 28.6K. Measure it with `claude -p "Reply with OK." --output-format json --no-session-persistence --max-turns 1` and its `usage`, not `/context`: its output stays in the conversation, about 56K a run.
+- **One session per work item:** hand off with the `handoff` skill after each merge, not only at 200K. A session starts at about 29K of context before any work (measured 2026-11-04, after the settings above), and every call re-reads all of it. A coordinator that reviews and merges two items in a row reached 209K over 103 calls.
+- **Long sessions get compacted or handed off:** a session whose every turn re-reads a very large context should hand off with the `handoff` skill (`.claude/skills/handoff/SKILL.md`), which updates `NOW.md` and commits, then `/clear` and start the next session with "Read NOW.md". Or compact. Past 200K tokens of context, the hand-off hook in `.claude/settings.json` says so after a turn.
 
 ## Commands
 
@@ -77,10 +81,18 @@ There is no Vite dev server. `npm run dev` runs `vite build --watch --mode devel
 ```
 NOW.md                   where the work stands and what is next; every session reads it first and updates it before it ends
 PLAN.md                  the living design: architecture, security, open milestones, open questions
-docs/plan-archive.md     history: M0 to M4 work breakdowns, findings and decisions
+docs/plan-archive.md     history: M0 to M5 work breakdowns, findings and decisions
 .claude/skills/handoff/  the handoff skill: update NOW.md, commit, /clear
+skills/spin-off/         the spin-off skill (W163), for the sessions pitwall watches, installed once as a personal
+                         skill (README): a session ends its turn with a `spin-off` block that proposes a new session.
+                         Outside .claude/, so it isn't one of this repo's project skills
+.claude/settings.json    pitwall's own project settings, checked in: the hand-off hook and disableClaudeAiConnectors.
+                         .claude/settings.local.json, untracked, is a person's own (Efficiency)
+.claude/hooks/           handoffNudge.mjs, a Stop hook that tells a session past 200K tokens of context, and again
+                         past 400K, to finish safely and use the handoff skill (W133, spike 012); fails soft, leaves
+                         sub-agents alone. Its test sits beside it; typechecked and in npm test, not built
 README.md                for newcomers: what pitwall is, how to run it, how it works, the roadmap
-docs/decisions.md        settled decisions, D1 to D26, with their reasoning
+docs/decisions.md        settled decisions, D1 to D27, with their reasoning
 docs/design-system.md    the web UI's design system: tokens, layout, components, content, accessibility
 docs/images/             screenshots for README.md
 docs/spikes/             spike write-ups, one file per spike, with a script beside some
@@ -92,10 +104,11 @@ src/prs/                 your open pull requests (M4): three gh api graphql sear
                          on its own poller, each PR placed under its repo or root (W105, place.ts).
                          Entry point index.ts: createPrPoller(), prsOff() for --no-prs
 src/recaps/              per-session recaps (M5, W110, D26): engine.ts schedules them, a short claude -p on Haiku
-                         per session, at most 2 at a time and 200 a day, and decorates the snapshot; input.ts
+                         per session, at most 2 at a time and 500 a day, and decorates the snapshot; input.ts
                          builds the input, prompt.ts the command line, environment and strict parsing, call.ts
-                         runs one. Plan status (W123) is the same kind of call, made only when the page asks,
-                         from the same engine. The transcript reads are src/index/recapSources.ts; the
+                         runs one, store.ts keeps each session's recap on disk across restarts (W132). Plan
+                         status (W123) is the same kind of call, made only when the page asks, from the
+                         same engine. The transcript reads are src/index/recapSources.ts; the
                          snapshot's view and routes are src/server/snapshotRecaps.ts and recapRoutes.ts.
                          Off with --no-recaps
 src/supervisor/          the supervisor (M5, W113, W115, D4): one claude -p session on Opus 5.5 that pitwall starts
@@ -107,6 +120,10 @@ src/supervisor/          the supervisor (M5, W113, W115, D4): one claude -p sess
                          supervisorActions.ts (approve, spawn_session and the checks, W115); the snapshot's
                          view and routes are src/server/snapshotSupervisor.ts and supervisorRoutes.ts. Off
                          with --no-supervisor
+src/usage/               the usage report's reads and totals (M5.1, W131): scan.ts streams transcripts and keeps
+                         numbers only, report.ts aggregates them by repo, model, day, hour and sub-agent,
+                         prices.ts has the API list prices behind its stand-in cost, format.ts the text tables.
+                         Under src/, so built, because M5.1's Usage view will reuse it from the server
 src/cli.ts               the `pitwall` command (bin, built to dist/cli.js)
 src/config.ts            the config file (W103, D24): ~/.pitwall/config.json or --config, JSON with comments,
                          the roots and each root's GitHub owners, ownersByRoot() for the PR side, and `work`,
@@ -121,6 +138,10 @@ web/public/theme-init.js sets the theme before first paint (a same-origin script
 web/src/uikit/           the dev-only `#uikit` gallery; `npm run build` leaves it out
 web/src/test/            test helpers and fixtures shared across the web UI's tests; not built
 scripts/dev.ts           runs the two watchers behind `npm run dev`
+scripts/usage-report.ts  npx tsx scripts/usage-report.ts [--days 14] [--json]: aggregate token usage from every
+                         repo's transcripts, read-only, totals only, to test the efficiency rules (W131)
+scripts/flag-report.ts   npx tsx scripts/flag-report.ts [--days 30] [--json]: counts and texts from the flag log,
+                         ~/.pitwall/flags.jsonl (W153), read-only; the texts are session content, so it stays local
 scripts/extract-icons.ts regenerates web/src/icons/paths.ts from a pinned Material Symbols commit
 scripts/readme-screenshot.ts
                          writes <outDir>/hero-<theme>.png from made-up sessions on the app check's fake
@@ -132,7 +153,7 @@ THIRD_PARTY_NOTICES.md   licences for the bundled fonts and icons
 .env.example             how to make a fixed PITWALL_TOKEN for npm run dev (D7), and PITWALL_DEV_RECAPS;
                          .env is gitignored
 CLAUDE.md                imports this file for Claude Code
-tsconfig.json            server typecheck: src/ with tests, scripts/, config files
+tsconfig.json            server typecheck: src/ with tests, .claude/hooks/, scripts/, config files
 tsconfig.build.json      server build: src/ to dist/, without tests
 web/tsconfig.json        web UI typecheck (DOM, react-jsx, bundler resolution)
 vite.config.ts           web UI build
