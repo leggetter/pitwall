@@ -38,10 +38,13 @@
 // The call is an update (the previous recap and the turns since) when there's a previous recap and
 // turns since it, else a first recap (src/recaps/input.ts). Activity with no turn the input shows,
 // such as a tool's result, moves the recap's `throughAt` on without a call. Since W150 (the recap
-// strip gives the picture) a first recap reads as much as a plan status does, up to PLAN_TURNS_CAP,
-// and a previous recap without W150's goal, working on and plan, or a compaction summary newer than
-// the previous recap's `throughAt`, makes the call a first recap, so the picture is read again.
-// Both calls, and a plan status, also name the session's PRs from the PR list start() is given
+// strip gives the picture) a first recap reads more of the transcript, up to PLAN_TURNS_CAP, and a
+// previous recap without W150's goal, working on and plan, or a compaction summary newer than the
+// previous recap's `throughAt`, makes the call a first recap, so the picture is read again. So does,
+// since W172 (the plan is part of the recap), a previous recap that names a plan but has none of its
+// items, one stored from W150 until W172 (prompt.ts lacksPlanItems()): it keeps showing the plan's
+// line alone until the session's next activity, which recaps it from the start, so the list appears
+// soon without a call of its own. Both calls also name the session's PRs from the PR list start() is given
 // (input.ts sessionPrs()), which runs no gh of its own.
 //
 // The call runs from one fixed 0700 directory, `$PITWALL_HOME/recap`, with recapArgs() and
@@ -58,13 +61,8 @@
 // Before pitwall's first recap of a session, and while the day's budget is spent, Claude Code's own
 // `away_summary` stands in for it (source 'claude-code'), which never sets Needs you.
 //
-// Plan status (W123): makePlanStatus(), only when you ask, a call like a recap's, from the same
-// directory, under the same name and hidden the same way, with the plan prompt, over the first prompt,
-// the whole compaction summary and up to PLAN_TURNS_CAP of the latest turns. Counted against the
-// day's budget when it starts, at most one at a time per session, outside the recaps' queue and their
-// two at a time. Its failures are answered to the request, never RecapHealth's error, and never
-// pause recaps. The newest per session is kept in memory; the snapshot carries only when it was made
-// (SessionSummary.planStatusAt).
+// W123's plan status, a call of its own made when you asked, is gone since W172: the recap carries
+// the plan's items and how it changed, from the same input on the same model.
 import { realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -82,7 +80,6 @@ import {
   prOwner,
   type IndexSnapshot,
   type PullRequestList,
-  type PlanStatus,
   type NeedsYou,
   type RecapHealth,
   type RecapSummary,
@@ -96,27 +93,22 @@ import { checkClaudeVersion, prepareRelayDir } from '../server/relay.js';
 import { budgetFile, type BudgetStore } from './budget.js';
 import { runRecapCall, spawnRecapChild, type CallOutcome, type RecapSpawner } from './call.js';
 import { recapStoreDir, type RecapStore } from './store.js';
-import { firstRecapInput, planStatusInput, sessionPrs, TurnCollector, updateRecapInput, type RelayMessages, type SessionPrs } from './input.js';
+import { firstRecapInput, sessionPrs, TurnCollector, updateRecapInput, type RelayMessages, type SessionPrs } from './input.js';
 import {
-  CALL_FAILED,
-  ENVELOPE_UNREADABLE,
   MIN_RECAP_CLAUDE_VERSION,
-  PLAN_ANSWER_INVALID,
   parseEnvelope,
-  parsePlanAnswer,
   hasPicture,
+  lacksPlanItems,
   leadTodo,
   readRecapAnswer,
   todoOf,
   RECAP_REFUSALS,
   type RecapRepair,
-  planStatusArgs,
   plainField,
   RECAP_DIR_NAME,
   RECAP_NAME,
   recapArgs,
   recapEnvironment,
-  type PlanAnswer,
   type RecapAnswer,
 } from './prompt.js';
 
@@ -141,20 +133,6 @@ export type RefreshResult =
   | { kind: 'running'; retryAfterSeconds: number }
   | { kind: 'closed' };
 
-/** makePlanStatus()'s answer, which the route turns into a status (src/server/recapRoutes.ts). */
-export type PlanStatusOutcome =
-  /** Made: the newest plan status, kept for GET planStatusPath(). */
-  | { kind: 'made'; status: PlanStatus }
-  /** pitwall has no transcript of it to read. */
-  | { kind: 'no-transcript' }
-  /** The day's budget is spent: Retry-After is midnight. */
-  | { kind: 'spent'; retryAfterSeconds: number }
-  /** A plan status of it is being made already, or, with `others`, PLAN_MAX_CONCURRENT of other sessions'. */
-  | { kind: 'running'; retryAfterSeconds: number; others?: true }
-  /** The call failed or couldn't be made: why, in pitwall's words, never the model's or claude's output. */
-  | { kind: 'failed'; reason: string }
-  | { kind: 'closed' };
-
 export interface RecapEngine {
   /**
    * Starts scheduling from the index's snapshots, and from the PR list when given, which a finished
@@ -172,15 +150,7 @@ export interface RecapEngine {
   refresh(session: SessionSummary): RefreshResult;
   /** The session's recap as GET recapPath() answers it, or undefined when there's none. */
   recap(session: SessionSummary): SessionRecap | undefined;
-  /**
-   * Makes the session's plan status now (W123, POST planStatusRefreshPath()), and resolves once the
-   * call has finished. At most one at a time per session, counted against the day's budget as a
-   * recap call. Never rejects.
-   */
-  makePlanStatus(session: SessionSummary): Promise<PlanStatusOutcome>;
-  /** The session's newest plan status, as GET planStatusPath() answers it, or undefined when none has been made. */
-  planStatus(session: SessionSummary): PlanStatus | undefined;
-  /** `session` as the snapshot carries it: with its recap, its title from the recap, Needs you's 'recap' reason and when its plan status was made. The same object when there's neither recap nor plan status. */
+  /** `session` as the snapshot carries it: with its recap, its title from the recap and Needs you's 'recap' reason. The same object when there's no recap. */
   decorate(session: SessionSummary): SessionSummary;
   /** How recaps are doing today (IndexSnapshot.recaps). */
   health(): RecapHealth;
@@ -246,11 +216,6 @@ export const PAUSE_AFTER_FAILURES = 3;
 /** The first pause, doubling with each failure after that, up to PAUSE_MAX_MS. */
 export const PAUSE_BASE_MS = 5 * 60_000;
 export const PAUSE_MAX_MS = 60 * 60_000;
-/** Plan status calls at a time, of all sessions (W123's review): more presses are answered 'running'. */
-export const PLAN_MAX_CONCURRENT = 2;
-/** A model Claude Code refused, for a plan status: it runs on recaps' model, so that's the setting to change. */
-export const PLAN_MODEL_REJECTED =
-  "Claude Code didn't accept the model set for recaps, which plan status uses too, so pitwall made no plan status: it may not exist, or your account can't use it. Choose another in Preferences, under Models and effort, or in the config file's \"work.recaps\".";
 /** How soon `claude --version` is asked again after it said too old, or couldn't be run. */
 const VERSION_RETRY_MS = 10 * 60_000;
 /**
@@ -359,10 +324,6 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   const recaps = loadKept();
   /** Sessions listed in a snapshot of this run whose listing worked: one that leaves such a snapshot has left for good. */
   let seen = new Set<string>();
-  /** Each session's newest plan status (W123), by session id, in memory only. */
-  const plans = new Map<string, PlanStatus>();
-  /** Plan status calls running, by session id: at most one each. */
-  const planRunning = new Map<string, Promise<PlanStatusOutcome>>();
   /** What the index read on its latest poll. */
   let facts: ReadonlyMap<string, SessionFacts> = new Map();
   /** Sessions whose latest call failed: for what activity, and when. */
@@ -511,8 +472,8 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     if (!snapshot.source.ok) return pump();
     const listed = new Set<string>();
     for (const group of snapshot.groups) for (const session of group.sessions) listed.add(session.sessionId);
-    // Only listed sessions' failures and plan statuses are kept: one that comes back later starts again.
-    for (const map of [failures, plans]) for (const id of map.keys()) if (!listed.has(id)) map.delete(id);
+    // Only listed sessions' failures are kept: one that comes back later starts again.
+    for (const id of failures.keys()) if (!listed.has(id)) failures.delete(id);
     // A recap is forgotten, in memory and on disk, once its session was listed this run and has left.
     // A kept one whose session isn't listed yet waits: another pitwall on this home may list it, under
     // other roots, and this one may later. RECAP_KEEP_MS bounds what waits (store.ts).
@@ -612,15 +573,15 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
 
     const previous = recaps.get(job.sessionId);
     const read = await sources.read(file);
-    // A first recap when there's no previous one, nothing since it, no picture in it (W150), or a
-    // compaction since it, after which the picture is read again (W150).
+    // A first recap when there's no previous one, nothing since it, no picture in it (W150), a plan
+    // line without its items (W172), or a compaction since it, after which the picture is read again (W150).
     const compactedSince = previous !== undefined && read.compaction?.at !== undefined && parseMs(read.compaction.at) > parseMs(previous.throughAt);
-    const update = previous !== undefined && !(startedActivity <= parseMs(previous.throughAt)) && hasPicture(previous) && !compactedSince;
+    const update = previous !== undefined && !(startedActivity <= parseMs(previous.throughAt)) && hasPicture(previous) && !lacksPlanItems(previous) && !compactedSince;
     const collector = new TurnCollector({
       ...(options.relay === undefined ? {} : { relay: options.relay }),
       ...(update ? { after: previous.throughAt } : { cap: PLAN_TURNS_CAP }),
     });
-    // A first recap reads a plan status's turns, three times an update's, so up to twice its pages.
+    // A first recap reads PLAN_TURNS_CAP of turns, three times an update's, so up to twice its pages.
     // An update reads back to the previous recap for your lines past its cap (W152), up to four times
     // its pages; one with less since the previous recap stops there.
     await collectTurns(source, job.sessionId, collector, update ? 4 * maxPages : 2 * maxPages);
@@ -734,91 +695,6 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     }
     // Out of pages, or a page that couldn't be read, with older turns left: an update marks it (W152).
     collector.finish(true);
-  }
-
-  // ---------------------------------------------------------------- one plan status (W123)
-
-  /**
-   * A plan status of `sessionId`: its first prompt, its newest compaction summary and its latest
-   * turns up to PLAN_TURNS_CAP (input.ts planStatusInput()), in one call as a recap's, counted
-   * against the day's budget. Its failures are its own: they don't set RecapHealth's error or pause
-   * recaps, since the strip says why at once.
-   */
-  async function runPlan(session: SessionSummary, file: string, throughFrom: number): Promise<PlanStatusOutcome> {
-    const { sessionId } = session;
-    const source = index;
-    if (source === undefined) return { kind: 'failed', reason: "pitwall hasn't read the sessions yet. Try again in a moment." };
-    const read = await sources.read(file);
-    const collector = new TurnCollector({ ...(options.relay === undefined ? {} : { relay: options.relay }), cap: PLAN_TURNS_CAP });
-    // Three times a recap's turns, so up to twice its pages.
-    await collectTurns(source, sessionId, collector, 2 * maxPages);
-    if (closed) return { kind: 'closed' };
-    const throughMs = Math.max(Number.isNaN(throughFrom) ? 0 : throughFrom, collector.newestMs ?? 0);
-    const keep = (answer: PlanAnswer): PlanStatusOutcome => {
-      const status: PlanStatus = answer.found
-        ? { found: true, plan: answer.plan, items: answer.items.map(({ text, state }) => ({ text, state })), ...(answer.changes === undefined ? {} : { changes: answer.changes }), at: new Date(now()).toISOString(), throughAt: new Date(throughMs).toISOString() }
-        : { found: false, items: [], at: new Date(now()).toISOString(), throughAt: new Date(throughMs).toISOString() };
-      plans.set(sessionId, status);
-      changed();
-      return { kind: 'made', status };
-    };
-    // Nothing to read: no plan, without a call.
-    if (collector.turns === 0 && read.firstPrompt === undefined && read.compaction === undefined) return keep({ found: false });
-    const prs = prsOf(session);
-    const input = planStatusInput(
-      {
-        ...(read.firstPrompt === undefined ? {} : { firstPrompt: read.firstPrompt }),
-        ...(read.compaction === undefined ? {} : { compaction: read.compaction }),
-        turns: collector.text(),
-        ...(prs === undefined ? {} : { prs }),
-      },
-      options.randomId,
-    );
-    let cwd: string;
-    try {
-      cwd = prepareDir(dir);
-      dirs.add(cwd);
-    } catch {
-      return { kind: 'failed', reason: `pitwall couldn't prepare its folder for recap calls, ${dir}.` };
-    }
-    const version = await checkVersion();
-    if (closed) return { kind: 'closed' };
-    if (version !== undefined) return { kind: 'failed', reason: version };
-    sync();
-    if (spent()) return { kind: 'spent', retryAfterSeconds: secondsToMidnight(now()) };
-    calls++;
-    changes++;
-    save();
-    let pid: number | undefined;
-    const outcome = await runRecapCall({
-      claudeBin,
-      args: planStatusArgs(options.work?.() ?? (options.model === undefined ? {} : { model: options.model })),
-      cwd,
-      env: recapEnvironment(options.env ?? process.env),
-      input,
-      timeoutMs,
-      spawn,
-      onPid(each) {
-        pid = each;
-        pids.add(each);
-      },
-      signal: closing.signal,
-    });
-    if (pid !== undefined) pids.delete(pid);
-    if (outcome.kind === 'stopped') return { kind: 'closed' };
-    const result = readPlanOutcome(outcome);
-    if (result.costUsd !== undefined) {
-      sync();
-      costUsd += result.costUsd;
-      save();
-      changes++;
-    }
-    if (!result.ok) {
-      log(result.reason);
-      changed();
-      return { kind: 'failed', reason: result.reason };
-    }
-    return keep(result.answer);
   }
 
   /** Undefined when Claude Code is new enough, else why not, in pitwall's words. */
@@ -944,36 +820,10 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     recap(session) {
       return shown(session);
     },
-    makePlanStatus(session) {
-      if (closed) return Promise.resolve({ kind: 'closed' });
-      sync();
-      const file = facts.get(session.sessionId)?.file;
-      if (session.transcript !== 'ok' || file === undefined) return Promise.resolve({ kind: 'no-transcript' });
-      if (planRunning.has(session.sessionId)) return Promise.resolve({ kind: 'running', retryAfterSeconds: 5 });
-      // One call per session, and a few at a time in all, on top of recaps' own maxConcurrent.
-      if (planRunning.size >= PLAN_MAX_CONCURRENT) return Promise.resolve({ kind: 'running', retryAfterSeconds: 5, others: true });
-      if (spent()) return Promise.resolve({ kind: 'spent', retryAfterSeconds: secondsToMidnight(now()) });
-      const made = runPlan(session, file, parseMs(session.lastActivityAt))
-        .catch((error: unknown): PlanStatusOutcome => {
-          log(`a plan status failed unexpectedly: ${error instanceof Error ? error.message : String(error)}`);
-          return { kind: 'failed', reason: 'pitwall hit an unexpected error while making a plan status.' };
-        })
-        .finally(() => {
-          planRunning.delete(session.sessionId);
-        });
-      planRunning.set(session.sessionId, made);
-      return made;
-    },
-    planStatus(session) {
-      const status = plans.get(session.sessionId);
-      return status === undefined ? undefined : { ...status, items: status.items.map((item) => ({ ...item })) };
-    },
     decorate(session) {
       const recap = shown(session);
-      const planAt = plans.get(session.sessionId)?.at;
-      if (recap === undefined) return planAt === undefined ? session : { ...session, planStatusAt: planAt };
+      if (recap === undefined) return session;
       const decorated: SessionSummary = { ...session, recap: summaryOf(session, recap) };
-      if (planAt !== undefined) decorated.planStatusAt = planAt;
       // pitwall's title, even while Claude Code's away_summary stands in for its recap.
       const title = recaps.get(session.sessionId)?.title;
       if (title !== undefined && !sameTitle(title, session.name)) {
@@ -1013,16 +863,17 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
       autoQueue.length = 0;
       closing.abort();
       const done: Promise<unknown>[] = [...running.values()].map((each) => each.done);
-      done.push(...planRunning.values());
       await Promise.race([Promise.all(done), new Promise((resolve) => setTimeout(resolve, 3000).unref())]);
     },
   };
 }
 
-/** A stored recap's answer fields, for an update's input: W150's goal, working on and plan when it has them. */
+/** A stored recap's answer fields, for an update's input: W150's goal, working on and plan when it has them, and W172's plan items and changes. */
 function answerOf(recap: SessionRecap): RecapAnswer {
   const answer: RecapAnswer = { summary: recap.summary, todos: recap.todos.map(todoOf), waitingOn: recap.waitingOn, title: recap.title };
   if (hasPicture(recap)) Object.assign(answer, { goal: recap.goal, workingOn: recap.workingOn, plan: recap.plan });
+  if (recap.planItems !== undefined) answer.planItems = recap.planItems.map(({ text, state }) => ({ text, state }));
+  if (recap.planChanges !== undefined) answer.planChanges = recap.planChanges;
   return answer;
 }
 
@@ -1030,61 +881,26 @@ function answerOf(recap: SessionRecap): RecapAnswer {
 export function readOutcome(
   outcome: Exclude<CallOutcome, { kind: 'stopped' }>,
 ): { ok: true; answer: RecapAnswer; repaired?: RecapRepair[]; costUsd?: number } | { ok: false; reason: string; costUsd?: number } {
-  return readCall(
-    outcome,
-    (text) => {
-      const reading = readRecapAnswer(text);
-      return reading.ok ? { ok: true, answer: reading.answer, repaired: reading.repaired } : { ok: false, reason: RECAP_REFUSALS[reading.refusal] };
-    },
-    'recap',
-  );
-}
-
-/** What a plan status call's process gave (W123): its answer, or why not, in pitwall's words, with its cost when it reported one. */
-export function readPlanOutcome(outcome: Exclude<CallOutcome, { kind: 'stopped' }>): { ok: true; answer: PlanAnswer; costUsd?: number } | { ok: false; reason: string; costUsd?: number } {
-  return readCall(
-    outcome,
-    (text) => {
-      const answer = parsePlanAnswer(text);
-      return answer === undefined ? { ok: false, reason: PLAN_ANSWER_INVALID } : { ok: true, answer };
-    },
-    'plan status',
-  );
-}
-
-/** The envelope's reasons, which name a recap call, for another kind of call. */
-function envelopeReason(reason: string, noun: 'recap' | 'plan status'): string {
-  if (noun === 'recap') return reason;
-  if (reason === ENVELOPE_UNREADABLE) return `The ${noun} call printed something pitwall couldn't read.`;
-  if (reason === CALL_FAILED) return `Claude Code said the ${noun} call failed.`;
-  return reason;
-}
-
-function readCall<T>(
-  outcome: Exclude<CallOutcome, { kind: 'stopped' }>,
-  parse: (text: string) => { ok: true; answer: T; repaired?: RecapRepair[] } | { ok: false; reason: string },
-  noun: 'recap' | 'plan status',
-): { ok: true; answer: T; repaired?: RecapRepair[]; costUsd?: number } | { ok: false; reason: string; costUsd?: number } {
   switch (outcome.kind) {
     case 'spawn-error':
-      return { ok: false, reason: outcome.notFound ? `claude wasn't found, so pitwall couldn't make a ${noun}.` : `pitwall couldn't start claude for a ${noun}.` };
+      return { ok: false, reason: outcome.notFound ? "claude wasn't found, so pitwall couldn't make a recap." : "pitwall couldn't start claude for a recap." };
     case 'timeout':
-      return { ok: false, reason: `The ${noun} call didn't finish in time, so pitwall stopped it.` };
+      return { ok: false, reason: "The recap call didn't finish in time, so pitwall stopped it." };
     case 'too-large':
-      return { ok: false, reason: `The ${noun} call printed far more than a ${noun}, so pitwall stopped it.` };
+      return { ok: false, reason: 'The recap call printed far more than a recap, so pitwall stopped it.' };
     case 'exit': {
       const envelope = parseEnvelope(outcome.stdout);
       const cost = envelope.costUsd === undefined ? {} : { costUsd: envelope.costUsd };
       // A refused model exits 1, with a result that says so (W119): pitwall's words for that, not the exit code.
-      if (!envelope.ok && envelope.reason === modelRejectedMessage('recaps')) return { ok: false, reason: noun === 'recap' ? envelope.reason : PLAN_MODEL_REJECTED, ...cost };
+      if (!envelope.ok && envelope.reason === modelRejectedMessage('recaps')) return { ok: false, reason: envelope.reason, ...cost };
       if (outcome.code !== 0) {
         const how = outcome.code === null ? `was stopped by ${outcome.signal ?? 'a signal'}` : `exited with code ${outcome.code}`;
-        return { ok: false, reason: `The ${noun} call ${how}.`, ...cost };
+        return { ok: false, reason: `The recap call ${how}.`, ...cost };
       }
-      if (!envelope.ok) return { ok: false, reason: envelopeReason(envelope.reason, noun), ...cost };
+      if (!envelope.ok) return { ok: false, reason: envelope.reason, ...cost };
       // The reason is the check that refused the answer, in pitwall's words, never the answer itself (W126).
-      const read = parse(envelope.text);
-      return { ...read, ...cost };
+      const reading = readRecapAnswer(envelope.text);
+      return reading.ok ? { ok: true, answer: reading.answer, repaired: reading.repaired, ...cost } : { ok: false, reason: RECAP_REFUSALS[reading.refusal], ...cost };
     }
   }
 }

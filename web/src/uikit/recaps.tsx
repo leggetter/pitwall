@@ -1,7 +1,7 @@
 // Recaps (M5, W111, W121, W150): the real RecapStrip in every state, in the session view and alone at its
-// width, the picture (W150: goal, working on, plan and your to-dos) and recaps without it, Plan status
-// (W123), the session rows' recap reasons on line 2, and the app strip's recap lines. Each strip has a stub
-// API (stubs.ts) holding its made-up recap, and its own collapsed setting in memory, so pressing one
+// width, the picture (W150: goal, working on, plan and your to-dos), its Plan section with the plan's
+// items (W172), and recaps without it, the session rows' recap reasons on line 2, and the app strip's recap lines. Each strip has a stub
+// API (stubs.ts) holding its made-up recap, and its own collapsed settings in memory, so pressing one
 // changes none of the others. Every recap here is made up, as spike 010's examples are.
 
 import { useState, type ReactNode } from 'react';
@@ -11,7 +11,7 @@ import { RecapStrip } from '../components/RecapStrip.js';
 import { SessionView } from '../components/SessionView.js';
 import { ToastProvider } from '../components/Toast.js';
 import type { StorageSource } from '../groupState.js';
-import { RECAP_COLLAPSED_KEY } from '../recap.js';
+import { RECAP_COLLAPSED_KEY, RECAP_PLAN_COLLAPSED_KEY } from '../recap.js';
 import { ago, background, endedSession, session } from './fixtures.js';
 import { element, hoverFor, Scenario, Specimen } from './kit.js';
 import { acrossGroups, inGroup, Rows } from './lists.js';
@@ -52,11 +52,19 @@ function recap(extra: Partial<SessionRecap> = {}): SessionRecap {
   };
 }
 
-/** W150's picture of the made-up recap: the goal, what it's on and why, and the plan's line. */
-const PICTURE = {
+/** W150's picture of the made-up recap: the goal, what it's on and why, and the plan's line, with W172's items and changes. */
+const PICTURE: Partial<SessionRecap> = {
   goal: 'Make the made-up nightly export work on files over 2 GB.',
   workingOn: '#42: the fix for the 32-bit size field in the upload step, which the large-file goal needs before the archive job can reuse it.',
   plan: 'The made-up large-file plan: #42, then the archive job, then the thumbnails; on #42 now',
+  planItems: [
+    { text: '#40: find why files over 2 GB fail', state: 'done' },
+    { text: '#42: fix the 32-bit size field, with a test', state: 'now' },
+    { text: 'The archive job reuses the fix', state: 'next' },
+    { text: 'The thumbnails job reuses the fix', state: 'next' },
+    { text: 'Rewrite the upload step', state: 'dropped' },
+  ],
+  planChanges: 'You dropped the upload step rewrite: the size field fix is enough. The thumbnails job was added after you asked about it.',
 };
 
 /** A made-up recap with the picture (W150). */
@@ -105,8 +113,11 @@ function recapped(name: string, full: SessionRecap | undefined, extra: Partial<S
 }
 
 /** Storage that lasts as long as the specimen, starting collapsed or open. */
-function memoryStorage(collapsed: boolean): StorageSource {
-  const items = new Map<string, string>([[RECAP_COLLAPSED_KEY, collapsed ? 'true' : 'false']]);
+function memoryStorage(collapsed: boolean, planOpen = false): StorageSource {
+  const items = new Map<string, string>([
+    [RECAP_COLLAPSED_KEY, collapsed ? 'true' : 'false'],
+    [RECAP_PLAN_COLLAPSED_KEY, planOpen ? 'false' : 'true'],
+  ]);
   const storage = { getItem: (key: string) => items.get(key) ?? null, setItem: (key: string, value: string) => void items.set(key, value) };
   return () => storage;
 }
@@ -117,15 +128,18 @@ function Strip({
   health = HEALTHY,
   options = {},
   collapsed = false,
+  planOpen = false,
   listed = true,
 }: {
   of: { session: SessionSummary; full: SessionRecap | undefined };
   health?: RecapHealth;
   options?: StubOptions;
   collapsed?: boolean;
+  /** The Plan section open (W172), which starts collapsed. */
+  planOpen?: boolean;
   listed?: boolean;
 }) {
-  const [storage] = useState(() => memoryStorage(collapsed));
+  const [storage] = useState(() => memoryStorage(collapsed, planOpen));
   const recaps = of.full ? { [of.session.sessionId]: of.full } : {};
   return (
     <ToastProvider>
@@ -153,12 +167,16 @@ const PICTURE_CI = recapped(
 );
 const PICTURE_SOMEONE = recapped(
   'recap-picture-someone',
-  pictured({ waitingOn: 'someone else', todos: [{ text: "Fix the review's comments on #42", owner: 'someone else' }], plan: '' }),
+  pictured({ waitingOn: 'someone else', todos: [{ text: "Fix the review's comments on #42", owner: 'someone else' }], plan: '', planItems: undefined, planChanges: undefined }),
 );
 const PICTURE_DONE = recapped(
   'recap-picture-done',
-  pictured({ waitingOn: 'nothing', todos: [], workingOn: 'Nothing: #42 merged, and the nightly run passed with a 3 GB file, which was the goal.', plan: '' }),
+  pictured({ waitingOn: 'nothing', todos: [], workingOn: 'Nothing: #42 merged, and the nightly run passed with a 3 GB file, which was the goal.', plan: '', planItems: undefined, planChanges: undefined }),
 );
+/** A plan with items and no changes (W172). */
+const PICTURE_STEADY = recapped('recap-picture-steady', pictured({ planChanges: undefined }));
+/** Stored before W172: the plan's line, no items. */
+const PICTURE_LINE_ONLY = recapped('recap-picture-line-only', pictured({ planItems: undefined, planChanges: undefined }));
 const PICTURE_STALE = recapped('recap-picture-stale', pictured({ stale: true }), { lastActivityAt: ago(1) });
 const YOU = recapped('recap-you', recap());
 const CI = recapped(
@@ -255,7 +273,7 @@ export function RecapSpecimens() {
     <>
       <Specimen
         title="In the session view"
-        note="Between the header and the tabs, on every tab: line 1 is the disclosure button, how old the recap is and Refresh right after it; then the picture (W150): Goal, why it was started; Working on, the item and why it matters; Plan, its line, with Show plan; For you, only your to-dos. The title in the header is the recap's, pitwall's, with where it came from in its tooltip."
+        note="Between the header and the tabs, on every tab: line 1 is the disclosure button, how old the recap is and Refresh right after it; then the picture (W150): Goal, why it was started; Working on, the item and why it matters; Plan, its own collapsible section (W172); For you, only your to-dos. The title in the header is the recap's, pitwall's, with where it came from in its tooltip."
         frame="view"
       >
         <Stubbed options={{ recaps: { [IN_VIEW.session.sessionId]: IN_VIEW.full! } }}>
@@ -271,13 +289,13 @@ export function RecapSpecimens() {
           <SessionView session={VIEW_ENDED} listed onClose={noop} recaps={HEALTHY} />
         </Stubbed>
       </Specimen>
-      <StripSpecimen title="The picture, waiting on you" note="W150: Goal, Working on, Plan with Show plan, then For you (2): only your to-dos, in order, with no tags, since they're all yours. The session's own, CI's and someone else's to-dos aren't shown: what's next is the conversation's.">
+      <StripSpecimen title="The picture, waiting on you" note="W150: Goal, Working on, the Plan section, collapsed by default, its line on one row with the toggle (W172), then For you (2): only your to-dos, in order, with no tags, since they're all yours. The session's own, CI's and someone else's to-dos aren't shown: what's next is the conversation's.">
         <Strip of={PICTURE_YOU} />
       </StripSpecimen>
       <StripSpecimen title="The picture, waiting on CI" note="Your to-do comes after CI's, so it's listed, and a quiet line says what it waits on now: Waiting on CI.">
         <Strip of={PICTURE_CI} />
       </StripSpecimen>
-      <StripSpecimen title="The picture, no plan, waiting on someone else" note="The recap names no plan: Plan says None named., and Show plan can still look. Nothing for you, so no For you line; the quiet line says what it waits on.">
+      <StripSpecimen title="The picture, no plan, waiting on someone else" note="The recap names no plan: no Plan section at all (W172). Nothing for you, so no For you line; the quiet line says what it waits on.">
         <Strip of={PICTURE_SOMEONE} />
       </StripSpecimen>
       <StripSpecimen title="The picture, nothing left" note="No to-dos at all: Nothing left to do.">
@@ -289,10 +307,14 @@ export function RecapSpecimens() {
       <StripSpecimen title="The picture, may be out of date" note="Line 1: the age, Refresh right after it, as the recap's own, then May be out of date. The view asked for a new one once as it opened, which this stub refuses quietly.">
         <Strip of={PICTURE_STALE} options={{ recapRefresh: 'failed' }} />
       </StripSpecimen>
-      <StripSpecimen title="Show plan" note="W150: Show plan, on the Plan line, opens the plan status panel (W123) right under it: the plan's one line, its items in order, each Done, Now, Next or Dropped, and how the plan changed; its age, Make a new one and Close.">
-        <Scenario run={async (root) => (await element(root, '[data-plan-status]')).click()}>
-          <Strip of={PICTURE_YOU} />
-        </Scenario>
+      <StripSpecimen title="The Plan section, open" note="W172: open, the plan's items in its own order, each tagged Now (info), Done (success), Next (quiet) or Dropped (outline, struck through), then Changes: how the plan changed. The line wraps while it's open. The choice is kept per viewer, as a boolean, in pitwall.recap-plan-collapsed.v1.">
+        <Strip of={PICTURE_YOU} planOpen />
+      </StripSpecimen>
+      <StripSpecimen title="The Plan section, no changes" note="Open, with no Changes line: the plan hasn't changed.">
+        <Strip of={PICTURE_STEADY} planOpen />
+      </StripSpecimen>
+      <StripSpecimen title="The Plan section, stored before W172" note="The plan's line with no items yet: a plain Plan heading, nothing to open, until the session's next recap, which is a first recap so the items come.">
+        <Strip of={PICTURE_LINE_ONLY} />
       </StripSpecimen>
       <StripSpecimen title="Without the picture, waiting on you" note="A recap stored before W150: the summary, then the to-dos in order: yours with a You tag in the Needs you tone, subtle warning, as Asked you, and their text in full colour; the rest quiet, subtle neutral tags and muted text. The session needs you, for Needs you's reason 'recap', with your first to-do on its row's line 2.">
         <Strip of={YOU} />
@@ -315,7 +337,7 @@ export function RecapSpecimens() {
       >
         <Strip of={STALE} options={{ recapRefresh: 'failed' }} />
       </StripSpecimen>
-      <StripSpecimen title="Claude Code's recap" note="Before pitwall's first recap, or while the day's budget is spent: Claude Code's own away_summary, as the summary alone, with no to-dos. Nothing to open, so no disclosure button, and Plan status sits under the summary (W150).">
+      <StripSpecimen title="Claude Code's recap" note="Before pitwall's first recap, or while the day's budget is spent: Claude Code's own away_summary, as the summary alone, with no to-dos. Nothing to open, so no disclosure button, and no plan.">
         <Strip of={CLAUDE} />
       </StripSpecimen>
       <StripSpecimen title="Collapsed" note="The summary's first line, its whole in a tooltip when it's cut, and how many to-dos are yours, 2 for you, in the Needs you tone. The choice is kept per viewer, as a boolean, in pitwall.recap-collapsed.v1.">
@@ -329,21 +351,6 @@ export function RecapSpecimens() {
       </StripSpecimen>
       <StripSpecimen title="Open, a long recap" note="Six to-dos, the most a recap keeps, for each owner. Open, everything wraps; past 35% of the view's height it scrolls inside itself.">
         <Strip of={LONG} />
-      </StripSpecimen>
-      <StripSpecimen title="Plan status, without the picture" note="W123: in a recap without the picture, a text button in the body under the to-dos (W150); pressed, where the session is in its bigger plan, under it: the plan's one line, its items in order, each Done, Now, Next or Dropped, and how the plan changed; its age, Make a new one and Close.">
-        <Scenario run={async (root) => (await element(root, '[data-plan-status]')).click()}>
-          <Strip of={LONG} />
-        </Scenario>
-      </StripSpecimen>
-      <StripSpecimen title="Plan status, no plan" note="The transcript shows no plan the session works through.">
-        <Scenario run={async (root) => (await element(root, '[data-plan-status]')).click()}>
-          <Strip of={LONG} options={{ planStatus: 'none' }} />
-        </Scenario>
-      </StripSpecimen>
-      <StripSpecimen title="Plan status, being made" note="Its button busy, and the panel saying so, while the call runs.">
-        <Scenario run={async (root) => (await element(root, '[data-plan-status]')).click()}>
-          <Strip of={LONG} options={{ planStatus: 'making' }} />
-        </Scenario>
       </StripSpecimen>
       <StripSpecimen title="Refreshing" note="Refresh pressed: its spinner until the snapshot's recap changes, or a minute passes, or a call fails.">
         <Scenario run={async (root) => (await element(root, '[data-recap-refresh]')).click()}>
