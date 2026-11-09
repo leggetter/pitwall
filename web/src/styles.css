@@ -2631,8 +2631,8 @@ mark.match {
  * The recap strip (section 4: Recap strip, W111): between the session view's header and its tabs, on
  * --pw-surface-muted, as the footer is, with a bottom --pw-border. Line 1: the disclosure button, the
  * age, Refresh right after it (W150), and "May be out of date" while it's stale. Then the picture
- * (W150): Goal, Working on, on one line with an ellipsis while it's collapsed, Plan with Show plan, and
- * your to-dos; or, for a recap without one, the summary and, while it's open, the to-dos (W121). At
+ * (W150): Goal, Working on, on one line with an ellipsis while it's collapsed, the Plan section (W172),
+ * and your to-dos; or, for a recap without one, the summary and, while it's open, the to-dos (W121). At
  * most 35% of the view's height, scrolling inside itself past that, as the footer does at half, so the
  * body always keeps its room.
  */
@@ -2660,46 +2660,8 @@ mark.match {
   min-width: 0;
 }
 
-/* The plan status panel's Make a new one and Close (W123), together at the end of its line 1. */
-.recap-actions {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--pw-space-1);
-  margin-left: auto;
-}
-
 /*
- * Plan status, or Show plan on the picture's Plan line (W150): a ghost sm text button, a disclosure
- * with the chevron, turned down while the panel is open, its block margins taken back so its line
- * keeps its height.
- */
-.button.recap-plan-button {
-  flex: none;
-  margin-block: calc(-1 * var(--pw-space-0-5));
-  vertical-align: baseline;
-}
-
-.recap-plan-button .chevron {
-  flex: none;
-  transition: transform var(--pw-duration-fast) var(--pw-ease-standard);
-}
-
-.recap-plan-button[aria-expanded='true'] .chevron {
-  transform: rotate(90deg);
-}
-
-/* Plan status's own line in a recap without the picture (W150), under the to-dos. */
-.recap-plan-action {
-  margin: 0;
-}
-
-.recap-plan-action .button.recap-plan-button {
-  margin-left: calc(-1 * var(--pw-space-2));
-}
-
-/*
- * The picture's lines (W150): "Goal:", "Working on:", "Plan:" and "For you (n):", each label in 500
+ * The picture's lines (W150): "Goal:", "Working on:" and "For you (n):", each label in 500
  * --pw-text, then its text, wrapping while the strip is open.
  */
 .recap-line {
@@ -2881,51 +2843,69 @@ mark.match {
   color: var(--pw-text-muted);
 }
 
-/* While the plan status is open, the strip may take half the view, as the footer may, since the plan can run to 15 items. */
-.session-recap[data-plan='open'] {
+/* While its Plan section is open, the strip may take half the view, as the footer may, since the plan can run to 15 items (W172). */
+.session-recap:has(.recap-plan[data-open='true']) {
   max-height: 50%;
 }
 
 /*
- * The plan status panel (W123): under its button, a top --pw-border, its heading, age,
- * Make a new one and Close on its line 1; then the plan's one line, its items in order, each with its
- * state as a small tag, and how the plan changed.
+ * The Plan section (W172), in the picture's body: its head mirrors the strip's, the disclosure, "Plan",
+ * in 500 --pw-text, and the plan's line on the same row, top-aligned, the line padded as the toggle
+ * is, so their first lines share a centre and a baseline, however far the line wraps. Collapsed, the line is one line with an ellipsis; open, or with no items to
+ * open, it wraps. Open, the items in order, each with its state as a small tag, then how the plan changed.
  */
 .recap-plan {
   display: flex;
   flex-direction: column;
   gap: var(--pw-space-1);
-  margin-top: var(--pw-space-1);
-  padding-top: var(--pw-space-2);
-  border-top: 1px solid var(--pw-border);
-}
-
-.recap-plan[hidden] {
-  display: none;
+  min-width: 0;
 }
 
 .recap-plan-head {
   display: flex;
-  align-items: center;
-  gap: var(--pw-space-2);
+  align-items: flex-start;
+  gap: var(--pw-space-1);
   min-width: 0;
 }
 
-.recap-plan-head .icon-button {
-  flex: none;
-  margin-block: calc(-1 * var(--pw-space-0-5));
-}
-
 .recap-plan-heading {
+  flex: none;
   margin: 0;
   font-size: var(--pw-text-s);
   font-weight: var(--pw-weight-medium);
   line-height: var(--pw-leading-s);
 }
 
+/* With no items to open, a plain heading, padded as the toggle is. */
+.recap-plan-title {
+  display: inline-block;
+  padding: var(--pw-space-0-5) 0;
+}
+
 .recap-plan-line {
+  flex: 1 1 auto;
+  min-width: 0;
   margin: 0;
+  padding-block: var(--pw-space-0-5);
   overflow-wrap: anywhere;
+}
+
+/* Collapsed: the line's first line, its whole in a tooltip when it's cut. */
+.recap-plan[data-open='false'] .recap-plan-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recap-plan-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+  min-width: 0;
+}
+
+.recap-plan-body[hidden] {
+  display: none;
 }
 
 .recap-plan-items {

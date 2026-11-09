@@ -106,9 +106,9 @@ src/prs/                 your open pull requests (M4): three gh api graphql sear
 src/recaps/              per-session recaps (M5, W110, D26): engine.ts schedules them, a short claude -p on Haiku
                          per session, at most 2 at a time and 500 a day, and decorates the snapshot; input.ts
                          builds the input, prompt.ts the command line, environment and strict parsing, call.ts
-                         runs one, store.ts keeps each session's recap on disk across restarts (W132). Plan
-                         status (W123) is the same kind of call, made only when the page asks, from the
-                         same engine. The transcript reads are src/index/recapSources.ts; the
+                         runs one, store.ts keeps each session's recap on disk across restarts (W132). Since
+                         W172 the recap carries the plan's items and changes too; W123's separate Plan status
+                         call is gone. The transcript reads are src/index/recapSources.ts; the
                          snapshot's view and routes are src/server/snapshotRecaps.ts and recapRoutes.ts.
                          Off with --no-recaps
 src/supervisor/          the supervisor (M5, W113, W115, D4): one claude -p session on Opus 5.5 that pitwall starts

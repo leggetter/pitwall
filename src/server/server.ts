@@ -43,10 +43,8 @@
 //   GET /api/sessions/:sessionId/recap           then recapRoutes.ts: the session's SessionRecap, else 404
 //   POST /api/sessions/:sessionId/recap/refresh  then recapRoutes.ts: a recap now; 409 with --no-recaps,
 //                                                429 when the day's budget is spent or one is running
-//   GET /api/sessions/:sessionId/plan-status     then recapRoutes.ts: its newest PlanStatus (W123), else 404
-//   POST /api/sessions/:sessionId/plan-status/refresh
-//                                                then recapRoutes.ts: a plan status now, answered once the
-//                                                call ends; 409, 429 as for a recap, 502 when it failed
+//                                                (W123's plan-status routes went in W172: the recap
+//                                                carries the plan's items)
 //
 // With the supervisor on (M5, W112, W113), the snapshot carries its state too, and goes out again when
 // that changes (snapshotSupervisor.ts):
