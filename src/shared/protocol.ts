@@ -1852,6 +1852,12 @@ export const RECAP_TODO_OWNERS: readonly RecapTodoOwner[] = ['you', 'session', '
 export interface RecapTodo {
   text: string;
   owner: RecapTodoOwner;
+  /**
+   * W166: true when it can only happen once an earlier to-do in the list is done, such as a release
+   * after a merge; false when it can be done now. Absent from a recap made before W166, which keeps
+   * W146's rule alone (needsYouOf(), src/recaps/engine.ts).
+   */
+  after?: boolean;
 }
 
 /** The most to-dos a recap keeps: the first ones, in order. */

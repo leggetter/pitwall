@@ -321,6 +321,13 @@ describe('the input', () => {
     ]);
   });
 
+  it("passes on each previous to-do's `after` when it has one (W166)", () => {
+    const todos = [{ text: 'Merge #42', owner: 'someone else' as const, after: false }, { text: 'Release the CLI', owner: 'you' as const, after: true }];
+    const previous = { summary: 'It fixed the export in #42.', todos, waitingOn: 'someone else' as const, title: 'A title' };
+    const input = updateRecapInput({ firstPrompt: 'Fix it.', previous, turns: '' }, fixedId);
+    expect(input).toContain('"todos":[{"text":"Merge #42","owner":"someone else","after":false},{"text":"Release the CLI","owner":"you","after":true}]');
+  });
+
   it("passes on a previous recap's goal, working on and plan, first, to be kept steady (W150)", () => {
     const previous = {
       summary: 'It fixed the export in #42.',
