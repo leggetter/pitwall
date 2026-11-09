@@ -477,6 +477,8 @@
 
 /* Needs you's notice while the supervisor's drafts wait on you, over the rows, as the PR list's notices are. */
 .supervisor-notice {
+  /* Its alert's button wraps under the text when the session list column is narrow, as the page alerts' do (styles.css, Alerts). */
+  container: alerts / inline-size;
   padding: var(--pw-space-3) var(--pw-space-4);
   border-bottom: 1px solid var(--pw-border);
 }
