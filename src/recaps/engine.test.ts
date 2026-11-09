@@ -984,6 +984,8 @@ describe('what the snapshot shows', () => {
       expect(h.engine.decorate(a)).not.toHaveProperty('needsYou');
       const later = await recapped({ todos: [handoff[0], { ...handoff[1], after: true }, handoff[2]], waitingOn: 'CI' });
       expect(later.h.engine.decorate(later.a).needsYou).toEqual({ reason: 'recap', text: handoff[2]!.text });
+      // The row's `next` is the same step Needs you shows (#202's review).
+      expect(later.h.engine.decorate(later.a).recap).toMatchObject({ forYou: 2, next: handoff[2]!.text });
     });
 
     it("keeps W146's rule for a job that isn't done, an interactive session, a wait on another session and a recap from before W166", async () => {

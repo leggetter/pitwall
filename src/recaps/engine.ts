@@ -867,10 +867,12 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     return isStale(chosen) ? { ...chosen, stale: true } : { ...chosen };
   }
 
-  function summaryOf(recap: SessionRecap): RecapSummary {
+  function summaryOf(session: SessionSummary, recap: SessionRecap): RecapSummary {
     const yours = recap.todos.filter((todo) => todo.owner === 'you');
     const summary: RecapSummary = { waitingOn: recap.waitingOn, title: recap.title, forYou: yours.length, at: recap.at, source: recap.source };
-    if (yours[0] !== undefined) summary.next = yours[0].text;
+    // Your step that's due, as Needs you says it (W166), else your first.
+    const next = yourNext(session, recap) ?? yours[0]?.text;
+    if (next !== undefined) summary.next = next;
     if (recap.stale === true) summary.stale = true;
     return summary;
   }
@@ -970,7 +972,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
       const recap = shown(session);
       const planAt = plans.get(session.sessionId)?.at;
       if (recap === undefined) return planAt === undefined ? session : { ...session, planStatusAt: planAt };
-      const decorated: SessionSummary = { ...session, recap: summaryOf(recap) };
+      const decorated: SessionSummary = { ...session, recap: summaryOf(session, recap) };
       if (planAt !== undefined) decorated.planStatusAt = planAt;
       // pitwall's title, even while Claude Code's away_summary stands in for its recap.
       const title = recaps.get(session.sessionId)?.title;
