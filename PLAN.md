@@ -306,6 +306,39 @@ On `m5.2/integration`, branched from `main` once M5.1 has merged (Phil, 2026-11-
   - The report: `scripts/diagnostics-report.ts [--days 7] [--session <id>] [--json]`, read-only, like `scripts/flag-report.ts` (W153): why a session was flagged and for how long, and which reasons fire most.
   - Checks: the writer's tests (transitions only, never a repeat line for the same state; fail-soft; cap), a test that no field can carry text from a transcript, the report's tests, and `PLAN.md`'s Security section updated, since it's new storage on disk: a security review.
   - Status: Planned.
+- **W166, A finished job's own to-dos aren't hidden behind work nobody is watching** (`m5.2/done-job-todos`, S). Independent of W155 to W160; first of W166 to W168 (Phil, 2026-11-09: "yes to all three, go ahead").
+  - Phil, 2026-11-09: a background session showed as done, but he had to run `/clear` and a prompt to carry on. Claude Code's job said `done` with no `needs` line; its last message had no Open questions and didn't end on a question (`detectAskedYou()`, `src/index/asked.ts`); and its recap had two `you` to-dos, "Push the hand-off commit" and "Run /clear, then …", but `waitingOn: CI`, because the message said `main`'s CI "was still running". W146's rule (`needsYouOf()`, `src/recaps/engine.ts`) hides your to-dos behind someone else's, and nothing was left to recheck CI, so the row stayed done.
+  - Not the fix: dropping W146's rule. Its case, "release the CLI once #42 ships", was also a done job, and it must stay out of Needs you.
+  - What: the recap's to-dos say which ones only follow the one before them (an optional `after: true`, parsed as strictly as the other fields, W126). For a background job whose state is `done`, with its turn over, Needs you's 'recap' reason takes the first `you` to-do that doesn't follow another's, whatever `waitingOn` says: the job won't take another turn to check CI until you prompt it. Recaps' prompt version goes up, so stored recaps are read as before and updated as usual.
+  - Checks: `src/recaps/engine.test.ts` and the parser's tests: this case (a CI to-do, then two of yours, none after) is in Needs you with "Push the hand-off commit"; W146's (yours after #42's) isn't; a `working` or `blocked` job keeps W146's rule; an old recap without `after` behaves as today.
+  - Status: Planned.
+- **W167, Session lineage: what a session continues, and what continues it** (`m5.2/session-lineage`, M). After W166, before W168.
+  - Phil, 2026-11-09: "sessions tend to focus on the same thing even after `/clear` is run. So, I want an agent to easily be able to track the continuation before and after the `/clear` run."
+  - Found (2026-11-09, this machine, Claude Code 2.1.316): `/clear` in a background job keeps the job, its short id, name and `children` (the PRs it opened), and starts a new transcript with a new session id. `claude agents --json` lists the job's id with the new `sessionId`. The job's `state.json` (internal) keeps only the first (`sessionId`) and the latest (`resumeSessionId`), not those between. The new transcript opens with a `/clear` `local_command` entry and `parentUuid: null`, and names no predecessor. A session started from a card is a new job, so nothing links it to the one that proposed it.
+  - What: `$PITWALL_HOME/lineage.jsonl`, 0600, written like the flag log (W153): `{at, from, to, job, how, cwd, branch, inferred}`, ids and paths only. `how` is `clear` or `continue`.
+  - Sources:
+    - **`clear`, seen live:** between two polls, `claude agents --json` (documented) lists the same job id, or for an interactive session the same pid, with a new `sessionId`.
+    - **`clear`, inferred**, for what happened while pitwall wasn't running: a job's `state.json` first and latest ids, and a transcript that opens with `/clear`, matched by cwd, agent name and time to the transcript before it. Behind the adapter, failing soft; marked `inferred: true`.
+    - **`continue`:** when you start a session from W168's continue card, pitwall knows both ids.
+  - Read by:
+    - **Any agent:** `scripts/lineage.ts <session id> [--json]`, read-only, prints the chain both ways with each session's transcript path, so a session can read its predecessor's last turns.
+    - **The supervisor:** a read-only `session_lineage` MCP tool (W112's kind).
+    - **You:** "Continued from" and "Continued in" links in the session view.
+    - **Recaps:** the first recap of a continued session gets its predecessor's last recap summary as input, inside the session's frame, as data.
+  - Not: session ids in `NOW.md` or anything committed (Write for a public repo).
+  - Later: carry a star or a snooze along the chain.
+  - Checks: the writer's tests (one line per change, never a repeat; fail-soft; size cap and rotation like the flag log's), the poll diff's tests (same job or pid with a new session id; a job that's gone isn't a clear), the backfill's tests from made-up transcripts, the script's and the tool's tests. `PLAN.md`'s Security section gets the new store: a security review.
+  - Status: Planned.
+- **W168, Clear and continue: a hand-off you start with one click** (`m5.2/clear-and-continue`, M, with a spike first). After W167.
+  - Phil, 2026-11-09: (a) flag sessions that need `/clear` and a prompt to carry on; (b) automate the `/clear` and the prompt. Covers "Hand off in Needs you" (W133's C) from "Nice to have, later".
+  - The proposal: the `handoff` skill's last step ends the message with a `spin-off` block (W163), folder and prompt included, instead of "Run `/clear`, then …". Its prompt starts with `Continues session <id>.` W163's parser shows it as a card in Needs you, so (a) comes from structure, not wording.
+  - The card, for a hand-off from a background job, offers **Clear and continue**: pitwall types `/clear` into the job, waits until `claude agents --json` lists the job with a new session id, then types the prompt. That keeps the job, its name and its PRs (W167's finding), and W167 records the link.
+  - Otherwise, for an interactive session or when Clear and continue fails: **Start**, as W163's card does, a new session in the folder, and W167 records `continue`. End session on the old one is offered beside it, not done for you.
+  - Nothing runs without your click (W163's rule; D4 for the supervisor).
+  - Spike 014 first, on a `pitwall-test-*` background session: whether the server can send `/clear` through its own attach PTY (`src/server/attach.ts`) without reading the screen, how long the new session id takes to appear, whether a multi-line prompt goes in as one message with bracketed paste, whether the relay's cross-session message (D8) runs `/clear` as a command (not tried; W128's rename note expects not), and what attaching does to a `done` job with a live process. If typing can't be confirmed without reading the screen, only Start ships.
+  - Security: the typed text is the card's prompt, shown whole before the click. It's refused if it starts with `/` or `!` (a slash command or a shell line) or has a control, zero-width or bidi character (W163's rule). The PTY is the server's own, for the job you clicked, and closed afterwards.
+  - Checks: the skill's text, the card's tests, the typing sequence against a fake PTY, the app check's `lists` and `new-session` parts, which have W163's card. A security review, with W167's.
+  - Status: Planned.
 
 ## Open questions
 
@@ -325,7 +358,7 @@ Small improvements that aren't needed now, gathered from reviews and try-outs so
   - **The PR list's placeholder** shows for about 8 s after a restart, until the first fetch.
   - **The session view full page** ([#143](https://github.com/leggetter/pitwall/issues/143)): the Conversation or Terminal tab given the whole window, for reading a lot of text or a wide table (Phil, 2026-11-02).
   - **Open in Terminal on the "Workspace not trusted" card:** a button that opens a terminal in the directory with `claude` running, so you accept Claude Code's trust prompt without copying the command; pitwall still never trusts a directory for you (Phil, 2026-11-02: a UX nag, not for now).
-  - **"Hand off" in Needs you** (W133's C; Phil, 2026-11-03: "I like the idea of C, too. But for later"): a session over the context limit shows in Needs you with a Hand off action.
+  - **"Hand off" in Needs you** (now W168, Clear and continue; W133's C; Phil, 2026-11-03: "I like the idea of C, too. But for later"): a session over the context limit shows in Needs you with a Hand off action.
   - **Plan status's live region at 375 wide** stays empty instead of saying "Plan status ready.": the app check's recaps part fails there, on `m5.1/integration` before W132 too (W132's build). It passed at 375 in both themes in W150's run, where the panel sits in the strip's body, so it may be fixed or only intermittent.
 - **Pull requests**
   - **Snooze a PR's attention,** by its key and a hash of its state, as W88's Not needed now did for sessions, so an abandoned PR of yours doesn't stay in Needs you (W106).

@@ -18,6 +18,7 @@ Last updated: 2026-11-09, on `docs/handoff-m5.1`, a hand-off after M5.1 merged i
 | --- | --- |
 | M5.2, W155 to W160 | Not started. W155 (work profiles), W156 (the supervisor proposes sessions with a profile), W157 (spike 013: reading the plan's percentages without changing your settings), W158 (the Usage view), W159 (the run rate against a weekend reserve), W160 (the supervisor reads the run rate), in that order (`PLAN.md`, "M5.2 work breakdown") |
 | W165 (a diagnostics log: why a row is in Needs you) | Planned, any time in M5.2 (`PLAN.md`, "M5.2 work breakdown"); Phil approved the work item on 2026-11-09 |
+| W166 to W168: W166 (a finished job's own to-dos aren't hidden behind work nobody is watching), W167 (session lineage: what a session continues across `/clear` or a hand-off), W168 (Clear and continue: a hand-off you start with one click, spike 014 first) | Planned, in that order, independent of W155 to W160 (`PLAN.md`, "M5.2 work breakdown"); Phil approved all three on 2026-11-09 ("yes to all three, go ahead"), after a hand-off session showed as done when it needed `/clear` and a prompt |
 | Left from W164 (M5.1's security review) | F5 (a snooze trusts the relay's name, not its msg_ids), I3's note on attached files, I4 (by design); in the archive's W164 item |
 | Left from M5's security notes (Info) | A look-alike name doesn't trigger the resume card's shared-name note; resume errors show a folder outside `untrusted`; the `claude` command list isn't checked against Claude Code 2.1.316's hidden commands |
 | Left from M5.1's items | Each item's "Left" is in its archive entry: for example W153's (flag) no retry of a failed ask, W154's (snooze) unseen scheduled wake-ups, W163's (spin-off proposals) overlap check, "Ask the supervisor" and the profile's model, with M6 |
@@ -31,8 +32,9 @@ Last updated: 2026-11-09, on `docs/handoff-m5.1`, a hand-off after M5.1 merged i
 1. **Today, 2026-11-09:** `npx tsx scripts/usage-report.ts --days 7` against the 10-20 to 10-29 figures, for the high-effort week; then one blog-editing session on Sonnet for Phil to judge (agreed; not the evals post).
 2. **Phil's 4518:** it was built from `aa955fa` (2026-11-07, 12:22); W161 to W164's code has merged since. In the main checkout, which is on `m5.1/integration`: `git checkout main && git pull --ff-only && npm ci && npm run build`, then Phil restarts 4518. After that restart, the supervisor begins a new conversation once (prompt version 6, W138), if it hasn't already.
 3. **Branch `m5.2/integration` from `main`** and push it, then W155 (work profiles) in a worktree (`.worktrees/work-profiles`), built by a sub-agent at high effort, a fresh review, the coordinator's fixes, merge into `m5.2/integration`, CI there. Read `PLAN.md`'s W155 item and W119's `work` block (`src/config.ts`, `src/server/work.ts`) first.
-4. **Then W156 to W160,** one session per item (`AGENTS.md`, Efficiency), then M5.2's security review and the merge into `main`, with its PR text shown to Phil first.
-5. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
+4. **W166 to W168,** in that order, each on its own branch from `m5.2/integration` and merged after a fresh review, beside W155; W168 starts with spike 014 (sending `/clear` and a prompt to a background job through pitwall's attach PTY).
+5. **Then W156 to W160,** one session per item (`AGENTS.md`, Efficiency), then M5.2's security review and the merge into `main`, with its PR text shown to Phil first.
+6. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
 
 ## Open questions for Phil
 
