@@ -9,7 +9,8 @@
 //   replaces it; while it shows the chosen one, the list offers every directory, as a select would.
 //   Name, optional; Profile (W155), which starts on Build and fills Model and Effort with its own, and
 //   shows Custom once either changes, while its sub-agents' model and skill, which its line under it
-//   names, still apply; Model, with "Other…" revealing a field, and Effort (W119), which with a profile
+//   names, still apply; or None (Phil, 2026-11-09), which sends no profile, so pitwall's defaults for
+//   sessions and their sub-agents apply, Preferences' overrides included, as before W155; Model, with "Other…" revealing a field, and Effort (W119), which with a profile
 //   that leaves one out, or on its first option, are pitwall's defaults for sessions, which the first
 //   option names once they've loaded, or Claude Code's own, resolved for the directory chosen (W122,
 //   modelEffort.ts); and the first prompt. The request names the profile; the server takes its
@@ -56,6 +57,7 @@ import {
 import {
   DEFAULT_PROFILE,
   EFFORT_LEVELS,
+  NO_PROFILE,
   WORK_DEFAULT,
   type DirectoryList,
   type EffortLevel,
@@ -78,7 +80,16 @@ import {
   type DirectoryOption,
 } from '../directories.js';
 import { plainText, shortenHome } from '../format.js';
-import { claudeChoiceText, CUSTOM_PROFILE_TEXT, fetchWorkSettings, modelInEffect, profileHint, sessionDefaultText } from '../modelEffort.js';
+import {
+  claudeChoiceText,
+  CUSTOM_PROFILE_TEXT,
+  fetchWorkSettings,
+  modelInEffect,
+  NO_PROFILE_TEXT,
+  noProfileHint,
+  profileHint,
+  sessionDefaultText,
+} from '../modelEffort.js';
 import {
   directoryChoices,
   directoryProblem,
@@ -106,6 +117,8 @@ const OTHER = '\u0000other';
 const MODELS = ['sonnet', 'opus', 'haiku'] as const;
 /** The Profile picker's Custom: shown, never chosen. A NUL, so no profile's name can be it. */
 const CUSTOM = '\u0000custom';
+/** The Profile picker's None (Phil, 2026-11-09): no profile, so pitwall's defaults apply. A NUL, so no profile's name can be it. */
+const NONE = '\u0000none';
 
 /** The sentence before the trust command (4: Dialogs, New session dialog). */
 export const TRUST_TEXT = "pitwall never trusts a directory for you. Run this in a terminal, accept Claude Code's trust prompt, then start the session again:";
@@ -237,8 +250,8 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
   // With the directory they were asked for (W122), so an answer for an earlier choice never shows.
   const [loadedWork, setWork] = useState<{ settings: WorkSettings; dir: string | undefined }>();
   // The work profiles (W155), from the first answer, and the one picked: Build, until the answer
-  // says there's no such profile. Picking one fills Model and Effort, as does the first answer, unless
-  // either was changed before it came.
+  // says there's no such profile, or NONE for None. Picking one fills Model and Effort, as does the
+  // first answer, unless either was changed, or None picked, before it came.
   const [profiles, setProfiles] = useState<WorkProfile[]>();
   const [picked, setPicked] = useState<string | undefined>(DEFAULT_PROFILE);
   const changedWork = useRef(false);
@@ -653,12 +666,20 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
               className="select-input"
               value={custom ? CUSTOM : picked}
               onChange={edit((value) => {
+                if (value === NONE) {
+                  // No profile: Model and Effort on their first options, pitwall's defaults for sessions,
+                  // and none sent, so the server applies those and the defaults for sub-agents (W119).
+                  changedWork.current = true;
+                  setPicked(NONE);
+                  fill({ name: NO_PROFILE, source: 'built-in' });
+                  return;
+                }
                 const profile = profiles?.find((one) => one.name === value);
                 if (profile === undefined) return;
                 setPicked(profile.name);
                 fill(profile);
               })}
-              aria-describedby={pickedProfile === undefined ? undefined : `${ids.profile}-hint`}
+              aria-describedby={pickedProfile === undefined && picked !== NONE ? undefined : `${ids.profile}-hint`}
               {...disabled}
             >
               {(profiles ?? [{ name: DEFAULT_PROFILE }]).map((profile) => (
@@ -666,6 +687,7 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
                   {profile.name}
                 </option>
               ))}
+              <option value={NONE}>{NO_PROFILE_TEXT}</option>
               {custom && (
                 <option value={CUSTOM} disabled>
                   {CUSTOM_PROFILE_TEXT}
@@ -677,6 +699,11 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
           {pickedProfile !== undefined && (
             <p className="field-hint" id={`${ids.profile}-hint`}>
               {profileHint(pickedProfile, custom)}
+            </p>
+          )}
+          {picked === NONE && (
+            <p className="field-hint" id={`${ids.profile}-hint`}>
+              {noProfileHint(latestWork)}
             </p>
           )}
         </div>

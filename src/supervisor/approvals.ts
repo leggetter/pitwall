@@ -26,7 +26,7 @@
 // conversation (W136) drops the hand-offs, passes and notes with the conversation they came from
 // (forgetConversation()); it's refused while a card waits, so there are none of those to drop.
 import { randomBytes } from 'node:crypto';
-import { SUPERVISOR_APPROVAL_TIMEOUT_MS, SUPERVISOR_HANDOFFS_MAX, type SavedPermission, type SupervisorApproval, type SupervisorHandoff } from '../shared/protocol.js';
+import { SUPERVISOR_APPROVAL_TIMEOUT_MS, SUPERVISOR_HANDOFFS_MAX, type SavedPermission, type SessionLaunch, type SupervisorApproval, type SupervisorHandoff } from '../shared/protocol.js';
 
 /** The permission prompt tool's answer, as Claude Code documents it for `--permission-prompt-tool`. */
 export type PermissionAnswer = { behavior: 'allow'; updatedInput: Record<string, unknown> } | { behavior: 'deny'; message: string };
@@ -35,7 +35,7 @@ export type PermissionAnswer = { behavior: 'allow'; updatedInput: Record<string,
 export type ApprovalDraft =
   | { kind: 'message'; to: string; text: string }
   | { kind: 'spawn'; directory: string; name?: string; prompt: string }
-  | { kind: 'resume'; sessionId: string; name: string; directory: string; text: string; lastActivityAt?: string; sameName: number; permission: SavedPermission };
+  | { kind: 'resume'; sessionId: string; name: string; directory: string; text: string; lastActivityAt?: string; sameName: number; permission: SavedPermission; launch?: SessionLaunch };
 
 /** One card waiting, with the call it's for. */
 export interface PendingApproval {
@@ -187,6 +187,7 @@ export function createApprovalQueue(options: ApprovalQueueOptions = {}): Approva
                 ...(request.draft.lastActivityAt === undefined ? {} : { lastActivityAt: request.draft.lastActivityAt }),
                 sameName: request.draft.sameName,
                 permission: request.draft.permission,
+                ...(request.draft.launch === undefined ? {} : { launch: { ...request.draft.launch } }),
                 ...times,
               }
             : { id, kind: 'spawn', directory: request.draft.directory, ...(request.draft.name === undefined ? {} : { name: request.draft.name }), prompt: request.draft.prompt, ...times };

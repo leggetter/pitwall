@@ -9,6 +9,7 @@ import {
   isSkillName,
   OFFERED_WORK_MODELS,
   isWorkModel,
+  NO_PROFILE,
   RECAP_EFFORT_LEVELS,
   SUBAGENT_MODEL_ALIASES,
   WORK_DEFAULT,
@@ -39,8 +40,10 @@ export const WORK_LABELS: Readonly<Record<WorkKind, string>> = {
 
 /** What each kind is, and when a change reaches it. */
 export const WORK_HINTS: Readonly<Record<WorkKind, string>> = {
-  session: 'New session, and resuming one pitwall started. From the next session you start.',
-  subagents: "For sub-agents whose definition names no model, from the next session you start. Their effort is the session's: Claude Code has no separate setting for it.",
+  session:
+    "New session on the None profile, the supervisor's new sessions, and resuming one pitwall started without a profile; a profile's own model and effort win. From the next session you start.",
+  subagents:
+    "For sub-agents whose definition names no model, in New session on the None profile, the supervisor's new sessions, and resuming one pitwall started without a profile; a profile's own wins. From the next session you start. Their effort is the session's: Claude Code has no separate setting for it.",
   supervisor: 'From its next start.',
   recaps: 'From the next recap. At most high effort: a recap may write 4,096 tokens, thinking included.',
   relay: 'Passes on the messages you write to interactive sessions. From its next start.',
@@ -133,6 +136,24 @@ export function readProfiles(value: unknown): WorkProfile[] | undefined {
 
 /** New session's Profile picker's choice once the model or effort no longer match the profile picked. */
 export const CUSTOM_PROFILE_TEXT = 'Custom';
+
+/** New session's Profile picker's choice for no profile (W155; Phil, 2026-11-09). */
+export const NO_PROFILE_TEXT = `${NO_PROFILE} (pitwall's defaults)`;
+
+/**
+ * The line under New session's Profile picker on None: no profile, so the model and effort are
+ * pitwall's defaults for sessions, and its sub-agents pitwall's default for them, or Claude Code's.
+ */
+export function noProfileHint(work: WorkSettings | undefined): string {
+  const sub = work?.effective.subagents.model;
+  const subagents =
+    work === undefined
+      ? "Sub-agents on pitwall's default for them."
+      : sub === undefined || sub === WORK_DEFAULT
+        ? "Sub-agents on Claude Code's default."
+        : `Sub-agents on pitwall's default for them, ${sub}.`;
+  return `No profile: pitwall's defaults for sessions, as Preferences sets them. ${subagents}`;
+}
 
 /**
  * The line under New session's Profile picker (W155): what the profile adds besides the model and

@@ -25,6 +25,7 @@ import {
   isEffortLevel,
   isSkillName,
   isWorkModel,
+  NO_PROFILE,
   SUPERVISOR_MODEL,
   WORK_DEFAULT,
   WORK_PROFILE_NAME_PATTERN,
@@ -50,8 +51,11 @@ export const SKILL_PROBLEM =
 
 const PROFILE_NAME_PROBLEM = `must be 1 to 40 letters, digits, spaces, ".", "_" and "-", starting with a letter or digit`;
 
-/** The name New session's picker shows once the model or effort changes: never a profile's. */
-const RESERVED_NAMES = new Set(['custom']);
+/**
+ * The names New session's picker uses for its own choices, never a profile's: Custom, shown once the
+ * model or effort changes, and None (NO_PROFILE), no profile at all (Phil, 2026-11-09). Ignoring case.
+ */
+export const RESERVED_PROFILE_NAMES: ReadonlySet<string> = new Set(['custom', NO_PROFILE.toLowerCase()]);
 
 /**
  * The config file's `profiles`, checked: an object whose keys are the names and whose values are
@@ -75,7 +79,7 @@ export function parseProfiles(
     if (!WORK_PROFILE_NAME_PATTERN.test(name)) fail(`${key}, its profile number ${i + 1}`, `has a name that ${PROFILE_NAME_PROBLEM}`);
     const where = `${key}.${name}`;
     const folded = name.toLowerCase();
-    if (RESERVED_NAMES.has(folded)) fail(where, 'is a name New session uses for a model or effort that no profile has. Choose another.');
+    if (RESERVED_PROFILE_NAMES.has(folded)) fail(where, 'is a name New session uses for its own choices, Custom and None. Choose another.');
     if (seen.has(folded)) fail(where, 'has the same name as another profile, ignoring case. Name each once.');
     seen.add(folded);
     profiles.push(parseProfile(name, (value as Record<string, unknown>)[name], where, fail, unknown));

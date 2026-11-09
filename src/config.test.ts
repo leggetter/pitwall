@@ -132,6 +132,12 @@ describe('parseConfig', () => {
     );
   });
 
+  it('refuses a profile named None or Custom, the names New session uses for its own choices (W155)', () => {
+    expect(fails('{ "profiles": { "None": { "model": "sonnet" } } }')).toThrow(`${FILE}: "profiles.None" is a name New session uses for its own choices, Custom and None. Choose another.`);
+    expect(fails('{ "profiles": { "none": {} } }')).toThrow(/"profiles.none" is a name New session uses/);
+    expect(fails('{ "profiles": { "Custom": {} } }')).toThrow(/"profiles.Custom" is a name New session uses/);
+  });
+
   it('has no roots for a file without "roots", or an empty object', () => {
     expect(parse('{}')).toEqual({ warnings: [] });
     expect(parse('// nothing yet\n{ }')).toEqual({ warnings: [] });

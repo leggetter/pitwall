@@ -100,6 +100,7 @@ import {
   stopPath,
   type ActionResult,
   type ResumeResult,
+  type SessionLaunch,
   type SessionSummary,
   type SpawnResult,
   type WorkChoice,
@@ -112,6 +113,7 @@ import { isClaudeCommand } from './claudeCommands.js';
 import { childEnvironment, runCommand, type CommandResult, type RunCommand } from './command.js';
 import type { RecentSpawns } from './recentSpawns.js';
 import { resolveSession } from './sessions.js';
+import type { SessionLaunches } from './sessionLaunches.js';
 import { withSkill } from './profiles.js';
 import { EFFORT_PROBLEM, mergeChoices, modelProblem, withEffort, workArgs, type WorkStore } from './work.js';
 
@@ -165,7 +167,8 @@ export interface ActionOptions {
   resumer?: ResumeRunner;
   /**
    * The model and effort for sessions and their sub-agents (W119): what spawn uses when the request
-   * names none, and what resume always uses. Default: none, so no flags, as before W119. With
+   * names none, and what resume uses, except for a session started with a profile, which resumes on
+   * what it used (`launches`). Default: none, so no flags, as before W119. With
    * `profile`, spawn's request may name a work profile (W155); without it, any profile is unknown.
    */
   work?: Pick<WorkStore, 'choice'> & Partial<Pick<WorkStore, 'profile'>>;
@@ -176,6 +179,12 @@ export interface ActionOptions {
    * no resume takes the defaults.
    */
   started?: Pick<Set<string>, 'add' | 'has'>;
+  /**
+   * The settings each session pitwall started with a profile used (W155; Phil, 2026-11-09), kept on
+   * disk: spawn records them, and resume reuses them for that session, over the defaults for sessions.
+   * Default: none, so resume is as before.
+   */
+  launches?: Pick<SessionLaunches, 'record' | 'lookup' | 'resumed'>;
 }
 
 /** What spawn needs from the AttachmentStore. */
@@ -226,6 +235,8 @@ export interface ValidSpawn {
   subagentModel?: string;
   /** The work profile's name (W155), as the server's own profiles spell it. */
   profile?: string;
+  /** The request's own model or effort isn't the profile's (New session's Custom, W155). */
+  custom?: true;
   /** The profile's skill (W155), SKILL_NAME_PATTERN, from the server's profile, never the request: the prompt starts `/<skill> `. */
   skill?: string;
   /** The kept files for SpawnRequest.attachments, in its order. Absent for none. */
@@ -291,6 +302,7 @@ export async function validateSpawnRequest(
   if (chosenEffort !== undefined) spawn.effort = chosenEffort;
   if (profile !== undefined) {
     spawn.profile = profile.name;
+    if ((model !== undefined && model !== profile.model) || (effort !== undefined && effort !== profile.effort)) spawn.custom = true;
     if (profile.subagentModel !== undefined) spawn.subagentModel = profile.subagentModel;
     if (profile.skill !== undefined) spawn.skill = profile.skill;
   }
@@ -630,6 +642,20 @@ export function withSessionWork(spawn: ValidSpawn, work: Pick<WorkStore, 'choice
   };
 }
 
+/**
+ * What a spawn with a profile used, as SessionLaunch keeps it (W155): each of the model, effort and
+ * sub-agents' model, WORK_DEFAULT where it passed none, so a resume passes none either.
+ */
+export function launchOf(spawn: ValidSpawn): SessionLaunch {
+  return {
+    ...(spawn.profile === undefined ? {} : { profile: spawn.profile }),
+    ...(spawn.custom === true ? { custom: true as const } : {}),
+    model: spawn.model ?? WORK_DEFAULT,
+    effort: spawn.effort ?? WORK_DEFAULT,
+    subagentModel: spawn.subagentModel ?? WORK_DEFAULT,
+  };
+}
+
 export function createSpawnRunner(options: Omit<ActionOptions, 'spawner'> = {}): SpawnRunner {
   const run = options.run ?? runCommand;
   const now = options.now ?? Date.now;
@@ -695,6 +721,8 @@ export function createSpawnRunner(options: Omit<ActionOptions, 'spawner'> = {}):
       }
       options.spawned?.add(started.shortId);
       options.started?.add(started.shortId);
+      // With a profile, what it used, for a resume (W155). Never the skill: it runs once, as the first prompt's prefix.
+      if (spawn.profile !== undefined) options.launches?.record(started.shortId, launchOf(spawn));
       return { status: 201, result: { ok: true, shortId: started.shortId, name: started.name ?? spawn.name ?? started.shortId } };
     } finally {
       if (ids.length > 0) {
@@ -842,8 +870,13 @@ export function createResumeRunner(
       // The defaults for sessions and their sub-agents (W119), only for a session this pitwall started
       // or resumed (W119's review, #114's scope): one started elsewhere keeps the model and effort it
       // was started with, so no flags. Claude Code takes `--model` and `--effort` on a resume too.
-      const ours = options.started?.has(sessionId) === true || (session.shortId !== undefined && options.started?.has(session.shortId) === true);
-      const work = ours ? sessionWork() : { session: {}, subagents: {} };
+      // A session pitwall started with a work profile resumes on what it used, kept on disk, checked
+      // again as it's read: the profile's model, effort and sub-agents' model, never its skill (W155;
+      // Phil, 2026-11-09). A field that didn't pass is the defaults'.
+      const kept = options.launches?.lookup(session);
+      const ours = kept !== undefined || options.started?.has(sessionId) === true || (session.shortId !== undefined && options.started?.has(session.shortId) === true);
+      const defaults = ours ? sessionWork() : { session: {}, subagents: {} };
+      const work = kept === undefined ? defaults : { session: mergeChoices(kept.session, defaults.session), subagents: mergeChoices(kept.subagents, defaults.subagents) };
       const result = await run(claudeBin, resumeArgs(sessionId, work.session, prompt), { cwd: dir.path, env: { ...withEffort(env(), work.session, work.subagents), PWD: cwd }, timeoutMs });
       if (result.kind === 'failed') {
         if (result.reason === 'timeout') {
@@ -889,6 +922,7 @@ export function createResumeRunner(
       options.resumed?.add(sessionId);
       options.started?.add(sessionId);
       options.started?.add(resumed.shortId);
+      if (kept !== undefined) options.launches?.resumed(session, resumed.shortId);
       // You asked for it back, so it needs your prompt until you send one (NeedsYou's 'restarted', W69).
       // Polls soon. With a prompt it has one, its next turn, so it doesn't (W127).
       if (prompt === undefined) indexer.noteRestart(sessionId, now());

@@ -42,6 +42,7 @@ import {
 import type { CommandOptions, CommandResult, RunCommand } from './command.js';
 import type { RunningServer } from './index.js';
 import { startServerWithInternals } from './server.js';
+import { SessionLaunches } from './sessionLaunches.js';
 import { createWorkStore, emptyChoices, type WorkStore } from './work.js';
 import { pitwallOrigin, proofFor } from '../test/proof.js';
 
@@ -1646,6 +1647,100 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
       await spawnAsPage(started, { cwd: repo, prompt: 'go' });
       expect(started.run.calls[0]?.args).toEqual(['--bg', '--model', 'opus', '--effort', 'high', '--', 'go']);
       expect(started.run.calls[0]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('haiku');
+    });
+
+    it("None, no profile, gets pitwall's defaults for sessions and their sub-agents, Preferences' overrides included, and keeps no record", async () => {
+      const work = profiled();
+      expect(work.update({ overrides: { session: { effort: 'low' }, subagents: { model: 'sonnet' } } }).ok).toBe(true);
+      const launches = new SessionLaunches();
+      const run = fakeRunner(backgrounded());
+      const server = await startServerWithInternals({ indexer: fakeIndexer(), token: TOKEN, webRoot, port: 0, work }, { actions: { run, env: {}, agents: fakeAgents(), launches } });
+      running.push(server);
+      const started = { server, apiKey: await apiKeyOf(server.port), run };
+      expect((await spawnAsPage(started, { cwd: repo, prompt: 'go' })).status).toBe(201);
+      expect(run.calls[0]?.args).toEqual(['--bg', '--model', 'opus', '--effort', 'low', '--', 'go']);
+      expect(run.calls[0]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('sonnet');
+      expect(launches.size).toBe(0);
+    });
+
+    describe('resume keeps the profile it started with (Phil, 2026-11-09)', () => {
+      const STOPPED_ID = '99999999-9999-4999-8999-999999999999';
+      const stopped = () => session({ sessionId: STOPPED_ID, shortId: '99999999', name: 'pitwall-test-stopped', alive: false, finished: true, state: 'stopped' });
+      const agents = () => fakeAgents({ ok: true, rows: [agentRow(STOPPED_ID, { kind: 'background', shortId: '99999999', pid: undefined, state: 'stopped' })] });
+      const woken = () => exited(0, 'backgrounded · 99999999 · pitwall-test-stopped (idle — send a prompt to start)\n');
+
+      async function startHome(work: WorkStore, run: ReturnType<typeof fakeRunner>, pitwallHome?: string): Promise<Started> {
+        const server = await startServerWithInternals(
+          { indexer: fakeIndexer(snapshotWith(stopped())), token: TOKEN, webRoot, port: 0, work, ...(pitwallHome === undefined ? {} : { pitwallHome }) },
+          { actions: { run, env: {}, agents: agents() } },
+        );
+        running.push(server);
+        return { server, apiKey: await apiKeyOf(server.port), run };
+      }
+
+      it("resumes on the profile's model, effort and sub-agents, over the defaults, and never runs its skill again", async () => {
+        const started = await startHome(profiled(), fakeRunner(backgrounded('99999999', 'pitwall-test-stopped'), woken(), woken()));
+        expect((await spawnAsPage(started, { cwd: repo, prompt: 'Review PR 12', profile: 'Review' })).status).toBe(201);
+        expect(started.run.calls[0]?.args.at(-1)).toBe('/agent-roles:role-reviewer Review PR 12');
+        expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
+        const resume = started.run.calls[1];
+        expect(resume?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'sonnet', '--effort', 'high']);
+        expect(resume?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('sonnet');
+        expect(resume?.args.join(' ')).not.toMatch(/role-reviewer/);
+        // Again, after the first resume moved its record: the same.
+        expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
+        expect(started.run.calls[2]?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'sonnet', '--effort', 'high']);
+      });
+
+      it('keeps what Custom used, and a profile whose sub-agents are on Claude Code\'s default leaves the variable alone', async () => {
+        const started = await startHome(profiled(), fakeRunner(backgrounded('99999999', 'pitwall-test-stopped'), woken()));
+        expect((await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Inherit', model: 'haiku', effort: 'low' })).status).toBe(201);
+        expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
+        expect(started.run.calls[1]?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'haiku', '--effort', 'low']);
+        expect(started.run.calls[1]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
+      });
+
+      it('survives a restart: a new pitwall on the same home resumes it on the profile, though its run never started it', async () => {
+        const home = await mkdtemp(join(tmpdir(), 'pitwall-test-launch-home-'));
+        try {
+          const first = await startHome(profiled(), fakeRunner(backgrounded('99999999', 'pitwall-test-stopped')), home);
+          expect((await spawnAsPage(first, { cwd: repo, prompt: 'go', profile: 'Security review' })).status).toBe(201);
+          await first.server.close();
+          const second = await startHome(profiled(), fakeRunner(woken()), home);
+          expect((await postAsPage(second, resumePath(STOPPED_ID))).status).toBe(200);
+          expect(second.run.calls[0]?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'claude-opus-5-5', '--effort', 'xhigh']);
+          expect(second.run.calls[0]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('opus');
+        } finally {
+          await rm(home, { recursive: true, force: true });
+        }
+      });
+
+      it('finds it by its session id once linked, when Claude Code no longer lists its job and it shows as an ended session', async () => {
+        const snap = snapshotWith(stopped());
+        const run = fakeRunner(backgrounded('99999999', 'pitwall-test-stopped'), woken(), exited(0, 'backgrounded · 77777777 · pitwall-test-stopped\n'));
+        const fakeAgentList = agents();
+        const server = await startServerWithInternals({ indexer: fakeIndexer(snap), token: TOKEN, webRoot, port: 0, work: profiled() }, { actions: { run, env: {}, agents: fakeAgentList } });
+        running.push(server);
+        const started = { server, apiKey: await apiKeyOf(server.port), run };
+        expect((await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Docs' })).status).toBe(201);
+        expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
+        // Its job removed: listed from its transcript, as an ended interactive session with no short id.
+        snap.groups[0]!.sessions = snap.groups[0]!.sessions.map((one) =>
+          one.sessionId === STOPPED_ID ? session({ sessionId: STOPPED_ID, name: 'pitwall-test-stopped', kind: 'interactive', alive: false, ended: true, finished: true, pid: undefined }) : one,
+        );
+        fakeAgentList.result = { ok: true, rows: [] };
+        expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
+        expect(run.calls[2]?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'sonnet', '--effort', 'medium']);
+        expect(run.calls[2]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('sonnet');
+      });
+
+      it('with no record, a session this pitwall started without a profile resumes on the defaults, as before', async () => {
+        const started = await startHome(profiled(), fakeRunner(backgrounded('99999999', 'pitwall-test-stopped'), woken()));
+        expect((await spawnAsPage(started, { cwd: repo, prompt: 'go' })).status).toBe(201);
+        expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
+        expect(started.run.calls[1]?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'opus', '--effort', 'high']);
+        expect(started.run.calls[1]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('haiku');
+      });
     });
 
     it('GET lists the profiles: the built-ins, replaced in place, then the config file\'s', async () => {

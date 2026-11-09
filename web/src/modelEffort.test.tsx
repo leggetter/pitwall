@@ -422,7 +422,7 @@ describe("New session's Profile (W155)", () => {
     renderDialog(fetch);
     await settle();
     const { profile, model, effort } = fields();
-    expect(optionTexts(profile)).toEqual(['Build', 'Review', 'Security review', 'Docs', 'Loose']);
+    expect(optionTexts(profile)).toEqual(['Build', 'Review', 'Security review', 'Docs', 'Loose', "None (pitwall's defaults)"]);
     expect([shownProfile(profile), model.value, effort.value]).toEqual(['Build', 'claude-opus-5-5', 'high']);
     // Build's full name is a choice of its own, never "Other…".
     expect(optionTexts(model)).toContain('claude-opus-5-5');
@@ -495,6 +495,56 @@ describe("New session's Profile (W155)", () => {
     await act(async () => answer?.());
     await settle();
     expect([shownProfile(fields().profile), fields().model.value]).toEqual(['Custom', 'haiku']);
+  });
+
+  it("None sends no profile, with Model and Effort on pitwall's defaults for sessions, and says its sub-agents' (Phil, 2026-11-09)", async () => {
+    const effective = { ...settings().effective, session: { model: 'opus', effort: 'medium' as const }, subagents: { model: 'haiku' } };
+    const fetch = fakeServer(settings({ profiles: PROFILES, effective }));
+    renderDialog(fetch);
+    await settle();
+    fireEvent.change(fields().profile, { target: { value: '\u0000none' } });
+    expect([shownProfile(fields().profile), fields().model.value, fields().effort.value]).toEqual(["None (pitwall's defaults)", '', '']);
+    expect(fields().model.options[0]?.textContent).toMatch(/opus/);
+    expect(screen.getByText("No profile: pitwall's defaults for sessions, as Preferences sets them. Sub-agents on pitwall's default for them, haiku.")).toBeTruthy();
+    expect(fields().profile.getAttribute('aria-describedby')).toBeTruthy();
+    expect(await start(fetch)).toEqual([{ cwd: REPO, prompt: 'go' }]);
+  });
+
+  it('under None, a change to Model or Effort just changes it: no Custom, and still no profile', async () => {
+    const fetch = fakeServer(settings({ profiles: PROFILES, effective: { ...settings().effective, subagents: {} } }));
+    renderDialog(fetch);
+    await settle();
+    fireEvent.change(fields().profile, { target: { value: '\u0000none' } });
+    expect(screen.getByText("No profile: pitwall's defaults for sessions, as Preferences sets them. Sub-agents on Claude Code's default.")).toBeTruthy();
+    fireEvent.change(fields().model, { target: { value: 'haiku' } });
+    fireEvent.change(fields().effort, { target: { value: 'low' } });
+    expect(shownProfile(fields().profile)).toBe("None (pitwall's defaults)");
+    expect(optionTexts(fields().profile)).not.toContain('Custom');
+    expect(await start(fetch)).toEqual([{ cwd: REPO, prompt: 'go', model: 'haiku', effort: 'low' }]);
+  });
+
+  it('None picked before the profiles came stays None: the answer fills nothing over it', async () => {
+    let answer: (() => void) | undefined;
+    const fetch = fakeServer(settings({ profiles: PROFILES }));
+    const slow = vi.fn<FetchLike>(async (url, init) => {
+      if (pathOf(url) === WORK_PATH && init.method === undefined) await new Promise<void>((resolve) => (answer = resolve));
+      return fetch(url, init);
+    });
+    renderDialog(slow);
+    fireEvent.change(fields().profile, { target: { value: '\u0000none' } });
+    await act(async () => answer?.());
+    await settle();
+    expect([shownProfile(fields().profile), fields().model.value, fields().effort.value]).toEqual(["None (pitwall's defaults)", '', '']);
+  });
+
+  it('picking a profile after None fills its own again', async () => {
+    const fetch = fakeServer(settings({ profiles: PROFILES }));
+    renderDialog(fetch);
+    await settle();
+    fireEvent.change(fields().profile, { target: { value: '\u0000none' } });
+    fireEvent.change(fields().profile, { target: { value: 'Docs' } });
+    expect([shownProfile(fields().profile), fields().model.value, fields().effort.value]).toEqual(['Docs', 'sonnet', 'medium']);
+    expect(await start(fetch)).toEqual([{ cwd: REPO, prompt: 'go', profile: 'Docs', model: 'sonnet', effort: 'medium' }]);
   });
 
   it('has no Profile when the server lists none', async () => {

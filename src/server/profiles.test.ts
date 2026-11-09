@@ -118,7 +118,9 @@ describe('the config file\'s profiles', () => {
     ['a name with a leading space', { ' Review': {} }, /its profile number 1/],
     ['an empty name', { '': {} }, /its profile number 1/],
     ['a 41-character name', { ['x'.repeat(41)]: {} }, /its profile number 1/],
-    ['the name Custom, which New session uses', { custom: {} }, /"profiles.custom" is a name New session uses/],
+    ['the name Custom, which New session uses', { custom: {} }, /"profiles.custom" is a name New session uses for its own choices/],
+    ['the name None, New session\'s choice for no profile', { None: {} }, /"profiles.None" is a name New session uses for its own choices, Custom and None/],
+    ['the name none, in any case', { NONE: { model: 'sonnet' } }, /"profiles.NONE" is a name New session uses/],
     ['two names that differ only in case', { Review: {}, review: {} }, /"profiles.review" has the same name as another profile, ignoring case/],
   ])('refuses %s', (_, value, error) => {
     expect(() => parse(value)).toThrow(error);

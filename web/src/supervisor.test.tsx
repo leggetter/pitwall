@@ -21,6 +21,7 @@ import {
   newSupervisorConversation,
   RESUME_BYPASS_WARNING,
   resumeBypassed,
+  resumeLaunchText,
   resumePermissionText,
   resumeWhereLead,
   typedPromptNotes,
@@ -176,12 +177,28 @@ describe('its words', () => {
       expect(read({ permission })).toMatchObject({ permission: { kind: 'unknown' } });
     }
   });
+
+  it('reads a resume card’s kept launch settings with only the fields that pass the profiles’ checks (W155)', () => {
+    const read = (launch: unknown) => asSupervisorState({ status: 'idle', approvals: [{ ...resume, launch }] })?.approvals[0];
+    expect(read({ profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet' })).toMatchObject({ launch: { profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet' } });
+    expect(read({ profile: 'Bad\nname', custom: 'yes', model: 'opus --x', effort: 'high', subagentModel: 'opusplan' })).toMatchObject({ launch: { effort: 'high' } });
+    for (const launch of [undefined, 'Review', { profile: 'Review' }, { model: 'x y' }]) expect(read(launch)).not.toHaveProperty('launch');
+  });
 });
 
 describe('a resume card’s lines (W129)', () => {
   it('says how many sessions share the name, only when others do', () => {
     expect(resumeWhereLead(1)).toBe('In ');
     expect(resumeWhereLead(2)).toBe('2 listed sessions have this name; this is the one in ');
+  });
+
+  it('says the model, effort and sub-agents a session started with a profile resumes on (W155)', () => {
+    expect(resumeLaunchText({ profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet' })).toBe(
+      'pitwall resumes it on what it started it with, from the Review profile: model sonnet, effort high, sub-agents sonnet.',
+    );
+    expect(resumeLaunchText({ profile: 'Build', custom: true, model: 'haiku', effort: 'default', subagentModel: 'default' })).toBe(
+      "pitwall resumes it on what it started it with, from the Build profile, with its model or effort changed: model haiku, effort Claude Code's default, sub-agents Claude Code's default.",
+    );
   });
 
   it('says it resumes with its own saved settings, its permission mode included, and what pitwall knows of that mode', () => {

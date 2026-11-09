@@ -10,7 +10,8 @@
 // with no directory chosen (W147, D27). A session's proposal's Start (W163) opens it filled in with
 // the proposal, once the server has checked it, and a refused check says why on the card. Profile
 // (W155) starts on Build and fills Model and Effort; a pick fills them again, a change to either shows
-// Custom, and the line under it says what else the profile sets. W63's switch to the new session's group and tab is its own
+// Custom, and the line under it says what else the profile sets; None sends no profile, so pitwall's
+// defaults apply, and a change to Model or Effort under it is just that. W63's switch to the new session's group and tab is its own
 // part, new-session-selected.
 
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -39,6 +40,9 @@ const WORKTREE = `${API_SERVER}/.claude/worktrees/pitwall-test-wt`;
 const SHOWN_PROFILE = `(() => { const select = ${field('Profile')}; return select?.options[select.selectedIndex]?.textContent; })()`;
 const PROFILE_NAMES = `[...${field('Profile')}.options].filter((option) => !option.disabled).map((option) => option.textContent)`;
 const PROFILE_HINT = `${DIALOG}?.querySelector('.field-hint[id$="-hint"]')?.textContent`;
+/** The Profile picker's None (Phil, 2026-11-09): its option's value and text. */
+const NONE_VALUE = '\u0000none';
+const NONE_TEXT = "None (pitwall's defaults)";
 /** What a start on Build, untouched, sends besides the rest, in the fake server's record's order. */
 const BUILD = { profile: 'Build', model: 'claude-opus-5-5', effort: 'high' } as const;
 /** Each request for the directory list, as the fake server recorded it. */
@@ -172,7 +176,7 @@ const part: Part = {
         `${field('Effort')}?.options[1]?.textContent === ${q("Claude Code's default: xhigh (the project's Claude Code settings)")}`,
       );
       t.expectEqual(await page.evaluate(chooseOption(field('Model'), 'claude-opus-5-5')), 'claude-opus-5-5', "Build's model again");
-      t.expectEqual(await page.evaluate(PROFILE_NAMES), ['Build', 'Review', 'Security review', 'Docs'], 'the built-in profiles, in order');
+      t.expectEqual(await page.evaluate(PROFILE_NAMES), ['Build', 'Review', 'Security review', 'Docs', NONE_TEXT], 'the built-in profiles, in order, then None');
       t.expectEqual(await page.evaluate(`${field('Effort')}.value`), 'high', "and Effort is Build's");
       t.expectEqual(await page.evaluate(PROFILE_HINT), 'Sub-agents default to sonnet.', 'the line under it says what else Build sets');
       t.expect(await page.evaluate(`document.getElementById(${field('Profile')}.getAttribute('aria-describedby'))?.textContent === ${PROFILE_HINT}`), 'Profile is described by that line');
@@ -221,7 +225,7 @@ const part: Part = {
       t.expectEqual(await page.evaluate(`[${field('Model')}.value, ${field('Effort')}.value]`), ['sonnet', 'medium'], "Model and Effort are Docs'");
       t.expectEqual(await page.evaluate(chooseOption(field('Model'), 'haiku')), 'haiku', 'a model chosen');
       t.expectEqual(await page.evaluate(SHOWN_PROFILE), 'Custom', 'Profile shows Custom');
-      t.expectEqual(await page.evaluate(PROFILE_HINT), "Custom: your model and effort, with Docs's sub-agents. Sub-agents default to sonnet.", "the line says Docs's sub-agents still apply");
+      t.expectEqual(await page.evaluate(PROFILE_HINT), "Custom: your model and effort, with the Docs profile's sub-agents. Sub-agents default to sonnet.", "the line says Docs's sub-agents still apply");
       const hint = await page.evaluate<{ left: number; right: number }>(`(() => { const r = ${DIALOG}.querySelector('.field-hint[id$="-hint"]').getBoundingClientRect(); return { left: r.left, right: r.right }; })()`);
       const card = await page.evaluate<{ left: number; right: number }>(dialogBox);
       t.expect(hint.left >= card.left && hint.right <= card.right, 'the line fits in the dialog', { hint, card });
@@ -232,6 +236,29 @@ const part: Part = {
       await page.click('Cancel', dialogButton('Cancel'));
       await page.waitFor('the dialog to close', `!${DIALOG}`);
       t.expectEqual(server.records.spawns, [], 'nothing was started');
+    });
+
+    await t.step("Profile's None sends no profile, so pitwall's defaults apply, and says what its sub-agents get (Phil, 2026-11-09)", async () => {
+      await t.fresh({ search: `?repo=${DEMO_APP}` });
+      await openDialog(t, 'New session');
+      await page.waitFor('Build to fill Model', `${field('Model')}?.value === 'claude-opus-5-5'`);
+      t.expectEqual(await page.evaluate(chooseOption(field('Profile'), NONE_VALUE)), NONE_VALUE, 'None picked');
+      t.expectEqual(await page.evaluate(SHOWN_PROFILE), NONE_TEXT, 'Profile shows None');
+      t.expectEqual(await page.evaluate(`[${field('Model')}.value, ${field('Effort')}.value]`), ['', ''], "Model and Effort on their first options, pitwall's defaults for sessions");
+      t.expectEqual(
+        await page.evaluate(PROFILE_HINT),
+        "No profile: pitwall's defaults for sessions, as Preferences sets them. Sub-agents on pitwall's default for them, haiku.",
+        "the line says the defaults apply, and the sub-agents' from the made-up config file",
+      );
+      t.expect(await page.evaluate(`document.getElementById(${field('Profile')}.getAttribute('aria-describedby'))?.textContent === ${PROFILE_HINT}`), 'Profile is described by that line');
+      t.expectEqual(await page.evaluate(chooseOption(field('Effort'), 'low')), 'low', 'an effort chosen');
+      t.expectEqual(await page.evaluate(SHOWN_PROFILE), NONE_TEXT, 'still None: no Custom without a profile');
+      await t.shot('profile-none');
+      await page.click('First prompt', PROMPT);
+      await page.type(FIRST_PROMPT);
+      await page.click('Start session', dialogButton('Start session'));
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+      t.expectEqual(server.records.spawns, [{ cwd: DEMO_APP, effort: 'low', promptLength: FIRST_PROMPT.length }], 'the fake server got no profile and no model, so the defaults');
     });
 
     await t.step('Directory is an autocomplete: focus selects its text, emptied it lists every directory, and it narrows as you type', async () => {

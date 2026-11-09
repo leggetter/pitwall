@@ -70,11 +70,12 @@
 import type { AgentRow, AgentsSource } from '../index/agents.js';
 import { isRecord } from '../index/guards.js';
 import { hiddenTextProblem } from '../shared/hiddenText.js';
-import { MCP_TOOLS, SUPERVISOR_PROPOSAL_MAX, withSupervisorFooter, type IndexSnapshot, type SavedPermission, type SessionSummary, type SupervisorDecision } from '../shared/protocol.js';
+import { MCP_TOOLS, SUPERVISOR_PROPOSAL_MAX, withSupervisorFooter, type IndexSnapshot, type SavedPermission, type SessionLaunch, type SessionSummary, type SupervisorDecision } from '../shared/protocol.js';
 import { DECLINED_MESSAGE, type ApprovalDraft, type ApprovalQueue, type PermissionAnswer } from '../supervisor/approvals.js';
 import { isPreviewOf, KNOWN_INPUT_FIELDS, OWN_NAMES } from '../supervisor/supervisorGateHook.mjs';
 import { mcpToolName } from '../supervisor/prompt.js';
 import { checkDirectory, MAX_PROMPT_LENGTH, resumeProblem, validateSpawnRequest, type ResumeRunner, type SpawnRunner, type ValidSpawn } from './actions.js';
+import type { SessionLaunches } from './sessionLaunches.js';
 import { isClaudeCommand } from './claudeCommands.js';
 import type { McpTool, McpToolResult } from './mcp.js';
 import { NAME_MAX, plainField, UNTRUSTED_NOTE } from './mcpTools.js';
@@ -120,6 +121,8 @@ export interface SupervisorActionSources {
    * for an ended interactive session, which has no saved flags pitwall reads, it's 'unknown'.
    */
   savedPermission?: (shortId: string, sessionId: string) => Promise<SavedPermission>;
+  /** What a session started with a work profile used, which its resume reuses (W155), for the card. */
+  launches?: Pick<SessionLaunches, 'lookup'>;
 }
 
 type Checked<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -325,6 +328,16 @@ export async function resumePermission(session: SessionSummary, read: Supervisor
   }
 }
 
+/** The card's `launch`: what pitwall resumes `session` on, when it started it with a profile (W155). Fails soft. */
+function launchFor(session: SessionSummary, launches: SupervisorActionSources['launches']): { launch?: SessionLaunch } {
+  try {
+    const kept = launches?.lookup(session);
+    return kept === undefined ? {} : { launch: kept.launch };
+  } catch {
+    return {};
+  }
+}
+
 /** The input resume_session runs with, once allowed: the listed session's own id, and the message as the card showed it or your edit. */
 function resumeInput(sessionId: string, text: string): Record<string, unknown> {
   return { id: sessionId, message: text };
@@ -413,6 +426,7 @@ export function createApproveTool(sources: SupervisorActionSources): McpTool {
           ...(session.lastActivityAt === undefined ? {} : { lastActivityAt: session.lastActivityAt }),
           sameName: snapshot === undefined ? 1 : sameNameCount(snapshot, session),
           permission: await resumePermission(session, sources.savedPermission),
+          ...launchFor(session, sources.launches),
         };
         runInput = resumeInput(session.sessionId, text);
       } else {

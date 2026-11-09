@@ -1073,7 +1073,8 @@ export interface SpawnRequest {
    * Optional work profile (W155): the name of one of WorkSettings.profiles, exactly. The server looks
    * it up in its own profiles, and 400s for a name it doesn't have. Its model and effort apply where
    * `model` and `effort` are absent; its sub-agents' model and its skill always apply, from the
-   * server's profile, never from the request. Absent: no profile, as before W155.
+   * server's profile, never from the request. Absent: no profile, as before W155, which is what New
+   * session's None (NO_PROFILE) sends: pitwall's defaults for sessions and their sub-agents apply.
    */
   profile?: string;
   /**
@@ -2218,6 +2219,8 @@ export type SupervisorApproval =
       sameName: number;
       /** The permission mode it resumes in, as far as pitwall can tell (W129, L1). */
       permission: SavedPermission;
+      /** The profile's settings pitwall started it with, which it resumes with (W155). Absent: none kept. */
+      launch?: SessionLaunch;
     };
 
 /**
@@ -2525,6 +2528,27 @@ export interface WorkProfile {
 
 /** The profile New session starts on (W155). Always one of the profiles: a config file can replace it, not remove it. */
 export const DEFAULT_PROFILE = 'Build';
+
+/**
+ * New session's Profile picker's choice for no profile (W155; Phil, 2026-11-09): the request names
+ * none, so pitwall's defaults for sessions and their sub-agents apply (W119: the config file's `work`,
+ * then Preferences' overrides), as before W155. Reserved, as Custom is: no profile may have the name.
+ */
+export const NO_PROFILE = 'None';
+
+/**
+ * The settings pitwall started a session with from a work profile (W155; Phil, 2026-11-09), which it
+ * reuses when it resumes that session: the profile's name, whether its model or effort were changed in
+ * the dialog (Custom), and what was used. `model`, `effort` and `subagentModel` are as WorkProfile's,
+ * WORK_DEFAULT for none. Never the skill: it was the first prompt's prefix, and runs once.
+ */
+export interface SessionLaunch {
+  profile?: string;
+  custom?: true;
+  model?: string;
+  effort?: EffortLevel | typeof WORK_DEFAULT;
+  subagentModel?: string;
+}
 
 /** A profile's name: letters, digits, spaces, `.`, `_` and `-`, 1 to 40, starting with a letter or digit and not ending with a space. */
 export const WORK_PROFILE_NAME_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9 ._-]{0,38}[A-Za-z0-9._-])?$/;
