@@ -1080,6 +1080,22 @@ export interface SpawnRequest {
   /** Optional effort (W119): an EffortLevel, or WORK_DEFAULT. Absent: the defaults for sessions. */
   effort?: EffortLevel | typeof WORK_DEFAULT;
   /**
+   * Optional sub-agents' default model (W155; Phil, 2026-11-09), CLAUDE_CODE_SUBAGENT_MODEL for the
+   * session, never forced: as isWorkModel(…, 'subagents') allows, or WORK_DEFAULT for none whatever
+   * the profile and pitwall's defaults say. Absent: the profile's, else the defaults for sub-agents
+   * (WorkSettings.effective.subagents).
+   */
+  subagentModel?: string;
+  /**
+   * Optional work profile (W155): the name of one of WorkSettings.profiles, exactly. The server looks
+   * it up in its own profiles, and 400s for a name it doesn't have. Its model, effort and sub-agents'
+   * model apply where `model`, `effort` and `subagentModel` are absent; its skill always applies, from
+   * the server's profile, never from the request. Absent: no profile, as before W155: pitwall's
+   * defaults for sessions and their sub-agents apply. New session sends one once the profiles load
+   * (Phil, 2026-11-09: Customized, never None), with all three fields as the dialog shows them.
+   */
+  profile?: string;
+  /**
    * Optional files for the first prompt (W79, spike 008): ids from
    * AttachmentResult, at most ATTACHMENTS_MAX_PER_SESSION, each used once.
    * The server appends one `@<absolute path>` line per file to the prompt,
@@ -2183,6 +2199,8 @@ export type SupervisorApproval =
       sameName: number;
       /** The permission mode it resumes in, as far as pitwall can tell (W129, L1). */
       permission: SavedPermission;
+      /** The profile's settings pitwall started it with, which it resumes with (W155). Absent: none kept. */
+      launch?: SessionLaunch;
     };
 
 /**
@@ -2393,6 +2411,12 @@ export interface WorkSettings {
   /** The config file it read, for the words "in <file>". Absent when there's none. */
   configFile?: string;
   /**
+   * The work profiles (W155): the built-ins, Build, Review, Security review and Docs, in that order,
+   * each replaced in place by the config file's of the same name, then the config file's others, in
+   * its order. Absent from a server before W155.
+   */
+  profiles?: WorkProfile[];
+  /**
    * What Claude Code would use where pitwall passes no `--model` or `--effort` (W122), read from its
    * documented settings files and environment variables as the request came in. Absent when the
    * server wasn't given a reader (tests, the gallery) or the read failed.
@@ -2454,6 +2478,66 @@ export interface ClaudeDefaults {
    * tell this answer from one for an earlier choice. Absent: none, so sessions' are your settings alone.
    */
   dir?: string;
+}
+
+/**
+ * A work profile (W155): a session's launch settings, by name. New session's Profile picker fills its
+ * Model, Effort and Sub-agents; the server adds its skill. A field it lacks is left to the defaults for
+ * sessions and sub-agents (WorkSettings.effective), as a dialog field left on its default is.
+ */
+export interface WorkProfile {
+  /** WORK_PROFILE_NAME_PATTERN; unique ignoring case. */
+  name: string;
+  /** As WorkChoice's for `session`: isWorkModel(), or WORK_DEFAULT. */
+  model?: string;
+  effort?: EffortLevel | typeof WORK_DEFAULT;
+  /**
+   * CLAUDE_CODE_SUBAGENT_MODEL for the session, a default only (Claude Code v2.1.251: an Agent call's
+   * own `model`, or an agent definition's, wins): isWorkModel(…, 'subagents'), or WORK_DEFAULT for
+   * none. pitwall never sets CLAUDE_CODE_SUBAGENT_MODEL_FORCE.
+   */
+  subagentModel?: string;
+  /**
+   * A skill the session starts with, SKILL_NAME_PATTERN, without its `/`: the first prompt becomes
+   * `/<skill> <prompt>`, which Claude Code runs as if typed (W155's check).
+   */
+  skill?: string;
+  /** pitwall's own, or the config file's `profiles`, which replaces a built-in of the same name. */
+  source: 'built-in' | 'config';
+}
+
+/** The profile New session starts on (W155). Always one of the profiles: a config file can replace it, not remove it. */
+export const DEFAULT_PROFILE = 'Build';
+
+/**
+ * The settings pitwall started a session with from a work profile (W155; Phil, 2026-11-09), which it
+ * reuses when it resumes that session: the profile's name, whether its model, effort or sub-agents'
+ * model were changed in the dialog (Customized), and what was used. `model`, `effort` and
+ * `subagentModel` are as WorkProfile's, WORK_DEFAULT for none. Never the skill: it was the first prompt's prefix, and runs once.
+ */
+export interface SessionLaunch {
+  profile?: string;
+  custom?: true;
+  model?: string;
+  effort?: EffortLevel | typeof WORK_DEFAULT;
+  subagentModel?: string;
+}
+
+/** A profile's name: letters, digits, spaces, `.`, `_` and `-`, 1 to 40, starting with a letter or digit and not ending with a space. */
+export const WORK_PROFILE_NAME_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9 ._-]{0,38}[A-Za-z0-9._-])?$/;
+
+/** The most profiles the config file may name. */
+export const WORK_PROFILES_MAX = 30;
+
+/**
+ * A skill's name, as a profile gives it: letters, digits and hyphens, starting with a letter or
+ * digit, with one optional `plugin:` part of the same characters; at most 64 a part. Never free text on
+ * a command line: no space, quote, `/`, `.`, newline or second `:`, and never a leading `-`.
+ */
+export const SKILL_NAME_PATTERN = /^(?:[A-Za-z0-9][A-Za-z0-9-]{0,63}:)?[A-Za-z0-9][A-Za-z0-9-]{0,63}$/;
+
+export function isSkillName(value: unknown): value is string {
+  return typeof value === 'string' && SKILL_NAME_PATTERN.test(value);
 }
 
 /**

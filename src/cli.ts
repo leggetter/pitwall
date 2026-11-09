@@ -589,6 +589,7 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   // environment at each GET, for Preferences' and New session's words.
   const work = createWorkStore({
     ...(config.work === undefined ? {} : { config: config.work }),
+    ...(config.profiles === undefined ? {} : { profiles: config.profiles }),
     ...(config.found ? { configFile: config.file } : {}),
     claude: createClaudeDefaultsReader({ roots: () => roots }),
   });

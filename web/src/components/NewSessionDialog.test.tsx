@@ -361,6 +361,7 @@ describe('New session: starting one', () => {
     await submit(dialog);
 
     expect(posts(server).map((post) => post.body)).toEqual([
+      // Before the profiles have loaded (this fake server has none), Build by name, which the server always has.
       { cwd: REPO, prompt: 'first' },
       { cwd: `${ROOT}/new-thing`, prompt: 'second', model: 'claude-haiku-4-5' },
     ]);

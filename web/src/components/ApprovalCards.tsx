@@ -15,7 +15,8 @@
 // - A resume card (W129, M2, L1) shows, as text, the session's folder, home as ~, and its last
 //   activity; how many listed sessions share its name when others do, since names aren't unique; and
 //   that it resumes with its own saved settings, its permission mode included, with a warning when
-//   that mode is bypassPermissions. Edit opens the text in place, up to SUPERVISOR_PROPOSAL_MAX for a message and
+//   that mode is bypassPermissions; and, for a session pitwall started with a work profile, the model,
+//   effort and sub-agents' model it resumes on, which pitwall kept (W155). Edit opens the text in place, up to SUPERVISOR_PROPOSAL_MAX for a message and
 // SPAWN_PROMPT_MAX for a new session's first prompt (editLimit()), with Send edit and Cancel.
 // - A message card (W138) shows, under the text and under the editor alike, the line pitwall adds at
 //   the end of what goes, SUPERVISOR_MESSAGE_FOOTER, labelled as pitwall's, apart from the text: it's
@@ -43,6 +44,7 @@ import {
   decideApproval,
   RESUME_BYPASS_WARNING,
   resumeBypassed,
+  resumeLaunchText,
   resumePermissionText,
   resumeWhereLead,
   SUPERVISOR_EDIT_MAX,
@@ -402,6 +404,8 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
           </p>
           <p className="approval-note">{RESUME_NOTE}</p>
           <p className="approval-note approval-permission">{resumePermissionText(approval.permission)}</p>
+          {/* A session pitwall started with a work profile resumes on what it used (W155). */}
+          {approval.launch !== undefined && <p className="approval-note approval-launch">{resumeLaunchText(approval.launch)}</p>}
           {resumeBypassed(approval.permission) && (
             <Alert tone="warning" className="approval-bypass">
               {RESUME_BYPASS_WARNING}

@@ -37,9 +37,11 @@ import {
   type WorkChoice,
   type WorkChoices,
   type WorkKind,
+  type WorkProfile,
   type WorkSettings,
 } from '../shared/protocol.js';
 import type { ClaudeDefaultsReader } from './claudeDefaults.js';
+import { mergeProfiles } from './profiles.js';
 import { RELAY_MODEL } from './relayPrompt.js';
 
 /** pitwall's own model and effort for each kind of work: today's behaviour, before W119. */
@@ -198,6 +200,8 @@ export interface WorkStore {
   describe(dir?: string): Promise<WorkSettings>;
   /** Replaces the overrides with `body`'s, a WorkUpdate, once it passes every check. */
   update(body: unknown): { ok: true; settings: WorkSettings } | { ok: false; error: string };
+  /** The work profile named exactly `name` (W155), a copy, or undefined. */
+  profile(name: string): WorkProfile | undefined;
 }
 
 export interface WorkStoreOptions {
@@ -205,6 +209,8 @@ export interface WorkStoreOptions {
   config?: WorkChoices;
   /** The config file's path, when one was read. */
   configFile?: string;
+  /** The config file's `profiles` (W155), checked (LoadedConfig.profiles). The built-ins apply either way. */
+  profiles?: readonly WorkProfile[];
   /** Reads Claude Code's defaults (W122, claudeDefaults.ts). Absent: the answers have no `claude`. */
   claude?: ClaudeDefaultsReader;
 }
@@ -212,6 +218,7 @@ export interface WorkStoreOptions {
 export function createWorkStore(options: WorkStoreOptions = {}): WorkStore {
   const config = options.config ?? emptyChoices();
   let overrides = emptyChoices();
+  const profiles = mergeProfiles(options.profiles);
   const choice = (kind: WorkKind) => mergeChoices(overrides[kind], config[kind], BUILT_IN_WORK[kind]);
   const settings = (): WorkSettings => {
     const effective = emptyChoices();
@@ -222,6 +229,7 @@ export function createWorkStore(options: WorkStoreOptions = {}): WorkStore {
       overrides: copy(overrides),
       effective,
       ...(options.configFile === undefined ? {} : { configFile: options.configFile }),
+      profiles: profiles.map((profile) => ({ ...profile })),
     };
   };
   return {
@@ -248,6 +256,10 @@ export function createWorkStore(options: WorkStoreOptions = {}): WorkStore {
         throw error;
       }
       return { ok: true, settings: settings() };
+    },
+    profile(name) {
+      const found = profiles.find((profile) => profile.name === name);
+      return found === undefined ? undefined : { ...found };
     },
   };
 }

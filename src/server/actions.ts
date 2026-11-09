@@ -100,9 +100,11 @@ import {
   stopPath,
   type ActionResult,
   type ResumeResult,
+  type SessionLaunch,
   type SessionSummary,
   type SpawnResult,
   type WorkChoice,
+  type WorkProfile,
   WORK_DEFAULT,
 } from '../shared/protocol.js';
 import { UNKNOWN_ATTACHMENT_ERROR, type AttachmentFile, type AttachmentStore } from './attachments.js';
@@ -111,6 +113,8 @@ import { isClaudeCommand } from './claudeCommands.js';
 import { childEnvironment, runCommand, type CommandResult, type RunCommand } from './command.js';
 import type { RecentSpawns } from './recentSpawns.js';
 import { resolveSession } from './sessions.js';
+import type { SessionLaunches } from './sessionLaunches.js';
+import { withSkill } from './profiles.js';
 import { EFFORT_PROBLEM, mergeChoices, modelProblem, withEffort, workArgs, type WorkStore } from './work.js';
 
 export interface ActionOptions {
@@ -163,9 +167,11 @@ export interface ActionOptions {
   resumer?: ResumeRunner;
   /**
    * The model and effort for sessions and their sub-agents (W119): what spawn uses when the request
-   * names none, and what resume always uses. Default: none, so no flags, as before W119.
+   * names none, and what resume uses, except for a session started with a profile, which resumes on
+   * what it used (`launches`). Default: none, so no flags, as before W119. With
+   * `profile`, spawn's request may name a work profile (W155); without it, any profile is unknown.
    */
-  work?: Pick<WorkStore, 'choice'>;
+  work?: Pick<WorkStore, 'choice'> & Partial<Pick<WorkStore, 'profile'>>;
   /**
    * Every short id and session id this pitwall started or resumed, for its run (W119's review): a
    * resume takes the defaults for sessions only for one of these, since #114 leaves sessions pitwall
@@ -173,6 +179,12 @@ export interface ActionOptions {
    * no resume takes the defaults.
    */
   started?: Pick<Set<string>, 'add' | 'has'>;
+  /**
+   * The settings each session pitwall started with a profile used (W155; Phil, 2026-11-09), kept on
+   * disk: spawn records them, and resume reuses them for that session, over the defaults for sessions.
+   * Default: none, so resume is as before.
+   */
+  launches?: Pick<SessionLaunches, 'record' | 'lookup' | 'resumed'>;
 }
 
 /** What spawn needs from the AttachmentStore. */
@@ -216,8 +228,17 @@ export interface ValidSpawn {
   model?: string;
   /** isEffortLevel(), or WORK_DEFAULT for no `--effort`. */
   effort?: WorkChoice['effort'];
-  /** CLAUDE_CODE_SUBAGENT_MODEL for the session's sub-agents, from the defaults (W119). Never from the request. */
+  /**
+   * CLAUDE_CODE_SUBAGENT_MODEL for the session's sub-agents: the request's, else the profile's (W155),
+   * else the defaults' (W119); WORK_DEFAULT for none.
+   */
   subagentModel?: string;
+  /** The work profile's name (W155), as the server's own profiles spell it. */
+  profile?: string;
+  /** The request's own model, effort or sub-agents' model isn't the profile's (New session's Customized, W155). */
+  custom?: true;
+  /** The profile's skill (W155), SKILL_NAME_PATTERN, from the server's profile, never the request: the prompt starts `/<skill> `. */
+  skill?: string;
   /** The kept files for SpawnRequest.attachments, in its order. Absent for none. */
   attachments?: readonly AttachmentFile[];
 }
@@ -234,9 +255,10 @@ export async function validateSpawnRequest(
   body: unknown,
   roots: readonly string[],
   attachments?: Pick<SpawnAttachments, 'lookup'>,
+  profiles?: (name: string) => WorkProfile | undefined,
 ): Promise<SpawnValidation> {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return invalid('The body must be a JSON object.');
-  const { cwd, prompt, name, model, effort, attachments: ids } = body as Record<string, unknown>;
+  const { cwd, prompt, name, model, effort, subagentModel, profile: profileName, attachments: ids } = body as Record<string, unknown>;
 
   if (typeof prompt !== 'string' || prompt.trim() === '') return invalid('The first prompt is required.');
   if (prompt.length > MAX_PROMPT_LENGTH) return invalid(`The first prompt can be at most ${MAX_PROMPT_LENGTH} characters.`);
@@ -255,6 +277,17 @@ export async function validateSpawnRequest(
   if (typeof name === 'string' && OWN_NAMES.has(name.trim().toLowerCase())) return invalid(`The name ${name} is pitwall's own. Choose another.`);
   if (model !== undefined && model !== WORK_DEFAULT && !isWorkModel(model)) return invalid(`The model ${modelProblem('session')}.`);
   if (effort !== undefined && effort !== WORK_DEFAULT && !isEffortLevel(effort)) return invalid(`The effort ${EFFORT_PROBLEM}.`);
+  // The sub-agents' model, as W119 checks one for sub-agents (W155; Phil, 2026-11-09). Not quoted back.
+  if (subagentModel !== undefined && subagentModel !== WORK_DEFAULT && !isWorkModel(subagentModel, 'subagents')) {
+    return invalid(`The sub-agents' model ${modelProblem('subagents')}.`);
+  }
+  // The profile by its exact name, from the server's own (W155): its skill comes from there, never
+  // from the request. Not quoted back: it could be any text.
+  let profile: WorkProfile | undefined;
+  if (profileName !== undefined) {
+    profile = typeof profileName === 'string' && profileName.length <= 64 ? profiles?.(profileName) : undefined;
+    if (profile === undefined) return invalid("That profile isn't one pitwall has. Reopen New session to see the profiles now.");
+  }
   if (ids !== undefined) {
     if (!Array.isArray(ids) || !ids.every((id) => typeof id === 'string')) return invalid('The attachments must be a list of attachment ids.');
     if (ids.length > ATTACHMENTS_MAX_PER_SESSION) return invalid(`A new session can have at most ${ATTACHMENTS_MAX_PER_SESSION} attachments.`);
@@ -266,8 +299,20 @@ export async function validateSpawnRequest(
 
   const spawn: ValidSpawn = { cwd: dir.path, prompt };
   if (name !== undefined) spawn.name = name as string;
-  if (model !== undefined) spawn.model = model as string;
-  if (effort !== undefined) spawn.effort = effort as WorkChoice['effort'];
+  // The request's own model, effort and sub-agents' model, else the profile's; withSessionWork() fills
+  // the rest from the defaults.
+  const chosenModel = (model as string | undefined) ?? profile?.model;
+  const chosenEffort = (effort as WorkChoice['effort'] | undefined) ?? profile?.effort;
+  const chosenSubagents = (subagentModel as string | undefined) ?? profile?.subagentModel;
+  if (chosenModel !== undefined) spawn.model = chosenModel;
+  if (chosenEffort !== undefined) spawn.effort = chosenEffort;
+  if (chosenSubagents !== undefined) spawn.subagentModel = chosenSubagents;
+  if (profile !== undefined) {
+    spawn.profile = profile.name;
+    const differs = (sent: unknown, own: string | undefined) => sent !== undefined && sent !== own;
+    if (differs(model, profile.model) || differs(effort, profile.effort) || differs(subagentModel, profile.subagentModel)) spawn.custom = true;
+    if (profile.skill !== undefined) spawn.skill = profile.skill;
+  }
   if (ids !== undefined && ids.length > 0) {
     const found = attachments ? await attachments.lookup(ids as string[]) : { ok: false as const, error: UNKNOWN_ATTACHMENT_ERROR };
     if (!found.ok) return invalid(found.error);
@@ -328,11 +373,15 @@ export function spawnArgs(spawn: ValidSpawn): string[] {
   return args;
 }
 
-/** The first prompt as `claude --bg` gets it: the user's, then, after a blank line, an `@<path>` line per attachment. */
-export function spawnPrompt(spawn: Pick<ValidSpawn, 'prompt' | 'attachments'>): string {
+/**
+ * The first prompt as `claude --bg` gets it: the profile's skill, `/<skill> `, when it has one (W155),
+ * the user's, then, after a blank line, an `@<path>` line per attachment.
+ */
+export function spawnPrompt(spawn: Pick<ValidSpawn, 'prompt' | 'attachments' | 'skill'>): string {
+  const prompt = withSkill(spawn.prompt, spawn.skill);
   const files = spawn.attachments ?? [];
-  if (files.length === 0) return spawn.prompt;
-  return `${spawn.prompt}\n\n${files.map((file) => `@${file.file}`).join('\n')}`;
+  if (files.length === 0) return prompt;
+  return `${prompt}\n\n${files.map((file) => `@${file.file}`).join('\n')}`;
 }
 
 /**
@@ -584,17 +633,33 @@ export interface SpawnRunner {
 
 /**
  * `spawn` with the defaults for sessions where it names no model or effort, field by field, and the
- * sub-agents' model from the defaults (W119). The same object without `work`.
+ * sub-agents' model from the defaults (W119) where neither the request nor its profile names one (W155). The same object
+ * without `work`.
  */
 export function withSessionWork(spawn: ValidSpawn, work: Pick<WorkStore, 'choice'> | undefined): ValidSpawn {
   if (work === undefined) return spawn;
   const session = mergeChoices({ ...(spawn.model === undefined ? {} : { model: spawn.model }), ...(spawn.effort === undefined ? {} : { effort: spawn.effort }) }, work.choice('session'));
+  if (spawn.subagentModel !== undefined) return { ...spawn, ...(session.model === undefined ? {} : { model: session.model }), ...(session.effort === undefined ? {} : { effort: session.effort }) };
   const subagents = work.choice('subagents').model;
   return {
     ...spawn,
     ...(session.model === undefined ? {} : { model: session.model }),
     ...(session.effort === undefined ? {} : { effort: session.effort }),
     ...(subagents === undefined || subagents === WORK_DEFAULT ? {} : { subagentModel: subagents }),
+  };
+}
+
+/**
+ * What a spawn with a profile used, as SessionLaunch keeps it (W155): each of the model, effort and
+ * sub-agents' model, WORK_DEFAULT where it passed none, so a resume passes none either.
+ */
+export function launchOf(spawn: ValidSpawn): SessionLaunch {
+  return {
+    ...(spawn.profile === undefined ? {} : { profile: spawn.profile }),
+    ...(spawn.custom === true ? { custom: true as const } : {}),
+    model: spawn.model ?? WORK_DEFAULT,
+    effort: spawn.effort ?? WORK_DEFAULT,
+    subagentModel: spawn.subagentModel ?? WORK_DEFAULT,
   };
 }
 
@@ -634,6 +699,7 @@ export function createSpawnRunner(options: Omit<ActionOptions, 'spawner'> = {}):
       try {
         // PWD is the directory it runs in, as for resume: a new session records where it started.
         // CLAUDE_CODE_SUBAGENT_MODEL for its sub-agents, and no inherited CLAUDE_CODE_EFFORT_LEVEL over its --effort (W119).
+        // A profile's sub-agents' model is a default only: never CLAUDE_CODE_SUBAGENT_MODEL_FORCE (W155).
         const childEnv = withEffort(env(), spawn, spawn.subagentModel === undefined ? {} : { model: spawn.subagentModel });
         result = await run(claudeBin, spawnArgs(spawn), { cwd: spawn.cwd, env: { ...childEnv, PWD: spawn.cwd }, timeoutMs });
       } finally {
@@ -662,6 +728,8 @@ export function createSpawnRunner(options: Omit<ActionOptions, 'spawner'> = {}):
       }
       options.spawned?.add(started.shortId);
       options.started?.add(started.shortId);
+      // With a profile, what it used, for a resume (W155). Never the skill: it runs once, as the first prompt's prefix.
+      if (spawn.profile !== undefined) options.launches?.record(started.shortId, launchOf(spawn));
       return { status: 201, result: { ok: true, shortId: started.shortId, name: started.name ?? spawn.name ?? started.shortId } };
     } finally {
       if (ids.length > 0) {
@@ -809,8 +877,13 @@ export function createResumeRunner(
       // The defaults for sessions and their sub-agents (W119), only for a session this pitwall started
       // or resumed (W119's review, #114's scope): one started elsewhere keeps the model and effort it
       // was started with, so no flags. Claude Code takes `--model` and `--effort` on a resume too.
-      const ours = options.started?.has(sessionId) === true || (session.shortId !== undefined && options.started?.has(session.shortId) === true);
-      const work = ours ? sessionWork() : { session: {}, subagents: {} };
+      // A session pitwall started with a work profile resumes on what it used, kept on disk, checked
+      // again as it's read: the profile's model, effort and sub-agents' model, never its skill (W155;
+      // Phil, 2026-11-09). A field that didn't pass is the defaults'.
+      const kept = options.launches?.lookup(session);
+      const ours = kept !== undefined || options.started?.has(sessionId) === true || (session.shortId !== undefined && options.started?.has(session.shortId) === true);
+      const defaults = ours ? sessionWork() : { session: {}, subagents: {} };
+      const work = kept === undefined ? defaults : { session: mergeChoices(kept.session, defaults.session), subagents: mergeChoices(kept.subagents, defaults.subagents) };
       const result = await run(claudeBin, resumeArgs(sessionId, work.session, prompt), { cwd: dir.path, env: { ...withEffort(env(), work.session, work.subagents), PWD: cwd }, timeoutMs });
       if (result.kind === 'failed') {
         if (result.reason === 'timeout') {
@@ -856,6 +929,7 @@ export function createResumeRunner(
       options.resumed?.add(sessionId);
       options.started?.add(sessionId);
       options.started?.add(resumed.shortId);
+      if (kept !== undefined) options.launches?.resumed(session, resumed.shortId);
       // You asked for it back, so it needs your prompt until you send one (NeedsYou's 'restarted', W69).
       // Polls soon. With a prompt it has one, its next turn, so it doesn't (W127).
       if (prompt === undefined) indexer.noteRestart(sessionId, now());
@@ -920,7 +994,8 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
       const snapshot = indexer.latest();
       if (!snapshot) return spawnResult(c, { ok: false, error: LOOKUP_ERRORS[503] }, 503);
 
-      const validation = await validateSpawnRequest(body, snapshot.roots, options.attachments);
+      const profiles = options.work?.profile;
+      const validation = await validateSpawnRequest(body, snapshot.roots, options.attachments, profiles === undefined ? undefined : (name) => profiles(name));
       if (!validation.ok) return spawnResult(c, { ok: false, error: validation.error }, 400);
       const started = await spawner.start(validation.spawn);
       if (started.retryAfterSeconds !== undefined) c.header('Retry-After', String(started.retryAfterSeconds));

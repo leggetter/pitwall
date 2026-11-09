@@ -18,6 +18,7 @@ import { fakeSupervisor, type FakeSupervisor } from '../test/supervisor.js';
 import type { CommandOptions, CommandResult } from './command.js';
 import type { RunningServer } from './index.js';
 import { startServerWithInternals } from './server.js';
+import { SessionLaunches } from './sessionLaunches.js';
 import { checkMessage, recipientNames, sameNameCount } from './supervisorActions.js';
 import { hiddenTextProblem } from '../shared/hiddenText.js';
 import { validateSpawnRequest } from './actions.js';
@@ -139,7 +140,9 @@ afterEach(async () => {
   await Promise.all(running.splice(0).map((server) => server.close()));
 });
 
-async function start(options: { timeoutMs?: number; sessions?: SessionSummary[]; resumed?: CommandResult; savedPermission?: (shortId: string, sessionId: string) => Promise<SavedPermission> } = {}): Promise<Setup> {
+async function start(
+  options: { timeoutMs?: number; sessions?: SessionSummary[]; resumed?: CommandResult; savedPermission?: (shortId: string, sessionId: string) => Promise<SavedPermission>; launches?: SessionLaunches } = {},
+): Promise<Setup> {
   const queue = createApprovalQueue({ ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }), now: () => NOW });
   const supervisor = fakeSupervisor(MCP_TOKEN, queue);
   const state: State = { sessions: [...SESSIONS, ...(options.sessions ?? [])], outside: [], listings: 0 };
@@ -159,7 +162,7 @@ async function start(options: { timeoutMs?: number; sessions?: SessionSummary[];
   };
   // Never the user's jobs folder (W129): a stopped job's saved mode is the test's.
   const savedPermission = options.savedPermission ?? (async (): Promise<SavedPermission> => ({ kind: 'unset' }));
-  const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0, supervisor }, { actions: { run, agents }, savedPermission });
+  const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0, supervisor }, { actions: { run, agents, ...(options.launches === undefined ? {} : { launches: options.launches }) }, savedPermission });
   running.push(server);
   return { server, supervisor, queue, indexer, state, runs };
 }
@@ -608,6 +611,29 @@ describe('a finished session resumed with a message, behind your click (W127)', 
     expect(broken.queue.list()[0]).toMatchObject({ permission: { kind: 'unknown' } });
     for (const each of [queue, broken.queue]) for (const card of each.list()) each.settle(card.id, { behavior: 'deny', message: DECLINED_MESSAGE });
     await Promise.all([job, ended, third]);
+  });
+
+  it('a card says the profile settings pitwall kept for a session it started with one, and the resume uses them (W155)', async () => {
+    const launches = new SessionLaunches();
+    launches.record('bbbbbbbb', { profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet' });
+    const { server, queue, runs } = await start({ sessions: [stopped(), finished()], launches });
+    const { ws, apiKey } = await authedClient(server.port);
+    const input = { id: STOPPED_ID, message: 'Go on.' };
+    const answer = approve(server.port, RESUME, input, 'toolu_launch');
+    await until(() => queue.list().length === 1);
+    expect(queue.list()[0]).toMatchObject({ sessionId: STOPPED_ID, launch: { profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet' } });
+    await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send' });
+    await answer;
+    await callTool(server.port, 'resume_session', input, { 'claudecode/toolUseId': 'toolu_launch' });
+    expect(resumeRuns(runs)[0]!.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'sonnet', '--effort', 'high', '--', 'Go on.']);
+    expect(resumeRuns(runs)[0]!.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('sonnet');
+    // One with no record says nothing of it.
+    const ended = approve(server.port, RESUME, { id: FINISHED_ID, message: 'Go on.' }, 'toolu_nolaunch');
+    await until(() => queue.list().length === 1);
+    expect(queue.list()[0]).not.toHaveProperty('launch');
+    queue.settle(queue.list()[0]!.id, { behavior: 'deny', message: DECLINED_MESSAGE });
+    await ended;
+    ws.close();
   });
 
   it('a card counts the listed sessions that share its name, ignoring case, each once, since the id is exact and the name isn’t (W129, M2)', async () => {

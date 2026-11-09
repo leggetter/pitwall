@@ -1010,6 +1010,15 @@ describe('a finished session resumed with a message (W127)', () => {
     expect(shown.querySelector('.approval-where')?.textContent).toMatch(/^2 listed sessions have this name; this is the one in \/Users\/example\/code\/demo-app, last active \d+d ago\.$/);
     expect(shown.querySelector('.approval-permission')?.textContent).toBe('Claude Code resumes it with its own saved settings, its permission mode included: bypassPermissions.');
     expect(shown.querySelector('.approval-bypass')?.textContent).toContain('the message runs with no permission prompts');
+    expect(shown.querySelector('.approval-launch')).toBeNull();
+  });
+
+  it('a card says what a session started with a profile resumes on (W155)', async () => {
+    const card: SupervisorApproval = { ...resumeCard, launch: { profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet' } };
+    renderDashboard(resumeSnap({ status: 'idle', approvals: [card] }), { search: '?view=all&supervisor' });
+    await settle();
+    const shown = view()!.querySelector<HTMLElement>('li.approval-card')!;
+    expect(shown.querySelector('.approval-launch')?.textContent).toBe('pitwall resumes it on what it started it with, from the Review profile: model sonnet, effort high, sub-agents sonnet.');
   });
 
   it('a card notes a typed prompt’s slash command or @ path, for a resume and a new session alike (W129, I2)', async () => {

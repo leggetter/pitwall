@@ -6,6 +6,7 @@
 import {
   EFFORT_LEVELS,
   isEffortLevel,
+  isSkillName,
   OFFERED_WORK_MODELS,
   isWorkModel,
   RECAP_EFFORT_LEVELS,
@@ -13,6 +14,8 @@ import {
   WORK_DEFAULT,
   WORK_KINDS,
   WORK_PATH,
+  WORK_PROFILE_NAME_PATTERN,
+  WORK_PROFILES_MAX,
   type ClaudeDefault,
   type ClaudeDefaults,
   type ClaudeDefaultSource,
@@ -20,6 +23,7 @@ import {
   type WorkChoice,
   type WorkChoices,
   type WorkKind,
+  type WorkProfile,
   type WorkSettings,
 } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
@@ -35,8 +39,10 @@ export const WORK_LABELS: Readonly<Record<WorkKind, string>> = {
 
 /** What each kind is, and when a change reaches it. */
 export const WORK_HINTS: Readonly<Record<WorkKind, string>> = {
-  session: 'New session, and resuming one pitwall started. From the next session you start.',
-  subagents: "For sub-agents whose definition names no model, from the next session you start. Their effort is the session's: Claude Code has no separate setting for it.",
+  session:
+    "Where no dialog chooses: the supervisor's new sessions, and resuming one pitwall didn't start with a profile. New session fills Model and Effort from a profile. From the next session you start.",
+  subagents:
+    "For sub-agents whose definition names no model, where no dialog chooses: the supervisor's new sessions, and resuming one pitwall didn't start with a profile. New session fills Sub-agents from a profile. From the next session you start. Their effort is the session's: Claude Code has no separate setting for it.",
   supervisor: 'From its next start.',
   recaps: 'From the next recap. At most high effort: a recap may write 4,096 tokens, thinking included.',
   relay: 'Passes on the messages you write to interactive sessions. From its next start.',
@@ -87,15 +93,64 @@ export function readWorkSettings(value: unknown): WorkSettings | undefined {
   const effective = readChoices(value.effective);
   if (!builtIn || !config || !overrides || !effective) return undefined;
   const claude = readClaudeDefaults(value.claude);
+  const profiles = readProfiles(value.profiles);
   return {
     builtIn,
     config,
     overrides,
     effective,
     ...(typeof value.configFile === 'string' ? { configFile: value.configFile } : {}),
+    ...(profiles === undefined ? {} : { profiles }),
     ...(claude === undefined ? {} : { claude }),
   };
 }
+
+/**
+ * WorkSettings.profiles (W155), read defensively: a profile is kept only when its name and every field
+ * it has pass the server's checks, and a name is kept once. Undefined when the answer has no list.
+ */
+export function readProfiles(value: unknown): WorkProfile[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const profiles: WorkProfile[] = [];
+  const seen = new Set<string>();
+  for (const entry of value.slice(0, WORK_PROFILES_MAX + 4)) {
+    if (!isRecord(entry) || typeof entry.name !== 'string' || !WORK_PROFILE_NAME_PATTERN.test(entry.name) || seen.has(entry.name.toLowerCase())) continue;
+    if (entry.source !== 'built-in' && entry.source !== 'config') continue;
+    if (entry.model !== undefined && entry.model !== WORK_DEFAULT && !isWorkModel(entry.model, 'session')) continue;
+    if (entry.effort !== undefined && entry.effort !== WORK_DEFAULT && !isEffortLevel(entry.effort)) continue;
+    if (entry.subagentModel !== undefined && entry.subagentModel !== WORK_DEFAULT && !isWorkModel(entry.subagentModel, 'subagents')) continue;
+    if (entry.skill !== undefined && !isSkillName(entry.skill)) continue;
+    seen.add(entry.name.toLowerCase());
+    profiles.push({
+      name: entry.name,
+      source: entry.source,
+      ...(entry.model === undefined ? {} : { model: entry.model as string }),
+      ...(entry.effort === undefined ? {} : { effort: entry.effort as WorkProfile['effort'] }),
+      ...(entry.subagentModel === undefined ? {} : { subagentModel: entry.subagentModel as string }),
+      ...(entry.skill === undefined ? {} : { skill: entry.skill as string }),
+    });
+  }
+  return profiles;
+}
+
+/**
+ * New session's Profile picker's choice once Model, Effort or Sub-agents no longer match the profile
+ * picked (Phil, 2026-11-09). It keeps that profile's skill.
+ */
+export const CUSTOM_PROFILE_TEXT = 'Customized';
+
+/**
+ * The line after New session's Sub-agents (W155): the profile's skill, which Customized keeps, or
+ * nothing for a profile without one. The model, effort and sub-agents' model are in their fields.
+ */
+export function profileHint(profile: WorkProfile, custom: boolean): string | undefined {
+  if (profile.skill === undefined) return undefined;
+  const whose = custom ? `, the ${profile.name} profile's skill,` : ',';
+  return `Starts with /${profile.skill}${whose} which must be installed where the session runs.`;
+}
+
+/** New session's Sub-agents hint (W155): what the field sets, a default, never forced. */
+export const SUBAGENTS_HINT = "For sub-agents that don't name their own model.";
 
 const SCOPES: readonly string[] = ['managed', 'local', 'project', 'user'];
 const SETTING_KEYS: readonly string[] = ['model', 'effortLevel', 'modelSettings', 'maxEffortLevel'];
@@ -293,6 +348,18 @@ export function sessionDefaultText(settings: WorkSettings | undefined, field: 'm
   const value = settings.effective.session[field];
   if (value !== undefined && value !== WORK_DEFAULT) return `Default: ${fieldValueText(field, value)}`;
   return claudeDefaultText(settings, 'session', field, field === 'effort' ? (model ?? modelInEffect(settings, 'session')) : undefined);
+}
+
+/**
+ * New session's Sub-agents' first option (W155): what the server applies with none chosen, pitwall's
+ * default for sub-agents, the override included, "Default: Sonnet", or Claude Code's, resolved where
+ * the server said. "Default" before the settings load.
+ */
+export function subagentsDefaultText(settings: WorkSettings | undefined): string {
+  if (settings === undefined) return 'Default';
+  const value = settings.effective.subagents.model;
+  if (value !== undefined && value !== WORK_DEFAULT) return `Default: ${modelText(value)}`;
+  return claudeDefaultText(settings, 'subagents', 'model');
 }
 
 /** The "Claude Code's default" option, with its value where the server resolved it: "Claude Code's default: Opus 5.5 (…)". */

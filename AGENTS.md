@@ -128,7 +128,8 @@ src/cli.ts               the `pitwall` command (bin, built to dist/cli.js)
 src/config.ts            the config file (W103, D24): ~/.pitwall/config.json or --config, JSON with comments,
                          the roots and each root's GitHub owners, ownersByRoot() for the PR side, and `work`,
                          the model and effort for each kind of work (W119), which src/server/work.ts checks,
-                         layers with the app's overrides for the run and serves at /api/work
+                         layers with the app's overrides for the run and serves at /api/work, and `profiles`,
+                         New session's work profiles (W155), which src/server/profiles.ts checks and merges
 src/test/                test helpers shared across test files, such as the v3 proof, made-up PRs, and
                          noClaude.ts, which fails any server test that would run `claude` or `gh` without
                          PITWALL_LIVE=1, or open an editor at all; not built. Recap and supervisor tests pass

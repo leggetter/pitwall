@@ -16,6 +16,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   CONTEXT_HIGH_TOKENS,
   CONTEXT_WARN_TOKENS,
+  isEffortLevel,
+  isWorkModel,
   PERMISSION_MODES,
   SUPERVISOR_INTERRUPT_PATH,
   SUPERVISOR_MESSAGE_MAX,
@@ -24,8 +26,11 @@ import {
   SUPERVISOR_NEW_CONVERSATION_PATH,
   SUPERVISOR_START_PATH,
   supervisorApprovalPath,
+  WORK_DEFAULT,
+  WORK_PROFILE_NAME_PATTERN,
   type ConversationEntry,
   type SavedPermission,
+  type SessionLaunch,
   type SessionSummary,
   type SupervisorApproval,
   type SupervisorDecision,
@@ -192,9 +197,26 @@ function asApproval(value: unknown): SupervisorApproval | undefined {
       permission: asPermission(value.permission),
     };
     if (isTime(lastActivityAt)) approval.lastActivityAt = lastActivityAt;
+    const launch = asLaunch(value.launch);
+    if (launch !== undefined) approval.launch = launch;
     return approval;
   }
   return undefined;
+}
+
+/**
+ * A resume's kept launch settings (W155), only the fields that pass the profiles' checks; undefined
+ * when none does, so the card says nothing of them.
+ */
+function asLaunch(value: unknown): SessionLaunch | undefined {
+  if (!isRecord(value)) return undefined;
+  const launch: SessionLaunch = {};
+  if (typeof value.profile === 'string' && WORK_PROFILE_NAME_PATTERN.test(value.profile)) launch.profile = value.profile;
+  if (value.custom === true) launch.custom = true;
+  if (value.model === WORK_DEFAULT || isWorkModel(value.model, 'session')) launch.model = value.model as string;
+  if (value.effort === WORK_DEFAULT || isEffortLevel(value.effort)) launch.effort = value.effort as SessionLaunch['effort'];
+  if (value.subagentModel === WORK_DEFAULT || isWorkModel(value.subagentModel, 'subagents')) launch.subagentModel = value.subagentModel as string;
+  return launch.model === undefined && launch.effort === undefined && launch.subagentModel === undefined ? undefined : launch;
 }
 
 /** A resume's saved permission mode, or 'unknown' when it isn't one this page knows (W129). */
@@ -465,6 +487,21 @@ export function resumePermissionText(permission: SavedPermission): string {
   if (permission.kind === 'mode') return `${lead}: ${permission.mode}.`;
   if (permission.kind === 'unset') return `${lead}. Its saved flags set no permission mode, so your Claude Code settings decide it.`;
   return `${lead}, which pitwall can't see for this session.`;
+}
+
+/**
+ * What a resume card says of the model it resumes on, for a session pitwall started with a work
+ * profile (W155): pitwall passes what it started with again, never the profile's skill.
+ */
+export function resumeLaunchText(launch: SessionLaunch): string {
+  const shown = (value: string) => (value === WORK_DEFAULT ? "Claude Code's default" : value);
+  const parts = [
+    ...(launch.model === undefined ? [] : [`model ${shown(launch.model)}`]),
+    ...(launch.effort === undefined ? [] : [`effort ${shown(launch.effort)}`]),
+    ...(launch.subagentModel === undefined ? [] : [`sub-agents ${shown(launch.subagentModel)}`]),
+  ];
+  const from = launch.profile === undefined ? 'a profile' : `the ${launch.profile} profile${launch.custom === true ? ', customized' : ''}`;
+  return `pitwall resumes it on what it started it with, from ${from}: ${parts.join(', ')}.`;
 }
 
 /** The warning on a resume card whose saved permission mode skips the prompts (W129, L1). */
