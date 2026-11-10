@@ -13,7 +13,8 @@
 //   the range is the slower of the two low ends to the faster of the two high ends. A burst lifts the
 //   day's rate and the range's early end; a quiet spell lowers it and the late end; a straight line
 //   from either alone would overstate or understate. Only once the readings this week span
-//   RUN_RATE_MIN_SPAN_HOURS: 'thin' before.
+//   RUN_RATE_MIN_SPAN_HOURS: 'thin' before. With no span that long in the last day, the week's
+//   average alone.
 import {
   RUN_RATE_AHEAD_POINTS,
   RUN_RATE_MIN_SPAN_HOURS,
@@ -93,19 +94,21 @@ export function project(reading: WeekReading, history: readonly WeekReading[]): 
   const elapsed = reading.at - start;
   // This week's readings up to this one, with the reading itself.
   const week = history.filter((r) => Math.abs(r.resetsAt - reading.resetsAt) <= SAME_RESET_MS && r.at >= start && r.at <= reading.at);
+  const earliestThisWeek = week.reduce((a, b) => Math.min(a, b.at), reading.at);
+  if (elapsed < MIN_SPAN_MS || reading.at - earliestThisWeek < MIN_SPAN_MS) return { status: 'thin' };
   const base = [...week, reading].filter((r) => r.at >= reading.at - DAY_RATE_MS).reduce((a, b) => (b.at < a.at ? b : a), reading);
   const span = reading.at - base.at;
-  if (elapsed < MIN_SPAN_MS || span < MIN_SPAN_MS) return { status: 'thin' };
   const hours = (ms: number) => ms / HOUR_MS;
   // The week since its reset, where it was 0: only this reading's rounding.
-  const weekLow = Math.max(0, reading.used - ROUNDING) / hours(elapsed);
-  const weekHigh = (reading.used + ROUNDING) / hours(elapsed);
-  // The last day: both readings' rounding. A fall (a correction) counts as no use.
-  const rise = reading.used - base.used;
-  const dayLow = Math.max(0, rise - 2 * ROUNDING) / hours(span);
-  const dayHigh = Math.max(0, rise + 2 * ROUNDING) / hours(span);
-  const low = Math.min(weekLow, dayLow);
-  const high = Math.max(weekHigh, dayHigh);
+  let low = Math.max(0, reading.used - ROUNDING) / hours(elapsed);
+  let high = (reading.used + ROUNDING) / hours(elapsed);
+  // The last day, when its readings span MIN_SPAN_MS: both readings' rounding. A fall (a correction)
+  // counts as no use. Without one, as after a night with no page open, the week's average alone.
+  if (span >= MIN_SPAN_MS) {
+    const rise = reading.used - base.used;
+    low = Math.min(low, Math.max(0, rise - 2 * ROUNDING) / hours(span));
+    high = Math.max(high, Math.max(0, rise + 2 * ROUNDING) / hours(span));
+  }
   const left = 100 - reading.used;
   const earliest = reading.at + (left / high) * HOUR_MS;
   if (earliest >= reading.resetsAt) return { status: 'lasts' };

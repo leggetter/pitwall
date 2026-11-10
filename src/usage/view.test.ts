@@ -11,7 +11,7 @@ import { DayStore, emptyTokens, localDay, type DayTotals } from './days.js';
 import { READINGS_FILE_NAME, readReadingsFile } from './readings.js';
 import type { RateLimits, RateLimitsReader } from './rateLimits.js';
 import type { CallRecord, FileScan } from './scan.js';
-import { createUsageSource } from './service.js';
+import { createUsageSource, RUN_RATE_READ_MS } from './service.js';
 import { buildUsageView, readScans, startOfDay, usageWindow, type BuildViewOptions } from './view.js';
 
 // Local time, so days are the machine's days, as the view's are.
@@ -259,6 +259,19 @@ describe('the source', () => {
     expect(report.week.from).toBe('reset');
     expect(report.heaviest).toEqual([]);
     expect((await source.view('24h')).runRate).toEqual(rate);
+  });
+
+  it('the run rate calls the reader at most once in 5 minutes, even while its reads fail', async () => {
+    let now = NOW;
+    const reader = fakeReader({ status: 'unavailable', readAt: NOW, reason: 'timeout' });
+    const source = createUsageSource({ configDir: path.join(dir, 'none'), home: dir, now: () => now, rateLimits: reader, resolveRepo: async (cwd) => cwd });
+    expect(await source.runRate()).toMatchObject({ status: 'unavailable', reason: 'timeout' });
+    now += RUN_RATE_READ_MS - 1;
+    await source.runRate();
+    expect(reader.reads).toBe(1);
+    now += 1;
+    await source.runRate();
+    expect(reader.reads).toBe(2);
   });
 
   it('with --no-usage: never reads the plan’s percentages, keeps no readings, and the week is the last 7 days', async () => {

@@ -9,7 +9,7 @@
 // a link isn't followed and a FIFO never blocks, then fstat: a regular file of this user's, not
 // writable by group or others, at most READINGS_FILE_MAX_BYTES. Each reading is checked field by
 // field, as whole numbers in bounds (a percentage 0 to 1000, a time no older than READINGS_KEEP_MS
-// and no later than a day ahead, a reset within the 8 days after it), and copied into a record of
+// and no later than READINGS_AHEAD_MS ahead, a reset within the 8 days after it), and copied into a record of
 // its own; anything else is skipped. So a planted file can at worst move the pace's projection, which
 // the current reading's own percentage bounds, and never adds text to the page.
 //
@@ -30,12 +30,14 @@ export const READINGS_KEEP_MS = WEEK_MS + 86_400_000;
 /** Every 5 minutes for 8 days is 2,304; two pitwalls on one home can add more. Past it the oldest go. */
 export const READINGS_MAX = 3000;
 const MAX_PERCENT = 1000;
+/** A reading's time may be this far ahead of now, for clock jitter between two pitwalls; no more. */
+export const READINGS_AHEAD_MS = 5 * 60_000;
 
 function readReading(value: unknown, now: number): WeekReading | undefined {
   if (!isRecord(value)) return undefined;
   const { at, used, resetsAt } = value;
-  if (typeof at !== 'number' || !Number.isInteger(at) || at < now - READINGS_KEEP_MS || at > now + 86_400_000) return undefined;
-  if (typeof used !== 'number' || !Number.isFinite(used) || used < 0 || used > MAX_PERCENT) return undefined;
+  if (typeof at !== 'number' || !Number.isInteger(at) || at < now - READINGS_KEEP_MS || at > now + READINGS_AHEAD_MS) return undefined;
+  if (typeof used !== 'number' || !Number.isInteger(used) || used < 0 || used > MAX_PERCENT) return undefined;
   if (typeof resetsAt !== 'number' || !Number.isInteger(resetsAt) || resetsAt < at || resetsAt > at + WEEK_MS + 86_400_000) return undefined;
   return { at, used, resetsAt };
 }
@@ -103,7 +105,8 @@ export class ReadingStore {
 
   /** Keeps `reading`, once by its time, and writes the file when it's new. */
   add(reading: WeekReading): void {
-    const checked = readReading(reading, this.#now());
+    // The server sends whole percentages (spike 013); a fraction is rounded, as the file holds whole numbers.
+    const checked = readReading({ ...reading, used: Math.round(reading.used) }, this.#now());
     if (checked === undefined || this.#readings.has(checked.at)) return;
     this.#readings.set(checked.at, { ...checked });
     this.#prune();

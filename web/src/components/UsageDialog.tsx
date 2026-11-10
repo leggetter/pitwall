@@ -17,10 +17,10 @@ import { useContext, useId, useLayoutEffect, useRef, useState, type ReactNode, t
 import type { SessionSummary, UsageBucket, UsageTokens, UsageView, UsageWindowKey } from '../../../src/shared/protocol.js';
 import { USAGE_WINDOWS } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
-import { plainText } from '../format.js';
+import { plainText, relativeTime } from '../format.js';
 import { modelText } from '../modelEffort.js';
 import { moveTabFocus } from '../tabs.js';
-import { lineText, paceText, projectionText, targetText } from '../runRate.js';
+import { lineText, paceText, projectionText, showsAge, targetText } from '../runRate.js';
 import { bucketText, costText, planReasonText, resetText, tokenText, USAGE_LABEL, useUsage, WINDOW_LABELS, windowText } from '../usage.js';
 import { Alert } from './Alert.js';
 import { Button } from './Button.js';
@@ -253,6 +253,8 @@ function PaceFigure({ view }: { view: UsageView }) {
   const rate = view.runRate;
   if (rate?.status !== 'available' || rate.sevenDay === null || rate.sevenDay.pace === null) return null;
   const { pace, projection } = rate.sevenDay;
+  // Never a stale reading as current: one over 10 minutes old, or standing in for a failed read, says how old.
+  const now = Date.now();
   const projected = projectionText(projection);
   return (
     <div className="usage-pace">
@@ -263,6 +265,12 @@ function PaceFigure({ view }: { view: UsageView }) {
       </p>
       <p className="field-hint">{lineText(pace, rate.target)}</p>
       {projected !== undefined && <p className="field-hint">{projected}</p>}
+      {(rate.fallback !== undefined || showsAge(rate.readAt, now)) && (
+        <p className="field-hint usage-pace-age">
+          From a reading {relativeTime(rate.readAt, now)}
+          {rate.fallback !== undefined ? ": pitwall's latest read of the plan's week failed." : '.'}
+        </p>
+      )}
     </div>
   );
 }

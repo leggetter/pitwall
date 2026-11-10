@@ -11,8 +11,9 @@
 // reader's, for the index's exclude and End session's refusal (src/cli.ts, src/server/server.ts).
 //
 // The run rate (W159): runRate() for the header's RUN_RATE_PATH, which a visible page asks every
-// RUN_RATE_POLL_MS, through the same reader and its cache, so `/usage` runs at most once every
-// RATE_LIMITS_TTL_MS while a page is open and never with none. Each new reading of the week is kept
+// RUN_RATE_POLL_MS, through the same reader and its cache, and calls the reader at most once every
+// RUN_RATE_READ_MS whether the read worked or not, so `/usage` runs for it at most once in 5 minutes
+// while a page is open, and never with none. Each new reading of the week is kept
 // (readings.ts) for the pace's projection (runRate.ts). report() is the one call the supervisor's
 // get_usage (W160) makes: the run rate and the week's heaviest sessions. With `planReads: false`
 // (`--no-usage`), no `/usage` call runs, nothing is kept, the run rate is 'off', and the view's week
@@ -49,6 +50,12 @@ export const REPORT_SESSIONS = 5;
  * says "unavailable" instead.
  */
 export const FALLBACK_MAX_MS = 6 * 3_600_000;
+
+/**
+ * The run rate calls the reader at most this often, whether the last call worked or not: the reader
+ * keeps a failure only 1 minute (RATE_LIMITS_FAILURE_TTL_MS), and the run rate is asked on a timer.
+ */
+export const RUN_RATE_READ_MS = 5 * 60_000;
 
 export interface UsageSource {
   /** False with `--no-usage`: no `/usage` call, and the run rate is 'off'. */
@@ -105,7 +112,8 @@ export function runRateOf(limits: RateLimits, history: readonly WeekReading[], t
   if (limits.status === 'unavailable') {
     if (limits.reason === 'off') return { status: 'off' };
     const last = history.at(-1);
-    if (last === undefined || now - last.at > FALLBACK_MAX_MS || now >= last.resetsAt) return { status: 'unavailable', readAt: iso(limits.readAt), reason: limits.reason };
+    // Never a reading from the future: a planted one would read as fresh.
+    if (last === undefined || last.at > now || now - last.at > FALLBACK_MAX_MS || now >= last.resetsAt) return { status: 'unavailable', readAt: iso(limits.readAt), reason: limits.reason };
     return {
       status: 'available',
       readAt: iso(last.at),
@@ -194,6 +202,8 @@ export function createUsageSource(options: UsageSourceOptions = {}): UsageSource
     return limits;
   }
   const runRate = (limits: RateLimits) => runRateOf(limits, readings?.all() ?? [], target, now());
+  // The run rate's last call to the reader, so a failing read isn't retried every minute (RUN_RATE_READ_MS).
+  let lastRunRateRead: { at: number; limits: RateLimits } | undefined;
 
   async function view(key: UsageWindowKey): Promise<UsageView> {
     // Both at once: the reader's call takes about 3.5 s, and the first read of the transcripts longer.
@@ -222,7 +232,12 @@ export function createUsageSource(options: UsageSourceOptions = {}): UsageSource
     view,
     async runRate() {
       try {
-        return runRate(await readPlan());
+        if (lastRunRateRead !== undefined && now() - lastRunRateRead.at < RUN_RATE_READ_MS) return runRate(lastRunRateRead.limits);
+        const at = now();
+        const limits = await readPlan();
+        // A call pitwall stopped, as at shutdown, isn't an answer to keep.
+        if (!(limits.status === 'unavailable' && limits.reason === 'stopped')) lastRunRateRead = { at, limits };
+        return runRate(limits);
       } catch {
         return { status: 'unavailable', readAt: new Date(now()).toISOString(), reason: 'failed' };
       }

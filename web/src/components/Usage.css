@@ -272,6 +272,36 @@
   font-variant-numeric: tabular-nums;
 }
 
+.usage-meter-ahead-icon {
+  display: none;
+  width: 14px;
+  height: 14px;
+  margin-inline-end: var(--pw-space-0-5);
+  vertical-align: -2px;
+}
+
+/* At 600 px and narrower, the week's figure alone on screen; the rest stays in the button's name. */
+@container pitwall (max-width: 600px) {
+  .usage-meter .usage-meter-wide {
+    position: absolute;
+    /* A badge's own min-width would keep it 20 px wide. */
+    min-width: 0;
+    min-height: 0;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .usage-meter .usage-meter-ahead-icon {
+    display: inline-block;
+  }
+}
+
 .usage-meter-age {
   color: var(--pw-text-subtle);
   font-size: var(--pw-text-s);

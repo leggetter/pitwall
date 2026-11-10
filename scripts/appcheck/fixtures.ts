@@ -1055,8 +1055,8 @@ export class World {
       return d.getTime();
     };
     const plan = this.#usage !== 'unavailable';
-    // The plan's week reset 4 days ago at 14:00, so it resets in 3 days.
-    const reset = midnight(this.#now - 4 * DAY) + 14 * HOUR;
+    // The plan's week reset 4 days ago at 14:00, so it resets in 3 days; with the run rate on, its week (W159).
+    const reset = this.#runRate === 'off' ? midnight(this.#now - 4 * DAY) + 14 * HOUR : this.#runRateWeek().resetsAt - WEEK_MS;
     const since =
       key === '24h' ? Math.floor((this.#now - 23 * HOUR) / HOUR) * HOUR : key === 'week' && plan ? reset : midnight(this.#now) - ((key === '30d' ? 30 : key === '14d' ? 14 : 7) - 1) * DAY;
     const bucket = key === '24h' ? 'hour' : 'day';
@@ -1132,14 +1132,19 @@ export class World {
    * 18:00 falls late in it, with hourly readings at a steady rate up to the state's percentage. The
    * Usage view's plan's week shows the same week then.
    */
+  /** The run rate's week: it resets on the next Sunday at 12:00, local time. */
+  #runRateWeek(): { resetsAt: number } {
+    const reset = new Date(this.#now);
+    reset.setHours(12, 0, 0, 0);
+    while (reset.getDay() !== 0 || reset.getTime() <= this.#now) reset.setDate(reset.getDate() + 1);
+    return { resetsAt: reset.getTime() };
+  }
+
   runRate(): RunRate {
     if (this.#runRate === 'off') return { status: 'off' };
     if (this.#runRate === 'unavailable') return { status: 'unavailable', readAt: new Date(this.#now).toISOString(), reason: 'timeout' };
     const HOUR = 60 * MINUTE;
-    const reset = new Date(this.#now);
-    reset.setHours(12, 0, 0, 0);
-    while (reset.getDay() !== 0 || reset.getTime() <= this.#now) reset.setDate(reset.getDate() + 1);
-    const resetsAt = reset.getTime();
+    const { resetsAt } = this.#runRateWeek();
     const start = new Date(resetsAt - WEEK_MS);
     const readAt = this.#runRate === 'old' ? this.#now - 25 * MINUTE : this.#now - MINUTE;
     const line = paceAt(readAt, 0, resetsAt, DEFAULT_RUN_RATE_TARGET).line;

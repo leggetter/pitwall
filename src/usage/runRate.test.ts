@@ -121,6 +121,16 @@ describe('the projection', () => {
     expect(project({ at: at(100), used: 100, resetsAt: RESET }, [])).toEqual({ status: 'used-up' });
   });
 
+  it('with no 6 hours of readings in the last day, the week’s average alone', () => {
+    // Read at 30 hours, then nothing until 72: a night and a day with no page open.
+    const history = [{ at: at(30), used: 24, resetsAt: RESET }];
+    const now: WeekReading = { at: at(72), used: 58, resetsAt: RESET };
+    const result = project(now, history);
+    expect(result.status).toBe('range');
+    if (result.status !== 'range') return;
+    expect(result.perHour).toEqual({ low: Math.round((57.5 / 72) * 1000) / 1000, high: Math.round((58.5 / 72) * 1000) / 1000 });
+  });
+
   it('leaves out the last week’s readings: across the reset, the new week is thin', () => {
     const previous = readings(150, 168, () => 92, RESET - WEEK_MS).map((r) => ({ ...r, at: r.at - WEEK_MS }));
     const now: WeekReading = { at: at(4), used: 3, resetsAt: RESET };
@@ -165,6 +175,9 @@ describe('the run rate', () => {
     expect(runRateOf(failed(late), history, DEFAULT_RUN_RATE_TARGET, late)).toEqual({ status: 'unavailable', readAt: new Date(late).toISOString(), reason: 'timeout' });
     const reset = [{ at: RESET - HOUR, used: 99, resetsAt: RESET }];
     expect(runRateOf(failed(RESET + 1), reset, DEFAULT_RUN_RATE_TARGET, RESET + 1)).toMatchObject({ status: 'unavailable' });
+    // A reading from the future, as a planted file could hold, never stands in.
+    const planted = [{ at: at(73) + 23 * HOUR, used: 999, resetsAt: RESET }];
+    expect(runRateOf(failed(at(73)), planted, DEFAULT_RUN_RATE_TARGET, at(73))).toMatchObject({ status: 'unavailable', reason: 'timeout' });
     expect(runRateOf({ status: 'unavailable', readAt: at(1), reason: 'off' }, history, DEFAULT_RUN_RATE_TARGET, at(1))).toEqual({ status: 'off' });
   });
 });

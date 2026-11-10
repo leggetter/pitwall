@@ -35,8 +35,17 @@ const part: Part = {
       return page.evaluate<Figure[]>(figures);
     }
 
+    /** The header's height in the normal state, which no other state may change (W159's review). */
+    let normalHeight = 0;
+    const headerHeight = `document.querySelector('header').getBoundingClientRect().height`;
+    const sameHeight = async (state: string) => {
+      if (t.viewport.width <= 600) t.expectEqual(await page.evaluate(headerHeight), normalHeight, `${state}: the header keeps its height at 600 px and narrower`);
+    };
+    const wideShown = `[...${BUTTON}.querySelectorAll('.usage-meter-wide')].filter((e) => e.getBoundingClientRect().width > 1).length`;
+
     await t.step('normal: the week in neutral, under the line, so no badge', async () => {
       const [week, ...rest] = await shown('normal');
+      normalHeight = await page.evaluate<number>(headerHeight);
       t.expect(/^Week \d+%$/.test(week?.text ?? ''), 'the week’s figure', week);
       t.expectEqual([week?.level, week?.look], ['normal', 'badge-subtle-neutral'], 'neutral');
       t.expectEqual(rest.length, 0, 'no five hours when none is sent');
@@ -48,8 +57,17 @@ const part: Part = {
 
     await t.step('ahead: Ahead of pace, a subtle warning badge', async () => {
       await shown('ahead');
-      t.expectEqual(await page.evaluate(ahead), 'Ahead of pace', 'the badge');
+      t.expectEqual(await page.evaluate(ahead), 'Ahead of pace', 'the badge, in the name at any width');
       t.expect(await page.evaluate<boolean>(`${BUTTON}.querySelector('.usage-meter-ahead').classList.contains('badge-subtle-warning')`), 'in subtle warning');
+      const icon = await page.evaluate<number>(`${BUTTON}.querySelector('.usage-meter-ahead-icon').getBoundingClientRect().width`);
+      if (t.viewport.width <= 600) {
+        t.expect(icon > 0, 'a warning icon in the week’s badge', icon);
+        t.expectEqual(await page.evaluate(wideShown), 0, 'the week’s figure alone on screen');
+      } else {
+        t.expectEqual(icon, 0, 'no icon where the badge shows');
+        t.expectEqual(await page.evaluate(wideShown), 1, 'the badge on screen');
+      }
+      await sameHeight('ahead');
       await t.shot('ahead');
     });
 
@@ -63,18 +81,21 @@ const part: Part = {
         ],
         'the week amber and the five hours normal',
       );
+      await sameHeight('amber');
       await t.shot('amber');
     });
 
     await t.step('red at 93%', async () => {
       const [week] = await shown('red');
       t.expectEqual([week?.text, week?.look], ['Week 93%', 'badge-subtle-danger'], 'the week red');
+      await sameHeight('red');
       await t.shot('red');
     });
 
     await t.step('a reading 25 minutes old says so', async () => {
       await shown('old');
-      t.expectEqual(await page.evaluate(age), '25m ago', 'its age');
+      t.expectEqual(await page.evaluate(age), '25m ago', 'its age, in the name at any width');
+      await sameHeight('old');
       await t.shot('old');
     });
 
@@ -92,6 +113,9 @@ const part: Part = {
       await t.fresh({ search: '?view=all&usage', runRate: 'ahead' });
       await page.waitFor('the pace', `${DIALOG}?.querySelector('.usage-pace') !== null`);
       const text = await page.evaluate<string>(`${DIALOG}.querySelector('.usage-pace').textContent`);
+      const window = await page.evaluate<string>(`${DIALOG}.querySelector('.usage-window').textContent`);
+      const resets = await page.evaluate<string>(`${DIALOG}.querySelector('.usage-plan .field-hint').textContent`);
+      t.expect(window.includes(', Sun') || window.includes('Sun,') || window.includes('Sun '), 'the window starts on the Sunday the week resets on', { window, resets });
       t.expect(text.startsWith('Pace for 80% by Fri 18:00'), 'its label', text);
       t.expect(/\d+ points ahead of pace/.test(text), 'how far ahead', text);
       t.expect(text.includes('The line for 80% by Fri 18:00 is at') || text.includes('the line runs from 80%'), 'the line', text);

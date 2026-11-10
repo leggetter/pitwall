@@ -5,7 +5,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, wr
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { READINGS_FILE_MAX_BYTES, READINGS_FILE_NAME, READINGS_KEEP_MS, READINGS_MAX, ReadingStore, readReadingsFile } from './readings.js';
+import { READINGS_AHEAD_MS, READINGS_FILE_MAX_BYTES, READINGS_FILE_NAME, READINGS_KEEP_MS, READINGS_MAX, ReadingStore, readReadingsFile } from './readings.js';
 
 const NOW = Date.parse('2026-11-10T12:00:00Z');
 const HOUR = 3_600_000;
@@ -88,6 +88,23 @@ describe('the readings', () => {
     });
     expect(readReadingsFile(file, NOW)).toEqual([reading(1, 20)]);
     expect(Object.keys(readReadingsFile(file, NOW)[0]!)).toEqual(['at', 'used', 'resetsAt']);
+  });
+
+  it('refuses a reading more than 5 minutes ahead, or with a fraction of a percent, and rounds a fraction it’s given', () => {
+    write({
+      v: 1,
+      readings: [
+        { at: NOW + 23 * HOUR, used: 999, resetsAt: RESET },
+        { at: NOW + READINGS_AHEAD_MS + 1, used: 20, resetsAt: RESET },
+        { at: NOW + READINGS_AHEAD_MS, used: 20, resetsAt: RESET },
+        { at: NOW - HOUR, used: 20.5, resetsAt: RESET },
+      ],
+    });
+    expect(readReadingsFile(file, NOW)).toEqual([{ at: NOW + READINGS_AHEAD_MS, used: 20, resetsAt: RESET }]);
+    const store = new ReadingStore({ now: () => NOW });
+    store.add({ at: NOW - HOUR, used: 41.6, resetsAt: RESET });
+    store.add({ at: NOW + HOUR, used: 50, resetsAt: RESET });
+    expect(store.all()).toEqual([{ at: NOW - HOUR, used: 42, resetsAt: RESET }]);
   });
 
   it('reads nothing from a file that isn’t safe: a link, a FIFO, writable by others, too big, or not version 1', () => {

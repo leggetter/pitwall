@@ -155,6 +155,9 @@ describe('the header’s Usage button', () => {
     const button = usageButton();
     expect(within(button).getByText('Ahead of pace').className).toContain('badge-subtle-warning');
     expect(within(button).getByText('5h 30%')).toBeTruthy();
+    // At 600 px and narrower, only the week's figure shows: the rest is in the name, and ahead is an icon in its badge.
+    expect(button.querySelector('[data-level] svg.usage-meter-ahead-icon')).not.toBeNull();
+    expect([...button.querySelectorAll('.usage-meter-wide')].map((each) => each.textContent)).toEqual(['5h 30%', 'Ahead of pace']);
     const description = document.getElementById(button.getAttribute('aria-describedby')!.split(' ').at(-1)!)?.textContent ?? '';
     expect(description).toContain("The plan's week: 57% used");
     expect(description).toContain('12 points ahead of pace. The line for 80% by Fri 18:00 is at 45% now.');
@@ -229,6 +232,11 @@ describe('the Usage view’s pace', () => {
     expect(screen.getByText('12 points ahead of pace')).toBeTruthy();
     expect(screen.getByText('The line for 80% by Fri 18:00 is at 45% now.')).toBeTruthy();
     expect(screen.getByText(/^At this rate, 100% from/)).toBeTruthy();
+  });
+
+  it('says how old its reading is when it stands in for a failed read', async () => {
+    dialog({ ...VIEW, runRate: rate(week(57), { readAt: new Date(Date.now() - 2 * 3_600_000).toISOString(), fallback: { reason: 'timeout' } }) });
+    expect(await screen.findByText("From a reading 2h ago: pitwall's latest read of the plan's week failed.")).toBeTruthy();
   });
 
   it('is left out when the run rate is off or unavailable', async () => {
