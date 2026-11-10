@@ -375,6 +375,37 @@ const part: Part = {
       t.expectEqual(await page.evaluate('location.search'), `${start}&supervisor`, 'one Back returns to where it was, so it was one entry');
     });
 
+    await t.step('the pace beside a new session’s Profile (W160): the header’s week and pace, a warning while ahead, describing the select, inside the card', async () => {
+      await t.fresh({ search: '?view=all&supervisor', supervisor: 'idle', approvals: true, runRate: 'ahead' });
+      await page.waitFor('the pace line', `!!${CARDS}[1]?.querySelector('.approval-pace')`);
+      const read = `(() => {
+        const card = ${CARDS}[1];
+        const line = card.querySelector('.approval-pace');
+        const select = card.querySelector('.approval-profile select');
+        const c = card.getBoundingClientRect();
+        const r = line.getBoundingClientRect();
+        const week = document.querySelector('header .usage-meter-figure')?.textContent ?? null;
+        return {
+          text: line.textContent,
+          // In the warning's colour, not the muted note's above it, with its icon.
+          ahead: line.dataset.ahead === 'true' && line.querySelector('svg') !== null && getComputedStyle(line).color !== getComputedStyle(card.querySelector('.approval-profile .approval-launch')).color,
+          described: (select.getAttribute('aria-describedby') ?? '').split(' ').includes(line.id),
+          below: r.top >= select.getBoundingClientRect().bottom - 0.5,
+          inside: r.left >= c.left - 0.5 && r.right <= c.right + 0.5,
+          week,
+          onMessage: ${CARDS}[0].querySelector('.approval-pace') !== null,
+        };
+      })()`;
+      const seen = await page.evaluate<{ text: string; ahead: boolean; described: boolean; below: boolean; inside: boolean; week: string | null; onMessage: boolean }>(read);
+      const percent = /^The plan's week: (\d+)% used, \d+ points ahead of pace\.$/.exec(seen.text)?.[1];
+      t.expect(percent !== undefined, 'the week and its pace in a sentence', seen.text);
+      t.expectEqual(seen.week, `Week ${percent}%`, 'the same week as the header’s');
+      t.expectEqual({ ahead: seen.ahead, described: seen.described, below: seen.below, inside: seen.inside, onMessage: seen.onMessage }, { ahead: true, described: true, below: true, inside: true, onMessage: false }, 'a warning, describing the select, under it inside the card, and none on a message');
+      // In view for the shot: at 375 px the message card above fills the band.
+      await page.evaluate(`${CARDS}[1].querySelector('.approval-pace').scrollIntoView({ block: 'center' })`);
+      await t.shot('pace');
+    });
+
     await t.step('a reply to the supervisor (W138): To pitwall-supervisor in its session, and the refusal in pitwall’s words', async () => {
       await t.fresh({ search: '?view=all' });
       await openFromRow(t, NAMES.asked);

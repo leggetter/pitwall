@@ -20,7 +20,9 @@
 // - A new session's card and a resume's (W156) have a Profile select, on the supervisor's pick: every
 //   profile, as the server resolved it for the card, and, on a resume's, As it started first. Under it,
 //   exactly what the pick starts or resumes the session on; Send and Send edit send the pick, so what
-//   goes is what the card shows. Edit opens the text in place, up to SUPERVISOR_PROPOSAL_MAX for a message and
+//   goes is what the card shows. Beside it, the plan's week and its pace (W160), from the run rate the
+//   page already asks for (RunRateContext), so a card adds no `/usage` read; none while the header has
+//   no figures. Edit opens the text in place, up to SUPERVISOR_PROPOSAL_MAX for a message and
 // SPAWN_PROMPT_MAX for a new session's first prompt (editLimit()), with Send edit and Cancel.
 // - A message card (W138) shows, under the text and under the editor alike, the line pitwall adds at
 //   the end of what goes, SUPERVISOR_MESSAGE_FOOTER, labelled as pitwall's, apart from the text: it's
@@ -36,8 +38,10 @@
 //   in the editor, and Cancel or Escape back on Edit.
 
 import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
-import { SPAWN_PROMPT_MAX, SUPERVISOR_MESSAGE_FOOTER, type SupervisorApproval, type SupervisorDecision } from '../../../src/shared/protocol.js';
+import { SPAWN_PROMPT_MAX, SUPERVISOR_MESSAGE_FOOTER, type RunRate, type SupervisorApproval, type SupervisorDecision } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
+import { useNow } from '../clock.js';
+import { cardPace, RunRateContext } from '../runRate.js';
 import { useAutoGrow } from '../autoGrow.js';
 import { visibleParts, visibleString, type VisiblePart } from '../../../src/shared/hiddenText.js';
 import { characterCount } from '../relay.js';
@@ -274,7 +278,7 @@ type Phase = { kind: 'idle' } | { kind: 'deciding'; decision: SupervisorDecision
 
 function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
   const api = useContext(ApiContext);
-  const ids = { heading: useId(), text: useId(), editor: useId(), count: useId(), notes: useId(), footer: useId(), profile: useId(), profileHint: useId() };
+  const ids = { heading: useId(), text: useId(), editor: useId(), count: useId(), notes: useId(), footer: useId(), profile: useId(), profileHint: useId(), pace: useId() };
   const [textBox, setTextBox] = useState<HTMLElement | null>(null);
   const overflowing = useOverflowing(textBox);
   const alive = useRef(true);
@@ -290,6 +294,10 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
   const pickedProfile = profiles?.find((profile) => profile.name === picked);
   // What Send and Send edit say of it: the pick by name, or null for As it started; nothing on a card with no profiles.
   const profileChoice = profiles === undefined ? {} : { profile: pickedProfile?.name ?? null };
+  // The plan's week and its pace beside the profile (W160), from what the header already has. Only a
+  // card with figures ticks on the shared clock, for their age, as the header's button.
+  const runRate = useContext(RunRateContext);
+  const pace = runRate?.status === 'available' && runRate.sevenDay !== null ? runRate : undefined;
 
   useEffect(() => {
     alive.current = true;
@@ -442,7 +450,7 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
               className="select-input"
               value={pickedProfile?.name ?? AS_STARTED}
               onChange={(event) => setPicked(event.target.value)}
-              aria-describedby={ids.profileHint}
+              aria-describedby={pace === undefined ? ids.profileHint : `${ids.profileHint} ${ids.pace}`}
               disabled={busy}
             >
               {approval.kind === 'resume' && <option value={AS_STARTED}>{asStartedText(approval.launch)}</option>}
@@ -463,6 +471,7 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
                 ? resumeLaunchText(approval.launch)
                 : RESUME_AS_STARTED}
           </p>
+          {pace !== undefined && <CardPace id={ids.pace} runRate={pace} />}
         </div>
       )}
       {editing === undefined ? (
@@ -542,5 +551,18 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
         )}
       </div>
     </li>
+  );
+}
+
+/** The plan's week and its pace, beside a card's profile (W160): a warning while it's ahead of pace, in words as well as tone. */
+function CardPace({ id, runRate }: { id: string; runRate: RunRate }) {
+  const pace = cardPace(runRate, useNow());
+  // Its week has reset since it was read: none, as the header shows none.
+  if (pace === undefined) return null;
+  return (
+    <p className="approval-note approval-pace" id={id} data-ahead={pace.ahead || undefined}>
+      {pace.ahead && <Icon name="warning" className="approval-pace-icon" />}
+      <span>{pace.text}</span>
+    </p>
   );
 }

@@ -9,6 +9,7 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  RUN_RATE_PATH,
   SPAWN_PROMPT_MAX,
   SUPERVISOR_INTERRUPT_PATH,
   SUPERVISOR_MESSAGE_MAX,
@@ -70,7 +71,7 @@ function snap(supervisor: SupervisorState | undefined, roots: 1 | 2 = 1): IndexS
 type Answer = { status: number; body?: unknown } | 'never' | Error;
 
 /** POSTs get what `post` says for their path, `{ ok: true }` by default; the conversation gets `page`, a 404 without one. */
-function fakeServer(options: { page?: { sessionId: string; entries: ConversationEntry[]; before?: string }; post?: (url: string, body: unknown) => Answer } = {}) {
+function fakeServer(options: { page?: { sessionId: string; entries: ConversationEntry[]; before?: string }; post?: (url: string, body: unknown) => Answer; runRate?: unknown } = {}) {
   return vi.fn<FetchLike>(async (url, init) => {
     if (init.method === 'POST') {
       const body = init.body === undefined ? undefined : (JSON.parse(String(init.body)) as unknown);
@@ -80,6 +81,7 @@ function fakeServer(options: { page?: { sessionId: string; entries: Conversation
       return new Response(answer.body === undefined ? 'not json' : JSON.stringify(answer.body), { status: answer.status });
     }
     if (url.startsWith('/api/supervisor/conversation') && options.page) return new Response(JSON.stringify(options.page), { status: 200 });
+    if (url === RUN_RATE_PATH && options.runRate !== undefined) return new Response(JSON.stringify(options.runRate), { status: 200 });
     return new Response('{}', { status: 404 });
   });
 }
@@ -1000,6 +1002,49 @@ describe('a draft card’s work profile (W156)', () => {
     expect(read({ ...spawn, profile: 'Build' })).toEqual([]);
     expect(read({ ...spawn, profile: 'Build', profiles: [...PROFILES, { name: 'Bad', model: '--yolo', effort: 'high', subagentModel: 'sonnet' }] })).toEqual([]);
     expect(read({ ...spawn, profile: 'Build', profiles: [...PROFILES, PROFILES[0]] })).toEqual([]);
+  });
+});
+
+describe('a draft card’s pace (W160)', () => {
+  const PROFILES = [{ name: 'Build', model: 'claude-opus-5-5', effort: 'high' as const, subagentModel: 'sonnet' }];
+  const RATE = {
+    status: 'available',
+    readAt: new Date().toISOString(),
+    target: { percent: 80, day: 'friday', time: '18:00' },
+    sevenDay: {
+      usedPercentage: 62,
+      resetsAt: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+      level: 'normal',
+      pace: { targetAt: new Date(Date.now() + 2 * 86_400_000).toISOString(), line: 50, points: 12, ahead: true, pastTarget: false },
+      projection: { status: 'lasts' },
+    },
+    fiveHour: null,
+  };
+  const paced = (s: IndexSnapshot): IndexSnapshot => ({ ...s, planUsage: 'on' });
+
+  it('shows the header’s week and pace beside the profile, describing the select, and asks for nothing more', async () => {
+    const fetch = fakeServer({ runRate: RATE });
+    renderDashboard(paced(snap({ status: 'idle', approvals: [{ ...spawn, profile: 'Build', profiles: PROFILES }, message('m1', 2)] })), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    const [first, second] = [...view()!.querySelectorAll<HTMLElement>('li.approval-card')];
+    const line = first!.querySelector<HTMLElement>('.approval-pace')!;
+    expect(line.textContent).toBe("The plan's week: 62% used, 12 points ahead of pace.");
+    expect(line.dataset.ahead).toBe('true');
+    expect(line.querySelector('svg')).not.toBeNull();
+    const picker = within(first!).getByRole('combobox', { name: 'Profile' });
+    expect(picker.getAttribute('aria-describedby')!.split(' ')).toContain(line.id);
+    // A message card has no profile, so no pace.
+    expect(second!.querySelector('.approval-pace')).toBeNull();
+    // The header's one ask: the cards add none.
+    expect(fetch.mock.calls.filter(([url]) => url === RUN_RATE_PATH)).toHaveLength(1);
+  });
+
+  it('shows none while the header has no figures', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [{ ...spawn, profile: 'Build', profiles: PROFILES }] }), { fetch: fakeServer({ runRate: RATE }), search: '?view=all&supervisor' });
+    await settle();
+    expect(view()!.querySelector('.approval-pace')).toBeNull();
+    const picker = within(view()!).getByRole('combobox', { name: 'Profile' });
+    expect(picker.getAttribute('aria-describedby')!.split(' ')).toHaveLength(1);
   });
 });
 

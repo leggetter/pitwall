@@ -520,3 +520,20 @@
 .approval-profile .approval-launch {
   flex-basis: 100%;
 }
+
+/* The plan's week and its pace beside the profile (W160): muted, as the note above it; warning while ahead. */
+.approval-profile .approval-pace {
+  flex-basis: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--pw-space-1);
+}
+
+.approval-pace[data-ahead] {
+  color: var(--pw-warning-fg);
+}
+
+.approval-pace-icon {
+  flex: none;
+  margin-top: 0.125em;
+}

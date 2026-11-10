@@ -342,6 +342,8 @@ export async function startServerWithInternals(
               conversation: (sessionId, before) => indexer.conversation(sessionId, before),
               ...(recaps === undefined ? {} : { recaps }),
               prs,
+              // get_usage (W160): the usage source's one report, through its reader's cache.
+              ...(options.usage === undefined ? {} : { usage: options.usage }),
               ownSessionIds: () => supervisor.ownSessionIds(),
             }),
             createSpawnSessionTool(supervisorActions),
