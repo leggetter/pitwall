@@ -107,6 +107,8 @@ const ICONS: Readonly<Record<string, string | readonly [glyph: string, style: ty
   image: 'image',
   pdf: 'picture_as_pdf',
   file: 'description',
+  // The header's Usage (W158), which opens the Usage view: a bar chart, what the view mostly is.
+  usage: 'bar_chart',
   'theme-system': 'computer',
   'theme-light': 'light_mode',
   'theme-dark': 'dark_mode',

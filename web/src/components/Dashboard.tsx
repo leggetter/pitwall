@@ -151,6 +151,7 @@ import { absentGroup, useHiddenGroups, type HiddenGroup } from '../hidden.js';
 import { useLayout } from '../layout.js';
 import { supervisorLast, useOpenSession, withSession, type OpenSession } from '../openSession.js';
 import { useOpenPr, withPr } from '../openPr.js';
+import { useOpenUsage } from '../usage.js';
 import { approvalsWaiting, asSupervisorState, SUPERVISOR_DRAFT_ID, SUPERVISOR_VIEW_ID, useOpenSupervisor, withSupervisor } from '../supervisor.js';
 import { usePrRefresh } from '../prRefresh.js';
 import { listNow, prKey, prListState, prName, prsOff, SEARCH_NAMES, sessionsFor, strongPrsOf } from '../prs.js';
@@ -211,6 +212,7 @@ import { SpinOffCards, type CheckedSpinOff } from './SpinOffCards.js';
 import { NO_RELATION, PrListFilters, PrListFoot, PrNotices, prSourceBody, RefreshAction } from './PrList.js';
 import { PrView, UnlistedPrView, WaitingPrView, type PrMissing } from './PrView.js';
 import { PreferencesDialog } from './Preferences.js';
+import { UsageDialog } from './UsageDialog.js';
 import { RepoDrawer } from './RepoDrawer.js';
 import { RepoList } from './RepoList.js';
 import { olderText, SessionList, type SessionListHeading } from './SessionList.js';
@@ -463,6 +465,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const shortcuts = useShortcutsStore();
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
+  // The Usage view (W158), from the header, as ?usage, which no other parameter's rule knows of.
+  const usageUrl = useOpenUsage(navigation);
   // Which open session views have a draft in the message box: no shortcut replaces or closes the view
   // then, just as Escape doesn't (6.2). By session, since each root tab keeps its view (W38).
   const drafts = useRef(new Map<string, boolean>());
@@ -2021,6 +2025,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         reposRef={reposButton}
         onShortcuts={() => setShortcutsOpen(true)}
         onPreferences={() => setPreferencesOpen(true)}
+        onUsage={() => usageUrl.show()}
         tabs={
           tab === undefined
             ? undefined
@@ -2170,6 +2175,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       )}
 
       {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
+
+      {usageUrl.open && <UsageDialog onClose={usageUrl.close} sessions={supervisorSessions} />}
 
       {preferencesOpen && (
         <PreferencesDialog

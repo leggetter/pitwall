@@ -1,7 +1,7 @@
 // The app's header (docs/design-system.md, 3): the Repos button below the sidebar breakpoint, the
 // wordmark and the roots on the left; New session, the connection badge, when the list was updated,
-// the theme switch, Preferences (W59, Preferences.tsx) and the keyboard shortcuts button on the
-// right. At 600 px and narrower the right side wraps under the wordmark. The roots show home as ~,
+// Usage (W158, UsageDialog.tsx), the theme switch, Preferences (W59, Preferences.tsx) and the
+// keyboard shortcuts button on the right. At 600 px and narrower the right side wraps under the wordmark. The roots show home as ~,
 // with the full paths in a tooltip; the update time ticks on the shared clock, with the absolute
 // time in its tooltip.
 //
@@ -32,6 +32,7 @@ import { RootTabs, type RootTabsProps } from './RootTabs.js';
 import { ThemeSwitch } from './ThemeSwitch.js';
 import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
+import { USAGE_LABEL } from '../usage.js';
 
 export interface HeaderProps {
   state: ConnectionState;
@@ -53,11 +54,13 @@ export interface HeaderProps {
   tabs?: RootTabsProps | undefined;
   /** Opens the Preferences dialog (W59). Its button, after the theme switch, shows only when this is given. */
   onPreferences?: (() => void) | undefined;
+  /** Opens the Usage view (W158). Its button, before the theme switch, shows only when this is given. */
+  onUsage?: (() => void) | undefined;
 }
 
 export const SHORTCUTS_LABEL = 'Keyboard shortcuts';
 
-export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOpen = false, reposRef, onShortcuts, tabs, onPreferences }: HeaderProps) {
+export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOpen = false, reposRef, onShortcuts, tabs, onPreferences, onUsage }: HeaderProps) {
   const shortcuts = useShortcuts();
   const tabbed = tabs !== undefined && tabs.tabs.length > 1;
   return (
@@ -92,6 +95,13 @@ export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOp
         )}
         <ConnectionBadge state={state} />
         {updatedAt && <Timestamp className="updated" at={updatedAt} format="updated" />}
+        {onUsage && (
+          <Tooltip content={USAGE_LABEL} relation="label">
+            <button type="button" className="icon-button ghost md" aria-haspopup="dialog" onClick={onUsage}>
+              <Icon name="usage" />
+            </button>
+          </Tooltip>
+        )}
         <ThemeSwitch />
         {onPreferences && (
           <Tooltip content={PREFERENCES_LABEL} relation="label">

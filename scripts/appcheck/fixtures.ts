@@ -33,6 +33,9 @@ import type {
   SupervisorDecision,
   SupervisorState,
   SupervisorStatus,
+  UsageTokens,
+  UsageView,
+  UsageWindowKey,
 } from '../../src/shared/protocol.js';
 import { withSupervisorFooter } from '../../src/shared/protocol.js';
 import { REFUSED_TO_SUPERVISOR_NOTICE } from '../../src/index/conversation.js';
@@ -373,7 +376,15 @@ export interface ResetOptions {
   supervisorRaced?: boolean;
   /** Whether NAMES.cloned is listed too (W145), a session that started in docs-site and worked in sdk-cli alone. */
   cloned?: boolean;
+  /**
+   * What GET USAGE_PATH answers (W158): 'ok', made-up figures with the plan's week; 'unavailable',
+   * the same figures without it, the last 7 days; 'empty', the plan's week with no calls in it;
+   * 'failing', HTTP 500.
+   */
+  usage?: UsageWorldState;
 }
+
+export type UsageWorldState = 'ok' | 'unavailable' | 'empty' | 'failing';
 
 /** The made-up index: a snapshot, conversations, and what POSTs have changed since the last reset. */
 export class World {
@@ -385,6 +396,8 @@ export class World {
   #nextSpawn = 0;
   /** NAMES.inApi has the most sub-agents a list carries, and more (manySubagents()). */
   #manySubagents = false;
+  /** What the Usage view's route answers (W158), and the windows asked for since the last reset. */
+  #usage: UsageWorldState = 'ok';
   /** The sessions whose running turn `endTurn()` has ended, until the next reset (W102). */
   #turnsEnded = new Set<string>();
   /** What the PR source says, and whether a fetch is running (W95). */
@@ -440,6 +453,7 @@ export class World {
     this.#labels = options.labels ?? {};
     this.#spawned = [];
     this.#manySubagents = false;
+    this.#usage = options.usage ?? 'ok';
     this.#turnsEnded = new Set();
     this.#prs = options.prs ?? 'ok';
     this.#prsRefreshing = false;
@@ -1012,6 +1026,83 @@ export class World {
   /** The session with this id, if the snapshot lists it. */
   session(sessionId: string): SessionSummary | undefined {
     return this.#sessions.get(sessionId);
+  }
+
+  /**
+   * GET USAGE_PATH's answer (W158): made-up figures for the window, shaped as src/usage/view.ts builds
+   * them. Three listed sessions, one not listed, and pitwall's own recap calls; a kept day in 30 days.
+   */
+  usage(key: UsageWindowKey): { status: number; body?: UsageView } {
+    if (this.#usage === 'failing') return { status: 500 };
+    const HOUR = 60 * MINUTE;
+    const DAY = 24 * HOUR;
+    const midnight = (ms: number) => {
+      const d = new Date(ms);
+      d.setHours(0, 0, 0, 0);
+      return d.getTime();
+    };
+    const plan = this.#usage !== 'unavailable';
+    // The plan's week reset 4 days ago at 14:00, so it resets in 3 days.
+    const reset = midnight(this.#now - 4 * DAY) + 14 * HOUR;
+    const since =
+      key === '24h' ? Math.floor((this.#now - 23 * HOUR) / HOUR) * HOUR : key === 'week' && plan ? reset : midnight(this.#now) - ((key === '30d' ? 30 : key === '14d' ? 14 : 7) - 1) * DAY;
+    const bucket = key === '24h' ? 'hour' : 'day';
+    const scale = this.#usage === 'empty' ? 0 : key === '24h' ? 0.2 : key === '30d' ? 3.5 : key === '14d' ? 1.8 : 1;
+    const t = (cost: number, calls: number): UsageTokens => ({
+      calls: Math.round(calls * scale),
+      input: Math.round(calls * 37 * scale),
+      cacheWrite: Math.round(calls * 4_100 * scale),
+      cacheRead: Math.round(calls * 182_000 * scale),
+      output: Math.round(calls * 610 * scale),
+      cost: cost * scale,
+    });
+    const starts: number[] = [];
+    if (bucket === 'hour') for (let at = since; at < this.#now; at += HOUR) starts.push(at);
+    else for (let at = midnight(since); at < this.#now; at = midnight(at + DAY + 2 * HOUR)) starts.push(at);
+    // A made-up shape: quiet nights and a busy middle, a quiet day here and there.
+    const weight = (i: number) => (bucket === 'hour' ? [0.1, 0.1, 0.05, 0, 0, 0, 0.2, 0.6, 1, 1.4, 1.2, 0.9][i % 12]! : [1, 1.6, 0.4, 2.1, 1.2, 0.2, 0.9][i % 7]!);
+    const buckets = starts.map((start, i) => ({
+      start: new Date(start).toISOString(),
+      ...t(scale === 0 ? 0 : (42 * weight(i)) / scale / (bucket === 'hour' ? 6 : 1), 300 * weight(i)),
+      ...(key === '30d' && i === 1 ? { history: true as const } : {}),
+    }));
+    const id = (name: string) => this.byName(name).sessionId;
+    const sessions = [
+      { sessionId: id(NAMES.conversation), repo: '~/code/api-server', kind: 'main' as const, model: 'claude-opus-5-5', subagentRuns: 6, subagentCost: 31.4 * scale, ...t(96.2, 2_100) },
+      { sessionId: id(NAMES.running), repo: '~/code/data-pipeline', kind: 'main' as const, model: 'claude-sonnet-5-5', subagentRuns: 0, subagentCost: 0, ...t(41.75, 1_350) },
+      { sessionId: '00000000-0000-4000-8000-00000000dead', repo: '~/code/docs-site', kind: 'main' as const, model: 'claude-opus-5-5', subagentRuns: 2, subagentCost: 4.1 * scale, ...t(18.3, 640) },
+      { sessionId: id(NAMES.waiting), repo: '~/code/docs-site', kind: 'main' as const, model: 'claude-opus-5-5', subagentRuns: 1, subagentCost: 0.9 * scale, ...t(7.06, 230) },
+      { sessionId: '00000000-0000-4000-8000-0000000000aa', repo: "pitwall's own: recap", kind: 'pitwall' as const, model: 'claude-haiku-5-5', subagentRuns: 0, subagentCost: 0, ...t(0.004, 190) },
+    ];
+    const view: UsageView = {
+      window: { key, since: new Date(since).toISOString(), until: new Date(this.#now).toISOString(), from: key === '24h' ? 'hours' : key === 'week' && plan ? 'reset' : 'days', bucket },
+      plan: plan
+        ? { status: 'available', readAt: new Date(this.#now - MINUTE).toISOString(), fiveHour: null, sevenDay: { usedPercentage: 63, resetsAt: new Date(reset + 7 * DAY).toISOString() } }
+        : { status: 'unavailable', readAt: new Date(this.#now - MINUTE).toISOString(), reason: 'no-report' },
+      costLabel: "API list price, a stand-in: how your plan's usage limits weigh tokens isn't published",
+      totals: t(163.3, 4_510),
+      buckets,
+      byRepo: {
+        rows: [
+          { repo: '~/code/api-server', sessions: 3, ...t(96.2, 2_100) },
+          { repo: '~/code/data-pipeline', sessions: 1, ...t(41.75, 1_350) },
+          { repo: '~/code/docs-site', sessions: 2, ...t(25.36, 870) },
+          { repo: "pitwall's own: recap", sessions: 41, ...t(0.004, 190) },
+        ],
+        ...(key === '30d' ? { rest: { count: 3, ...t(2.2, 80) } } : {}),
+      },
+      bySession: { rows: sessions },
+      byModel: [
+        { model: 'claude-opus-5-5', ...t(121.5, 2_970) },
+        { model: 'claude-sonnet-5-5', ...t(41.75, 1_350) },
+        { model: 'claude-haiku-5-5', ...t(0.004, 190) },
+      ],
+      split: { main: { sessions: 46, ...t(127.0, 3_900) }, subagent: { runs: 9, ...t(36.3, 610) } },
+      ...(key === '30d' ? { history: { days: 1, ...t(12.4, 300) } } : {}),
+      scan: { at: new Date(this.#now - 2_000).toISOString(), files: 865, unreadable: 0, malformed: 0 },
+    };
+    if (this.#usage === 'empty') return { status: 200, body: { ...view, byRepo: { rows: [] }, bySession: { rows: [] }, byModel: [] } };
+    return { status: 200, body: view };
   }
 
   byName(name: string): SessionSummary {
