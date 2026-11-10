@@ -319,7 +319,7 @@ export interface HandoffRow {
   handoff: SupervisorHandoff;
   /** The session it went to, or started, as the snapshot lists it: undefined until the index has it. */
   session?: SessionSummary;
-  /** "<name> needs you: <reason>", while pitwall's own Needs you says so. */
+  /** Why it needs you, while pitwall's own Needs you says so: the row's name and badge say the rest. */
   needs?: string;
 }
 
@@ -367,7 +367,7 @@ export function handoffRows(handoffs: readonly SupervisorHandoff[] | undefined, 
     const row: HandoffRow = { handoff: kept };
     if (session !== undefined) {
       row.session = session;
-      if (needsAttention(session)) row.needs = `${visibleString(session.name)} needs you: ${needsReason(session)}`;
+      if (needsAttention(session)) row.needs = needsReason(session);
     }
     byKey.set(key, { row, order, started });
   });

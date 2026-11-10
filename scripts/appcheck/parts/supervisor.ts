@@ -381,14 +381,18 @@ const part: Part = {
       t.expectEqual(
         rows,
         [
-          { what: 'Started pr-57', needs: 'pr-57 needs you: Which base branch should the made-up review compare against?', open: 'Open pr-57 →' },
-          { what: `Message approved for ${NAMES.asked}`, needs: rows[1]?.needs ?? null, open: `Open ${NAMES.asked} →` },
+          { what: 'Started pr-57', needs: 'Which base branch should the made-up review compare against?', open: 'Open →' },
+          { what: `Message approved for ${NAMES.asked}`, needs: rows[1]?.needs ?? null, open: 'Open →' },
         ],
         'needs you first, each with its Open',
       );
       t.expectEqual(await page.evaluate(`${SVIEW}.querySelector('[data-supervisor-handoffs] h3')?.textContent`), 'Sent and started (2)', 'under their heading');
       const box = await page.evaluate<{ right: number }>(`(() => { const r = ${HANDOFFS}[0].querySelector('[data-handoff-open]').getBoundingClientRect(); return { right: r.right }; })()`);
       t.expect(box.right <= t.viewport.width + 0.5, 'Open inside the window', box);
+      const spill = await page.evaluate<{ meta: number; row: number }[]>(
+        `${HANDOFFS}.map((li) => ({ meta: li.querySelector('.supervisor-handoff-meta').getBoundingClientRect().right, row: li.getBoundingClientRect().right }))`,
+      );
+      t.expect(spill.every((r) => r.meta <= r.row + 0.5), 'each row’s state, when and Open inside its card', spill);
       await t.shot('handoffs');
       await page.click('Open pr-57', `${HANDOFFS}[0].querySelector('[data-handoff-open]')`);
       await page.waitFor('its session view, beside the panel or in sight', `${PANEL_AS_LAYOUT} && !!document.querySelector('#session-view')`);
@@ -702,7 +706,7 @@ const part: Part = {
       const row = await page.evaluate<{ kind: string; what: string; open: string | null }>(
         `(() => { const li = ${HANDOFFS}[0]; return { kind: li.dataset.handoff, what: li.querySelector('.supervisor-handoff-what').textContent, open: li.querySelector('[data-handoff-open]')?.textContent ?? null }; })()`,
       );
-      t.expectEqual(row, { kind: 'resume', what: `Resumed ${NAMES.ended}`, open: `Open ${NAMES.ended} →` }, '“Resumed <name>” with Open');
+      t.expectEqual(row, { kind: 'resume', what: `Resumed ${NAMES.ended}`, open: 'Open →' }, '“Resumed <name>” with Open');
       await t.shot('resume-handoff');
       await page.click(`Open ${NAMES.ended}`, `${HANDOFFS}[0].querySelector('[data-handoff-open]')`);
       await page.waitFor('its session view, beside the panel or in sight', `${PANEL_AS_LAYOUT} && !!document.querySelector('#session-view')`);

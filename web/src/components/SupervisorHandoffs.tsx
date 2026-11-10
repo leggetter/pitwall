@@ -1,12 +1,14 @@
 // What the supervisor sent and started in this run (M5, W124; docs/design-system.md, 4: Supervisor):
-// a row per session, each with its state from pitwall's index and "Open <name> →", which opens that
+// a row per session, each with its state from pitwall's index and "Open →", which opens that
 // session's view as clicking it in the list does. The supervisor never sees a session's reply (Phil,
 // 2026-11-02), so this is where you go on from: you carry on in the session itself.
 //
 // - Read from the snapshot alone: the supervisor's hand-offs (SupervisorState.handoffs) and the
 //   sessions pitwall lists. No supervisor turn, no request.
-// - A session that needs you, by pitwall's own Needs you, says so on its row, "<name> needs you:
-//   <reason>", and comes first.
+// - One line: what it did and the name, then, on the right as one group, the state, when and Open, so
+//   the name is said once. Open's accessible name is "Open <name>".
+// - A session that needs you, by pitwall's own Needs you, has the bar, and its reason under the line,
+//   and comes first.
 // - A started session the index hasn't listed yet says "Starting…" and has no Open, since there's
 //   nothing to open; Open appears with the next snapshot that lists it. So does a resumed one (W127),
 //   "Resumed <name>", until the index lists it running again.
@@ -63,19 +65,28 @@ export function SupervisorHandoffs({ handoffs, sessions, onOpenSession }: Superv
                   <span className="supervisor-handoff-what">
                     {handoffVerb(row.handoff)} <bdi className="supervisor-handoff-name">{name}</bdi>
                   </span>
-                  {badge !== undefined ? (
-                    <Badge look={badge.look} lead={badge.dot === true ? 'dot' : undefined}>
-                      {badge.label}
-                    </Badge>
-                  ) : (
-                    <span className="supervisor-handoff-starting">{row.handoff.kind === 'message' ? 'Not listed' : HANDOFF_STARTING}</span>
-                  )}
-                  <Timestamp className="supervisor-handoff-at" at={row.handoff.at} />
-                  {row.session !== undefined && onOpenSession !== undefined && (
-                    <Button size="sm" variant="outline" className="supervisor-handoff-open" onClick={() => onOpenSession(row.session!.sessionId)} data-handoff-open="">
-                      {row.handoff.copy === true ? 'Open the copy' : <>Open <bdi>{name}</bdi></>} <span aria-hidden="true">→</span>
-                    </Button>
-                  )}
+                  <span className="supervisor-handoff-meta">
+                    {badge !== undefined ? (
+                      <Badge look={badge.look} lead={badge.dot === true ? 'dot' : undefined}>
+                        {badge.label}
+                      </Badge>
+                    ) : (
+                      <span className="supervisor-handoff-starting">{row.handoff.kind === 'message' ? 'Not listed' : HANDOFF_STARTING}</span>
+                    )}
+                    <Timestamp className="supervisor-handoff-at" at={row.handoff.at} />
+                    {row.session !== undefined && onOpenSession !== undefined && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="supervisor-handoff-open"
+                        aria-label={row.handoff.copy === true ? 'Open the copy' : `Open ${name}`}
+                        onClick={() => onOpenSession(row.session!.sessionId)}
+                        data-handoff-open=""
+                      >
+                        {row.handoff.copy === true ? 'Open the copy' : 'Open'} <span aria-hidden="true">→</span>
+                      </Button>
+                    )}
+                  </span>
                 </div>
                 {row.handoff.copy === true && (
                   <p className="supervisor-handoff-copy" data-handoff-copy="">
