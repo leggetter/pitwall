@@ -1,6 +1,7 @@
-// The supervisor's panel (M5, W114; docs/design-system.md, 4: Supervisor): the repo list's item in
+// The supervisor's panel (M5, W114; docs/design-system.md, 4: Supervisor): the header's button in
 // every root tab, its status and its drafts' count, which Needs you and the page title count too; its
-// view in the third column, as ?supervisor, one pushed history entry, in a session's or a PR's place;
+// panel over the page, as ?supervisor, one pushed history entry, beside a session's or a PR's view (W177,
+// and SupervisorPanel.test.tsx);
 // its states, off, starting, idle, working, held and failed, and none with --no-supervisor; the empty
 // state's questions; the message box and Stop; and the draft cards and their decisions, with focus.
 // Nothing starts it but Start and a message. Made-up sessions, ids and text only.
@@ -8,6 +9,7 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  RUN_RATE_PATH,
   SPAWN_PROMPT_MAX,
   SUPERVISOR_INTERRUPT_PATH,
   SUPERVISOR_MESSAGE_MAX,
@@ -27,7 +29,7 @@ import type { ConnectionView } from '../connection.js';
 import { draftKey } from '../drafts.js';
 import type { StorageSource } from '../groupState.js';
 import type { NavigationEnv } from '../selection.js';
-import { NEW_CONVERSATION_CONFIRM, NEW_CONVERSATION_DONE, SUPERVISOR_CONTEXT_INFO, SUPERVISOR_DRAFT_ID, needsReason } from '../supervisor.js';
+import { asSupervisorState, NEW_CONVERSATION_CONFIRM, NEW_CONVERSATION_DONE, SUPERVISOR_CONTEXT_INFO, SUPERVISOR_DRAFT_ID, needsReason } from '../supervisor.js';
 import { group, minutesAgo, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
 import { descriptionOf, hover, tooltipText } from '../test/tooltips.js';
@@ -69,7 +71,7 @@ function snap(supervisor: SupervisorState | undefined, roots: 1 | 2 = 1): IndexS
 type Answer = { status: number; body?: unknown } | 'never' | Error;
 
 /** POSTs get what `post` says for their path, `{ ok: true }` by default; the conversation gets `page`, a 404 without one. */
-function fakeServer(options: { page?: { sessionId: string; entries: ConversationEntry[]; before?: string }; post?: (url: string, body: unknown) => Answer } = {}) {
+function fakeServer(options: { page?: { sessionId: string; entries: ConversationEntry[]; before?: string }; post?: (url: string, body: unknown) => Answer; runRate?: unknown } = {}) {
   return vi.fn<FetchLike>(async (url, init) => {
     if (init.method === 'POST') {
       const body = init.body === undefined ? undefined : (JSON.parse(String(init.body)) as unknown);
@@ -79,6 +81,7 @@ function fakeServer(options: { page?: { sessionId: string; entries: Conversation
       return new Response(answer.body === undefined ? 'not json' : JSON.stringify(answer.body), { status: answer.status });
     }
     if (url.startsWith('/api/supervisor/conversation') && options.page) return new Response(JSON.stringify(options.page), { status: 200 });
+    if (url === RUN_RATE_PATH && options.runRate !== undefined) return new Response(JSON.stringify(options.runRate), { status: 200 });
     return new Response('{}', { status: 404 });
   });
 }
@@ -113,26 +116,34 @@ const settle = () => act(async () => {});
 const repoList = () => screen.getByRole('navigation', { name: 'Repos' });
 const items = () => [...repoList().querySelectorAll<HTMLAnchorElement>('a[data-repo-item]')];
 const labels = () => items().map((link) => link.querySelector('.repo-item-label')?.textContent);
-const item = () => repoList().querySelector<HTMLAnchorElement>('a[data-supervisor-item]');
+const header = () => document.querySelector('header')!;
+const item = () => header().querySelector<HTMLButtonElement>('button[data-supervisor-button]');
 const needsYouItem = () => items().find((link) => link.querySelector('.repo-item-label')?.textContent === 'Needs you');
 const view = () => document.getElementById('supervisor-view') ?? undefined;
 const viewOf = () => within(view()!);
 const box = () => viewOf().getByRole('textbox', { name: 'Message to the supervisor' }) as HTMLTextAreaElement;
 const sendButton = () => viewOf().getByRole('button', { name: 'Send' });
 
-async function openFromItem() {
+async function openFromButton() {
   fireEvent.click(item()!);
   await settle();
 }
 
-describe('the Supervisor item', () => {
-  it('is first in the repo list, above Needs you, while pitwall runs one', () => {
+describe('the header’s Supervisor button (W182)', () => {
+  it('is last on the header’s right while pitwall runs one, and no longer in the repo list', () => {
     renderDashboard(snap({ status: 'idle', approvals: [] }));
-    expect(labels().slice(0, 3)).toEqual(['Supervisor', 'Needs you', 'All sessions']);
-    expect(item()?.getAttribute('href')).toBe('?view=all&supervisor');
+    const buttons = [...header().querySelectorAll('button')];
+    expect(buttons.at(-1)).toBe(item());
+    expect(item()?.closest('.app-header-actions')).not.toBeNull();
+    // A labelled outline button, where the controls before it are ghost icon buttons.
+    expect(item()?.className).toBe('button md supervisor-button');
+    expect(item()?.getAttribute('aria-haspopup')).toBe('dialog');
+    expect(item()?.getAttribute('aria-expanded')).toBe('false');
+    expect(labels().slice(0, 2)).toEqual(['Needs you', 'All sessions']);
+    expect(repoList().querySelector('[data-supervisor-item]')).toBeNull();
   });
 
-  it('is in no repo list with --no-supervisor', () => {
+  it('is in no header with --no-supervisor', () => {
     renderDashboard(snap(undefined));
     expect(item()).toBeNull();
     expect(labels()[0]).toBe('Needs you');
@@ -140,26 +151,33 @@ describe('the Supervisor item', () => {
 
   it('says its status while it works, starts, is held or has failed, and nothing while it’s idle or off', () => {
     const { update } = renderDashboard(snap({ status: 'off', approvals: [] }));
-    const badge = () => item()?.querySelector('.supervisor-item-status')?.textContent ?? null;
+    const badge = () => item()?.querySelector('.supervisor-button-status')?.textContent ?? null;
     expect(badge()).toBeNull();
     expect(item()?.textContent).toBe('Supervisor');
     for (const [status, label] of [['working', 'Working'], ['starting', 'Starting'], ['held', 'Held'], ['failed', 'Failed']] as const) {
       update(snap({ status, approvals: [] }));
       expect(badge()).toBe(label);
       // Its name says it once, from the visually hidden text, not the badge, which is hidden.
+      expect(item()?.querySelector('.supervisor-button-status')?.getAttribute('aria-hidden')).toBe('true');
       expect(item()?.querySelector('.visually-hidden')?.textContent).toBe(`, ${label.toLowerCase()}`);
+      expect(item()?.getAttribute('data-supervisor-button')).toBe(status);
     }
     update(snap({ status: 'idle', approvals: [] }));
     expect(badge()).toBeNull();
   });
 
-  it('counts its drafts in its own badge, Needs you’s and the page title, solid, as Needs you’s are', () => {
-    renderDashboard(snap({ status: 'idle', approvals: [message('m1', 4), spawn] }));
+  it('counts its drafts in its own badge, Needs you’s and the page title, solid, as Needs you’s are, and says them in its name', () => {
+    const { update } = renderDashboard(snap({ status: 'working', approvals: [message('m1', 4), spawn] }));
     const badge = item()?.querySelector('.badge-attention');
     expect(badge?.textContent).toBe('2 drafts need you');
+    // Its name, as its text without the hidden badge: "Supervisor, working, 2 drafts need you".
+    const name = () => [...item()!.querySelectorAll('.supervisor-button-label, .visually-hidden, .badge-attention')].filter((el) => !el.closest('.badge-attention') || el.classList.contains('badge-attention')).map((el) => el.textContent).join('');
+    expect(name()).toBe('Supervisor, working, 2 drafts need you');
     // alpha waits on you, and the two drafts.
     expect(needsYouItem()?.querySelector('.badge')?.textContent).toBe('3 need you');
     expect(document.title).toBe('(3) pitwall');
+    update(snap({ status: 'idle', approvals: [message('m1', 4)] }));
+    expect(name()).toBe('Supervisor, 1 draft needs you');
   });
 
   it('is in every root tab, and its drafts count in each tab’s Needs you, not the tabs’ own badges', async () => {
@@ -174,47 +192,65 @@ describe('the Supervisor item', () => {
     expect(item()).not.toBeNull();
     expect(needsYouItem()?.querySelector('.badge')?.textContent).toBe('1 needs you');
   });
+
+  it('toggles: pressed again, it closes the panel, as one pushed entry, and focus stays on it', async () => {
+    const { history } = renderDashboard(snap({ status: 'idle', approvals: [] }));
+    item()!.focus();
+    await openFromButton();
+    expect(view()).toBeDefined();
+    item()!.focus();
+    await openFromButton();
+    expect(view()).toBeUndefined();
+    expect(item()?.getAttribute('aria-expanded')).toBe('false');
+    expect(item()?.hasAttribute('aria-controls')).toBe(false);
+    expect(history!.entries).toEqual(['?view=all', '?view=all&supervisor', '?view=all']);
+    expect(document.activeElement).toBe(item());
+  });
+
+  it('closed from Needs you’s notice’s opening, by the button: focus on the button, not the notice', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [message('m1', 4)] }), { search: '?view=needs-you' });
+    const open = screen.getByRole('button', { name: 'Open the supervisor' });
+    open.focus();
+    fireEvent.click(open);
+    await settle();
+    expect(view()).toBeDefined();
+    item()!.focus();
+    await openFromButton();
+    expect(view()).toBeUndefined();
+    expect(document.activeElement).toBe(item());
+  });
 });
 
 describe('the supervisor’s view', () => {
-  it('opens from the item in the third column, as one pushed history entry, with focus on its heading', async () => {
+  it('opens from the header’s button over the page, as one pushed history entry, with focus on its heading', async () => {
     const { history } = renderDashboard(snap({ status: 'idle', approvals: [] }));
-    await openFromItem();
+    await openFromButton();
     expect(view()).toBeDefined();
     expect(history!.entries).toEqual(['?view=all', '?view=all&supervisor']);
     expect(document.activeElement).toBe(viewOf().getByRole('heading', { level: 2, name: 'Supervisor' }));
-    expect(item()?.getAttribute('aria-current')).toBe('true');
+    expect(item()?.getAttribute('aria-expanded')).toBe('true');
     expect(item()?.getAttribute('aria-controls')).toBe('supervisor-view');
-    // Again: no entry, focus on the heading.
-    await openFromItem();
     expect(history!.entries).toHaveLength(2);
   });
 
-  it('takes a session’s place, and a session takes its place, each one entry, and the back button goes between them', async () => {
+  it('opens over the page beside the open session, which stays, as one entry; the back button closes it alone (W177)', async () => {
     const { history } = renderDashboard(snap({ status: 'idle', approvals: [] }));
     fireEvent.click(screen.getByRole('button', { name: 'pitwall-test-beta' }));
     await settle();
+    await openFromButton();
     expect(document.getElementById('session-view')).not.toBeNull();
-    await openFromItem();
-    expect(document.getElementById('session-view')).toBeNull();
     expect(view()).toBeDefined();
-    expect(history!.location.search).toBe('?view=all&supervisor');
-    fireEvent.click(screen.getByRole('button', { name: 'pitwall-test-alpha' }));
-    await settle();
-    expect(view()).toBeUndefined();
-    expect(history!.location.search).toBe(`?view=all&session=${alpha.sessionId}`);
-    history!.back();
-    await settle();
-    expect(view()).toBeDefined();
+    expect(history!.location.search).toBe(`?view=all&session=${beta.sessionId}&supervisor`);
     history!.back();
     await settle();
     expect(view()).toBeUndefined();
     expect(document.getElementById('session-view')).not.toBeNull();
+    expect(history!.location.search).toBe(`?view=all&session=${beta.sessionId}`);
   });
 
-  it('closes with Close, giving focus back to the item', async () => {
+  it('closes with Close, giving focus back to the button', async () => {
     renderDashboard(snap({ status: 'idle', approvals: [] }));
-    await openFromItem();
+    await openFromButton();
     fireEvent.click(viewOf().getByRole('button', { name: 'Close' }));
     await settle();
     expect(view()).toBeUndefined();
@@ -920,6 +956,138 @@ describe('its draft cards', () => {
   });
 });
 
+describe('a draft card’s work profile (W156)', () => {
+  const PROFILES = [
+    { name: 'Build', model: 'claude-opus-5-5', effort: 'high' as const, subagentModel: 'sonnet' },
+    { name: 'Review', model: 'sonnet', effort: 'high' as const, subagentModel: 'sonnet', skill: 'agent-roles:role-reviewer' },
+    { name: 'Docs', model: 'sonnet', effort: 'medium' as const, subagentModel: 'default' },
+  ];
+  const card = () => view()!.querySelector<HTMLElement>('li.approval-card')!;
+  const picker = () => within(card()).getByRole('combobox', { name: 'Profile' }) as HTMLSelectElement;
+  const hint = () => document.getElementById(picker().getAttribute('aria-describedby')!)?.textContent;
+
+  it('a new session’s card shows the supervisor’s pick, what it starts on, and sends the profile you pick', async () => {
+    const fetch = fakeServer();
+    renderDashboard(snap({ status: 'idle', approvals: [{ ...spawn, profile: 'Review', profiles: PROFILES }] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    expect(picker().value).toBe('Review');
+    expect([...picker().options].map((option) => option.textContent)).toEqual(['Build', 'Review', 'Docs']);
+    expect(hint()).toBe(
+      'Starts on model sonnet, effort high, sub-agents sonnet. Its first prompt starts with /agent-roles:role-reviewer, which must be installed where the session runs.',
+    );
+    fireEvent.change(picker(), { target: { value: 'Docs' } });
+    expect(hint()).toBe("Starts on model sonnet, effort medium, sub-agents Claude Code's default.");
+    fireEvent.click(within(card()).getByRole('button', { name: 'Send' }));
+    await settle();
+    expect(posts(fetch)).toEqual([{ url: supervisorApprovalPath('spawn-1'), body: { decision: 'send', profile: 'Docs' } }]);
+    // Off while pitwall takes the answer.
+    expect(picker().disabled).toBe(true);
+  });
+
+  it('Send edit sends the pick too, and a card from a server with no profiles sends none, as before', async () => {
+    const fetch = fakeServer();
+    renderDashboard(snap({ status: 'idle', approvals: [{ ...spawn, profile: 'Build', profiles: PROFILES }, { ...spawn, id: 'spawn-2' }] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    const [first, second] = [...view()!.querySelectorAll<HTMLElement>('li.approval-card')];
+    expect(second!.querySelector('select')).toBeNull();
+    fireEvent.change(within(first!).getByRole('combobox', { name: 'Profile' }), { target: { value: 'Review' } });
+    fireEvent.click(within(first!).getByRole('button', { name: 'Edit' }));
+    await settle();
+    fireEvent.change(within(first!).getByRole('textbox', { name: 'Edit the first prompt' }), { target: { value: 'Only this.' } });
+    fireEvent.click(within(first!).getByRole('button', { name: 'Send edit' }));
+    fireEvent.click(within(second!).getByRole('button', { name: 'Send' }));
+    await settle();
+    expect(posts(fetch)).toEqual([
+      { url: supervisorApprovalPath('spawn-1'), body: { decision: 'edit', text: 'Only this.', profile: 'Review' } },
+      { url: supervisorApprovalPath('spawn-2'), body: { decision: 'send' } },
+    ]);
+  });
+
+  it('a resume’s card offers As it started first, saying what it kept, and sends null for it', async () => {
+    const fetch = fakeServer();
+    const resume: SupervisorApproval = {
+      id: 'r1',
+      kind: 'resume',
+      sessionId: '00000000-0000-4000-8000-00000000a156',
+      name: 'pitwall-test-resume',
+      directory: `${ROOT}/demo-app`,
+      text: 'The user asked me to pass this on: review what you built.',
+      at: minutesAgo(1),
+      expiresAt: minutesAgo(-28),
+      sameName: 1,
+      permission: { kind: 'unknown' },
+      launch: { profile: 'Build', model: 'claude-opus-5-5', effort: 'high', subagentModel: 'sonnet' },
+      profile: 'Review',
+      profiles: PROFILES,
+    };
+    renderDashboard(snap({ status: 'idle', approvals: [resume] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    expect(picker().value).toBe('Review');
+    expect([...picker().options].map((option) => option.textContent)).toEqual(['As it started (Build)', 'Build', 'Review', 'Docs']);
+    expect(hint()).toBe('pitwall resumes it on the Review profile: model sonnet, effort high, sub-agents sonnet. Not its skill, /agent-roles:role-reviewer, which runs only when a session starts.');
+    // One launch line, the picker's.
+    expect(card().querySelectorAll('.approval-launch')).toHaveLength(1);
+    fireEvent.change(picker(), { target: { value: picker().options[0]!.value } });
+    expect(hint()).toBe('pitwall resumes it on what it started it with, from the Build profile: model claude-opus-5-5, effort high, sub-agents sonnet.');
+    fireEvent.click(within(card()).getByRole('button', { name: 'Send' }));
+    await settle();
+    expect(posts(fetch)).toEqual([{ url: supervisorApprovalPath('r1'), body: { decision: 'send', profile: null } }]);
+  });
+
+  it('a card whose profiles aren’t well formed isn’t shown, since what it shows must be what goes', () => {
+    const read = (approval: unknown) => asSupervisorState({ status: 'idle', approvals: [approval] })?.approvals;
+    expect(read({ ...spawn, profile: 'Review', profiles: PROFILES })).toHaveLength(1);
+    expect(read({ ...spawn, profile: 'Nope', profiles: PROFILES })).toEqual([]);
+    expect(read({ ...spawn, profiles: PROFILES })).toEqual([]);
+    expect(read({ ...spawn, profile: 'Build' })).toEqual([]);
+    expect(read({ ...spawn, profile: 'Build', profiles: [...PROFILES, { name: 'Bad', model: '--yolo', effort: 'high', subagentModel: 'sonnet' }] })).toEqual([]);
+    expect(read({ ...spawn, profile: 'Build', profiles: [...PROFILES, PROFILES[0]] })).toEqual([]);
+  });
+});
+
+describe('a draft card’s pace (W160)', () => {
+  const PROFILES = [{ name: 'Build', model: 'claude-opus-5-5', effort: 'high' as const, subagentModel: 'sonnet' }];
+  const RATE = {
+    status: 'available',
+    readAt: new Date().toISOString(),
+    target: { percent: 80, day: 'friday', time: '18:00' },
+    sevenDay: {
+      usedPercentage: 62,
+      resetsAt: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+      level: 'normal',
+      pace: { targetAt: new Date(Date.now() + 2 * 86_400_000).toISOString(), line: 50, points: 12, ahead: true, pastTarget: false },
+      projection: { status: 'lasts' },
+    },
+    fiveHour: null,
+  };
+  const paced = (s: IndexSnapshot): IndexSnapshot => ({ ...s, planUsage: 'on' });
+
+  it('shows the header’s week and pace beside the profile, describing the select, and asks for nothing more', async () => {
+    const fetch = fakeServer({ runRate: RATE });
+    renderDashboard(paced(snap({ status: 'idle', approvals: [{ ...spawn, profile: 'Build', profiles: PROFILES }, message('m1', 2)] })), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    const [first, second] = [...view()!.querySelectorAll<HTMLElement>('li.approval-card')];
+    const line = first!.querySelector<HTMLElement>('.approval-pace')!;
+    expect(line.textContent).toBe("The plan's week: 62% used, 12 points ahead of pace.");
+    expect(line.dataset.ahead).toBe('true');
+    expect(line.querySelector('svg')).not.toBeNull();
+    const picker = within(first!).getByRole('combobox', { name: 'Profile' });
+    expect(picker.getAttribute('aria-describedby')!.split(' ')).toContain(line.id);
+    // A message card has no profile, so no pace.
+    expect(second!.querySelector('.approval-pace')).toBeNull();
+    // The header's one ask: the cards add none.
+    expect(fetch.mock.calls.filter(([url]) => url === RUN_RATE_PATH)).toHaveLength(1);
+  });
+
+  it('shows none while the header has no figures', async () => {
+    renderDashboard(snap({ status: 'idle', approvals: [{ ...spawn, profile: 'Build', profiles: PROFILES }] }), { fetch: fakeServer({ runRate: RATE }), search: '?view=all&supervisor' });
+    await settle();
+    expect(view()!.querySelector('.approval-pace')).toBeNull();
+    const picker = within(view()!).getByRole('combobox', { name: 'Profile' });
+    expect(picker.getAttribute('aria-describedby')!.split(' ')).toHaveLength(1);
+  });
+});
+
 describe('what it sent and started (W124)', () => {
   const started = session({ sessionId: '00000000-0000-4000-8000-00000000c124', name: 'pitwall-test-started', kind: 'background', shortId: 'c0ffee12', status: 'busy', state: 'working' });
   const asking = session({ sessionId: '00000000-0000-4000-8000-00000000d124', name: 'pitwall-test-asking', kind: 'background', shortId: 'd00dfeed', needsYou: { reason: 'claude-code', text: 'Pick a migration name' } });
@@ -1010,6 +1178,15 @@ describe('a finished session resumed with a message (W127)', () => {
     expect(shown.querySelector('.approval-where')?.textContent).toMatch(/^2 listed sessions have this name; this is the one in \/Users\/example\/code\/demo-app, last active \d+d ago\.$/);
     expect(shown.querySelector('.approval-permission')?.textContent).toBe('Claude Code resumes it with its own saved settings, its permission mode included: bypassPermissions.');
     expect(shown.querySelector('.approval-bypass')?.textContent).toContain('the message runs with no permission prompts');
+    expect(shown.querySelector('.approval-launch')).toBeNull();
+  });
+
+  it('a card says what a session started with a profile resumes on (W155)', async () => {
+    const card: SupervisorApproval = { ...resumeCard, launch: { profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet' } };
+    renderDashboard(resumeSnap({ status: 'idle', approvals: [card] }), { search: '?view=all&supervisor' });
+    await settle();
+    const shown = view()!.querySelector<HTMLElement>('li.approval-card')!;
+    expect(shown.querySelector('.approval-launch')?.textContent).toBe('pitwall resumes it on what it started it with, from the Review profile: model sonnet, effort high, sub-agents sonnet.');
   });
 
   it('a card notes a typed prompt’s slash command or @ path, for a resume and a new session alike (W129, I2)', async () => {

@@ -5,7 +5,7 @@
 // node-pty is loaded on the first attach, not at startup. A missing or broken
 // native build then fails that attach with a message, and the rest of pitwall
 // (the index, the session view) keeps working.
-import { accessSync, chmodSync, constants, existsSync } from 'node:fs';
+import { closeSync, constants, existsSync, fchmodSync, fstatSync, openSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 
@@ -39,43 +39,84 @@ export type PtySpawner = (file: string, args: string[], options: PtySpawnOptions
 
 type NodePty = typeof import('node-pty');
 
-let nodePty: NodePty | undefined;
+/** What spawnPty needs once node-pty has loaded: its spawn, and its spawn-helper, if it has one. */
+export interface LoadedPty {
+  spawn: NodePty['spawn'];
+  /** undefined off macOS, or when there's none. */
+  helper: string | undefined;
+}
+
+/**
+ * A PtySpawner that loads node-pty on its first spawn and makes sure the
+ * helper is executable before every spawn, not once per process: an `npm ci`
+ * under a running server reinstalls it without its execute bit, and every
+ * attach after it would fail until a restart (W169).
+ */
+export function ptySpawner(load: () => LoadedPty): PtySpawner {
+  let loaded: LoadedPty | undefined;
+  return (file, args, options) => {
+    loaded ??= load();
+    if (loaded.helper !== undefined) makeExecutable(loaded.helper);
+    return loaded.spawn(file, args, { ...options, encoding: 'utf8' });
+  };
+}
 
 /** The real PtySpawner, over node-pty. */
-export const spawnPty: PtySpawner = (file, args, options) => {
-  nodePty ??= loadNodePty();
-  return nodePty.spawn(file, args, { ...options, encoding: 'utf8' });
-};
+export const spawnPty: PtySpawner = ptySpawner(loadNodePty);
 
-function loadNodePty(): NodePty {
+function loadNodePty(): LoadedPty {
   const require = createRequire(import.meta.url);
   const pty = require('node-pty') as NodePty;
-  makeSpawnHelperExecutable(require);
-  return pty;
+  const helper =
+    process.platform === 'darwin'
+      ? findSpawnHelper(dirname(require.resolve('node-pty/package.json')), `${process.platform}-${process.arch}`)
+      : undefined;
+  return { spawn: pty.spawn.bind(pty), helper };
 }
 
 /**
  * node-pty 1.1.0's macOS prebuilds ship `spawn-helper` without its execute
  * bit (mode 0644 in the published tarball), so every spawn fails with
- * `posix_spawnp failed.` Set it, once, when it's missing. Linux builds from
- * source and doesn't use the helper. Remove this when an upgrade ships the
- * helper executable (1.2.0-beta.15 does).
+ * `posix_spawnp failed.` pitwall sets the bit when it's missing. Linux builds
+ * from source and doesn't use the helper. Remove this when a stable release
+ * ships the helper executable (the 1.2.0 betas do; 1.1.0 is still `latest`).
+ *
+ * The helper node-pty uses: its own build first, then the prebuild, the
+ * order node-pty loads its native module in.
  */
-function makeSpawnHelperExecutable(require: NodeRequire): void {
-  if (process.platform !== 'darwin') return;
-  const root = dirname(require.resolve('node-pty/package.json'));
-  for (const dir of ['build/Release', `prebuilds/${process.platform}-${process.arch}`]) {
+export function findSpawnHelper(root: string, platformArch: string): string | undefined {
+  for (const dir of ['build/Release', `prebuilds/${platformArch}`]) {
     const helper = join(root, dir, 'spawn-helper');
-    if (!existsSync(helper)) continue;
-    try {
-      accessSync(helper, constants.X_OK);
-    } catch {
+    if (existsSync(helper)) return helper;
+  }
+  return undefined;
+}
+
+/**
+ * Adds the execute bits when the owner's is missing, and nothing else. Never throws. Opened without
+ * following a link, then fstat'ed, and changed through that descriptor only when it's a regular file
+ * of this user's, so a link planted in its place, or a file swapped in after the check, is never
+ * changed, and no read bit is ever added (W180's F1).
+ */
+export function makeExecutable(path: string): void {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const stat = fstatSync(fd);
+    const uid = process.getuid?.();
+    if (!stat.isFile() || (uid !== undefined && stat.uid !== uid)) return;
+    if ((stat.mode & 0o100) !== 0) return;
+    // Without setuid, setgid or sticky bits: only the permission bits, plus execute (W180's N6).
+    fchmodSync(fd, (stat.mode & 0o777) | 0o111);
+  } catch {
+    // A link, a read-only install, or no file: the spawn then fails with node-pty's own error.
+  } finally {
+    if (fd !== undefined) {
       try {
-        chmodSync(helper, 0o755);
+        closeSync(fd);
       } catch {
-        // Read-only install: the spawn then fails with node-pty's own error.
+        // Already closed.
       }
     }
-    return;
   }
 }

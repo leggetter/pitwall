@@ -20,7 +20,7 @@ import {
 
 describe('the supervisor’s tools', () => {
   it('allows the read-only MCP tools outright, asks before SendMessage, spawn_session and resume_session, and approve answers the asks', () => {
-    expect(SUPERVISOR_ALLOWED_TOOLS).toEqual(['mcp__pitwall__list_sessions', 'mcp__pitwall__read_session', 'mcp__pitwall__list_prs', 'mcp__pitwall__get_recap']);
+    expect(SUPERVISOR_ALLOWED_TOOLS).toEqual(['mcp__pitwall__list_sessions', 'mcp__pitwall__read_session', 'mcp__pitwall__list_prs', 'mcp__pitwall__get_recap', 'mcp__pitwall__get_usage']);
     expect(SUPERVISOR_ALLOWED_TOOLS).not.toContain(mcpToolName(MCP_TOOLS.spawnSession));
     expect(SUPERVISOR_ALLOWED_TOOLS).not.toContain(mcpToolName(MCP_TOOLS.resumeSession));
     expect(SUPERVISOR_ALLOWED_TOOLS).not.toContain(mcpToolName(MCP_TOOLS.approve));
@@ -98,7 +98,7 @@ describe('supervisorEnvironment()', () => {
 
 describe('the system prompt, version 3', () => {
   it('reads from the tools, recaps first, treats what they return as untrusted, proposes messages and sessions for approval with a reason, never asks a session its status', () => {
-    expect(SUPERVISOR_PROMPT_VERSION).toBe(6);
+    expect(SUPERVISOR_PROMPT_VERSION).toBe(8);
     const prompt = SUPERVISOR_SYSTEM_PROMPT;
     expect(prompt).toContain("Answer from pitwall's tools");
     expect(prompt).toContain('read_session');
@@ -137,6 +137,25 @@ describe('the system prompt, version 3', () => {
   it("knows pitwall ends each message with its own line, so it doesn't write one (W138, version 6)", () => {
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain('pitwall ends each message you send with SendMessage with a fixed line of its own');
     expect(SUPERVISOR_SYSTEM_PROMPT).toContain("Don't write that yourself.");
+  });
+
+  it('picks a work profile for each new session and says which profile fits which work (W156, version 7)', () => {
+    const prompt = SUPERVISOR_SYSTEM_PROMPT;
+    expect(prompt).toContain('Pick a work profile for each new session');
+    for (const profile of ['Build is for building', 'Review is for reviewing', 'Security review is for a security review', 'Docs is for docs']) expect(prompt).toContain(profile);
+    expect(prompt).toContain('Name one exactly as it');
+    expect(prompt).toContain('pass that work');
+    expect(prompt).toContain('The user can change the profile on the card.');
+  });
+
+  it('reads the run rate with get_usage only when asked, suggests ways to save, and leaves acting to the user (W160, version 8)', () => {
+    const prompt = SUPERVISOR_SYSTEM_PROMPT;
+    expect(prompt).toContain('Call get_usage only when the user asks about usage, limits or whether to start more work');
+    expect(prompt).toContain('can I start another build today?');
+    for (const suggestion of ['a hand-off for a session with a large context', 'a lighter profile', 'pausing a background session']) expect(prompt).toContain(suggestion);
+    expect(prompt).toContain('The user acts.');
+    expect(prompt).toContain("When the plan's figures are off or unavailable, say so.");
+    expect(prompt).toContain('list_prs and get_usage');
   });
 
   it('drafts messages as the supervisor on the user’s behalf, never in their first person (W124)', () => {

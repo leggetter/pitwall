@@ -16,7 +16,7 @@ M3.1 was built on `m3.1/integration` ([PR #69](https://github.com/leggetter/pitw
 
 M4, Phil's open pull requests, was built on `m4/integration` (W92 to W117) and merged into `main` on 2026-11-02 in [PR #117](https://github.com/leggetter/pitwall/pull/117), after Phil's try-out and W108's security review.
 
-M5, the supervisor, was built on `m5/integration` (W109 to W129) and merged into `main` on 2026-11-02 in [PR #138](https://github.com/leggetter/pitwall/pull/138), after Phil's try-out, W116's security review and the re-review of W124 to W128: per-session recaps, pitwall's MCP server, the supervisor and its panel, approvals for messages, new sessions and resumes, New session from here (since taken out, W130, D27), and model and effort per kind of work. M5.1, the work after M5, is in progress on `m5.1/integration`, to W163 (spin-off proposals, first piece) and W164 (its security review); M5.2, efficiency, follows (Phil, 2026-11-07). See `NOW.md`.
+M5, the supervisor, was built on `m5/integration` (W109 to W129) and merged into `main` on 2026-11-02 in [PR #138](https://github.com/leggetter/pitwall/pull/138), after Phil's try-out, W116's security review and the re-review of W124 to W128: per-session recaps, pitwall's MCP server, the supervisor and its panel, approvals for messages, new sessions and resumes, New session from here (since taken out, W130, D27), and model and effort per kind of work. M5.1, the work after M5, was built on `m5.1/integration` (W130 to W164) and merged into `main` on 2026-11-09 in [PR #197](https://github.com/leggetter/pitwall/pull/197), after W164's security review: Needs you narrowed to sessions blocked on you now, with flag and snooze, recaps that give the picture, spin-off proposals' first piece, and fixes from daily use. M5.2, efficiency, was built on `m5.2/integration` (W155 to W160, W166, W169, W170, W172, W177, W180 to W182) and merged into `main` on 2026-11-10 (PR number to follow), after W180's security review: work profiles, the Usage view and run rate, the supervisor reading them, the supervisor over the page, and fixes from daily use. M5.3, the rest, starts with W176 (the pitwall plugin), on `m5.3/integration`. See `NOW.md`.
 
 ## Rules
 
@@ -31,7 +31,7 @@ M5, the supervisor, was built on `m5/integration` (W109 to W129) and merged into
 - **Commits and PRs:** conventional commits for commit messages and PR titles. Keep the PR summary short and put detail in a `<details>` block.
 - **Say what an ID is.** A work item (`W134`), decision (`D4`), spike (`spike 012`), issue or PR (`#143`) gets its title, or a few words of what it is, in parentheses: every time in a reply's Open questions and Next steps, and at its first mention anywhere else, in replies, `NOW.md`, PR descriptions and commit messages. For example: "W134 (work profiles)", "D4 (the supervisor: read-only tools, acts only after your click)", "#143 (Session view: expand the conversation or terminal to the full page)". Look the title up in `PLAN.md`, `docs/decisions.md`, `docs/plan-archive.md` or `gh`; don't guess. Phil (2026-11-04): "I've no idea what W134 is."
 - **Worktrees go in `.worktrees/<name>`** inside the main checkout, which `.gitignore` ignores (Phil, 2026-10-27), not in folders beside it. ripgrep, the editors' search, vitest and tsc leave them alone, and New session's directory list skips hidden folders. A plain `git clean -fdx` skips them as nested repositories; only `-ff` would delete them. After `git worktree add`, run `npm ci` in the worktree, since without its own `node_modules` its tests resolve modules from the main checkout and Vite's file allowlist fails 33 font tests (W140), and copy the main checkout's `.claude/settings.local.json`, if there is one, into the worktree's `.claude/`, so its sessions start as small (Efficiency).
-- **Write for a public repo.** It's going public (Phil, 2026-10-28), so don't commit tokens, transcripts, session content or internal Hookdeck details, including in fixtures. In the docs, `~/work` and `~/oss` stand for Phil's two roots (Phil, 2026-10-23).
+- **Write for a public repo.** It's public (Phil, 2026-10-28; confirmed 2026-11-09), so don't commit tokens, transcripts, session content or internal Hookdeck details, including in fixtures. In the docs, `~/work` and `~/oss` stand for Phil's two roots (Phil, 2026-10-23).
 
 ## Efficiency
 
@@ -67,7 +67,8 @@ npm start -- [root...]   run the built CLI, node dist/cli.js. `--interval <secon
                          `--no-open` leaves the browser alone, `--no-prs` turns off your open
                          pull requests, so pitwall never runs gh, `--no-recaps` turns off recaps, so
                          pitwall never sends transcript excerpts to the model, `--no-supervisor` turns
-                         off the supervisor, so pitwall never runs it, and `--config <path>`
+                         off the supervisor, so pitwall never runs it, `--no-usage` turns off the plan's
+                         percentages, so pitwall never runs `/usage`, and `--config <path>`
                          reads that config file instead of ~/.pitwall/config.json (README's Configuration)
 npm run appcheck -- --out <dir>   the headless app check of the production build, after npm run build
                          (scripts/appcheck/README.md); --list, --only <part>, --widths, --themes, --ports
@@ -106,9 +107,9 @@ src/prs/                 your open pull requests (M4): three gh api graphql sear
 src/recaps/              per-session recaps (M5, W110, D26): engine.ts schedules them, a short claude -p on Haiku
                          per session, at most 2 at a time and 500 a day, and decorates the snapshot; input.ts
                          builds the input, prompt.ts the command line, environment and strict parsing, call.ts
-                         runs one, store.ts keeps each session's recap on disk across restarts (W132). Plan
-                         status (W123) is the same kind of call, made only when the page asks, from the
-                         same engine. The transcript reads are src/index/recapSources.ts; the
+                         runs one, store.ts keeps each session's recap on disk across restarts (W132). Since
+                         W172 the recap carries the plan's items and changes too; W123's separate Plan status
+                         call is gone. The transcript reads are src/index/recapSources.ts; the
                          snapshot's view and routes are src/server/snapshotRecaps.ts and recapRoutes.ts.
                          Off with --no-recaps
 src/supervisor/          the supervisor (M5, W113, W115, D4): one claude -p session on Opus 5.5 that pitwall starts
@@ -122,13 +123,20 @@ src/supervisor/          the supervisor (M5, W113, W115, D4): one claude -p sess
                          with --no-supervisor
 src/usage/               the usage report's reads and totals (M5.1, W131): scan.ts streams transcripts and keeps
                          numbers only, report.ts aggregates them by repo, model, day, hour and sub-agent,
-                         prices.ts has the API list prices behind its stand-in cost, format.ts the text tables.
-                         Under src/, so built, because M5.1's Usage view will reuse it from the server
+                         prices.ts has the API list prices behind its stand-in cost, format.ts the text tables,
+                         rateLimits.ts the plan's five-hour and weekly percentages from `/usage`, with no model
+                         call (W157, spike 013), fail-soft to "unavailable". The Usage view's (W158): ledger.ts
+                         reads each transcript on from where it stopped, days.ts keeps each day's totals in
+                         $PITWALL_HOME/usage-days.json, view.ts builds a window's figures, service.ts puts them
+                         together for src/server/usageRoutes.ts' GET /api/usage. The run rate's (W159):
+                         runRate.ts the pace against the weekend reserve and the projection, readings.ts
+                         the week's readings in $PITWALL_HOME/usage-readings.json, GET /api/run-rate
 src/cli.ts               the `pitwall` command (bin, built to dist/cli.js)
 src/config.ts            the config file (W103, D24): ~/.pitwall/config.json or --config, JSON with comments,
                          the roots and each root's GitHub owners, ownersByRoot() for the PR side, and `work`,
                          the model and effort for each kind of work (W119), which src/server/work.ts checks,
-                         layers with the app's overrides for the run and serves at /api/work
+                         layers with the app's overrides for the run and serves at /api/work, and `profiles`,
+                         New session's work profiles (W155), which src/server/profiles.ts checks and merges
 src/test/                test helpers shared across test files, such as the v3 proof, made-up PRs, and
                          noClaude.ts, which fails any server test that would run `claude` or `gh` without
                          PITWALL_LIVE=1, or open an editor at all; not built. Recap and supervisor tests pass

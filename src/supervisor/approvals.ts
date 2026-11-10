@@ -18,7 +18,9 @@
 //              just allowed: each allow adds one pass, keyed on that input in canonical JSON (the
 //              directory's real path, the name, the prompt; or the session id and the message, W127,
 //              whose keys a spawn's never has), each call takes one, and a pass lasts PASS_MS. When the call
-//              carries Claude Code's tool_use_id, it must be the approval's too (grantPass(), takePass())
+//              carries Claude Code's tool_use_id, it must be the approval's too (grantPass(), takePass()).
+//              A pass may carry what pitwall adds to the input for the call, its `run`, such as the
+//              profile's settings the card showed (W156), which the call gets but can never bring
 //   notes      after an Edit, what was actually sent, for pitwall to put before your next message to
 //              the supervisor, so it isn't left believing its own text went (note(), takeNotes())
 //
@@ -26,7 +28,7 @@
 // conversation (W136) drops the hand-offs, passes and notes with the conversation they came from
 // (forgetConversation()); it's refused while a card waits, so there are none of those to drop.
 import { randomBytes } from 'node:crypto';
-import { SUPERVISOR_APPROVAL_TIMEOUT_MS, SUPERVISOR_HANDOFFS_MAX, type SavedPermission, type SupervisorApproval, type SupervisorHandoff } from '../shared/protocol.js';
+import { SUPERVISOR_APPROVAL_TIMEOUT_MS, SUPERVISOR_HANDOFFS_MAX, type ApprovalProfile, type SavedPermission, type SessionLaunch, type SupervisorApproval, type SupervisorHandoff } from '../shared/protocol.js';
 
 /** The permission prompt tool's answer, as Claude Code documents it for `--permission-prompt-tool`. */
 export type PermissionAnswer = { behavior: 'allow'; updatedInput: Record<string, unknown> } | { behavior: 'deny'; message: string };
@@ -34,8 +36,20 @@ export type PermissionAnswer = { behavior: 'allow'; updatedInput: Record<string,
 /** What a card shows, before it has an id and times. */
 export type ApprovalDraft =
   | { kind: 'message'; to: string; text: string }
-  | { kind: 'spawn'; directory: string; name?: string; prompt: string }
-  | { kind: 'resume'; sessionId: string; name: string; directory: string; text: string; lastActivityAt?: string; sameName: number; permission: SavedPermission };
+  | { kind: 'spawn'; directory: string; name?: string; prompt: string; profile?: string; profiles?: ApprovalProfile[] }
+  | {
+      kind: 'resume';
+      sessionId: string;
+      name: string;
+      directory: string;
+      text: string;
+      lastActivityAt?: string;
+      sameName: number;
+      permission: SavedPermission;
+      launch?: SessionLaunch;
+      profile?: string;
+      profiles?: ApprovalProfile[];
+    };
 
 /** One card waiting, with the call it's for. */
 export interface PendingApproval {
@@ -78,12 +92,18 @@ export interface ApprovalQueue {
   settle(id: string, answer: PermissionAnswer): boolean;
   /** Denies every card with `message`. */
   cancelAll(message: string): void;
-  /** Lets one spawn_session or resume_session call with exactly this input run, within PASS_MS. Returns what revokePass() takes. */
-  grantPass(toolUseId: string, input: Record<string, unknown>): number;
+  /**
+   * Lets one spawn_session or resume_session call with exactly this input run, within PASS_MS. `run`,
+   * when given, is what takePass() returns for it in place of `input`: the input with what pitwall
+   * itself adds, such as the profile's settings the card showed (W156), which the call never carries.
+   * Returns what revokePass() takes.
+   */
+  grantPass(toolUseId: string, input: Record<string, unknown>, run?: Record<string, unknown>): number;
   /** Takes back a pass grantPass() gave, unused. */
   revokePass(pass: number): void;
   /**
-   * Takes one pass for a call with these arguments, and returns the input it allowed, or undefined
+   * Takes one pass for a call with these arguments, and returns the input it allowed (its `run`, when
+   * grantPass() was given one), or undefined
    * when none matches. With a tool_use_id, only a pass from that call's approval matches, and that
    * approval's pass is spent even when the arguments differ.
    */
@@ -132,7 +152,7 @@ export function createApprovalQueue(options: ApprovalQueueOptions = {}): Approva
   const now = options.now ?? Date.now;
   const randomId = options.randomId ?? (() => randomBytes(12).toString('hex'));
   const entries = new Map<string, Entry>();
-  const passes: { id: number; toolUseId: string; input: string; until: number }[] = [];
+  const passes: { id: number; toolUseId: string; input: string; run?: string; until: number }[] = [];
   let passIds = 0;
   const dropExpired = () => {
     const at = now();
@@ -187,9 +207,19 @@ export function createApprovalQueue(options: ApprovalQueueOptions = {}): Approva
                 ...(request.draft.lastActivityAt === undefined ? {} : { lastActivityAt: request.draft.lastActivityAt }),
                 sameName: request.draft.sameName,
                 permission: request.draft.permission,
+                ...(request.draft.launch === undefined ? {} : { launch: { ...request.draft.launch } }),
+                ...profileFields(request.draft),
                 ...times,
               }
-            : { id, kind: 'spawn', directory: request.draft.directory, ...(request.draft.name === undefined ? {} : { name: request.draft.name }), prompt: request.draft.prompt, ...times };
+            : {
+                id,
+                kind: 'spawn',
+                directory: request.draft.directory,
+                ...(request.draft.name === undefined ? {} : { name: request.draft.name }),
+                prompt: request.draft.prompt,
+                ...profileFields(request.draft),
+                ...times,
+              };
       let resolve!: (answer: PermissionAnswer) => void;
       const answer = new Promise<PermissionAnswer>((done) => {
         resolve = done;
@@ -224,10 +254,10 @@ export function createApprovalQueue(options: ApprovalQueueOptions = {}): Approva
     cancelAll(message) {
       for (const id of [...entries.keys()]) settle(id, { behavior: 'deny', message });
     },
-    grantPass(toolUseId, input) {
+    grantPass(toolUseId, input, run) {
       dropExpired();
       const id = ++passIds;
-      passes.push({ id, toolUseId, input: canonicalJson(input), until: now() + PASS_MS });
+      passes.push({ id, toolUseId, input: canonicalJson(input), ...(run === undefined ? {} : { run: JSON.stringify(run) }), until: now() + PASS_MS });
       return id;
     },
     revokePass(pass) {
@@ -242,13 +272,13 @@ export function createApprovalQueue(options: ApprovalQueueOptions = {}): Approva
         if (index === -1) return undefined;
         // Spent whatever its arguments: one call per approval.
         const [pass] = passes.splice(index, 1);
-        return pass!.input === wanted ? (JSON.parse(pass!.input) as Record<string, unknown>) : undefined;
+        return pass!.input === wanted ? (JSON.parse(pass!.run ?? pass!.input) as Record<string, unknown>) : undefined;
       }
       // Without Claude Code's tool_use_id, which isn't documented: the oldest pass for exactly these arguments.
       const index = passes.findIndex((each) => each.input === wanted);
       if (index === -1) return undefined;
       const [pass] = passes.splice(index, 1);
-      return JSON.parse(pass!.input) as Record<string, unknown>;
+      return JSON.parse(pass!.run ?? pass!.input) as Record<string, unknown>;
     },
     handoff(each) {
       done.push({ ...each, id: randomId(), at: new Date(now()).toISOString() });
@@ -279,6 +309,14 @@ export function createApprovalQueue(options: ApprovalQueueOptions = {}): Approva
         listeners.delete(listener);
       };
     },
+  };
+}
+
+/** A card's profile and the profiles to pick from (W156), copied. */
+function profileFields(draft: { profile?: string; profiles?: ApprovalProfile[] }): { profile?: string; profiles?: ApprovalProfile[] } {
+  return {
+    ...(draft.profile === undefined ? {} : { profile: draft.profile }),
+    ...(draft.profiles === undefined ? {} : { profiles: draft.profiles.map((each) => ({ ...each })) }),
   };
 }
 

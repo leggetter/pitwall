@@ -1,16 +1,15 @@
 // The recap strip (M5, W111, W121; docs/design-system.md, 4: Recap strip): when it shows, what it
 // fetches and when, the one request for a new recap as a view opens on a stale recap or none, never in
 // a loop, the summary and the to-dos under it, collapsed and open, Refresh and its answers, and its
-// loading and failed states; Plan status (W123); and the picture (W150): the goal, what it's working
-// on, the plan with Show plan, and only your to-dos. Made-up sessions, recaps and plans only.
+// loading and failed states; and the picture (W150): the goal, what it's working on, the Plan section
+// with the plan's items (W172), and only your to-dos. Made-up sessions, recaps and plans only.
 
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { planStatusPath, planStatusRefreshPath, RECAP_DAILY_BUDGET, recapPath, recapRefreshPath, type PlanStatus, type RecapHealth, type RecapSummary, type SessionRecap, type SessionSummary } from '../../../src/shared/protocol.js';
+import { RECAP_DAILY_BUDGET, recapPath, recapRefreshPath, type RecapHealth, type RecapSummary, type SessionRecap, type SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext, type ApiClient, type ApiResult } from '../api.js';
-import { NO_PLAN_LINE, RECAP_COLLAPSED_KEY, RECAP_WAIT_MS, RECAPS_OFF_TEXT, budgetText, parseRecap, refreshRecapFailedText } from '../recap.js';
+import { RECAP_COLLAPSED_KEY, RECAP_PLAN_COLLAPSED_KEY, RECAP_WAIT_MS, RECAPS_OFF_TEXT, budgetText, parseRecap, refreshRecapFailedText } from '../recap.js';
 import { minutesAgo, session } from '../test/fixtures.js';
-import { NO_PLAN_TEXT, PLAN_FULL_TEXT, PLAN_STATUS_LABEL, PLAN_NO_TRANSCRIPT_TEXT, PLAN_OFF_TEXT, PLAN_STATUS_BUSY, PLAN_STATUS_READY, parsePlanStatus, planFailedText } from '../planStatus.js';
 import { RecapStrip, STALE_LABEL } from './RecapStrip.js';
 import { SessionView } from './SessionView.js';
 import { ToastContext, type ShowToast } from './Toast.js';
@@ -326,8 +325,8 @@ describe('asking for a new recap as the view opens', () => {
     expect(server.post).not.toHaveBeenCalled();
     expect(strip()?.dataset.recap).toBe('none');
     expect(strip()?.textContent).toContain(`No recap yet. ${budgetText(RECAP_DAILY_BUDGET)}`);
-    // Plan status needs no recap, so it's still there (W150's review).
-    expect(strip()?.querySelector('.recap-plan-action [data-plan-status]')?.textContent).toBe(PLAN_STATUS_LABEL);
+    // No plan UI without a recap: W123's Plan status, which needed none, is gone (W172).
+    expect(strip()?.querySelector('.recap-plan')).toBeNull();
   });
 
   it('asks for nothing for a view only passed through, closed before the wait was up', async () => {
@@ -421,13 +420,10 @@ describe('the summary and the to-dos', () => {
     expect(document.querySelector('.recap-age')?.getAttribute('datetime')).toBe(full().at);
   });
 
-  it("is a region named by its heading, with no live region but the plan status panel's, empty until it's used", async () => {
+  it('is a region named by its heading, with no live region (W172: the plan status panel had the only one)', async () => {
     await shown(full());
     expect(screen.getByRole('region', { name: 'Recap' })).toBe(strip());
-    const live = [...(strip()?.querySelectorAll('[role="status"], [role="alert"], [aria-live]') ?? [])];
-    expect(live).toHaveLength(1);
-    expect(live[0]!.closest('.recap-plan')).not.toBeNull();
-    expect(live[0]!.textContent).toBe('');
+    expect(strip()?.querySelectorAll('[role="status"], [role="alert"], [aria-live]')).toHaveLength(0);
   });
 });
 
@@ -667,215 +663,8 @@ describe('loading and failing', () => {
     renderStrip({ session: target(recap) }, fakeApi({ recap: ok({ ...recap, waitingOn: 'the moon' }) }).api);
     await settle();
     expect(strip()?.dataset.recap).toBe('failed');
-    // Plan status needs no recap, so it's there, and its panel is the one it controls (W150's reviews).
-    const button = strip()!.querySelector<HTMLButtonElement>('.recap-plan-action [data-plan-status]')!;
-    expect(button.textContent).toBe(PLAN_STATUS_LABEL);
-    expect(document.getElementById(button.getAttribute('aria-controls')!)).not.toBeNull();
-  });
-});
-
-describe('Plan status (W123)', () => {
-  const PLAN: PlanStatus = {
-    found: true,
-    plan: 'M2 of the made-up export rewrite',
-    items: [
-      { text: 'W1: the reader', state: 'done' },
-      { text: 'W2: the writer', state: 'now' },
-      { text: 'W3: the old path', state: 'dropped' },
-      { text: 'W4: the docs', state: 'next' },
-    ],
-    changes: 'W3 was dropped: the writer replaces it.',
-    at: minutesAgo(2),
-    throughAt: minutesAgo(3),
-  };
-
-  /** An ApiClient for the plan routes: GET planStatusPath() with `stored`, POSTs with `posts` in turn; the recap routes as fakeApi's, with `recap`. */
-  function planApi(options: { stored?: PlanStatus; posts?: Answer[] } = {}) {
-    const posts = [...(options.posts ?? [])];
-    const answer = (value: Answer): Promise<ApiResult> => (value === 'pending' ? new Promise(() => {}) : value instanceof Promise ? value : Promise.resolve(value));
-    const get = vi.fn<ApiClient['get']>(async (path) => {
-      if (path === recapPath(SID)) return ok(full());
-      if (path === planStatusPath(SID)) return options.stored ? ok(options.stored) : status(404);
-      return status(404);
-    });
-    const post = vi.fn<ApiClient['post']>(async (path) => {
-      if (path !== planStatusRefreshPath(SID)) return status(404);
-      return answer(posts.shift() ?? ok({ ok: true, status: PLAN }));
-    });
-    const api: ApiClient = { get, post, upload: vi.fn(), delete: vi.fn() };
-    return { api, get, post, planPosts: () => post.mock.calls.filter(([path]) => path === planStatusRefreshPath(SID)).length, planGets: () => get.mock.calls.filter(([path]) => path === planStatusPath(SID)).length };
-  }
-
-  const button = () => document.querySelector<HTMLButtonElement>('[data-plan-status]');
-  const panel = () => document.querySelector<HTMLElement>('.recap-plan');
-  const items = () => [...document.querySelectorAll('.recap-plan-item')].map((li) => [li.querySelector('.recap-plan-item-text')?.textContent, li.querySelector('.recap-plan-state')?.textContent]);
-  const panelNote = () => document.querySelector('.recap-plan .recap-note')?.textContent;
-  // The button is in the strip's body, which shows once the recap is there (W150).
-  const press = async () => {
-    await settle();
-    fireEvent.click(button()!);
-    await settle();
-  };
-
-  it('is a button named Plan status in the body, after the to-dos, never on line 1, which fetches and makes nothing until it is pressed (W150)', async () => {
-    const server = planApi();
-    renderStrip({ session: target(full()) }, server.api);
-    await pastAskDelay();
-    expect(button()?.textContent).toBe('Plan status');
-    expect(button()?.closest('.recap-body')).not.toBeNull();
-    expect(button()?.closest('.recap-head')).toBeNull();
-    expect(document.querySelector('.recap-body .recap-todos + .recap-plan-action [data-plan-status]')).toBe(button());
-    expect(button()?.getAttribute('aria-expanded')).toBe('false');
-    expect(panel()?.hidden).toBe(true);
-    expect(server.planPosts()).toBe(0);
-    expect(server.planGets()).toBe(0);
-  });
-
-  it('pressed with none made, makes one, busy meanwhile, then shows the plan, its items with their states, the changes and its age', async () => {
-    let finish: (result: ApiResult) => void = () => undefined;
-    const server = planApi({ posts: [new Promise<ApiResult>((resolve) => (finish = resolve))] });
-    renderStrip({ session: target(full()) }, server.api);
-    await press();
-    expect(server.planPosts()).toBe(1);
-    expect(button()?.getAttribute('aria-expanded')).toBe('true');
-    expect(button()?.getAttribute('aria-busy')).toBe('true');
-    expect(panel()?.hidden).toBe(false);
-    expect(panelNote()).toBe(PLAN_STATUS_BUSY);
-    await act(async () => {
-      finish(ok({ ok: true, status: PLAN }));
-    });
-    await settle();
-    expect(button()?.hasAttribute('aria-busy')).toBe(false);
-    expect(document.querySelector('.recap-plan-line')?.textContent).toBe(PLAN.plan);
-    expect(items()).toEqual([
-      ['W1: the reader', 'Done'],
-      ['W2: the writer', 'Now'],
-      ['W3: the old path', 'Dropped'],
-      ['W4: the docs', 'Next'],
-    ]);
-    expect(document.querySelector('.recap-plan-changes')?.textContent).toBe(`Changes: ${PLAN.changes}`);
-    expect(document.querySelector('.recap-plan-age time')?.getAttribute('datetime') ?? document.querySelector('.recap-plan-age')?.textContent).toBeTruthy();
-    expect(document.querySelector('.recap-plan-item[data-state="now"]')).not.toBeNull();
-  });
-
-  it('pressed with one made, fetches it and makes none; closed and pressed again, shows it without asking again', async () => {
-    const server = planApi({ stored: PLAN });
-    renderStrip({ session: target(full(), { planStatusAt: PLAN.at }) }, server.api);
-    await press();
-    expect(server.planGets()).toBe(1);
-    expect(server.planPosts()).toBe(0);
-    expect(items()).toHaveLength(4);
-    fireEvent.click(document.querySelector<HTMLButtonElement>('.recap-plan-close')!);
-    await settle();
-    expect(panel()?.hidden).toBe(true);
-    expect(document.activeElement).toBe(button());
-    await press();
-    expect(server.planGets()).toBe(1);
-    expect(items()).toHaveLength(4);
-    // Make a new one.
-    fireEvent.click(document.querySelector<HTMLButtonElement>('.recap-plan-remake')!);
-    await settle();
-    expect(server.planPosts()).toBe(1);
-  });
-
-  it('fetches a newer one while it is open, when the snapshot says one was made', async () => {
-    const server = planApi({ stored: PLAN });
-    const view = renderStrip({ session: target(full(), { planStatusAt: PLAN.at }) }, server.api);
-    await press();
-    expect(server.planGets()).toBe(1);
-    view.update({ session: target(full(), { planStatusAt: minutesAgo(0) }) });
-    await settle();
-    expect(server.planGets()).toBe(2);
-  });
-
-  it('says "No plan found in this session." when the transcript shows none', async () => {
-    const server = planApi({ posts: [ok({ ok: true, status: { found: false, items: [], at: minutesAgo(0), throughAt: minutesAgo(1) } })] });
-    renderStrip({ session: target(full()) }, server.api);
-    await press();
-    expect(panelNote()).toBe(NO_PLAN_TEXT);
-    expect(document.querySelector('.recap-plan-items')).toBeNull();
-  });
-
-  it.each([
-    ['the budget is spent', status(429, { ok: false, error: 'made up', busy: 'spent' }), budgetText(RECAP_DAILY_BUDGET)],
-    ['recaps are off', status(409, { ok: false, error: 'made up' }), PLAN_OFF_TEXT],
-    ['there is no transcript', status(404, { ok: false, error: 'made up' }), PLAN_NO_TRANSCRIPT_TEXT],
-    ['the call failed, in pitwall’s words', status(502, { ok: false, error: "The plan status call's answer wasn't the JSON pitwall asked for." }), "The plan status call's answer wasn't the JSON pitwall asked for."],
-    ['anything else', status(500), planFailedText(500)],
-    ['pitwall is making as many as it does at a time, for other sessions', status(429, { ok: false, error: 'made up', busy: 'running', others: true }), PLAN_FULL_TEXT],
-  ])('says why when %s', async (_name, answer, text) => {
-    const server = planApi({ posts: [answer] });
-    renderStrip({ session: target(full()) }, server.api);
-    await press();
-    expect(panelNote()).toBe(text);
-    expect(button()?.hasAttribute('aria-busy')).toBe(false);
-  });
-
-  it('asks for nothing while the snapshot says the budget is spent, and says so', async () => {
-    const server = planApi();
-    renderStrip({ session: target(full()), health: SPENT }, server.api);
-    await press();
-    expect(server.planPosts()).toBe(0);
-    expect(panelNote()).toBe(budgetText(RECAP_DAILY_BUDGET));
-  });
-
-  it('after a 429 running, stays busy until the snapshot says the other request made one, then fetches it', async () => {
-    const server = planApi({ stored: PLAN, posts: [status(429, { ok: false, error: 'made up', busy: 'running' })] });
-    const view = renderStrip({ session: target(full()) }, server.api);
-    await press();
-    expect(button()?.getAttribute('aria-busy')).toBe('true');
-    expect(panelNote()).toBe(PLAN_STATUS_BUSY);
-    view.update({ session: target(full(), { planStatusAt: PLAN.at }) });
-    await settle();
-    expect(server.planGets()).toBe(1);
-    expect(items()).toHaveLength(4);
-    expect(button()?.hasAttribute('aria-busy')).toBe(false);
-  });
-
-  it('says "Plan status ready." once to a screen reader when Reading… ends, and nothing for a newer one from a snapshot', async () => {
-    let finish: (result: ApiResult) => void = () => undefined;
-    const server = planApi({ stored: PLAN, posts: [new Promise<ApiResult>((resolve) => (finish = resolve))] });
-    const view = renderStrip({ session: target(full()) }, server.api);
-    // There, empty, once the recap and its button are, before anything is pressed.
-    await settle();
-    const region = document.querySelector<HTMLElement>('.recap-plan [role="status"]')!;
-    expect(region.textContent).toBe('');
-    await press();
-    expect(region.textContent).toBe('');
-    await act(async () => {
-      finish(ok({ ok: true, status: PLAN }));
-    });
-    await settle();
-    expect(region.textContent).toBe(PLAN_STATUS_READY);
-    let changes = 0;
-    const observer = new MutationObserver((records) => (changes += records.length));
-    observer.observe(region, { childList: true, characterData: true, subtree: true });
-    view.update({ session: target(full(), { planStatusAt: minutesAgo(0) }) });
-    await settle();
-    expect(server.planGets()).toBe(1);
-    observer.disconnect();
-    expect(changes).toBe(0);
-    // Closed, it says nothing.
-    fireEvent.click(document.querySelector<HTMLButtonElement>('.recap-plan-close')!);
-    await settle();
-    expect(region.textContent).toBe('');
-  });
-
-  it('says the error once to a screen reader when Reading… ends without a plan status', async () => {
-    const reason = "The plan status call's answer wasn't the JSON pitwall asked for.";
-    const server = planApi({ posts: [status(502, { ok: false, error: reason })] });
-    renderStrip({ session: target(full()) }, server.api);
-    await press();
-    expect(document.querySelector('.recap-plan [role="status"]')?.textContent).toBe(reason);
-  });
-
-  it('reads the plan status defensively', () => {
-    expect(parsePlanStatus(PLAN)).toEqual(PLAN);
-    expect(parsePlanStatus({ ...PLAN, items: [{ text: 'x', state: 'blocked' }] })).toBeUndefined();
-    expect(parsePlanStatus({ ...PLAN, items: [] })).toBeUndefined();
-    expect(parsePlanStatus({ found: false, items: [], at: PLAN.at, throughAt: PLAN.throughAt })).toEqual({ found: false, items: [], at: PLAN.at, throughAt: PLAN.throughAt });
-    expect(parsePlanStatus({ found: false, plan: 'x', items: [], at: PLAN.at, throughAt: PLAN.throughAt })).toBeUndefined();
-    expect(parsePlanStatus({ ...PLAN, at: 'not a time' })).toBeUndefined();
+    // No plan UI without a recap (W172).
+    expect(strip()?.querySelector('.recap-plan')).toBeNull();
   });
 });
 
@@ -886,18 +675,30 @@ describe('the picture (W150)', () => {
     plan: 'The made-up export plan: #42, then the archive job, on #42 now',
   };
   const pictured = (extra: Partial<SessionRecap> = {}) => full({ ...PICTURE, ...extra });
-  const line = (name: string) => document.querySelector<HTMLElement>(`.recap-line[data-line="${name}"]`);
+  const line = (name: string) => document.querySelector<HTMLElement>(`[data-line="${name}"]`);
   const text = (name: string) => line(name)?.textContent;
+  const planToggle = () => document.querySelector<HTMLButtonElement>('.recap-plan-toggle');
+  const planLine = () => document.querySelector('.recap-plan-line')?.textContent;
+  const planItems = () => [...document.querySelectorAll('.recap-plan-item')].map((li) => [li.querySelector('.recap-plan-item-text')?.textContent, li.querySelector('.recap-plan-state')?.textContent]);
+  const ITEMS = [
+    { text: '#42: the 32-bit size field fix', state: 'now' as const },
+    { text: 'The archive job reuses it', state: 'next' as const },
+    { text: 'The old 2 GB guard', state: 'dropped' as const },
+    { text: '#40: the reader', state: 'done' as const },
+  ];
 
-  it('shows the goal, what it is working on, the plan with Show plan, and only your to-dos, with no tags and no summary', async () => {
+  it('shows the goal, what it is working on, the Plan section, and only your to-dos, with no tags and no summary', async () => {
     const recap = pictured();
     renderStrip({ session: target(recap) }, fakeApi({ recap }).api);
     await settle();
     expect(strip()?.dataset.picture).toBe('');
     expect(text('goal')).toBe(`Goal: ${PICTURE.goal}`);
     expect(text('working-on')).toBe(`Working on: ${PICTURE.workingOn}`);
-    expect(line('plan')?.querySelector('.recap-line-text')?.textContent).toBe(PICTURE.plan);
-    expect(line('plan')?.querySelector('[data-plan-status]')?.textContent).toBe('Show plan');
+    // A recap stored before W172: the plan's line under a plain heading, nothing to open.
+    expect(line('plan')?.querySelector('h4')?.textContent).toBe('Plan');
+    expect(planLine()).toBe(PICTURE.plan);
+    expect(planToggle()).toBeNull();
+    expect(document.querySelector('.recap-plan-items')).toBeNull();
     expect(line('for-you')?.querySelector('.recap-label')?.textContent).toBe('For you (2):');
     expect(todos()).toEqual([
       ['Say whether to mark #42 ready', undefined],
@@ -909,21 +710,21 @@ describe('the picture (W150)', () => {
     expect(strip()?.textContent).not.toContain('Review #42');
     expect(summaryText()).toBeUndefined();
     // In order: goal, working on, plan, for you.
-    const order = [...document.querySelectorAll('.recap-line')].map((each) => (each as HTMLElement).dataset.line);
+    const order = [...document.querySelectorAll('[data-line]')].map((each) => (each as HTMLElement).dataset.line);
     expect(order).toEqual(['goal', 'working-on', 'plan', 'for-you']);
     // Waiting on you: no quiet line, the to-dos say it.
     expect(document.querySelector('.recap-waiting')).toBeNull();
   });
 
-  it('says quietly what else it waits on, says when nothing is left, and names no plan when the recap has none', async () => {
+  it('says quietly what else it waits on, says when nothing is left, and has no Plan section when the recap names no plan', async () => {
     const ci = pictured({ waitingOn: 'CI', todos: [{ text: 'Finish the checks on #42', owner: 'CI' }], plan: '' });
     const view = renderStrip({ session: target(ci) }, fakeApi({ recap: ci }).api);
     await settle();
     expect(document.querySelector('.recap-waiting')?.textContent).toBe('Waiting on CI.');
     expect(line('for-you')).toBeNull();
     expect(note()).toBe('Waiting on CI.');
-    expect(line('plan')?.querySelector('.recap-line-text')?.textContent).toBe(NO_PLAN_LINE);
-    expect(line('plan')?.querySelector('[data-plan-status]')).not.toBeNull();
+    expect(line('plan')).toBeNull();
+    expect(strip()?.textContent).not.toContain('Plan');
     view.unmount();
     const done = pictured({ waitingOn: 'nothing', todos: [] });
     renderStrip({ session: target(done) }, fakeApi({ recap: done }).api);
@@ -950,36 +751,83 @@ describe('the picture (W150)', () => {
     expect(line('working-on')?.querySelector('.recap-for-you')).toBeNull();
   });
 
-  it('Show plan opens the plan status panel under the Plan line, making one when there is none', async () => {
-    const recap = pictured();
-    const server = fakeApi({ recap, posts: [] });
-    const post = vi.fn<ApiClient['post']>(async (path) => (path === planStatusRefreshPath(SID) ? ok({ ok: true, status: { found: true, plan: 'M2', items: [{ text: 'W1', state: 'now' }], at: minutesAgo(0), throughAt: minutesAgo(1) } }) : status(404)));
-    renderStrip({ session: target(recap) }, { ...server.api, post });
+  it("shows the plan's line beside its toggle, collapsed by default, and opens to the items, each tagged, with no Changes when there are none (W172)", async () => {
+    const recap = pictured({ planItems: ITEMS });
+    renderStrip({ session: target(recap) }, fakeApi({ recap }).api);
     await settle();
-    const show = line('plan')!.querySelector<HTMLButtonElement>('[data-plan-status]')!;
-    expect(show.getAttribute('aria-expanded')).toBe('false');
-    const panel = document.getElementById(show.getAttribute('aria-controls')!)!;
-    expect(panel.hidden).toBe(true);
-    // Right under the Plan line, before your to-dos.
-    expect(line('plan')!.nextElementSibling).toBe(panel);
-    fireEvent.click(show);
-    await settle();
-    expect(post.mock.calls.filter(([path]) => path === planStatusRefreshPath(SID))).toHaveLength(1);
-    expect(show.getAttribute('aria-expanded')).toBe('true');
-    expect(panel.hidden).toBe(false);
-    expect(panel.querySelector('.recap-plan-line')?.textContent).toBe('M2');
-    fireEvent.click(panel.querySelector<HTMLButtonElement>('.recap-plan-close')!);
-    await settle();
-    expect(document.activeElement).toBe(show);
+    const toggle = planToggle()!;
+    expect(toggle.textContent).toBe('Plan');
+    expect(toggle.closest('h4')).not.toBeNull();
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(line('plan')?.dataset.open).toBe('false');
+    // The line is there while it's collapsed, on the toggle's row.
+    expect(toggle.closest('.recap-plan-head')?.querySelector('.recap-plan-line')?.textContent).toBe(PICTURE.plan);
+    const body = document.getElementById(toggle.getAttribute('aria-controls')!)!;
+    expect(body.hidden).toBe(true);
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(body.hidden).toBe(false);
+    expect(screen.getByRole('list', { name: 'Plan items' }).tagName).toBe('OL');
+    expect(planItems()).toEqual([
+      ['#42: the 32-bit size field fix', 'Now'],
+      ['The archive job reuses it', 'Next'],
+      ['The old 2 GB guard', 'Dropped'],
+      ['#40: the reader', 'Done'],
+    ]);
+    const tags = [...document.querySelectorAll('.recap-plan-state')].map((tag) => tag.className);
+    expect(tags[0]).toContain('badge-subtle-info');
+    expect(tags[1]).toContain('badge-subtle-neutral');
+    expect(tags[2]).toContain('badge-outline');
+    expect(tags[3]).toContain('badge-subtle-success');
+    expect(document.querySelector('.recap-plan-changes')).toBeNull();
+    expect(window.localStorage.getItem(RECAP_PLAN_COLLAPSED_KEY)).toBe('false');
   });
 
-  it("shows a recap without the picture, and Claude Code's, as their summary, Plan status under Claude Code's", async () => {
+  it('shows how the plan changed, once open, when it did', async () => {
+    const recap = pictured({ planItems: ITEMS, planChanges: 'The old 2 GB guard was dropped: the fix replaces it.' });
+    renderStrip({ session: target(recap) }, fakeApi({ recap }).api);
+    await settle();
+    expect(document.querySelector<HTMLElement>('.recap-plan-changes')?.closest<HTMLElement>('[hidden]')).not.toBeNull();
+    fireEvent.click(planToggle()!);
+    expect(document.querySelector('.recap-plan-changes')?.textContent).toBe('Changes: The old 2 GB guard was dropped: the fix replaces it.');
+  });
+
+  it("remembers the Plan section's choice apart from the strip's, and reads anything but \"false\" as collapsed", async () => {
+    const recap = pictured({ planItems: ITEMS });
+    const view = renderStrip({ session: target(recap) }, fakeApi({ recap }).api);
+    await settle();
+    fireEvent.click(planToggle()!);
+    expect(window.localStorage.getItem(RECAP_PLAN_COLLAPSED_KEY)).toBe('false');
+    expect(window.localStorage.getItem(RECAP_COLLAPSED_KEY)).toBeNull();
+    view.unmount();
+    const again = renderStrip({ session: target(recap) }, fakeApi({ recap }).api);
+    await settle();
+    expect(planToggle()?.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(planToggle()!);
+    expect(window.localStorage.getItem(RECAP_PLAN_COLLAPSED_KEY)).toBe('true');
+    again.unmount();
+    window.localStorage.setItem(RECAP_PLAN_COLLAPSED_KEY, 'open');
+    renderStrip({ session: target(recap) }, fakeApi({ recap }).api);
+    await settle();
+    expect(planToggle()?.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('hides the Plan section with the rest of the body while the strip is collapsed', async () => {
+    window.localStorage.setItem(RECAP_COLLAPSED_KEY, 'true');
+    window.localStorage.setItem(RECAP_PLAN_COLLAPSED_KEY, 'false');
+    const recap = pictured({ planItems: ITEMS });
+    renderStrip({ session: target(recap) }, fakeApi({ recap }).api);
+    await settle();
+    expect(line('plan')?.closest<HTMLElement>('.recap-body')?.hidden).toBe(true);
+  });
+
+  it("shows a recap without the picture, and Claude Code's, as their summary, with no plan", async () => {
     const claude = full({ source: 'claude-code', todos: [], title: '', waitingOn: 'nothing', summary: 'The made-up fix is in #42.', ...PICTURE });
     renderStrip({ session: target(claude) }, fakeApi({ recap: claude }).api);
     await settle();
     expect(strip()?.dataset.picture).toBeUndefined();
     expect(summaryText()).toBe('The made-up fix is in #42.');
-    expect(document.querySelector('.recap-summary + .recap-plan-action [data-plan-status]')?.textContent).toBe('Plan status');
+    expect(document.querySelector('.recap-plan')).toBeNull();
     expect(document.querySelector('.recap-line')).toBeNull();
   });
 
@@ -989,5 +837,18 @@ describe('the picture (W150)', () => {
     expect(parseRecap({ ...body, plan: undefined })).not.toHaveProperty('goal');
     expect(parseRecap({ ...body, goal: 3 })).toBeUndefined();
     expect(parseRecap({ ...body, workingOn: 'x'.repeat(500) })?.workingOn?.length).toBeLessThanOrEqual(400);
+  });
+
+  it("reads the plan's items and changes defensively (W172)", () => {
+    const body = { ...full(), ...PICTURE, planItems: ITEMS, planChanges: 'It changed.' };
+    expect(parseRecap(body)).toMatchObject({ planItems: ITEMS, planChanges: 'It changed.' });
+    expect(parseRecap({ ...body, planItems: [{ text: 'x', state: 'blocked' }] })).toBeUndefined();
+    expect(parseRecap({ ...body, planItems: [{ text: 'x', state: 'now', owner: 'you' }] })).toBeUndefined();
+    expect(parseRecap({ ...body, planItems: 'x' })).toBeUndefined();
+    expect(parseRecap({ ...body, planChanges: 3 })).toBeUndefined();
+    expect(parseRecap({ ...body, planItems: Array.from({ length: 20 }, () => ITEMS[0]) })?.planItems).toHaveLength(15);
+    expect(parseRecap({ ...body, planItems: [{ text: 'y'.repeat(300), state: 'now' }] })?.planItems?.[0]?.text.length).toBeLessThanOrEqual(200);
+    // Without the picture's three, none of it.
+    expect(parseRecap({ ...body, plan: undefined })).not.toHaveProperty('planItems');
   });
 });

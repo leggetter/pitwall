@@ -32,6 +32,8 @@ import { childEnvironment } from './server/command.js';
 import { createRelayManager, DEFAULT_PORT, PortInUseError, startServer } from './server/index.js';
 import { createClaudeDefaultsReader } from './server/claudeDefaults.js';
 import { createWorkStore } from './server/work.js';
+import { isPitwallOwn } from './server/own.js';
+import { createUsageSource } from './usage/service.js';
 import { type DirCheckContext, LaunchDirError, pitwallHome, prepareLaunchDir, removeWhenUsed, writeLaunchFile } from './server/launch.js';
 import { RELAY_NAME } from './server/relayPrompt.js';
 import { SUPERVISOR_NAME } from './supervisor/prompt.js';
@@ -49,6 +51,7 @@ export const INTERVAL_MAX_SECONDS = 300;
 export const TOKEN_MIN_DIFFERENT = 8;
 
 export const USAGE = `Usage: pitwall [root...] [--config <path>] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs] [--no-recaps] [--no-supervisor]
+              [--no-usage]
 
 Lists the Claude Code sessions running under each root, in a local web UI.
 The roots default to the config file's, then to the current directory.
@@ -84,6 +87,12 @@ Options:
                         sessions and PRs, and reads a session's latest turns
                         when you ask about it. It messages a session or starts
                         one only after you approve its draft in the page.
+  --no-usage            Don't read your plan's usage percentages, and never run
+                        claude's /usage. Without it, while a pitwall page is
+                        open and visible, pitwall runs /usage with claude -p at
+                        most every 5 minutes, which answers with no model call,
+                        for the header's run rate. The Usage view's token
+                        totals from your transcripts work either way.
   -h, --help            Show this help.
   -v, --version         Show the version.
 
@@ -207,6 +216,8 @@ export type CliCommand =
       recaps: boolean;
       /** False with `--no-supervisor`: pitwall never runs the supervisor. */
       supervisor: boolean;
+      /** False with `--no-usage`: pitwall never runs `/usage` (W159). */
+      usage: boolean;
     };
 
 export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): CliCommand {
@@ -224,6 +235,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
         'no-prs': { type: 'boolean' },
         'no-recaps': { type: 'boolean' },
         'no-supervisor': { type: 'boolean' },
+        'no-usage': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'v' },
       },
@@ -246,6 +258,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     prs: !values['no-prs'],
     recaps: !values['no-recaps'],
     supervisor: !values['no-supervisor'],
+    usage: !values['no-usage'],
   };
 }
 
@@ -589,6 +602,7 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   // environment at each GET, for Preferences' and New session's words.
   const work = createWorkStore({
     ...(config.work === undefined ? {} : { config: config.work }),
+    ...(config.profiles === undefined ? {} : { profiles: config.profiles }),
     ...(config.found ? { configFile: config.file } : {}),
     claude: createClaudeDefaultsReader({ roots: () => roots }),
   });
@@ -600,10 +614,15 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   // The supervisor (M5, W113): started only when the page asks. The index leaves it out, as it does the relay.
   // With --no-supervisor, there's none, and pitwall never runs it.
   const supervisor = command.supervisor ? createSupervisor({ work: () => work.choice('supervisor') }) : undefined;
+  // The Usage view's source (W158): reads the transcripts and the plan's week from `/usage` (W157) only
+  // when the view asks, and the header's run rate (W159) when a visible page asks, against the config
+  // file's weekend reserve. The index leaves its `/usage` call out, as it does a recap call. With
+  // --no-usage, no `/usage` call: the view's transcript totals still work.
+  const usage = createUsageSource({ pitwallHome: pitwallHome(), planReads: command.usage, ...(config.runRate === undefined ? {} : { target: config.runRate }) });
   const indexer = startIndexer({
     roots,
     intervalMs,
-    exclude: (row) => relay.isRelay(row) || recaps?.isOwn(row) === true || supervisor?.isOwn(row) === true,
+    exclude: isPitwallOwn({ relay, recaps, supervisor, usage }),
     ...(recaps === undefined ? {} : { sessionFacts: (facts) => recaps.observe(facts) }),
     relayExchange: (sessionId) => relay.exchange(sessionId),
     relayAlert: () => relay.alert(),
@@ -637,12 +656,14 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
       prs: command.prs ? createPrPoller({ index: indexer, ownersByRoot: ownersByRoot(config, roots) }) : prsOff(),
       ...(recaps === undefined ? {} : { recaps }),
       ...(supervisor === undefined ? {} : { supervisor }),
+      usage,
       ...(command.port === undefined ? {} : { port: command.port }),
     });
   } catch (error) {
     indexer.stop();
     void recaps?.close();
     void supervisor?.close();
+    usage.close();
     if (error instanceof PortInUseError) {
       console.error(
         `pitwall: port ${error.port} on 127.0.0.1 is already in use. Pick another with --port <n>, or use --port 0 for a free one.`,

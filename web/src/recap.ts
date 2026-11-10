@@ -30,11 +30,18 @@
 //   what it's working on and why, and the plan's line (recapPicture()). The strip shows those, and of
 //   the to-dos only yours, since what's next is the conversation's. One without them, stored before
 //   W150 or Claude Code's own, shows its summary as before.
+// - **The plan's items** (W172, the plan is part of the recap): since W172 the recap also has the
+//   plan's items, each Done, Now, Next or Dropped, and how the plan changed, which the strip shows
+//   as the picture's Plan section. W123's Plan status, a call of its own, is gone.
 //
-// Only one thing is stored: whether the strip is collapsed, a boolean, per viewer (D14).
+// Only two things are stored, per viewer (D14): whether the strip is collapsed, and whether its Plan
+// section is, each a boolean.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  PLAN_ITEM_MAX,
+  PLAN_ITEM_STATES,
+  PLAN_ITEMS_MAX,
   RECAP_DAILY_BUDGET,
   RECAP_FIELD_MAX,
   RECAP_TODO_OWNERS,
@@ -42,6 +49,8 @@ import {
   RECAP_WAITING_ON,
   recapPath,
   recapRefreshPath,
+  type PlanItem,
+  type PlanItemState,
   type RecapHealth,
   type RecapSummary,
   type RecapTodo,
@@ -51,7 +60,7 @@ import {
   type SessionSummary,
 } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
-import type { BadgeLook } from './sessions.js';
+import { needsAttention, WAITING_ON_TEXT, waitingElsewhere, type BadgeLook } from './sessions.js';
 import { couldNot, plainText } from './format.js';
 import { browserStorage, type StorageSource } from './groupState.js';
 import { ATTACH_DELAY_MS, cssTime } from './timing.js';
@@ -91,13 +100,41 @@ export function useRecapCollapsed(storage: StorageSource = browserStorage): [boo
   return [collapsed, set];
 }
 
-/** What a session waits on, other than nothing, as line 2 says it. */
-export const WAITING_ON_TEXT: Readonly<Record<Exclude<RecapWaitingOn, 'nothing'>, string>> = {
-  you: 'Waiting on you',
-  CI: 'Waiting on CI',
-  'another session': 'Waiting on another session',
-  'someone else': 'Waiting on someone else',
-};
+/** Whether the picture's Plan section is collapsed (W172): "true" or "false", nothing else (D14). */
+export const RECAP_PLAN_COLLAPSED_KEY = 'pitwall.recap-plan-collapsed.v1';
+
+/** The Plan section's choice: collapsed unless "false" is stored, so it starts collapsed, and when it can't be read. */
+export function readPlanCollapsed(storage: StorageSource = browserStorage): boolean {
+  try {
+    return storage()?.getItem(RECAP_PLAN_COLLAPSED_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+export function writePlanCollapsed(collapsed: boolean, storage: StorageSource = browserStorage): void {
+  try {
+    storage()?.setItem(RECAP_PLAN_COLLAPSED_KEY, collapsed ? 'true' : 'false');
+  } catch {
+    // Blocked or full: the choice lasts until the page reloads.
+  }
+}
+
+/** The Plan section's choice (W172), read once, and a setter that stores it, as useRecapCollapsed() does the strip's. */
+export function usePlanCollapsed(storage: StorageSource = browserStorage): [boolean, (collapsed: boolean) => void] {
+  const [collapsed, setCollapsed] = useState(() => readPlanCollapsed(storage));
+  const set = useCallback(
+    (next: boolean) => {
+      setCollapsed(next);
+      writePlanCollapsed(next, storage);
+    },
+    [storage],
+  );
+  return [collapsed, set];
+}
+
+// What a session waits on, as line 2 and the badges say it: in sessions.ts, which statusBadge() is in.
+export { WAITING_ON_TEXT } from './sessions.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -118,10 +155,20 @@ export function cutText(text: string, max: number): string {
 
 /** A to-do from recapPath()'s body: exactly a string text and a known owner, the text cut to RECAP_FIELD_MAX. */
 function parseTodo(raw: unknown): RecapTodo | undefined {
-  if (!isRecord(raw) || Object.keys(raw).length !== 2) return undefined;
-  const { text, owner } = raw;
+  if (!isRecord(raw)) return undefined;
+  const { text, owner, after } = raw;
+  // W166's `after`, when there is one, is a third key; the page has no use for it.
+  if (Object.keys(raw).length !== (after === undefined ? 2 : 3) || (after !== undefined && typeof after !== 'boolean')) return undefined;
   if (typeof text !== 'string' || typeof owner !== 'string' || !(RECAP_TODO_OWNERS as readonly string[]).includes(owner)) return undefined;
   return { text: cutText(text, RECAP_FIELD_MAX), owner: owner as RecapTodoOwner };
+}
+
+/** A plan item from recapPath()'s body (W172): exactly a string text and a known state, the text cut to PLAN_ITEM_MAX. */
+function parsePlanItem(raw: unknown): PlanItem | undefined {
+  if (!isRecord(raw) || Object.keys(raw).length !== 2) return undefined;
+  const { text, state } = raw;
+  if (typeof text !== 'string' || typeof state !== 'string' || !(PLAN_ITEM_STATES as readonly string[]).includes(state)) return undefined;
+  return { text: cutText(text, PLAN_ITEM_MAX), state: state as PlanItemState };
 }
 
 /**
@@ -129,12 +176,17 @@ function parseTodo(raw: unknown): RecapTodo | undefined {
  * known `waitingOn`, `source` and owner for each to-do, and times that are times; anything else is no
  * recap. The summary, each to-do and the title are cut to RECAP_FIELD_MAX, and the to-dos to
  * RECAP_TODOS_MAX, as the server should already have them. W150's goal, working on and plan are kept,
- * cut the same way, only when all three are text; one that isn't text makes it no recap.
+ * cut the same way, only when all three are text; one that isn't text makes it no recap. W172's plan
+ * items, each exactly a text and a known state, the first PLAN_ITEMS_MAX, and its changes are kept
+ * with a plan's line; items that aren't that, or changes that aren't text, make it no recap.
  */
 export function parseRecap(body: unknown): SessionRecap | undefined {
   if (!isRecord(body)) return undefined;
-  const { summary, todos, waitingOn, title, at, throughAt, source, stale, goal, workingOn, plan } = body;
-  for (const field of [goal, workingOn, plan]) if (field !== undefined && typeof field !== 'string') return undefined;
+  const { summary, todos, waitingOn, title, at, throughAt, source, stale, goal, workingOn, plan, planItems, planChanges } = body;
+  for (const field of [goal, workingOn, plan, planChanges]) if (field !== undefined && typeof field !== 'string') return undefined;
+  if (planItems !== undefined && !Array.isArray(planItems)) return undefined;
+  const items = planItems === undefined ? undefined : planItems.slice(0, PLAN_ITEMS_MAX).map(parsePlanItem);
+  if (items?.some((item) => item === undefined)) return undefined;
   if (typeof summary !== 'string' || typeof title !== 'string' || !Array.isArray(todos)) return undefined;
   if (typeof waitingOn !== 'string' || !(RECAP_WAITING_ON as readonly string[]).includes(waitingOn)) return undefined;
   if (source !== 'pitwall' && source !== 'claude-code') return undefined;
@@ -155,17 +207,23 @@ export function parseRecap(body: unknown): SessionRecap | undefined {
     recap.goal = cutText(goal, RECAP_FIELD_MAX);
     recap.workingOn = cutText(workingOn, RECAP_FIELD_MAX);
     recap.plan = cutText(plan, RECAP_FIELD_MAX);
+    if (items !== undefined) recap.planItems = items as PlanItem[];
+    if (typeof planChanges === 'string' && planChanges !== '') recap.planChanges = cutText(planChanges, RECAP_FIELD_MAX);
   }
   if (stale === true) recap.stale = true;
   return recap;
 }
 
-/** W150's picture of a recap: its goal, what it's working on and its plan's line, as plain text. */
+/** W150's picture of a recap: its goal, what it's working on and its plan's line, as plain text, and since W172 the plan's items and changes. */
 export interface RecapPicture {
   goal: string;
   workingOn: string;
-  /** Empty when the recap names no plan. */
+  /** Empty when the recap names no plan: then there's no Plan section (W172). */
   plan: string;
+  /** The plan's items, their texts plain (W172). Absent, or empty, for a plan with none: the section has nothing to open. */
+  items?: PlanItem[];
+  /** How the plan changed, plain (W172). Absent when it records no change. */
+  changes?: string;
 }
 
 /**
@@ -178,17 +236,47 @@ export function recapPicture(recap: SessionRecap): RecapPicture | undefined {
   const goal = plainText(recap.goal).trim();
   const workingOn = plainText(recap.workingOn).trim();
   if (goal === '' || workingOn === '') return undefined;
-  return { goal, workingOn, plan: plainText(recap.plan).trim() };
+  const plan = plainText(recap.plan).trim();
+  const picture: RecapPicture = { goal, workingOn, plan };
+  if (plan === '') return picture;
+  const items = (recap.planItems ?? []).map(({ text, state }) => ({ text: plainText(text).trim(), state })).filter((item) => item.text !== '');
+  if (items.length > 0) picture.items = items;
+  const changes = recap.planChanges === undefined ? '' : plainText(recap.planChanges).trim();
+  if (changes !== '') picture.changes = changes;
+  return picture;
 }
 
 /** The picture's labels (W150). */
 export const GOAL_LABEL = 'Goal:';
 export const WORKING_ON_LABEL = 'Working on:';
-export const PLAN_LABEL = 'Plan:';
+/** The Plan section's heading, a disclosure when it has items (W172). */
+export const PLAN_LABEL = 'Plan';
+/** Before the plan's changes, in its open section (W172). */
+export const PLAN_CHANGES_LABEL = 'Changes:';
 /** "For you (2):", before your to-dos. */
 export const forYouLabel = (count: number) => `For you (${count.toLocaleString('en-US')}):`;
-/** The plan line when the recap names none: Show plan can still look. */
-export const NO_PLAN_LINE = 'None named.';
+
+/** Each plan item's state as its tag says it (W123, W172). */
+export const PLAN_STATE_TEXT: Readonly<Record<PlanItemState, string>> = {
+  done: 'Done',
+  now: 'Now',
+  next: 'Next',
+  dropped: 'Dropped',
+};
+
+/** A plan item's tag: Now in the info tone, Done in success's, Next quiet, Dropped an outline. */
+export function planStateLook(state: PlanItemState): BadgeLook {
+  switch (state) {
+    case 'done':
+      return 'subtle-success';
+    case 'now':
+      return 'subtle-info';
+    case 'next':
+      return 'subtle-neutral';
+    case 'dropped':
+      return 'outline';
+  }
+}
 
 /**
  * The quiet line under the picture when the session waits on CI, someone else or another session
@@ -270,11 +358,39 @@ export function recapsStripText(health: RecapHealth | undefined): string | undef
  * recap older than its latest turn, nor from Claude Code's, which says nothing of what it waits on.
  */
 export function quietWaitingOn(session: SessionSummary, needsYou: boolean): string | undefined {
-  const recap = session.recap;
-  if (!recap || recap.stale || recap.source !== 'pitwall' || needsYou || session.ended) return undefined;
-  if (recap.waitingOn === 'you' || recap.waitingOn === 'nothing') return undefined;
+  const waiting = waitingElsewhere(session);
+  if (waiting === undefined || needsYou) return undefined;
   if (session.status === 'busy' || (session.alive && session.state === 'working')) return undefined;
-  return WAITING_ON_TEXT[recap.waitingOn];
+  // A done job's badge says it already, in Done's place (W170).
+  if (session.state === 'done') return undefined;
+  return WAITING_ON_TEXT[waiting];
+}
+
+/**
+ * The PR the session view names after its badge (W170): the one its job's own file links, while its
+ * recap says it waits on someone else, CI or another session, as waitingPr() has it. `owner/name#n`, and its GitHub address.
+ * The index takes the repo and number only from an exact PR URL (src/index/jobs.ts), so the address
+ * is one.
+ */
+export function waitingPrLink(session: SessionSummary): { text: string; url: string } | undefined {
+  const pr = session.jobPr;
+  // When the row's line 2 would name it: not while it needs you, nor while it works (W170's review).
+  if (pr === undefined || waitingPr(session, needsAttention(session)) === undefined) return undefined;
+  return { text: `${pr.repo}#${pr.number}`, url: `https://github.com/${pr.repo}/pull/${pr.number}` };
+}
+
+/**
+ * The pull request a session waiting on someone else, on CI or on another session waits on, as line 2
+ * names it, "#6089" (W170): the one its job's own file links (SessionSummary.jobPr); the session view
+ * names its repo too. None while it needs you, while it works, unless its job is done, and while the
+ * row shows that PR's own badge already (`shown`, the open PRs it owns).
+ */
+export function waitingPr(session: SessionSummary, needsYou: boolean, shown: readonly { repo: string; number: number }[] = []): string | undefined {
+  const pr = session.jobPr;
+  if (pr === undefined || needsYou || waitingElsewhere(session) === undefined) return undefined;
+  if (session.state !== 'done' && (session.status === 'busy' || (session.alive && session.state === 'working'))) return undefined;
+  if (shown.some((owned) => owned.repo.toLowerCase() === pr.repo && owned.number === pr.number)) return undefined;
+  return `#${pr.number}`;
 }
 
 /**

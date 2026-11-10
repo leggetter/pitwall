@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from 'node:fs/p
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CACHE_SETTLE_MS, createJobReader, JOB_FILE_MAX_BYTES, NEEDS_MAX, needsText, parseJobState, parseSavedPermission, readSavedPermission } from './jobs.js';
+import { CACHE_SETTLE_MS, CHILDREN_MAX, createJobReader, JOB_FILE_MAX_BYTES, NEEDS_MAX, needsText, onlyPrOf, parseJobState, parseSavedPermission, readSavedPermission } from './jobs.js';
 
 // Synthetic job folders, shaped like Claude Code 2.1.311's `~/.claude/jobs/<shortId>/state.json`
 // (spike 007, finding 1). Made up: never a real job's file.
@@ -50,6 +50,57 @@ describe('parseJobState', () => {
     }
     expect(parseJobState(state({ needs: 42 }), SID)).toEqual({ kind: 'unknown' });
     expect(parseJobState(state({ needs: { text: 'Tea?' } }), SID)).toEqual({ kind: 'unknown' });
+  });
+});
+
+describe("a job's one PR, from its children (W170)", () => {
+  // Shaped like Claude Code 2.1.316's `children`, `{ kind, id, href }`, with made-up repos.
+  const child = (n: number, repo = 'example/demo-app') => ({ kind: 'pr', id: String(n), href: `https://github.com/${repo}/pull/${n}` });
+
+  it('takes the one PR its children link, beside its line or none', () => {
+    expect(parseJobState(state({ state: 'done', children: [child(6089)] }), SID)).toEqual({ kind: 'none', pr: { repo: 'example/demo-app', number: 6089 } });
+    expect(parseJobState(state({ needs: 'Tea?', children: [child(42, 'Example/Demo-App')] }), SID)).toEqual({ kind: 'needs', text: 'Tea?', pr: { repo: 'example/demo-app', number: 42 } });
+    // The same PR twice is still one.
+    expect(onlyPrOf([child(7), child(7)])).toEqual({ repo: 'example/demo-app', number: 7 });
+  });
+
+  it('takes none for more than one PR, or none at all', () => {
+    expect(onlyPrOf([child(7), child(8)])).toBeUndefined();
+    expect(onlyPrOf([child(7), child(7, 'example/other')])).toBeUndefined();
+    expect(onlyPrOf([])).toBeUndefined();
+    expect(parseJobState(state({ children: [child(7), child(8)] }), SID)).toEqual({ kind: 'none' });
+  });
+
+  it('passes over what isn’t a PR URL, or isn’t a pr entry, without making the file unknown', () => {
+    const others = [
+      { kind: 'frame', id: 'plan.html', href: 'https://example.com/plan.html', title: 'A made-up frame' },
+      { kind: 'pr', id: '9', href: 'https://github.com/example/demo-app/pull/9/files' },
+      { kind: 'pr', id: '9', href: 'http://github.com/example/demo-app/pull/9' },
+      { kind: 'pr', id: '9', href: 'https://github.example.com/example/demo-app/pull/9' },
+      { kind: 'pr', id: '9', href: 'https://github.com/example/../pull/9' },
+      { kind: 'pr', id: '9', href: 'https://github.com/example/demo-app/pull/0' },
+      { kind: 'pr', id: '9', href: 'javascript:alert(1)' },
+      { kind: 'pr', id: '9', href: 42 },
+      { kind: 'pr', id: '9' },
+      'https://github.com/example/demo-app/pull/9',
+      null,
+    ];
+    expect(onlyPrOf(others)).toBeUndefined();
+    expect(onlyPrOf([...others, child(6089)])).toEqual({ repo: 'example/demo-app', number: 6089 });
+    expect(parseJobState(state({ needs: 'Tea?', children: others }), SID)).toEqual({ kind: 'needs', text: 'Tea?' });
+  });
+
+  it('takes none from children that aren’t an array, or are too many to look at', () => {
+    for (const children of [{}, { pr: child(7) }, 'https://github.com/example/demo-app/pull/7', 7, null]) {
+      expect(onlyPrOf(children), JSON.stringify(children)).toBeUndefined();
+      expect(parseJobState(state({ children }), SID)).toEqual({ kind: 'none' });
+    }
+    expect(onlyPrOf(Array.from({ length: CHILDREN_MAX + 1 }, () => child(7)))).toBeUndefined();
+    expect(onlyPrOf(Array.from({ length: CHILDREN_MAX }, () => child(7)))).toEqual({ repo: 'example/demo-app', number: 7 });
+  });
+
+  it('is unknown for another session’s file, whatever its children say', () => {
+    expect(parseJobState(state({ sessionId: '88888888-8888-4888-8888-888888888888', children: [child(7)] }), SID)).toEqual({ kind: 'unknown' });
   });
 });
 

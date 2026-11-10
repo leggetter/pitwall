@@ -8,6 +8,7 @@ import {
   newestLinks,
   openedByGh,
   openedByMcp,
+  prRefOfUrl,
   prUrlsIn,
   pruneLinks,
   pushedIn,
@@ -305,6 +306,27 @@ describe('the links', () => {
     const at = Date.parse('2026-10-16T12:00:00.000Z');
     expect(toPrLink({ kind: 'opened', repo: 'example/demo-app', number: 12, at })).toEqual({ kind: 'opened', repo: 'example/demo-app', number: 12, lastAt: '2026-10-16T12:00:00.000Z' });
     expect(toPrLink({ kind: 'pushed', repo: 'example/demo-app', branch: 'main', at })).toEqual({ kind: 'pushed', repo: 'example/demo-app', branch: 'main', lastAt: '2026-10-16T12:00:00.000Z' });
+  });
+});
+
+describe('prRefOfUrl (W170)', () => {
+  it('takes exactly a PR URL, with the repo lowercase', () => {
+    expect(prRefOfUrl('https://github.com/Example/Demo-App/pull/6089')).toEqual({ repo: 'example/demo-app', number: 6089 });
+  });
+
+  it('refuses anything else', () => {
+    for (const url of [
+      'https://github.com/example/demo-app/pull/6089/',
+      'https://github.com/example/demo-app/pull/6089#top',
+      'https://github.com/example/demo-app/issues/6089',
+      'https://github.com/example/../pull/1',
+      'https://github.com/example/demo-app/pull/0',
+      ' https://github.com/example/demo-app/pull/1',
+      42,
+      undefined,
+    ]) {
+      expect(prRefOfUrl(url), String(url)).toBeUndefined();
+    }
   });
 });
 

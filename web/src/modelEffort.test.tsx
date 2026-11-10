@@ -2,11 +2,11 @@
 // fake server, and W122's words for Claude Code's resolved defaults. Made-up values only.
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { SPAWN_PATH, WORK_PATH, type ClaudeDefaults, type IndexSnapshot, type WorkSettings } from '../../src/shared/protocol.js';
+import { SPAWN_PATH, WORK_PATH, type ClaudeDefaults, type IndexSnapshot, type WorkProfile, type WorkSettings } from '../../src/shared/protocol.js';
 import { ApiContext, createApiClient, type FetchLike } from './api.js';
 import { NewSessionDialog } from './components/NewSessionDialog.js';
 import { recapCostText, supervisorCostText, WorkPreferences } from './components/Preferences.js';
-import { choiceText, choiceValues, claudeText, defaultText, modelText, readWorkSettings, sessionDefaultText, usdText, withOverride } from './modelEffort.js';
+import { choiceText, choiceValues, claudeText, defaultText, modelText, profileHint, readProfiles, readWorkSettings, sessionDefaultText, subagentsDefaultText, usdText, withOverride } from './modelEffort.js';
 import { group, session, snapshot } from './test/fixtures.js';
 
 const API_KEY = 'k'.repeat(43);
@@ -383,5 +383,185 @@ describe("New session's Model and Effort (W119)", () => {
     await settle();
     expect(optionTexts(screen.getByLabelText(/^Effort/) as HTMLSelectElement)).toEqual(['Default', 'low', 'medium', 'high', 'xhigh', 'max']);
     expect(optionTexts(screen.getByLabelText(/^Model/) as HTMLSelectElement)[1]).toBe('sonnet');
+    // No profiles, so no Profile field claims one: none is sent (W155).
+    expect(screen.queryByLabelText(/^Profile/)).toBeNull();
+  });
+});
+
+describe("New session's Profile (W155)", () => {
+  const snap = (): IndexSnapshot => snapshot([group({ key: REPO, label: 'demo-app', sessions: [session({ name: 'demo-docs', cwd: REPO })] })]);
+  const PROFILES: WorkProfile[] = [
+    { name: 'Build', model: 'claude-opus-5-5', effort: 'high', subagentModel: 'sonnet', source: 'built-in' },
+    { name: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet', skill: 'agent-roles:role-reviewer', source: 'config' },
+    { name: 'Security review', model: 'claude-opus-5-5', effort: 'xhigh', subagentModel: 'opus', source: 'built-in' },
+    { name: 'Docs', model: 'sonnet', effort: 'medium', subagentModel: 'sonnet', source: 'built-in' },
+    { name: 'Loose', source: 'config' },
+  ];
+
+  function renderDialog(fetch: FetchLike) {
+    const api = createApiClient({ apiKey: API_KEY, fetch });
+    return render(
+      <ApiContext.Provider value={api}>
+        <NewSessionDialog snapshot={snap()} onClose={() => {}} onStarted={() => {}} />
+      </ApiContext.Provider>,
+    );
+  }
+  const fields = () => ({
+    profile: screen.getByLabelText('Profile') as HTMLSelectElement,
+    model: screen.getByLabelText(/^Model/) as HTMLSelectElement,
+    effort: screen.getByLabelText(/^Effort/) as HTMLSelectElement,
+    subagents: screen.getByLabelText(/^Sub-agents/) as HTMLSelectElement,
+  });
+  const shownProfile = (select: HTMLSelectElement) => select.options[select.selectedIndex]?.textContent;
+  async function start(fetch: ReturnType<typeof fakeServer>) {
+    fireEvent.change(screen.getByLabelText('First prompt'), { target: { value: 'go' } });
+    fireEvent.submit(document.querySelector('form')!);
+    await settle();
+    return posts(fetch, SPAWN_PATH);
+  }
+
+  it('starts on Build, filling Model, Effort and Sub-agents with its own; the request names it and sends all three', async () => {
+    const fetch = fakeServer(settings({ profiles: PROFILES }));
+    renderDialog(fetch);
+    await settle();
+    const { profile, model, effort, subagents } = fields();
+    expect(optionTexts(profile)).toEqual(['Build', 'Review', 'Security review', 'Docs', 'Loose']);
+    expect([shownProfile(profile), model.value, effort.value, subagents.value]).toEqual(['Build', 'claude-opus-5-5', 'high', 'sonnet']);
+    // Build's full name is a choice of its own, never "Other…".
+    expect(optionTexts(model)).toContain('claude-opus-5-5');
+    expect(screen.queryByLabelText('Model alias or full name')).toBeNull();
+    // Sub-agents: pitwall's default for them first, then the same models as Model's, as far as sub-agents take them.
+    expect(optionTexts(subagents)).toEqual(['Default: haiku', "Claude Code's default", 'sonnet', 'opus', 'haiku', 'claude-opus-5-5']);
+    expect(subagents.getAttribute('aria-describedby')).toBe(screen.getByText("For sub-agents that don't name their own model.").id);
+    // Build has no skill: no line, and nothing for Profile to be described by.
+    expect(screen.queryByText(/^Starts with/)).toBeNull();
+    expect(profile.getAttribute('aria-describedby')).toBeNull();
+    expect(await start(fetch)).toEqual([{ cwd: REPO, prompt: 'go', profile: 'Build', model: 'claude-opus-5-5', effort: 'high', subagentModel: 'sonnet' }]);
+  });
+
+  it("a pick fills all three and says the profile's skill; a change to any of them shows Customized, which keeps the skill (Phil, 2026-11-09)", async () => {
+    const fetch = fakeServer(settings({ profiles: PROFILES }));
+    renderDialog(fetch);
+    await settle();
+    fireEvent.change(fields().profile, { target: { value: 'Review' } });
+    expect([shownProfile(fields().profile), fields().model.value, fields().effort.value, fields().subagents.value]).toEqual(['Review', 'sonnet', 'high', 'sonnet']);
+    const line = screen.getByText('Starts with /agent-roles:role-reviewer, which must be installed where the session runs.');
+    expect(fields().profile.getAttribute('aria-describedby')).toBe(line.id);
+
+    for (const [field, value, own] of [
+      ['model', 'opus', 'sonnet'],
+      ['effort', 'xhigh', 'high'],
+      ['subagents', 'haiku', 'sonnet'],
+    ] as const) {
+      fireEvent.change(fields()[field], { target: { value } });
+      expect(shownProfile(fields().profile)).toBe('Customized');
+      expect(screen.getByText("Starts with /agent-roles:role-reviewer, the Review profile's skill, which must be installed where the session runs.")).toBeTruthy();
+      // Back to the profile's own: no longer Customized.
+      fireEvent.change(fields()[field], { target: { value: own } });
+      expect(shownProfile(fields().profile)).toBe('Review');
+    }
+    fireEvent.change(fields().model, { target: { value: 'opus' } });
+    expect(await start(fetch)).toEqual([{ cwd: REPO, prompt: 'go', profile: 'Review', model: 'opus', effort: 'high', subagentModel: 'sonnet' }]);
+  });
+
+  it('sends the Sub-agents chosen, Customized', async () => {
+    const fetch = fakeServer(settings({ profiles: PROFILES }));
+    renderDialog(fetch);
+    await settle();
+    fireEvent.change(fields().subagents, { target: { value: 'haiku' } });
+    expect(shownProfile(fields().profile)).toBe('Customized');
+    expect(await start(fetch)).toEqual([{ cwd: REPO, prompt: 'go', profile: 'Build', model: 'claude-opus-5-5', effort: 'high', subagentModel: 'haiku' }]);
+  });
+
+  it('picking a profile again after Customized fills all three once more', async () => {
+    const fetch = fakeServer(settings({ profiles: PROFILES }));
+    renderDialog(fetch);
+    await settle();
+    fireEvent.change(fields().model, { target: { value: 'haiku' } });
+    fireEvent.change(fields().subagents, { target: { value: 'haiku' } });
+    expect(shownProfile(fields().profile)).toBe('Customized');
+    fireEvent.change(fields().profile, { target: { value: 'Security review' } });
+    expect([shownProfile(fields().profile), fields().model.value, fields().effort.value, fields().subagents.value]).toEqual(['Security review', 'claude-opus-5-5', 'xhigh', 'opus']);
+    fireEvent.change(fields().model, { target: { value: 'sonnet' } });
+    fireEvent.change(fields().profile, { target: { value: 'Security review' } });
+    expect([shownProfile(fields().profile), fields().model.value]).toEqual(['Security review', 'claude-opus-5-5']);
+  });
+
+  it("a field on its first option sends the defaults, or Claude Code's, so the profile's doesn't apply over it", async () => {
+    const fetch = fakeServer(settings({ profiles: PROFILES, effective: { ...settings().effective, session: { model: 'opus' } } }));
+    renderDialog(fetch);
+    await settle();
+    fireEvent.change(fields().model, { target: { value: '' } });
+    fireEvent.change(fields().effort, { target: { value: '' } });
+    fireEvent.change(fields().subagents, { target: { value: '' } });
+    expect(shownProfile(fields().profile)).toBe('Customized');
+    expect(await start(fetch)).toEqual([{ cwd: REPO, prompt: 'go', profile: 'Build', model: 'opus', effort: 'default', subagentModel: 'haiku' }]);
+  });
+
+  it("a profile without a model, effort or sub-agents leaves them on the defaults' first options, and sends none", async () => {
+    const fetch = fakeServer(settings({ profiles: PROFILES }));
+    renderDialog(fetch);
+    await settle();
+    fireEvent.change(fields().profile, { target: { value: 'Loose' } });
+    expect([fields().model.value, fields().effort.value, fields().subagents.value]).toEqual(['', '', '']);
+    expect(shownProfile(fields().profile)).toBe('Loose');
+    expect(await start(fetch)).toEqual([{ cwd: REPO, prompt: 'go', profile: 'Loose' }]);
+  });
+
+  it("doesn't fill over a field changed before the profiles came: Customized", async () => {
+    let answer: (() => void) | undefined;
+    const fetch = fakeServer(settings({ profiles: PROFILES }));
+    const slow = vi.fn<FetchLike>(async (url, init) => {
+      if (pathOf(url) === WORK_PATH && init.method === undefined) await new Promise<void>((resolve) => (answer = resolve));
+      return fetch(url, init);
+    });
+    renderDialog(slow);
+    // No Profile until the profiles come: none would be sent (W155).
+    expect(screen.queryByLabelText('Profile')).toBeNull();
+    const subagents = screen.getByLabelText(/^Sub-agents/) as HTMLSelectElement;
+    expect(optionTexts(subagents)[0]).toBe('Default');
+    fireEvent.change(subagents, { target: { value: 'haiku' } });
+    await act(async () => answer?.());
+    await settle();
+    expect([shownProfile(fields().profile), fields().model.value, fields().subagents.value]).toEqual(['Customized', '', 'haiku']);
+  });
+
+  it('has no Profile when the server lists none', async () => {
+    const fetch = fakeServer(settings());
+    renderDialog(fetch);
+    await settle();
+    expect(screen.queryByLabelText('Profile')).toBeNull();
+    expect(await start(fetch)).toEqual([{ cwd: REPO, prompt: 'go' }]);
+  });
+
+  it("reads the server's profiles defensively: one with a field pitwall doesn't allow, or a name twice, is dropped", () => {
+    expect(
+      readProfiles([
+        { name: 'Good', model: 'sonnet', skill: 'a:b', source: 'config' },
+        { name: 'good', source: 'config' },
+        { name: 'Bad skill', skill: 'a b', source: 'config' },
+        { name: 'Bad model', model: 'opus --x', source: 'config' },
+        { name: 'Bad sub-agents', subagentModel: 'opusplan', source: 'config' },
+        { name: 'Bad effort', effort: 'ultracode', source: 'config' },
+        { name: 'Bad\nname', source: 'config' },
+        { name: 'No source' },
+        'Review',
+      ]),
+    ).toEqual([{ name: 'Good', model: 'sonnet', skill: 'a:b', source: 'config' }]);
+    expect(readProfiles(undefined)).toBeUndefined();
+    expect(readWorkSettings({ ...settings(), profiles: 'all' })?.profiles).toBeUndefined();
+  });
+
+  it("words the profile's skill, and nothing for a profile without one", () => {
+    expect(profileHint({ name: 'X', subagentModel: 'default', source: 'config' }, false)).toBeUndefined();
+    expect(profileHint({ name: 'X', skill: 'a:b', source: 'config' }, false)).toBe('Starts with /a:b, which must be installed where the session runs.');
+    expect(profileHint({ name: 'X', skill: 'a:b', source: 'config' }, true)).toBe("Starts with /a:b, the X profile's skill, which must be installed where the session runs.");
+  });
+
+  it("words Sub-agents' first option: pitwall's default for them, else Claude Code's", () => {
+    expect(subagentsDefaultText(undefined)).toBe('Default');
+    expect(subagentsDefaultText(settings())).toBe('Default: haiku');
+    expect(subagentsDefaultText(settings({ effective: { ...settings().effective, subagents: {} } }))).toBe("Default: Claude Code's");
+    expect(subagentsDefaultText(settings({ effective: { ...settings().effective, subagents: {} }, claude: claude() }))).toBe("Default: the session's model");
   });
 });

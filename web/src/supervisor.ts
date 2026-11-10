@@ -4,18 +4,21 @@
 // never the token. The server is the authority on every check, and on what the supervisor does: the
 // page never starts it by itself, only when you press Start or send it a message.
 //
-// - The view's place: `?supervisor`, with no value, beside the selection, as ?session= and ?pr= are
-//   (openSession.ts, openPr.ts). The third column shows one thing, so opening the supervisor drops
-//   ?session= and ?pr=, and opening either drops ?supervisor, each in one pushed history entry. With
-//   more than one in a URL, as only one typed by hand can have, the session shows, then the PR.
+// - The panel's place: `?supervisor`, with no value, last, after the selection and any ?session= or
+//   ?pr= (openSession.ts, openPr.ts). It opens over the page, beside the open session's or PR's view,
+//   which stays (W177): opening it keeps ?session= and ?pr=, and opening either keeps ?supervisor,
+//   each in one pushed history entry.
 // - The state is read defensively, as the 'prs' message is: an approval that isn't well formed is
-//   left out, and a state that isn't one at all is no supervisor, so the page shows no item for it.
+//   left out, and a state that isn't one at all is no supervisor, so the page shows no button for it.
 // - Approvals' text is the model's: shown as plain text, never markdown, and sent as you leave it.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   CONTEXT_HIGH_TOKENS,
   CONTEXT_WARN_TOKENS,
+  isEffortLevel,
+  isSkillName,
+  isWorkModel,
   PERMISSION_MODES,
   SUPERVISOR_INTERRUPT_PATH,
   SUPERVISOR_MESSAGE_MAX,
@@ -24,8 +27,13 @@ import {
   SUPERVISOR_NEW_CONVERSATION_PATH,
   SUPERVISOR_START_PATH,
   supervisorApprovalPath,
+  WORK_DEFAULT,
+  WORK_PROFILE_NAME_PATTERN,
+  WORK_PROFILES_TOTAL_MAX,
+  type ApprovalProfile,
   type ConversationEntry,
   type SavedPermission,
+  type SessionLaunch,
   type SessionSummary,
   type SupervisorApproval,
   type SupervisorDecision,
@@ -37,7 +45,7 @@ import type { ApiClient, ApiResult } from './api.js';
 import { formatTokens } from './context.js';
 import { couldNot, plainText, shortenHome } from './format.js';
 import { visibleString } from '../../src/shared/hiddenText.js';
-import { PR_PARAM, SESSION_PARAM, SUPERVISOR_PARAM, withoutParams, type HistoryMode } from './openSession.js';
+import { SUPERVISOR_PARAM, withoutParams, type HistoryMode } from './openSession.js';
 import { outgoingText } from './relay.js';
 import { browserNavigation, type NavigationEnv } from './selection.js';
 import { needsAttention, needsText, recapNeedsText, statusBadge, type BadgeLook, type StatusBadge } from './sessions.js';
@@ -64,10 +72,10 @@ export function codeParts(text: string): Array<{ code: boolean; text: string }> 
     .map((part) => (/^`[^`\n]+`$/.test(part) ? { code: true, text: part.slice(1, -1) } : { code: false, text: part }));
 }
 
-/** The supervisor's name, as the repo list's item and its view's heading say it. */
+/** The supervisor's name, as the header's button (W182) and its view's heading say it. */
 export const SUPERVISOR_NAME = 'Supervisor';
 
-/** Its view's region id, which the repo list's item controls while it's open. */
+/** Its view's region id, which the header's button controls while it's open (W182). */
 export const SUPERVISOR_VIEW_ID = 'supervisor-view';
 
 /** The key its message box's draft is kept under in the tab's sessionStorage (drafts.ts, D14): `pitwall.draft.v1:supervisor`. */
@@ -75,26 +83,25 @@ export const SUPERVISOR_DRAFT_ID = 'supervisor';
 
 // --- Its place in the URL -------------------------------------------------------------------------
 
-/** Whether a query string opens the supervisor's view: `?supervisor`, unless a session or a PR shows instead. */
+/** Whether a query string opens the supervisor's panel: `?supervisor`, whatever else is open beside it (W177). */
 export function parseSupervisor(search: string): boolean {
-  const params = new URLSearchParams(search);
-  return params.has(SUPERVISOR_PARAM) && !params.has(SESSION_PARAM) && !params.has(PR_PARAM);
+  return new URLSearchParams(search).has(SUPERVISOR_PARAM);
 }
 
 /**
- * `search` with `?supervisor` added, in place of any ?session= or ?pr=, or removed, every other
- * parameter kept, in order, with it last.
+ * `search` with `?supervisor` added, beside any ?session= or ?pr=, which stay (W177), or removed,
+ * every other parameter kept, in order, with it last.
  */
 export function withSupervisor(search: string, open: boolean): string {
-  const kept = withoutParams(search, open ? [SUPERVISOR_PARAM, SESSION_PARAM, PR_PARAM] : [SUPERVISOR_PARAM]);
+  const kept = withoutParams(search, [SUPERVISOR_PARAM]);
   if (!open) return kept;
   return `${kept === '' ? '?' : `${kept}&`}${SUPERVISOR_PARAM}`;
 }
 
 export interface OpenSupervisor {
-  /** Whether the URL opens the supervisor's view. */
+  /** Whether the URL opens the supervisor's panel. */
   open: boolean;
-  /** Opens it, in place of a session's or a PR's view: one pushed entry, or none when it's open already. */
+  /** Opens it, beside a session's or a PR's view: one pushed entry, or none when it's open already. */
   show: (mode?: HistoryMode) => void;
   /** Closes it, pushing an entry without ?supervisor. */
   close: () => void;
@@ -102,7 +109,7 @@ export interface OpenSupervisor {
   follow: () => void;
 }
 
-/** The supervisor's view, from the URL, as useOpenPr() has the open PR. Reading it starts nothing. */
+/** The supervisor's panel, from the URL, as useOpenPr() has the open PR. Reading it starts nothing. */
 export function useOpenSupervisor(navigation: NavigationEnv = browserNavigation): OpenSupervisor {
   const [open, setOpen] = useState(() => parseSupervisor(navigation.location.search));
   const current = useRef(open);
@@ -131,7 +138,7 @@ export function useOpenSupervisor(navigation: NavigationEnv = browserNavigation)
 
   const show = useCallback(
     (mode: HistoryMode = 'push') => {
-      // Open already adds no entry, unless a session or a PR is in the URL too, which it takes the place of.
+      // Open already adds no entry.
       if (!current.current || !parseSupervisor(navigation.location.search)) write(true, mode);
       current.current = true;
       setOpen(true);
@@ -172,7 +179,11 @@ function asApproval(value: unknown): SupervisorApproval | undefined {
     const { directory, name, prompt } = value;
     if (!isText(directory) || directory === '' || !isText(prompt)) return undefined;
     if (name !== undefined && !isText(name)) return undefined;
-    return name === undefined || name.trim() === '' ? { id, kind, directory, prompt, at, expiresAt } : { id, kind, directory, name, prompt, at, expiresAt };
+    // W156: a card offers its profiles whole, or isn't shown, and a new session's always names one of them.
+    const profiles = asCardProfiles(value);
+    if (profiles === false || (profiles.profiles !== undefined && profiles.profile === undefined)) return undefined;
+    const approval: SupervisorApproval = name === undefined || name.trim() === '' ? { id, kind, directory, prompt, at, expiresAt } : { id, kind, directory, name, prompt, at, expiresAt };
+    return { ...approval, ...profiles };
   }
   if (kind === 'resume') {
     const { sessionId, name, directory, text } = value;
@@ -192,9 +203,57 @@ function asApproval(value: unknown): SupervisorApproval | undefined {
       permission: asPermission(value.permission),
     };
     if (isTime(lastActivityAt)) approval.lastActivityAt = lastActivityAt;
-    return approval;
+    const launch = asLaunch(value.launch);
+    if (launch !== undefined) approval.launch = launch;
+    const profiles = asCardProfiles(value);
+    if (profiles === false) return undefined;
+    return { ...approval, ...profiles };
   }
   return undefined;
+}
+
+/**
+ * A card's `profiles` and `profile` (W156), read whole: every profile well formed, as the server
+ * resolves them, each name once, at most WORK_PROFILES_TOTAL_MAX (the built-ins and the config file's), and `profile` one of them. False when any
+ * of it isn't, so the card isn't shown, since what it shows must be what goes; nothing when it has none.
+ */
+function asCardProfiles(value: Record<string, unknown>): { profiles?: ApprovalProfile[]; profile?: string } | false {
+  if (value.profiles === undefined) return value.profile === undefined ? {} : false;
+  if (!Array.isArray(value.profiles) || value.profiles.length === 0 || value.profiles.length > WORK_PROFILES_TOTAL_MAX) return false;
+  const profiles: ApprovalProfile[] = [];
+  for (const entry of value.profiles) {
+    const profile = asApprovalProfile(entry);
+    if (profile === undefined || profiles.some((each) => each.name === profile.name)) return false;
+    profiles.push(profile);
+  }
+  if (value.profile === undefined) return { profiles };
+  if (typeof value.profile !== 'string' || !profiles.some((each) => each.name === value.profile)) return false;
+  return { profiles, profile: value.profile };
+}
+
+function asApprovalProfile(value: unknown): ApprovalProfile | undefined {
+  if (!isRecord(value) || typeof value.name !== 'string' || !WORK_PROFILE_NAME_PATTERN.test(value.name)) return undefined;
+  const { model, effort, subagentModel, skill } = value;
+  if (model !== WORK_DEFAULT && !isWorkModel(model, 'session')) return undefined;
+  if (effort !== WORK_DEFAULT && !isEffortLevel(effort)) return undefined;
+  if (subagentModel !== WORK_DEFAULT && !isWorkModel(subagentModel, 'subagents')) return undefined;
+  if (skill !== undefined && !isSkillName(skill)) return undefined;
+  return { name: value.name, model: model as string, effort: effort as ApprovalProfile['effort'], subagentModel: subagentModel as string, ...(skill === undefined ? {} : { skill: skill as string }) };
+}
+
+/**
+ * A resume's kept launch settings (W155), only the fields that pass the profiles' checks; undefined
+ * when none does, so the card says nothing of them.
+ */
+function asLaunch(value: unknown): SessionLaunch | undefined {
+  if (!isRecord(value)) return undefined;
+  const launch: SessionLaunch = {};
+  if (typeof value.profile === 'string' && WORK_PROFILE_NAME_PATTERN.test(value.profile)) launch.profile = value.profile;
+  if (value.custom === true) launch.custom = true;
+  if (value.model === WORK_DEFAULT || isWorkModel(value.model, 'session')) launch.model = value.model as string;
+  if (value.effort === WORK_DEFAULT || isEffortLevel(value.effort)) launch.effort = value.effort as SessionLaunch['effort'];
+  if (value.subagentModel === WORK_DEFAULT || isWorkModel(value.subagentModel, 'subagents')) launch.subagentModel = value.subagentModel as string;
+  return launch.model === undefined && launch.effort === undefined && launch.subagentModel === undefined ? undefined : launch;
 }
 
 /** A resume's saved permission mode, or 'unknown' when it isn't one this page knows (W129). */
@@ -403,7 +462,7 @@ export function newConversationBlocked(state: SupervisorState): string | undefin
 /** The context gauge's info button (W136): what the number is, and what to do about it. */
 export const SUPERVISOR_CONTEXT_INFO = `The tokens of context its last call carried in this run, from what Claude Code reported: everything the model read again, cached or not. Every message sends all of it again. Flagged over ${formatTokens(CONTEXT_WARN_TOKENS)}, and in red over ${formatTokens(CONTEXT_HIGH_TOKENS)}: start a new conversation when you're done with this one.`;
 
-/** The repo list's item's status, visually hidden after its name: nothing for idle and off, which show nothing. */
+/** The header's button's status, visually hidden after its name: nothing for idle and off, which show nothing. */
 export function itemStatusText(status: SupervisorStatus): string | undefined {
   return status === 'working' || status === 'starting' || status === 'held' || status === 'failed' ? STATUS_LABELS[status].toLowerCase() : undefined;
 }
@@ -465,6 +524,54 @@ export function resumePermissionText(permission: SavedPermission): string {
   if (permission.kind === 'mode') return `${lead}: ${permission.mode}.`;
   if (permission.kind === 'unset') return `${lead}. Its saved flags set no permission mode, so your Claude Code settings decide it.`;
   return `${lead}, which pitwall can't see for this session.`;
+}
+
+/**
+ * What a resume card says of the model it resumes on, for a session pitwall started with a work
+ * profile (W155): pitwall passes what it started with again, never the profile's skill.
+ */
+export function resumeLaunchText(launch: SessionLaunch): string {
+  const shown = (value: string) => (value === WORK_DEFAULT ? "Claude Code's default" : value);
+  const parts = [
+    ...(launch.model === undefined ? [] : [`model ${shown(launch.model)}`]),
+    ...(launch.effort === undefined ? [] : [`effort ${shown(launch.effort)}`]),
+    ...(launch.subagentModel === undefined ? [] : [`sub-agents ${shown(launch.subagentModel)}`]),
+  ];
+  const from = launch.profile === undefined ? 'a profile' : `the ${launch.profile} profile${launch.custom === true ? ', customized' : ''}`;
+  return `pitwall resumes it on what it started it with, from ${from}: ${parts.join(', ')}.`;
+}
+
+/**
+ * A resume card's Profile choice for resuming as it started (W156): a NUL-prefixed value, as New
+ * session's Customized is, so no profile's name can be it. It sends `profile: null`.
+ */
+export const AS_STARTED = '\u0000as-started';
+
+/** That choice's words: as it started, naming the profile pitwall kept for it, if any (W155). */
+export function asStartedText(launch: SessionLaunch | undefined): string {
+  if (launch?.profile === undefined) return 'As it started';
+  return `As it started (${launch.profile}${launch.custom === true ? ', customized' : ''})`;
+}
+
+/** A profile's model, effort and sub-agents' model, as a card says them (W156). */
+function profileSettings(profile: ApprovalProfile): string {
+  const shown = (value: string) => (value === WORK_DEFAULT ? "Claude Code's default" : value);
+  return `model ${shown(profile.model)}, effort ${shown(profile.effort)}, sub-agents ${shown(profile.subagentModel)}`;
+}
+
+/**
+ * What a new session's card says under its Profile (W156): exactly what the session starts with, and
+ * the skill its first prompt starts with, which must be installed where it runs, as New session says.
+ */
+export function spawnProfileText(profile: ApprovalProfile): string {
+  const skill = profile.skill === undefined ? '' : ` Its first prompt starts with /${profile.skill}, which must be installed where the session runs.`;
+  return `Starts on ${profileSettings(profile)}.${skill}`;
+}
+
+/** What a resume card says under its Profile when one is picked (W156): what it resumes on, never the skill, which runs once. */
+export function resumeProfileText(profile: ApprovalProfile): string {
+  const skill = profile.skill === undefined ? '' : ` Not its skill, /${profile.skill}, which runs only when a session starts.`;
+  return `pitwall resumes it on the ${profile.name} profile: ${profileSettings(profile)}.${skill}`;
 }
 
 /** The warning on a resume card whose saved permission mode skips the prompts (W129, L1). */

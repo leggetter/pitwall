@@ -3,11 +3,11 @@
 // to a request means. Made-up sessions, ids and text only.
 
 import { describe, expect, it, vi } from 'vitest';
-import { SUPERVISOR_MESSAGE_PATH, SUPERVISOR_NEW_CONVERSATION_PATH, supervisorApprovalPath, type ConversationEntry, type SupervisorApproval } from '../../src/shared/protocol.js';
+import { SUPERVISOR_MESSAGE_PATH, SUPERVISOR_NEW_CONVERSATION_PATH, supervisorApprovalPath, WORK_PROFILES_TOTAL_MAX, type ConversationEntry, type SupervisorApproval } from '../../src/shared/protocol.js';
 import { createApiClient, type FetchLike } from './api.js';
 import { supervisorStripText } from './components/AppStrip.js';
 import { withPr } from './openPr.js';
-import { withSession } from './openSession.js';
+import { supervisorLast, withSession } from './openSession.js';
 import {
   APPROVAL_GONE,
   approvalTitle,
@@ -21,6 +21,7 @@ import {
   newSupervisorConversation,
   RESUME_BYPASS_WARNING,
   resumeBypassed,
+  resumeLaunchText,
   resumePermissionText,
   resumeWhereLead,
   typedPromptNotes,
@@ -59,18 +60,28 @@ describe('its place in the URL', () => {
     expect(withSupervisor('?view=all&supervisor', false)).toBe('?view=all');
   });
 
-  it('takes the place of an open session or PR, and either takes its place', () => {
-    expect(withSupervisor('?repo=/Users/example/code&session=abc', true)).toBe('?repo=/Users/example/code&supervisor');
-    expect(withSupervisor('?view=prs&pr=example/demo-app/57', true)).toBe('?view=prs&supervisor');
-    expect(withSession('?view=all&supervisor', 'abc')).toBe('?view=all&session=abc');
-    expect(withPr('?view=all&supervisor', 'example/demo-app/57')).toBe('?view=all&pr=example/demo-app/57');
-    // Closing a session or a PR leaves it alone.
-    expect(withSession('?view=all&supervisor', undefined)).toBe('?view=all&supervisor');
+  it('opens beside an open session or PR, which stay, and either opened keeps it, last (W177)', () => {
+    expect(withSupervisor('?repo=/Users/example/code&session=abc', true)).toBe('?repo=/Users/example/code&session=abc&supervisor');
+    expect(withSupervisor('?view=prs&pr=example/demo-app/57', true)).toBe('?view=prs&pr=example/demo-app/57&supervisor');
+    expect(withSession('?view=all&supervisor', 'abc')).toBe('?view=all&session=abc&supervisor');
+    expect(withSession('?view=all&session=abc&supervisor', 'def')).toBe('?view=all&session=def&supervisor');
+    expect(withPr('?view=all&supervisor', 'example/demo-app/57')).toBe('?view=all&pr=example/demo-app/57&supervisor');
+    // A PR opened still takes a session's place, and a session a PR's, the panel kept.
+    expect(withPr('?view=all&session=abc&supervisor', 'example/demo-app/57')).toBe('?view=all&pr=example/demo-app/57&supervisor');
+    expect(withSession('?view=all&pr=example/demo-app/57&supervisor', 'abc')).toBe('?view=all&session=abc&supervisor');
+    // Closing a session or a PR leaves it alone; closing it leaves them.
+    expect(withSession('?view=all&session=abc&supervisor', undefined)).toBe('?view=all&supervisor');
+    expect(withPr('?view=all&pr=example/demo-app/57&supervisor', undefined)).toBe('?view=all&supervisor');
+    expect(withSupervisor('?view=all&session=abc&supervisor', false)).toBe('?view=all&session=abc');
+    // Without it, nothing is added.
+    expect(supervisorLast('?view=all&session=abc')).toBe('?view=all&session=abc');
+    expect(supervisorLast('?supervisor&view=all')).toBe('?view=all&supervisor');
   });
 
-  it("isn't open when a session or a PR is in the URL too, as only one typed by hand can be", () => {
-    expect(parseSupervisor('?supervisor&session=abc')).toBe(false);
-    expect(parseSupervisor('?supervisor&pr=example/demo-app/57')).toBe(false);
+  it('is open whatever else the URL opens beside it', () => {
+    expect(parseSupervisor('?supervisor&session=abc')).toBe(true);
+    expect(parseSupervisor('?view=all&pr=example/demo-app/57&supervisor')).toBe(true);
+    expect(parseSupervisor('?view=all&supervisor=')).toBe(true);
     expect(parseSupervisor('?view=all')).toBe(false);
   });
 });
@@ -176,12 +187,36 @@ describe('its words', () => {
       expect(read({ permission })).toMatchObject({ permission: { kind: 'unknown' } });
     }
   });
+
+  it('reads a resume card’s kept launch settings with only the fields that pass the profiles’ checks (W155)', () => {
+    const read = (launch: unknown) => asSupervisorState({ status: 'idle', approvals: [{ ...resume, launch }] })?.approvals[0];
+    expect(read({ profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet' })).toMatchObject({ launch: { profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet' } });
+    expect(read({ profile: 'Bad\nname', custom: 'yes', model: 'opus --x', effort: 'high', subagentModel: 'opusplan' })).toMatchObject({ launch: { effort: 'high' } });
+    for (const launch of [undefined, 'Review', { profile: 'Review' }, { model: 'x y' }]) expect(read(launch)).not.toHaveProperty('launch');
+  });
+
+  it('shows a card with as many profiles as the server resolves, the 4 built-ins and 30 of the config file’s, and none past that (W180, F2)', () => {
+    const profiles = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `Profile ${i}`, model: 'sonnet', effort: 'high', subagentModel: 'sonnet' }));
+    const read = (n: number) => asSupervisorState({ status: 'idle', approvals: [{ ...resume, profiles: profiles(n) }] })?.approvals;
+    expect(WORK_PROFILES_TOTAL_MAX).toBe(34);
+    expect(read(WORK_PROFILES_TOTAL_MAX)?.[0]).toMatchObject({ profiles: profiles(WORK_PROFILES_TOTAL_MAX) });
+    expect(read(WORK_PROFILES_TOTAL_MAX + 1)).toEqual([]);
+  });
 });
 
 describe('a resume card’s lines (W129)', () => {
   it('says how many sessions share the name, only when others do', () => {
     expect(resumeWhereLead(1)).toBe('In ');
     expect(resumeWhereLead(2)).toBe('2 listed sessions have this name; this is the one in ');
+  });
+
+  it('says the model, effort and sub-agents a session started with a profile resumes on (W155)', () => {
+    expect(resumeLaunchText({ profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet' })).toBe(
+      'pitwall resumes it on what it started it with, from the Review profile: model sonnet, effort high, sub-agents sonnet.',
+    );
+    expect(resumeLaunchText({ profile: 'Build', custom: true, model: 'haiku', effort: 'default', subagentModel: 'default' })).toBe(
+      "pitwall resumes it on what it started it with, from the Build profile, customized: model haiku, effort Claude Code's default, sub-agents Claude Code's default.",
+    );
   });
 
   it('says it resumes with its own saved settings, its permission mode included, and what pitwall knows of that mode', () => {

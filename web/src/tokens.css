@@ -39,6 +39,8 @@
   --pw-list-min-w: 360px;
   --pw-panel-w: 760px;
   --pw-panel-min-w: 560px;
+  --pw-view-w: var(--pw-panel-w);
+  --pw-supervisor-w: 560px;
   --pw-dialog-sm: 408px;
   --pw-dialog-md: 624px;
   --pw-dialog-lg: 840px;
@@ -48,6 +50,7 @@
 
   --pw-z-sticky: 10;
   --pw-z-panel: 20;
+  --pw-z-supervisor: 25;
   --pw-z-dropdown: 30;
   --pw-z-backdrop: 40;
   --pw-z-dialog: 41;

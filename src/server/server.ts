@@ -43,10 +43,8 @@
 //   GET /api/sessions/:sessionId/recap           then recapRoutes.ts: the session's SessionRecap, else 404
 //   POST /api/sessions/:sessionId/recap/refresh  then recapRoutes.ts: a recap now; 409 with --no-recaps,
 //                                                429 when the day's budget is spent or one is running
-//   GET /api/sessions/:sessionId/plan-status     then recapRoutes.ts: its newest PlanStatus (W123), else 404
-//   POST /api/sessions/:sessionId/plan-status/refresh
-//                                                then recapRoutes.ts: a plan status now, answered once the
-//                                                call ends; 409, 429 as for a recap, 502 when it failed
+//                                                (W123's plan-status routes went in W172: the recap
+//                                                carries the plan's items)
 //
 // With the supervisor on (M5, W112, W113), the snapshot carries its state too, and goes out again when
 // that changes (snapshotSupervisor.ts):
@@ -59,6 +57,10 @@
 // The model and effort for each kind of work (W119), pitwall's defaults, the config file's and the
 // app's overrides for this run (work.ts):
 //
+//   GET /api/usage                      then usageRoutes.ts: the Usage view's figures (W158), read only when
+//                                      asked; 404 without a usage source
+//   GET /api/run-rate                   usageRoutes.ts too: the header's run rate (W159), asked by a visible
+//                                      page; 'off' with --no-usage, 404 without a usage source
 //   GET /api/work, POST /api/work       then work.ts: WorkSettings; POST replaces the overrides, JSON,
 //                                      at most 4 KiB, each value checked, else 400 and nothing changes
 //   /mcp                                outside /api/*, so neither the token nor the apiKey is taken
@@ -106,7 +108,7 @@ import { createSupervisorTools } from './mcpTools.js';
 import { registerPrs } from './prs.js';
 import { registerRecaps } from './recapRoutes.js';
 import { createSnapshotView, type SnapshotView } from './snapshotLinks.js';
-import { createRecapView } from './snapshotRecaps.js';
+import { createDecoratedView, createRecapView } from './snapshotRecaps.js';
 import { createSupervisorView } from './snapshotSupervisor.js';
 import { createApproveTool, createResumeSessionTool, createSpawnSessionTool, recipientNames, type SupervisorActionSources } from './supervisorActions.js';
 import { registerSupervisor } from './supervisorRoutes.js';
@@ -115,6 +117,7 @@ import { createRelayManager } from './relay.js';
 import { registerRelay } from './relayRoute.js';
 import { createFlagView, FlagStore, registerFlags } from './flags.js';
 import { createSnoozeView, registerSnoozes, SnoozeStore } from './snoozes.js';
+import { SessionLaunches } from './sessionLaunches.js';
 import { registerSpinOffs } from './spinOffRoutes.js';
 import {
   bearerToken,
@@ -134,6 +137,7 @@ import { resolveSession } from './sessions.js';
 import { BUILDING_PAGE, BUILDING_SCRIPT, BUILDING_SCRIPT_PATH, resolveStaticFile } from './static.js';
 import { HandshakeSlots } from './handshake.js';
 import { DEFAULT_AUTH_TIMEOUT_MS, handleClient, MAX_PAYLOAD_BYTES } from './websocket.js';
+import { registerUsage } from './usageRoutes.js';
 import { createWorkStore, registerWork } from './work.js';
 
 export const DEFAULT_PORT = 4517;
@@ -267,10 +271,27 @@ export async function startServerWithInternals(
   // Per-session recaps (M5, W110), or off. Started once listening, closed on close().
   const recaps = options.recaps;
   // With recaps, each session's recap, its title and Needs you's 'recap' reason, under W105's view.
-  const recapped = recaps === undefined ? undefined : createRecapView(indexer, recaps);
+  // What each session started with a work profile used, kept in pitwall's home, for its resume (W155),
+  // each linked to its session id as a snapshot read through the views lists its short id. A view
+  // that changes nothing, so it adds no subscription of its own.
+  const launches = new SessionLaunches(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
+  const linked = createDecoratedView(indexer, {
+    decorate: (snapshot) => {
+      try {
+        launches.link(snapshot);
+      } catch {
+        // Fails soft: a record not linked yet is still found by its short id.
+      }
+      // The header's run rate (W159): the page asks for it only when the snapshot says it's on.
+      return options.usage?.planReads === true ? { ...snapshot, planUsage: 'on' } : snapshot;
+    },
+    version: () => 0,
+    subscribe: () => () => {},
+  });
+  const recapped = recaps === undefined ? undefined : createRecapView(linked, recaps);
   // Flags, "It doesn't need me" (W153): each flagged session's `flagged`, over recaps, since a 'recap' flag is for its recap.
   const flags = new FlagStore(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
-  const flagged = createFlagView(recapped ?? indexer, flags);
+  const flagged = createFlagView(recapped ?? linked, flags);
   // Snoozes (W154): each snoozed session's `snoozed`, and why one came back, over flags. Ended by time or a wake.
   const snoozes = new SnoozeStore(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
   const snoozed = createSnoozeView(flagged, snoozes);
@@ -283,7 +304,7 @@ export async function startServerWithInternals(
   // Every session this pitwall started or resumed, for its run: only those resume with the defaults for sessions (W119's review).
   const started = new Set<string>();
   // New sessions, from the spawn route and the supervisor's spawn_session (W115): one set of limits.
-  const actionOptions: ActionOptions = { token, spawned, resumed, work, started, ...internals.actions, slots: commandSlots, attachments };
+  const actionOptions: ActionOptions = { token, spawned, resumed, work, started, launches, ...internals.actions, slots: commandSlots, attachments };
   const spawner = internals.actions?.spawner ?? createSpawnRunner(actionOptions);
   // Resuming, from the Resume route and the supervisor's resume_session (W127): one set of checks and limits.
   const resumer = internals.actions?.resumer ?? createResumeRunner(indexer, { ...actionOptions, slots: commandSlots, limiter: spawner.limiter });
@@ -302,6 +323,10 @@ export async function startServerWithInternals(
           agents: internals.actions?.agents ?? createAgentsSource(internals.actions?.claudeBin === undefined ? {} : { claudeBin: internals.actions.claudeBin }),
           // What a resume card says of its permission mode (W129, L1), behind the job-file adapter, failing soft.
           savedPermission: internals.savedPermission ?? ((shortId, sessionId) => readSavedPermission(shortId, sessionId)),
+          // What a resume card says it resumes on, for a session started with a profile (W155): what the resumer reads.
+          ...(actionOptions.launches === undefined ? {} : { launches: actionOptions.launches }),
+          // The work profiles spawn_session and resume_session take, and the defaults each card resolves them with (W156).
+          work,
         };
   // pitwall's MCP server, for the supervisor alone (W112, W115): read-only tools over what pitwall
   // already has, spawn_session, resume_session (W127), and approve, the permission prompt tool.
@@ -317,6 +342,8 @@ export async function startServerWithInternals(
               conversation: (sessionId, before) => indexer.conversation(sessionId, before),
               ...(recaps === undefined ? {} : { recaps }),
               prs,
+              // get_usage (W160): the usage source's one report, through its reader's cache.
+              ...(options.usage === undefined ? {} : { usage: options.usage }),
               ownSessionIds: () => supervisor.ownSessionIds(),
             }),
             createSpawnSessionTool(supervisorActions),
@@ -349,6 +376,7 @@ export async function startServerWithInternals(
     registerEndSession(app, indexer, {
       isRelay: (row) => relay.isRelay(row) || recaps?.isOwn(row) === true,
       isSupervisor: (row) => supervisor?.isOwn(row) === true,
+      isOwnProcess: (row) => options.usage?.isOwn(row) === true,
       ...internals.end,
       slots: commandSlots,
     });
@@ -359,6 +387,7 @@ export async function startServerWithInternals(
     registerSpinOffs(app, { snapshots: indexer });
     registerSupervisor(app, supervisor, supervisorActions);
     registerMcp(app, mcp);
+    registerUsage(app, options.usage);
     registerWork(app, work, async (dir) => {
       const checked = await checkDirectory(dir, indexer.latest()?.roots ?? []);
       return checked.ok ? checked.path : undefined;
@@ -454,6 +483,7 @@ export async function startServerWithInternals(
       snoozes.close();
       flagged.stop();
       recapped?.stop();
+      linked.stop();
       closed ??= Promise.all([
         closeAll(server, wss, () => {
           closing = true;
@@ -466,6 +496,8 @@ export async function startServerWithInternals(
         recaps?.close(),
         // Its stdin closed, then SIGTERM and SIGKILL if it lingers; its MCP config removed.
         supervisor?.close(),
+        // The Usage view's `/usage` call, if one is running (W158).
+        options.usage?.close(),
       ]).then(() => undefined);
       return closed;
     },

@@ -1,6 +1,6 @@
 // The supervisor's view (M5, W114; docs/design-system.md, 4: Supervisor): its conversation with you, in
-// the third column, in a session view's or a PR view's place and frame, from `?supervisor`
-// (supervisor.ts). Phil, 2026-10-29: "the point is to create a customized workflow that isn't just
+// a panel over the page, beside the open session's or PR's view, which stays (W177, Frame's `panel`),
+// from `?supervisor` (supervisor.ts). Phil, 2026-10-29: "the point is to create a customized workflow that isn't just
 // typing into a terminal and having a specialized UI".
 //
 // - The header: "Supervisor", its status, this run's cost, its context (W136) once its first call of the
@@ -318,7 +318,7 @@ export function SupervisorView({ state, onClose, layout = 'overlay', compact = f
   );
 
   return (
-    <Frame layout={layout} id={SUPERVISOR_VIEW_ID} className="supervisor-view" animate={animate} titleId={ids.title} onEscape={onEscape}>
+    <Frame layout={layout} id={SUPERVISOR_VIEW_ID} className="supervisor-view" panel animate={animate} titleId={ids.title} onEscape={onEscape}>
       <header className="session-view-head supervisor-head">
         <Top compact={compact} onClose={onClose} backLabel={backLabel}>
           {/* Focused when the view opens from the repo list, with no ring of its own (6.1, item 8). */}
@@ -534,7 +534,7 @@ export const NO_SUPERVISOR = {
 export function SupervisorOffView({ onClose, layout = 'overlay', compact = false, backLabel, headingRef, animate = true }: SupervisorOffViewProps) {
   const titleId = useId();
   return (
-    <Frame layout={layout} id={SUPERVISOR_VIEW_ID} className="supervisor-view" animate={animate} titleId={titleId} onEscape={onClose}>
+    <Frame layout={layout} id={SUPERVISOR_VIEW_ID} className="supervisor-view" panel animate={animate} titleId={titleId} onEscape={onClose}>
       <header className="session-view-head">
         <Top compact={compact} onClose={onClose} backLabel={backLabel}>
           <span className="session-view-spacer" />

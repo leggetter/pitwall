@@ -15,7 +15,14 @@
 // - A resume card (W129, M2, L1) shows, as text, the session's folder, home as ~, and its last
 //   activity; how many listed sessions share its name when others do, since names aren't unique; and
 //   that it resumes with its own saved settings, its permission mode included, with a warning when
-//   that mode is bypassPermissions. Edit opens the text in place, up to SUPERVISOR_PROPOSAL_MAX for a message and
+//   that mode is bypassPermissions; and, for a session pitwall started with a work profile, the model,
+//   effort and sub-agents' model it resumes on, which pitwall kept (W155).
+// - A new session's card and a resume's (W156) have a Profile select, on the supervisor's pick: every
+//   profile, as the server resolved it for the card, and, on a resume's, As it started first. Under it,
+//   exactly what the pick starts or resumes the session on; Send and Send edit send the pick, so what
+//   goes is what the card shows. Beside it, the plan's week and its pace (W160), from the run rate the
+//   page already asks for (RunRateContext), so a card adds no `/usage` read; none while the header has
+//   no figures. Edit opens the text in place, up to SUPERVISOR_PROPOSAL_MAX for a message and
 // SPAWN_PROMPT_MAX for a new session's first prompt (editLimit()), with Send edit and Cancel.
 // - A message card (W138) shows, under the text and under the editor alike, the line pitwall adds at
 //   the end of what goes, SUPERVISOR_MESSAGE_FOOTER, labelled as pitwall's, apart from the text: it's
@@ -31,8 +38,10 @@
 //   in the editor, and Cancel or Escape back on Edit.
 
 import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
-import { SPAWN_PROMPT_MAX, SUPERVISOR_MESSAGE_FOOTER, type SupervisorApproval, type SupervisorDecision } from '../../../src/shared/protocol.js';
+import { SPAWN_PROMPT_MAX, SUPERVISOR_MESSAGE_FOOTER, type RunRate, type SupervisorApproval, type SupervisorDecision } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
+import { useNow } from '../clock.js';
+import { cardPace, RunRateContext } from '../runRate.js';
 import { useAutoGrow } from '../autoGrow.js';
 import { visibleParts, visibleString, type VisiblePart } from '../../../src/shared/hiddenText.js';
 import { characterCount } from '../relay.js';
@@ -40,16 +49,22 @@ import {
   APPROVAL_GONE,
   approvalText,
   approvalTitle,
+  AS_STARTED,
+  asStartedText,
   decideApproval,
   RESUME_BYPASS_WARNING,
   resumeBypassed,
+  resumeLaunchText,
   resumePermissionText,
+  resumeProfileText,
   resumeWhereLead,
+  spawnProfileText,
   SUPERVISOR_EDIT_MAX,
   typedPromptNotes,
 } from '../supervisor.js';
 import { Alert } from './Alert.js';
 import { Button } from './Button.js';
+import { Icon } from './Icon.js';
 import { ScrollBox, useOverflowing } from './ScrollBox.js';
 import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
@@ -121,6 +136,9 @@ function MessageFooter({ id }: { id: string }) {
 
 /** What a spawn card adds under its heading: how the session starts. */
 export const SPAWN_NOTE = 'Starts a background session there with claude --bg, its first prompt as below.';
+
+/** What a resume card says under its Profile on As it started, for a session pitwall kept no profile for (W156). */
+export const RESUME_AS_STARTED = 'No profile’s settings: it resumes as Resume in the list would.';
 
 /** What a resume card adds under its heading (W127): how the finished session comes back, and what it reads. */
 export const RESUME_NOTE = 'Resumes this finished session in the background with claude --resume, in its own folder, and sends the message below as its next turn.';
@@ -260,7 +278,7 @@ type Phase = { kind: 'idle' } | { kind: 'deciding'; decision: SupervisorDecision
 
 function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
   const api = useContext(ApiContext);
-  const ids = { heading: useId(), text: useId(), editor: useId(), count: useId(), notes: useId(), footer: useId() };
+  const ids = { heading: useId(), text: useId(), editor: useId(), count: useId(), notes: useId(), footer: useId(), profile: useId(), profileHint: useId(), pace: useId() };
   const [textBox, setTextBox] = useState<HTMLElement | null>(null);
   const overflowing = useOverflowing(textBox);
   const alive = useRef(true);
@@ -270,6 +288,16 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
   const [editing, setEditing] = useState<string>();
   const editButton = useRef<HTMLButtonElement>(null);
   const editor = useRef<HTMLTextAreaElement>(null);
+  // The profile picked on the card (W156): the supervisor's, else, on a resume's, As it started.
+  const profiles = approval.kind === 'message' ? undefined : approval.profiles;
+  const [picked, setPicked] = useState<string>(() => (approval.kind === 'message' ? AS_STARTED : (approval.profile ?? AS_STARTED)));
+  const pickedProfile = profiles?.find((profile) => profile.name === picked);
+  // What Send and Send edit say of it: the pick by name, or null for As it started; nothing on a card with no profiles.
+  const profileChoice = profiles === undefined ? {} : { profile: pickedProfile?.name ?? null };
+  // The plan's week and its pace beside the profile (W160), from what the header already has. Only a
+  // card with figures ticks on the shared clock, for their age, as the header's button.
+  const runRate = useContext(RunRateContext);
+  const pace = runRate?.status === 'available' && runRate.sevenDay !== null ? runRate : undefined;
 
   useEffect(() => {
     alive.current = true;
@@ -350,7 +378,7 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
   const editOff = phase.kind !== 'idle' ? undefined : tooLong ? editTooLong(length - limit, limit) : empty ? EDIT_EMPTY : undefined;
   const sendEdit = () => {
     if (editing === undefined || editOff !== undefined) return;
-    void decide({ decision: 'edit', text: editing });
+    void decide({ decision: 'edit', text: editing, ...profileChoice });
   };
   const count = characterCount(length, limit);
 
@@ -402,12 +430,49 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
           </p>
           <p className="approval-note">{RESUME_NOTE}</p>
           <p className="approval-note approval-permission">{resumePermissionText(approval.permission)}</p>
+          {/* A session pitwall started with a work profile resumes on what it used (W155), unless you pick another (W156, below). */}
+          {approval.launch !== undefined && profiles === undefined && <p className="approval-note approval-launch">{resumeLaunchText(approval.launch)}</p>}
           {resumeBypassed(approval.permission) && (
             <Alert tone="warning" className="approval-bypass">
               {RESUME_BYPASS_WARNING}
             </Alert>
           )}
         </>
+      )}
+      {profiles !== undefined && (
+        <div className="approval-profile">
+          <label className="approval-profile-label" htmlFor={ids.profile}>
+            Profile
+          </label>
+          <span className="select">
+            <select
+              id={ids.profile}
+              className="select-input"
+              value={pickedProfile?.name ?? AS_STARTED}
+              onChange={(event) => setPicked(event.target.value)}
+              aria-describedby={pace === undefined ? ids.profileHint : `${ids.profileHint} ${ids.pace}`}
+              disabled={busy}
+            >
+              {approval.kind === 'resume' && <option value={AS_STARTED}>{asStartedText(approval.launch)}</option>}
+              {profiles.map((profile) => (
+                <option key={profile.name} value={profile.name}>
+                  {profile.name}
+                </option>
+              ))}
+            </select>
+            <Icon name="select" className="select-icon" />
+          </span>
+          <p className="approval-note approval-launch" id={ids.profileHint}>
+            {pickedProfile !== undefined
+              ? approval.kind === 'spawn'
+                ? spawnProfileText(pickedProfile)
+                : resumeProfileText(pickedProfile)
+              : approval.kind === 'resume' && approval.launch !== undefined
+                ? resumeLaunchText(approval.launch)
+                : RESUME_AS_STARTED}
+          </p>
+          {pace !== undefined && <CardPace id={ids.pace} runRate={pace} />}
+        </div>
       )}
       {editing === undefined ? (
         <div className="approval-body">
@@ -462,7 +527,7 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
       <div className="approval-actions">
         {editing === undefined ? (
           <>
-            <Button variant="primary" size="sm" icon="send" disabled={busy && !busyWith('send')} busy={busyWith('send')} busyLabel="Sending…" onClick={() => void decide({ decision: 'send' })}>
+            <Button variant="primary" size="sm" icon="send" disabled={busy && !busyWith('send')} busy={busyWith('send')} busyLabel="Sending…" onClick={() => void decide({ decision: 'send', ...profileChoice })}>
               Send
             </Button>
             <Button ref={editButton} size="sm" disabled={busy} onClick={openEditor}>
@@ -486,5 +551,18 @@ function ApprovalCard({ approval }: { approval: SupervisorApproval }) {
         )}
       </div>
     </li>
+  );
+}
+
+/** The plan's week and its pace, beside a card's profile (W160): a warning while it's ahead of pace, in words as well as tone. */
+function CardPace({ id, runRate }: { id: string; runRate: RunRate }) {
+  const pace = cardPace(runRate, useNow());
+  // Its week has reset since it was read: none, as the header shows none.
+  if (pace === undefined) return null;
+  return (
+    <p className="approval-note approval-pace" id={id} data-ahead={pace.ahead || undefined}>
+      {pace.ahead && <Icon name="warning" className="approval-pace-icon" />}
+      <span>{pace.text}</span>
+    </p>
   );
 }

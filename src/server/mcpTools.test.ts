@@ -6,7 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ConversationCursorError, readConversationPage } from '../index/conversation.js';
-import type { ConversationEntry, ConversationPage, IndexSnapshot, PullRequestList, PullRequestSummary, SessionRecap, SessionSummary } from '../shared/protocol.js';
+import { CONTEXT_HIGH_TOKENS, CONTEXT_WARN_TOKENS, type ConversationEntry, type ConversationPage, type IndexSnapshot, type PullRequestList, type PullRequestSummary, type RunRate, type SessionRecap, type SessionSummary, type UsageSessionRow } from '../shared/protocol.js';
+import type { UsageReport } from '../usage/service.js';
 import {
   ANSWER_MAX_CHARS,
   createSupervisorTools,
@@ -18,6 +19,7 @@ import {
   plainField,
   READ_ENTRY_MAX,
   UNTRUSTED_NOTE,
+  USAGE_LARGE_MAX,
   type SupervisorToolSources,
 } from './mcpTools.js';
 import type { McpTool } from './mcp.js';
@@ -77,7 +79,17 @@ const RECAP: SessionRecap = {
   source: 'pitwall',
 };
 
-function tools(options: { sessions?: SessionSummary[]; prs?: Partial<PullRequestList>; recaps?: Map<string, SessionRecap> | 'off'; pages?: Map<string | undefined, ConversationPage>; conversation?: SupervisorToolSources['conversation'] } = {}): Record<string, McpTool> {
+function tools(
+  options: {
+    sessions?: SessionSummary[];
+    prs?: Partial<PullRequestList>;
+    recaps?: Map<string, SessionRecap> | 'off';
+    pages?: Map<string | undefined, ConversationPage>;
+    conversation?: SupervisorToolSources['conversation'];
+    usage?: SupervisorToolSources['usage'];
+    usageWaitMs?: number;
+  } = {},
+): Record<string, McpTool> {
   const snapshot = snapshotOf(options.sessions ?? []);
   const list: PullRequestList = { source: { ok: true }, refreshing: false, prs: [], ...options.prs };
   const recaps = options.recaps === 'off' ? undefined : (options.recaps ?? new Map<string, SessionRecap>());
@@ -86,6 +98,8 @@ function tools(options: { sessions?: SessionSummary[]; prs?: Partial<PullRequest
     conversation: options.conversation ?? (async (_id, before) => options.pages?.get(before)),
     ...(recaps === undefined ? {} : { recaps: { recap: (s: SessionSummary) => recaps.get(s.sessionId) } }),
     prs: { latest: () => list },
+    ...(options.usage === undefined ? {} : { usage: options.usage }),
+    ...(options.usageWaitMs === undefined ? {} : { usageWaitMs: options.usageWaitMs }),
     ownSessionIds: () => new Set([OWN]),
     now: () => NOW,
   });
@@ -130,9 +144,9 @@ afterAll(() => {
 });
 
 describe('the tools', () => {
-  it('are the four read-only ones, each with a schema that takes no other argument', () => {
+  it('are the five read-only ones, each with a schema that takes no other argument', () => {
     const made = Object.values(tools());
-    expect(made.map((tool) => tool.name)).toEqual(['list_sessions', 'read_session', 'list_prs', 'get_recap']);
+    expect(made.map((tool) => tool.name)).toEqual(['list_sessions', 'read_session', 'list_prs', 'get_recap', 'get_usage']);
     for (const tool of made) {
       expect(tool.inputSchema).toMatchObject({ type: 'object', additionalProperties: false });
       expect(tool.description).toContain('untrusted');
@@ -187,9 +201,9 @@ describe('list_sessions', () => {
     expect(outside).not.toContain('pitwall-test-');
   });
 
-  it('never lists pitwall’s own sessions: the supervisor’s by id, and the relay, recap and supervisor names', async () => {
+  it('never lists pitwall’s own sessions: the supervisor’s by id, and the relay, recap, supervisor and /usage reader’s names (W180, U-F5)', async () => {
     const made = tools({
-      sessions: [session(OWN), session('r', { name: 'pitwall-relay' }), session('c', { name: 'Pitwall-Recap' }), session('s', { name: 'pitwall-supervisor' }), session('mine')],
+      sessions: [session(OWN), session('r', { name: 'pitwall-relay' }), session('c', { name: 'Pitwall-Recap' }), session('s', { name: 'pitwall-supervisor' }), session('u', { name: 'pitwall-usage' }), session('mine')],
     });
     const { json } = await call(made.list_sessions!);
     expect((json.sessions as { id: string }[]).map((each) => each.id)).toEqual(['mine']);
@@ -514,5 +528,118 @@ describe('get_recap', () => {
     expect(fallback).toMatchObject({ recap: { waitingOn: 'nothing', source: 'claude-code' }, untrusted: { summary: 'Waiting on the backport.', todos: [] } });
     expect(fallback.untrusted).not.toHaveProperty('title');
     expect((await call(tools({ sessions: [session('a')], recaps: 'off' }).get_recap!, { id: 'a' })).json).toMatchObject({ recap: null, reason: expect.stringContaining('--no-recaps') });
+  });
+});
+
+describe('get_usage (W160)', () => {
+  const RESETS = '2026-11-01T12:00:00.000Z';
+  const RATE: RunRate = {
+    status: 'available',
+    readAt: new Date(NOW - 60_000).toISOString(),
+    target: { percent: 80, day: 'friday', time: '18:00' },
+    sevenDay: {
+      usedPercentage: 62,
+      resetsAt: RESETS,
+      level: 'normal',
+      pace: { targetAt: '2026-10-30T18:00:00.000Z', line: 50, points: 12, ahead: true, pastTarget: false },
+      projection: { status: 'range', earliest: '2026-10-30T10:00:00.000Z', latest: null, perHour: { low: 0.4, high: 0.9 } },
+    },
+    fiveHour: null,
+  };
+  const tokens = { calls: 10, input: 100, cacheWrite: 200, cacheRead: 30_000, output: 400, cost: 1.23456 };
+  const row = (sessionId: string, extra: Partial<UsageSessionRow> = {}): UsageSessionRow => ({ sessionId, repo: '~/made-up/repo', kind: 'main', model: 'claude-opus-5-5', subagentRuns: 0, subagentCost: 0, ...tokens, ...extra });
+  const report = (extra: Partial<UsageReport> = {}): UsageReport => ({
+    runRate: RATE,
+    week: { since: '2026-10-25T12:00:00.000Z', from: 'reset', totals: tokens },
+    heaviest: [row('a'), row('gone'), row(OWN, { kind: 'pitwall', repo: "pitwall's own: supervisor" }), row('r', { kind: 'pitwall', repo: "pitwall's own: recap" })],
+    ...extra,
+  });
+  const source = (made: UsageReport | (() => Promise<UsageReport>)) => {
+    let calls = 0;
+    return {
+      usage: { report: async () => (calls++, typeof made === 'function' ? made() : made) },
+      calls: () => calls,
+    };
+  };
+
+  it('gives the run rate, the week, the heaviest sessions and those with a large context, in one report call', async () => {
+    const usage = source(report());
+    const sessions = [
+      session('a', { name: INJECTION, contextTokens: 120_000 }),
+      session('big', { contextTokens: CONTEXT_HIGH_TOKENS + 5, kind: 'background' }),
+      session('warm', { contextTokens: CONTEXT_WARN_TOKENS + 5 }),
+      session('done', { contextTokens: CONTEXT_HIGH_TOKENS * 2, finished: true }),
+      session(OWN, { name: 'pitwall-supervisor', contextTokens: CONTEXT_HIGH_TOKENS * 2 }),
+    ];
+    const { json, isError } = await call(tools({ sessions, usage: usage.usage }).get_usage!);
+    expect(isError).toBeUndefined();
+    expect(usage.calls()).toBe(1);
+    expect(json).toMatchObject({ now: new Date(NOW).toISOString(), note: UNTRUSTED_NOTE });
+    expect(json.plan).toMatchObject({ status: 'available', target: { percent: 80 }, week: { usedPercentage: 62, pace: { ahead: true, points: 12 }, projection: { status: 'range' } }, fiveHour: null });
+    expect(json.tokens).toEqual({ since: '2026-10-25T12:00:00.000Z', from: 'reset', totals: { calls: 10, input: 100, cacheWrite: 200, cacheRead: 30_000, output: 400 } });
+    const heaviest = json.heaviest as Record<string, unknown>[];
+    expect(heaviest[0]).toMatchObject({ id: 'a', kind: 'main', cost: 1.23, state: 'idle', sessionKind: 'interactive', contextTokens: 120_000, untrusted: { name: INJECTION, repo: 'repo', model: 'claude-opus-5-5' } });
+    // A session pitwall no longer lists: its id and the transcript's directory, untrusted.
+    // Unlisted: its id is only a transcript's file name, so it's under untrusted (W180, U-F4).
+    expect(heaviest[1]).toMatchObject({ listed: false, untrusted: { id: 'gone', repo: '~/made-up/repo' } });
+    expect(heaviest[1]).not.toHaveProperty('id');
+    // pitwall's own: by what it is, never its id.
+    expect(heaviest[2]).toEqual(expect.objectContaining({ kind: 'pitwall', pitwall: 'supervisor' }));
+    expect(heaviest[2]).not.toHaveProperty('id');
+    expect(heaviest[3]).toMatchObject({ kind: 'pitwall', pitwall: 'recap' });
+    // Unfinished, over CONTEXT_WARN_TOKENS, never pitwall's own, largest first.
+    expect(json.largeContext).toEqual({
+      overTokens: CONTEXT_WARN_TOKENS,
+      sessions: [
+        { id: 'big', kind: 'background', state: 'idle', contextTokens: CONTEXT_HIGH_TOKENS + 5, level: 'high', untrusted: { name: 'pitwall-test-big', repo: 'repo' } },
+        { id: 'warm', kind: 'interactive', state: 'idle', contextTokens: CONTEXT_WARN_TOKENS + 5, level: 'warn', untrusted: { name: 'pitwall-test-warm', repo: 'repo' } },
+      ],
+      omitted: 0,
+    });
+    // Names, repos and model ids only under untrusted; no session content.
+    expect(trustedStrings(json).join('\n')).not.toContain(INJECTION);
+    expect(JSON.stringify(json)).not.toContain(OWN);
+  });
+
+  it('caps the large-context sessions and counts the rest', async () => {
+    const sessions = Array.from({ length: USAGE_LARGE_MAX + 3 }, (_, i) => session(`s${i}`, { contextTokens: CONTEXT_WARN_TOKENS + 1000 * (i + 1) }));
+    const { json } = await call(tools({ sessions, usage: source(report()).usage }).get_usage!);
+    const large = json.largeContext as { sessions: { id: string }[]; omitted: number };
+    expect(large.sessions).toHaveLength(USAGE_LARGE_MAX);
+    expect(large.sessions[0]!.id).toBe(`s${USAGE_LARGE_MAX + 2}`);
+    expect(large.omitted).toBe(3);
+  });
+
+  it("with --no-usage, gives the transcripts' totals and says the plan's figures are off", async () => {
+    const { json } = await call(tools({ usage: source(report({ runRate: { status: 'off' }, week: { since: '2026-10-22T00:00:00.000Z', from: 'days', totals: tokens } })).usage }).get_usage!);
+    expect(json.plan).toMatchObject({ status: 'off', note: expect.stringContaining('--no-usage') });
+    expect(json.tokens).toMatchObject({ from: 'days', totals: { calls: 10 } });
+  });
+
+  it("says when the plan's read is unavailable, or stands in the last reading", async () => {
+    const unavailable = await call(tools({ usage: source(report({ runRate: { status: 'unavailable', readAt: new Date(NOW).toISOString(), reason: 'timeout' } })).usage }).get_usage!);
+    expect(unavailable.json.plan).toMatchObject({ status: 'unavailable', reason: 'timeout', note: expect.stringContaining("couldn't read") });
+    const fallback = await call(tools({ usage: source(report({ runRate: { ...RATE, fallback: { reason: 'failed' } } as RunRate })).usage }).get_usage!);
+    expect(fallback.json.plan).toMatchObject({ status: 'available', fallback: { reason: 'failed' }, note: expect.stringContaining('the one before') });
+  });
+
+  it('answers "unavailable", never a tool error, when the report fails, hangs or there is no usage source', async () => {
+    const sessions = [session('big', { contextTokens: CONTEXT_HIGH_TOKENS + 5 })];
+    for (const usage of [
+      undefined,
+      { report: async (): Promise<UsageReport> => Promise.reject(new Error('boom')) },
+      { report: (): Promise<UsageReport> => { throw new Error('sync boom'); } },
+      { report: () => new Promise<UsageReport>(() => {}) },
+    ]) {
+      const result = await call(tools({ sessions, ...(usage === undefined ? {} : { usage }), usageWaitMs: 20 }).get_usage!);
+      expect(result.isError).toBeUndefined();
+      expect(result.json).toMatchObject({ plan: { status: 'unavailable' }, tokens: null, heaviest: [], unavailable: expect.stringContaining("couldn't read") });
+      // The snapshot's figures still come.
+      expect((result.json.largeContext as { sessions: unknown[] }).sessions).toHaveLength(1);
+    }
+  });
+
+  it('takes no arguments', async () => {
+    expect(await call(tools({ usage: source(report()).usage }).get_usage!, { week: true })).toMatchObject({ isError: true, text: 'pitwall: Unknown argument: week.' });
   });
 });

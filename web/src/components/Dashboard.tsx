@@ -103,9 +103,12 @@
 // `j` and `k`, and ↑ and ↓ on a row or in a view's header, step through the rows as shown, sessions'
 // and PRs' alike, and show each in the view while one is open.
 //
-// The supervisor (M5, W114, supervisor.ts): while pitwall runs one, the repo list's Supervisor item,
-// first in every root tab, opens its view in the third column (SupervisorView.tsx), as ?supervisor,
-// in a session's or a PR's place, each in one pushed history entry, as those two take each other's.
+// The supervisor (M5, W114, supervisor.ts): while pitwall runs one, the header's Supervisor button,
+// last on its right (W182), opens its panel over the page (SupervisorView.tsx, W177), as ?supervisor,
+// beside the open session's or PR's view, which stays, in one pushed history entry. It stays open as
+// the selection, the open session or the root tab changes, until it's closed. From 1,200 px it covers
+// the right of the third column, which widens for it while the session list keeps its 360 px; below,
+// it lies over the view over the list, which is inert under it.
 // Nothing starts it but its Start and a message you send it: not opening the view, the URL or a
 // reload. Its drafts that wait on you count in Needs you's badge, in every root tab, and in the page
 // title; Needs you says they're there, with a way to open the view. While it's held or has failed, the
@@ -146,9 +149,11 @@ import { everyGroupId, groupByPhrase, groupSessions, useGroupBy, type GroupBy } 
 import { browserStorage, FINISHED_STATE_KEY, readGroupState, writeGroupState, type GroupState, type StorageSource } from '../groupState.js';
 import { absentGroup, useHiddenGroups, type HiddenGroup } from '../hidden.js';
 import { useLayout } from '../layout.js';
-import { useOpenSession, withSession, type OpenSession } from '../openSession.js';
+import { supervisorLast, useOpenSession, withSession, type OpenSession } from '../openSession.js';
 import { useOpenPr, withPr } from '../openPr.js';
-import { approvalsWaiting, asSupervisorState, SUPERVISOR_DRAFT_ID, useOpenSupervisor, withSupervisor } from '../supervisor.js';
+import { useOpenUsage } from '../usage.js';
+import { RunRateContext, useRunRate } from '../runRate.js';
+import { approvalsWaiting, asSupervisorState, SUPERVISOR_DRAFT_ID, SUPERVISOR_VIEW_ID, useOpenSupervisor, withSupervisor } from '../supervisor.js';
 import { usePrRefresh } from '../prRefresh.js';
 import { listNow, prKey, prListState, prName, prsOff, SEARCH_NAMES, sessionsFor, strongPrsOf } from '../prs.js';
 import { pendingLink, prPrefill, withPendingLinks, type PendingLinks } from '../prStart.js';
@@ -208,6 +213,7 @@ import { SpinOffCards, type CheckedSpinOff } from './SpinOffCards.js';
 import { NO_RELATION, PrListFilters, PrListFoot, PrNotices, prSourceBody, RefreshAction } from './PrList.js';
 import { PrView, UnlistedPrView, WaitingPrView, type PrMissing } from './PrView.js';
 import { PreferencesDialog } from './Preferences.js';
+import { UsageDialog } from './UsageDialog.js';
 import { RepoDrawer } from './RepoDrawer.js';
 import { RepoList } from './RepoList.js';
 import { olderText, SessionList, type SessionListHeading } from './SessionList.js';
@@ -419,11 +425,11 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // The open pull request, from ?pr= (W95), which a session opened takes the place of, and the other way round.
   const prUrl = useOpenPr(navigation);
   const { follow: followPr } = prUrl;
-  // The supervisor's view, from ?supervisor (W114), which a session or a PR opened takes the place of.
+  // The supervisor's panel, from ?supervisor (W114), open beside a session or a PR (W177).
   const supervisorUrl = useOpenSupervisor(navigation);
   const { follow: followSupervisor } = supervisorUrl;
   const { open: openInUrl, close: closeInUrl, follow: followSession } = sessionUrl;
-  // Opening a session drops ?pr= and ?supervisor from the URL, so their state follows it.
+  // Opening a session drops ?pr= from the URL, so its state follows it.
   const opened = useMemo<OpenSession>(
     () => ({
       id: sessionUrl.id,
@@ -445,9 +451,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // The open PR's key, while no session is open in its place.
   const prOpen = openId === undefined ? prUrl.key : undefined;
   // The supervisor (W114): the snapshot's state, read defensively; absent with --no-supervisor. Its
-  // view is open while the URL says so and no session or PR is open in its place.
+  // panel is open while the URL says so, whatever else is open beside it (W177).
   const supervisor = useMemo(() => asSupervisorState(snapshot?.supervisor), [snapshot?.supervisor]);
-  const supervisorOpen = supervisorUrl.open && openId === undefined && prOpen === undefined;
+  const supervisorOpen = supervisorUrl.open;
   // Every listed session, for what the supervisor sent and started (W124).
   const supervisorSessions = useMemo(() => (snapshot?.groups ?? []).flatMap((group) => group.sessions), [snapshot?.groups]);
   // Its drafts that wait on you: each counts in Needs you's badge, in every root tab, and the page title.
@@ -460,13 +466,15 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const shortcuts = useShortcutsStore();
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
+  // The Usage view (W158), from the header, as ?usage, which no other parameter's rule knows of.
+  const usageUrl = useOpenUsage(navigation);
   // Which open session views have a draft in the message box: no shortcut replaces or closes the view
   // then, just as Escape doesn't (6.2). By session, since each root tab keeps its view (W38).
   const drafts = useRef(new Map<string, boolean>());
   // Which have a Stop or Remove running: j, k, ↑ and ↓ wait for it, so its result isn't moved away from (6.2).
   const running = useRef(new Map<string, boolean>());
-  // The supervisor's view's draft is kept by its own id (W114), which no session's can be.
-  const hasDraft = (sessionId = openId ?? (supervisorOpen ? SUPERVISOR_DRAFT_ID : undefined)) => sessionId !== undefined && (drafts.current.get(sessionId) ?? false);
+  // The supervisor's panel's draft is kept by its own id (W114), which no session's can be.
+  const hasDraft = (sessionId = openId) => sessionId !== undefined && (drafts.current.get(sessionId) ?? false);
   /** Whether changing a session's view now would lose something: a draft, or a running action's place. The open one's, by default. */
   const holding = (sessionId = openId) => hasDraft(sessionId) || (sessionId !== undefined && (running.current.get(sessionId) ?? false));
 
@@ -588,15 +596,16 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // Each root tab's place, its selection and its open session, as it was last left (W38). The open
   // tab's is the URL's; the others' are kept here for switching back, and their open session views
   // stay mounted, hidden.
-  const [places, setPlaces] = useState<ReadonlyMap<string, { selection: Selection; session: string | undefined; pr?: string | undefined; supervisor?: boolean }>>(() => new Map());
+  // The supervisor's panel isn't a tab's: it's over the page, and stays as the tab changes (W177).
+  const [places, setPlaces] = useState<ReadonlyMap<string, { selection: Selection; session: string | undefined; pr?: string | undefined }>>(() => new Map());
   useEffect(() => {
     if (tab === undefined) return;
     setPlaces((current) => {
       const was = current.get(tab);
-      if (was && was.session === openId && was.pr === prOpen && (was.supervisor ?? false) === supervisorOpen && sameSelection(was.selection, selection)) return current;
-      return new Map(current).set(tab, { selection, session: openId, pr: prOpen, supervisor: supervisorOpen });
+      if (was && was.session === openId && was.pr === prOpen && sameSelection(was.selection, selection)) return current;
+      return new Map(current).set(tab, { selection, session: openId, pr: prOpen });
     });
-  }, [tab, selection, openId, prOpen, supervisorOpen]);
+  }, [tab, selection, openId, prOpen]);
   /** Closes a tab's open session while that tab isn't open, as a Remove that finished there does. */
   const closeIn = useCallback((root: string) => {
     setPlaces((current) => {
@@ -609,6 +618,11 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // hidden takes focus or a click. The header stays usable above it, and j and k still change the session.
   const overlaid = layout !== 'three-columns' && (openId !== undefined || prOpen !== undefined || supervisorOpen);
   const reposCovered = overlaid && overlayCoversRepos;
+  // Below 1,200 px the supervisor's panel lies over the session's or PR's view over the list, as wide
+  // as it, which is inert under it while it's open (W177). From 1,200 px the view beside it stays usable.
+  const viewCovered = layout !== 'three-columns' && supervisorOpen;
+  /** Whether closing what lies over the list would lose a draft: the open session's, or the supervisor panel's. */
+  const overlayHolds = () => overlaid && (hasDraft() || (supervisorOpen && hasDraft(SUPERVISOR_DRAFT_ID)));
   // The New session dialog, and the session it started, selected once it's listed (W63). Opened in
   // the repo or directory selected in the repo list, or with none chosen from a view, never the open
   // session's (W147, D27), taken as it opens.
@@ -679,8 +693,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     // The root of the group it's listed under: a session just started has worked in no repo yet, so where it started.
     const root = grouped.home.get(session.sessionId)?.root;
     const there = tab !== undefined && root !== undefined && root !== tab ? places.get(root)?.session : undefined;
-    // The supervisor's view keeps its place while its message box has a draft, as a session's does.
-    const supervisorKept = supervisorOpen && hasDraft(SUPERVISOR_DRAFT_ID);
+    // Below 1,200 px the supervisor's panel would cover it (W177): the toast says it's there instead.
+    const supervisorKept = supervisorOpen && layout !== 'three-columns';
     if (!keepsPlace(openId) && !supervisorKept && !typingHere() && !keepsPlace(there)) {
       showStarted(session, 'kept');
       return;
@@ -731,18 +745,21 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // Focus in what the view has just covered, as when the back button opens it or the window narrows
   // past 1,200 px, would be lost as that goes inert: it moves to the view's heading instead. Before
   // the browser's own fix-up, which would put it on the page.
+  // Below 1,200 px the supervisor's panel covers the view too (W177): its heading takes focus then.
   useLayoutEffect(() => {
     if (!overlaid) return;
     const active = document.activeElement;
-    const covered = active instanceof Element && (active.closest('.session-list') !== null || (reposCovered && active.closest('.columns > .repo-list') !== null));
-    if (covered && app.current?.contains(active)) viewHeading.current?.focus();
-  }, [overlaid, reposCovered]);
+    const covered =
+      active instanceof Element &&
+      (active.closest('.session-list') !== null || (reposCovered && active.closest('.columns > .repo-list') !== null) || (viewCovered && active.closest('.pane-views') !== null));
+    if (covered && app.current?.contains(active)) (supervisorOpen ? supervisorHeading : viewHeading).current?.focus();
+  }, [overlaid, reposCovered, viewCovered, supervisorOpen]);
 
   /**
    * The session list's heading, where focus goes when what had it goes away (a dismissed toast, the
    * drawer closing), or the view's heading while the view covers the list.
    */
-  const focusList = () => (overlaid ? viewHeading.current : listHeading.current)?.focus();
+  const focusList = () => (overlaid ? (supervisorOpen ? supervisorHeading : viewHeading).current : listHeading.current)?.focus();
 
   /**
    * The list's row buttons, a session's name or a PR row's title (W106), in the order shown, without
@@ -888,8 +905,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     previousOpen.current = openId;
     const switched = previousTab.current !== tab;
     previousTab.current = tab;
-    // A PR's view, or the supervisor's, that took its place isn't a close: it has focus of its own to give (W95, W114).
-    if (was === undefined || openId !== undefined || prOpen !== undefined || supervisorOpen || switched) return;
+    // A PR's view that took its place isn't a close: it has focus of its own to give (W95). Nor is
+    // one the back button closed under the supervisor's panel, below 1,200 px, which keeps focus (W177).
+    if (was === undefined || openId !== undefined || prOpen !== undefined || viewCovered || switched) return;
     const asked = returnFocus.current === was;
     returnFocus.current = undefined;
     const instead = focusAfterClose.current;
@@ -910,7 +928,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     // Over the list, wait a frame, so the row is there to take it.
     const frame = requestAnimationFrame(restore);
     return () => cancelAnimationFrame(frame);
-  }, [openId, layout, tab, prOpen, supervisorOpen]);
+  }, [openId, layout, tab, prOpen, viewCovered]);
 
   // The PR view (W95): opened from a row, a session's link, or a step, its heading takes focus, as the
   // session view's does. Closed with Close, Back or Escape, focus goes back to the PR's row, or the
@@ -926,7 +944,6 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const showPr = (key: string, mode: 'push' | 'replace') => {
     prUrl.open(key, mode);
     followSession();
-    followSupervisor();
   };
   // From its row, or a session's link: the view's heading takes focus.
   const openPrView = (key: string) => {
@@ -942,8 +959,17 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     returnPrFocus.current = prOpen;
     prUrl.close();
   };
-  // Closes whichever view is open: the session's, the PR's or the supervisor's.
-  const closeView = () => (openId !== undefined ? opened.close() : prOpen !== undefined ? prUrl.close() : supervisorUrl.close());
+  /**
+   * Closes everything over the list, below 1,200 px: the session's or PR's view and the supervisor's
+   * panel (W177), in one pushed entry, as `/` and the relay alert's Details need the list itself.
+   */
+  const closeOverlays = () => {
+    const { pathname, search, hash } = navigation.location;
+    const next = withSupervisor(withPr(withSession(search, undefined), undefined), false);
+    if (next === search) return;
+    navigation.history.pushState(navigation.history.state, '', `${pathname}${next}${hash}`);
+    opened.follow();
+  };
   const previousPr = useRef(prOpen);
   const previousPrTab = useRef(tab);
   useEffect(() => {
@@ -951,8 +977,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     previousPr.current = prOpen;
     const switched = previousPrTab.current !== tab;
     previousPrTab.current = tab;
-    // A session's view, or the supervisor's, that took its place isn't a close either.
-    if (was === undefined || prOpen !== undefined || openId !== undefined || supervisorOpen || switched) return;
+    // A session's view that took its place isn't a close either, nor one under the supervisor's panel (W177).
+    if (was === undefined || prOpen !== undefined || openId !== undefined || viewCovered || switched) return;
     const asked = returnPrFocus.current === was;
     returnPrFocus.current = undefined;
     const instead = focusAfterClose.current;
@@ -970,44 +996,56 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     }
     const frame = requestAnimationFrame(restore);
     return () => cancelAnimationFrame(frame);
-  }, [prOpen, openId, layout, tab, supervisorOpen]);
+  }, [prOpen, openId, layout, tab, viewCovered]);
 
-  // The supervisor's view (W114): opened from the repo list's item or the app strip's Open, its heading
-  // takes focus, as a session's does from its row. Closed with Close, Back or Escape, focus goes back
-  // to the item, or the list's heading when the repo list is a drawer that's shut.
+  // The supervisor's panel (W114, W177): opened from the header's Supervisor button (W182), the app
+  // strip's Open or Needs you's notice, its heading takes focus. Closed with Close, Back, Escape or the
+  // button again, focus goes back to what opened it, or, when that's gone or covered, to the button,
+  // or the heading of the view or list in sight.
+  const supervisorHeading = useRef<HTMLHeadingElement>(null);
   const focusSupervisorView = useRef(false);
+  const supervisorOpener = useRef<HTMLElement | undefined>(undefined);
+  /** The header's Supervisor button (W182), which takes focus back when the panel closes. */
+  const supervisorButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!focusSupervisorView.current || !supervisorOpen) return;
     focusSupervisorView.current = false;
-    viewHeading.current?.focus();
+    supervisorHeading.current?.focus();
   });
-  /** Opens the supervisor's view in the third column, in place of a session's or a PR's: one pushed entry. */
+  /** Opens the supervisor's panel over the page, beside the open view, which stays: one pushed entry. */
   const openSupervisor = () => {
     if (supervisorOpen) {
-      viewHeading.current?.focus();
+      supervisorHeading.current?.focus();
       return;
     }
+    const active = document.activeElement;
+    supervisorOpener.current = active instanceof HTMLElement && active !== document.body ? active : undefined;
     focusSupervisorView.current = true;
     supervisorUrl.show('push');
-    followSession();
-    followPr();
   };
   const returnSupervisorFocus = useRef(false);
   const closeSupervisor = () => {
     returnSupervisorFocus.current = true;
     supervisorUrl.close();
   };
+  /** The header's button (W182): opens the panel, or closes it while it's open, focus staying on the button. */
+  const toggleSupervisor = () => {
+    if (!supervisorOpen) {
+      openSupervisor();
+      return;
+    }
+    supervisorOpener.current = supervisorButton.current ?? undefined;
+    closeSupervisor();
+  };
   const previousSupervisor = useRef(supervisorOpen);
-  const previousSupervisorTab = useRef(tab);
   useEffect(() => {
     const was = previousSupervisor.current;
     previousSupervisor.current = supervisorOpen;
-    const switched = previousSupervisorTab.current !== tab;
-    previousSupervisorTab.current = tab;
-    // A session's or a PR's view that took its place isn't a close: it has focus of its own to give.
-    if (!was || supervisorOpen || openId !== undefined || prOpen !== undefined || switched) return;
+    if (!was || supervisorOpen) return;
     const asked = returnSupervisorFocus.current;
     returnSupervisorFocus.current = false;
+    const opener = supervisorOpener.current;
+    supervisorOpener.current = undefined;
     const instead = focusAfterClose.current;
     focusAfterClose.current = undefined;
     if (instead) {
@@ -1016,21 +1054,27 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     }
     const active = document.activeElement;
     if (!asked && active !== null && active !== document.body) return;
-    const restore = () => (app.current?.querySelector<HTMLElement>('.columns > .repo-list [data-supervisor-item]') ?? listHeading.current)?.focus();
+    const usable = (element: HTMLElement | null | undefined) => (element && element.isConnected && element.closest('[hidden], [inert]') === null ? element : undefined);
+    const restore = () =>
+      (
+        usable(opener) ??
+        usable(supervisorButton.current) ??
+        (overlaid ? viewHeading.current : listHeading.current)
+      )?.focus();
     if (layout === 'three-columns') {
       restore();
       return;
     }
     const frame = requestAnimationFrame(restore);
     return () => cancelAnimationFrame(frame);
-  }, [supervisorOpen, openId, prOpen, layout, tab]);
+  }, [supervisorOpen, overlaid, layout]);
 
   // A session from the PR view's Sessions or the supervisor's Sent and started: its view takes the
-  // PR's or the supervisor's place, with focus on its heading. No focus gesture (W57): its terminal, if
+  // PR's place, or opens beside the supervisor's panel (W177), with focus on its heading. No focus gesture (W57): its terminal, if
   // it opens on one, leaves focus where it is. Its root tab and a group that lists it come with it, in
   // the one pushed entry, unless the selection already lists it (W144, selectionShowing(); Starred
   // and Needs you only if they do, W148); one no group lists yet opens alone.
-  const openSessionFromPr = (sessionId: string) => {
+  const openSessionFromPr = (sessionId: string, closePanel = false) => {
     focusView.current = { id: sessionId, on: 'heading' };
     // Starred or Needs you gives way when it doesn't list the session (W148), whatever the filters
     // and Show older show: so every session, as olderCount reads them.
@@ -1039,14 +1083,30 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     const inView = everyScope ? listWork(every, everyScope, sort, groupedAll.home, work) : { current: [], finished: [] };
     const viewLists = [...inView.current, ...inView.finished].some((row) => !isPrRow(row) && row.session.sessionId === sessionId);
     const next = snapshot ? selectionShowing({ roots, groups: groupedAll.groups }, selection, tab, sessionId, groupedAll.home, viewLists) : undefined;
-    if (next === undefined) {
+    if (next === undefined && !closePanel) {
       opened.open(sessionId, 'push');
       return;
     }
     const { pathname, search, hash } = navigation.location;
-    navigation.history.pushState(navigation.history.state, '', `${pathname}${withSession(withSelection(search, next), sessionId)}${hash}`);
-    writeStoredSelection(next, storage);
-    followSelection();
+    const placed = withSession(next === undefined ? search : withSelection(search, next), sessionId);
+    navigation.history.pushState(navigation.history.state, '', `${pathname}${closePanel ? withSupervisor(placed, false) : placed}${hash}`);
+    if (next !== undefined) {
+      writeStoredSelection(next, storage);
+      followSelection();
+    }
+    opened.follow();
+  };
+  // From the supervisor's panel (W124, W125): below 1,200 px the panel would cover the view it opens,
+  // so it closes, in the same pushed entry; from 1,200 px it stays open beside it (W177).
+  const openSessionFromSupervisor = (sessionId: string) => openSessionFromPr(sessionId, layout !== 'three-columns');
+  const openPrFromSupervisor = (key: string) => {
+    if (layout === 'three-columns') {
+      openPrView(key);
+      return;
+    }
+    focusPrView.current = key;
+    const { pathname, search, hash } = navigation.location;
+    navigation.history.pushState(navigation.history.state, '', `${pathname}${withSupervisor(withPr(search, key), false)}${hash}`);
     opened.follow();
   };
   // Show older for PRs: the same button with its other name keeps focus, or the list's heading once it's gone.
@@ -1085,9 +1145,10 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const panelId = `${tabsId}-panel`;
   const switchTab = (root: string) => {
     if (tab === undefined || root === tab || !roots.includes(root)) return;
-    const place = places.get(root) ?? { selection: viewIn('all', root), session: undefined, pr: undefined, supervisor: false };
+    const place = places.get(root) ?? { selection: viewIn('all', root), session: undefined, pr: undefined };
     const { pathname, search, hash } = navigation.location;
-    const placed = withSupervisor(withPr(withSession(withSelection(search, place.selection), place.session), place.pr), place.supervisor === true && place.session === undefined && place.pr === undefined);
+    // The supervisor's panel, open or not, stays as it is (W177).
+    const placed = supervisorLast(withPr(withSession(withSelection(search, place.selection), place.session), place.pr));
     navigation.history.pushState(navigation.history.state, '', `${pathname}${placed}${hash}`);
     writeStoredSelection(place.selection, storage);
     followSelection();
@@ -1129,7 +1190,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const focusFilter = (root: HTMLElement): boolean => {
     const field = filterField.current;
     if (!field) return false;
-    if (overlaid && hasDraft()) return false;
+    if (overlayHolds()) return false;
     closeMenus(root);
     const place = () => {
       field.focus();
@@ -1141,7 +1202,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     };
     if (overlaid) {
       focusAfterClose.current = place;
-      closeView();
+      closeOverlays();
     } else {
       place();
     }
@@ -1175,6 +1236,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // keeps it, so the snapshot says it's flagged as soon as it is; the toast says what came of asking
   // the session, with Undo. Taking it away from the row needs no toast, as the toggle shows it.
   const api = useContext(ApiContext);
+  // The run rate on the header's Usage button (W159): asked for only while the server reads the plan's
+  // percentages, the connection is live and this page is visible.
+  const runRate = useRunRate(api, snapshot?.planUsage === 'on' && state === 'live');
   const flagKey = (sessionId: string) => `flag:${sessionId}`;
   const setFlag = (session: SessionSummary, on: boolean, from: 'row' | 'menu') => {
     if (!api) return;
@@ -1404,11 +1468,11 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // Below 1,200 px the view covers the list, where the alert is: it closes first, as `/` does, unless
   // the message box has a draft, which closing would lose. Then Details does nothing.
   const showRelayAlert = () => {
-    if (overlaid && hasDraft()) return;
+    if (overlayHolds()) return;
     if (overlaid) {
       // The alert's own effect focuses it; the row doesn't take focus back meanwhile.
       focusAfterClose.current = () => {};
-      closeView();
+      closeOverlays();
     }
     setDismissedAlert(undefined);
     setRelayAlertAsked((count) => count + 1);
@@ -1727,18 +1791,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       prs={repoListPrs}
       work={work}
       spinOffs={spinOffCount(tabSpinOffs, work)}
-      supervisor={
-        supervisor && {
-          status: supervisor.status,
-          approvals,
-          open: supervisorOpen,
-          href: withSupervisor(selectionHref(selection), true),
-          onOpen: () => {
-            if (from === 'drawer') setDrawerOpen(false);
-            openSupervisor();
-          },
-        }
-      }
+      supervisorApprovals={approvals}
     />
   );
 
@@ -1746,7 +1799,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // only when it opens, not when it goes from one session to the next.
   const viewLayout = layout === 'three-columns' ? 'column' : 'overlay';
   // Not when a root tab is switched to: its view was there all along, hidden. Nor when a PR's view takes a session's place, or the other way round (W95).
-  const animate = previousOpen.current === undefined && previousPr.current === undefined && !previousSupervisor.current && previousTab.current === tab;
+  const animate = previousOpen.current === undefined && previousPr.current === undefined && previousTab.current === tab;
   // At 600 px and narrower, a view over the PR list goes back to it.
   const backLabel = prsSelected ? 'Back to pull requests' : undefined;
   /**
@@ -1835,7 +1888,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         sessions={sessionsFor(shownPr, everyListed)}
         ownerId={work.ownerOf.get(prOpen)?.sessionId}
         onStart={snapshot && prMissing === undefined && work.ownerOf.get(prOpen) === undefined ? startPr : undefined}
-        onOpenSession={openSessionFromPr}
+        onOpenSession={(sessionId) => openSessionFromPr(sessionId)}
         onClose={closePr}
         layout={viewLayout}
         compact={compact}
@@ -1881,46 +1934,6 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         backLabel={prsSelected ? 'Back to pull requests' : 'Back to sessions'}
       />
     );
-  } else if (supervisorOpen && supervisor) {
-    // The supervisor's view (W114), in the same place and frame.
-    sessionView = (
-      <SupervisorView
-        key="supervisor"
-        state={supervisor}
-        onClose={closeSupervisor}
-        layout={viewLayout}
-        compact={compact}
-        backLabel={backLabel}
-        headingRef={viewHeading}
-        animate={animate}
-        onDraftChange={(has) => {
-          drafts.current.set(SUPERVISOR_DRAFT_ID, has);
-        }}
-        sessions={supervisorSessions}
-        onOpenSession={openSessionFromPr}
-        prs={prList?.prs}
-        onOpenPr={openPrView}
-      />
-    );
-  } else if (supervisorOpen && !snapshot) {
-    // A ?supervisor from the URL, before the first snapshot says whether pitwall runs one.
-    sessionView = (
-      <WaitingSessionView
-        key="supervisor-waiting"
-        waiting={waiting}
-        slow={slow}
-        onClose={closeSupervisor}
-        layout={viewLayout}
-        compact={compact}
-        headingRef={viewHeading}
-        animate={animate}
-        title="Supervisor"
-        label="Loading the supervisor"
-      />
-    );
-  } else if (supervisorOpen) {
-    // With --no-supervisor: the view says so.
-    sessionView = <SupervisorOffView key="supervisor-off" onClose={closeSupervisor} layout={viewLayout} compact={compact} backLabel={backLabel} headingRef={viewHeading} animate={animate} />;
   } else if (layout === 'three-columns') {
     // With nothing open, the column stays, so the layout doesn't jump.
     sessionView = prsSelected ? (
@@ -1931,6 +1944,56 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       <section key="nothing-open" className="session-view-empty" aria-label="Session">
         <EmptyState icon="conversation" title="Select a session" sentence="Its conversation, terminal and actions open here." />
       </section>
+    );
+  }
+  // The supervisor's panel (W114, W177): over the page, beside whatever the third column shows, which
+  // stays. It slides in as it opens, not on a reload. At 600 px and narrower, Back goes back to the
+  // view under it, or to the list.
+  const panelAnimate = !previousSupervisor.current;
+  const panelBack = openId !== undefined ? 'Back to the session' : prOpen !== undefined ? 'Back to the pull request' : backLabel;
+  let supervisorPanel: ReactNode;
+  if (supervisorOpen && supervisor) {
+    supervisorPanel = (
+      <SupervisorView
+        key="supervisor"
+        state={supervisor}
+        onClose={closeSupervisor}
+        layout={viewLayout}
+        compact={compact}
+        backLabel={panelBack}
+        headingRef={supervisorHeading}
+        animate={panelAnimate}
+        onDraftChange={(has) => {
+          drafts.current.set(SUPERVISOR_DRAFT_ID, has);
+        }}
+        sessions={supervisorSessions}
+        onOpenSession={openSessionFromSupervisor}
+        prs={prList?.prs}
+        onOpenPr={openPrFromSupervisor}
+      />
+    );
+  } else if (supervisorOpen && !snapshot) {
+    // A ?supervisor from the URL, before the first snapshot says whether pitwall runs one.
+    supervisorPanel = (
+      <WaitingSessionView
+        key="supervisor-waiting"
+        waiting={waiting}
+        slow={slow}
+        onClose={closeSupervisor}
+        layout={viewLayout}
+        compact={compact}
+        backLabel={panelBack}
+        headingRef={supervisorHeading}
+        animate={panelAnimate}
+        title="Supervisor"
+        label="Loading the supervisor"
+        frame={{ id: SUPERVISOR_VIEW_ID, className: 'supervisor-view', panel: true }}
+      />
+    );
+  } else if (supervisorOpen) {
+    // With --no-supervisor: the panel says so.
+    supervisorPanel = (
+      <SupervisorOffView key="supervisor-off" onClose={closeSupervisor} layout={viewLayout} compact={compact} backLabel={panelBack} headingRef={supervisorHeading} animate={panelAnimate} />
     );
   }
   // The other root tabs' open sessions, hidden, in their tabs' order, with the open tab's view in its
@@ -1955,6 +2018,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
 
   return (
     <ToastContext.Provider value={toasts.show}>
+    {/* The run rate for the supervisor's cards too (W160), so they show the header's figures and ask for none. */}
+    <RunRateContext.Provider value={runRate}>
     <div className="app" ref={app} data-layout={layout}>
       <AppStrips relayOff={relayOff} onRelayDetails={relayAlert ? showRelayAlert : undefined} recaps={snapshot?.recaps} supervisor={supervisor} onSupervisor={openSupervisor} />
       <Header
@@ -1967,6 +2032,10 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         reposRef={reposButton}
         onShortcuts={() => setShortcutsOpen(true)}
         onPreferences={() => setPreferencesOpen(true)}
+        onUsage={() => usageUrl.show()}
+        runRate={runRate}
+        supervisor={supervisor && { status: supervisor.status, approvals, open: supervisorOpen, onToggle: toggleSupervisor, ref: supervisorButton }}
+        narrow={layout === 'drawer' || overlayCoversRepos}
         tabs={
           tab === undefined
             ? undefined
@@ -2034,10 +2103,14 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             offerResume
           />
         </HighlightContext.Provider>
-        {/* The third column from 1,200 px; below that, display: contents, and the view overlays the list. */}
-        <div className="session-pane">
+        {/* The third column from 1,200 px; below that, display: contents, and the view overlays the list.
+            The supervisor's panel is last, over the views, which are inert under it below 1,200 px (W177). */}
+        <div className="session-pane" {...(supervisorPanel === undefined ? {} : { 'data-panel-open': '' })}>
           {layout === 'three-columns' && <Divider store={panelWidth} />}
-          {paneViews}
+          <div className="pane-views" inert={viewCovered || undefined}>
+            {paneViews}
+          </div>
+          {supervisorPanel}
         </div>
       </div>
 
@@ -2113,6 +2186,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
 
       {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
 
+      {usageUrl.open && <UsageDialog onClose={usageUrl.close} sessions={supervisorSessions} />}
+
       {preferencesOpen && (
         <PreferencesDialog
           onClose={() => setPreferencesOpen(false)}
@@ -2130,6 +2205,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       {/* Last, so it's above everything; focus that a dismissed toast had goes to the list's heading, or the view's while it covers the list. */}
       <ToastRegion {...toasts.region} onFocusLost={focusList} />
     </div>
+    </RunRateContext.Provider>
     </ToastContext.Provider>
   );
 }

@@ -1,18 +1,18 @@
 // The recap engine (M5, W110): which sessions get a recap and when, the budget and its midnight
 // reset, updates against first recaps, failures, the hiding of its calls, and what the snapshot
-// shows, Needs you's 'recap' reason included; and plan statuses (W123). A fake index, a fake `claude` that answers as
+// shows, Needs you's 'recap' reason included; and the plan's items (W172). A fake index, a fake `claude` that answers as
 // `claude -p --output-format json` does, and the test's own clock: no test runs claude. Every session
 // and recap here is made up.
 import { describe, expect, it } from 'vitest';
 import type { SessionFacts } from '../index/index.js';
 import type { RecapSourceReader, RecapSources } from '../index/recapSources.js';
-import { PLAN_TURNS_CAP, RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, RECAP_MODEL, RECAP_TURNS_CAP, RECAP_UPDATE_DEBOUNCE_MS, type ConversationEntry, type ConversationPage, type IndexSnapshot, type PullRequestList, type PullRequestSummary, type SessionRecap, type SessionSummary, type WorkChoice } from '../shared/protocol.js';
+import { PLAN_TURNS_CAP, RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, RECAP_TURNS_CAP, RECAP_UPDATE_DEBOUNCE_MS, type ConversationEntry, type ConversationPage, type IndexSnapshot, type PullRequestList, type PullRequestSummary, type SessionRecap, type SessionSummary, type WorkChoice } from '../shared/protocol.js';
 import { modelRejectedMessage } from '../server/work.js';
 import { memoryBudget } from './budget.js';
 import { memoryRecapStore } from './store.js';
 import type { RecapChildEvents, RecapSpawner } from './call.js';
-import { createRecapEngine, ownersNeedingYou, OWN_NAME_MS, PAUSE_AFTER_FAILURES, PLAN_MAX_CONCURRENT, PLAN_MODEL_REJECTED, RETRY_AFTER_FAILURE_MS, secondsToMidnight, type RecapEngineOptions, type RecapIndex } from './engine.js';
-import { CALL_FAILED, RECAP_REFUSALS, PLAN_STATUS_SYSTEM_PROMPT, planStatusArgs, recapArgs, RECAP_NAME } from './prompt.js';
+import { createRecapEngine, ownersNeedingYou, OWN_NAME_MS, PAUSE_AFTER_FAILURES, RETRY_AFTER_FAILURE_MS, secondsToMidnight, type RecapEngineOptions, type RecapIndex } from './engine.js';
+import { CALL_FAILED, RECAP_REFUSALS, recapArgs, RECAP_NAME } from './prompt.js';
 
 const MINUTE = 60_000;
 const DIR = '/made-up/pitwall-home/recap';
@@ -41,8 +41,15 @@ const answer = (overrides: Record<string, unknown> = {}) => ({
   goal: 'Make the nightly export work on large files.',
   workingOn: '#42: the fix, which the export needs.',
   plan: '',
+  items: [],
+  changes: '',
   ...overrides,
 });
+/** A stored recap's fields from a model's answer: W172's items and changes are planItems and planChanges, and only with a plan. */
+const keptOf = (raw: Record<string, unknown>): Partial<SessionRecap> => {
+  const { items, changes, ...rest } = raw;
+  return { ...rest, ...(raw.plan === '' || items === undefined ? {} : { planItems: items as SessionRecap['planItems'], ...(changes === '' ? {} : { planChanges: changes as string }) }) } as Partial<SessionRecap>;
+};
 const envelope = (result: unknown, overrides: Record<string, unknown> = {}) =>
   JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: typeof result === 'string' ? result : JSON.stringify(result), total_cost_usd: 0.0011, duration_ms: 4000, ...overrides });
 
@@ -236,7 +243,7 @@ describe('when a session is recapped', () => {
 
     await h.reply(call, envelope(answer()));
     expect(h.engine.health()).toEqual({ calls: 1, budget: RECAP_DAILY_BUDGET, costUsd: 0.0011 });
-    expect(h.engine.recap(a)).toEqual({ ...answer(), at: new Date(h.clock.now).toISOString(), throughAt: a.lastActivityAt, source: 'pitwall' });
+    expect(h.engine.recap(a)).toEqual({ ...keptOf(answer()), at: new Date(h.clock.now).toISOString(), throughAt: a.lastActivityAt, source: 'pitwall' });
     expect(h.changes()).toBeGreaterThan(0);
     // Nothing new since: no second call.
     await h.poll([a]);
@@ -359,11 +366,11 @@ describe('when a session is recapped', () => {
     await h.poll([a]);
     expect(h.calls).toHaveLength(2);
     const input = h.calls[1]!.input!;
-    expect(input).toContain('<previous-recap>\n{"goal":"Make the nightly export work on large files.","workingOn":"#42: the fix, which the export needs.","plan":"","summary":"You asked it to fix the nightly export. It opened draft PR #42 with a fix, and CI passes.","todos":[{"text":"Open a backport PR for 1.x","owner":"session"}');
+    expect(input).toContain('<previous-recap>\n{"goal":"Make the nightly export work on large files.","workingOn":"#42: the fix, which the export needs.","plan":"","items":[],"changes":"","summary":"You asked it to fix the nightly export. It opened draft PR #42 with a fix, and CI passes.","todos":[{"text":"Open a backport PR for 1.x","owner":"session"}');
     expect(input).toContain('<turns-since-previous-recap>');
     expect(input).toContain('User: Yes, open it.');
     expect(input).not.toContain('Please fix a.');
-    expect(input).toContain('Revise the previous recap with what the newer turns show: keep its goal, plan and summary steady');
+    expect(input).toContain('Revise the previous recap with what the newer turns show: keep its goal, plan, plan items and summary steady');
     expect(input).not.toContain('<latest-turns>');
     const reviewed = [{ text: 'Review #43', owner: 'someone else' }];
     await h.reply(h.calls[1], envelope(answer({ summary: 'It opened #43.', todos: reviewed, waitingOn: 'someone else' })));
@@ -404,7 +411,7 @@ describe('when a session is recapped', () => {
     });
     await h.poll([a]);
     expect(h.calls[0]!.input).toContain(`<claude-code-recap at="${a.lastActivityAt}">\nClaude Code says: waiting for review.\n</claude-code-recap>`);
-    // Whole since W150, as a plan status reads it.
+    // Whole since W150, as W123's plan status read it.
     expect(h.calls[0]!.input).toContain('<compaction-summary>\n1. Primary Request and Intent:\nFix a.\n2. Two:\nleft out\n</compaction-summary>');
   });
 });
@@ -434,7 +441,7 @@ describe('kept across restarts (W132)', () => {
     expect(one.calls).toHaveLength(2);
     const kept = store.current();
     expect([...kept.keys()].sort()).toEqual([A, B]);
-    expect(kept.get(A)).toEqual({ ...answer(), at: new Date(one.clock.now).toISOString(), throughAt: sessions[0]!.lastActivityAt, source: 'pitwall' });
+    expect(kept.get(A)).toEqual({ ...keptOf(answer()), at: new Date(one.clock.now).toISOString(), throughAt: sessions[0]!.lastActivityAt, source: 'pitwall' });
 
     two.start();
     const [a, b] = [two.add(A), two.add(B)];
@@ -462,7 +469,7 @@ describe('kept across restarts (W132)', () => {
     expect(two.engine.recap(a)?.stale).toBe(true);
     await two.poll([a]);
     expect(two.calls).toHaveLength(1);
-    expect(two.calls[0]!.input).toContain('<previous-recap>\n{"goal":"Make the nightly export work on large files.","workingOn":"#42: the fix, which the export needs.","plan":"","summary":"You asked it to fix the nightly export.');
+    expect(two.calls[0]!.input).toContain('<previous-recap>\n{"goal":"Make the nightly export work on large files.","workingOn":"#42: the fix, which the export needs.","plan":"","items":[],"changes":"","summary":"You asked it to fix the nightly export.');
     expect(two.calls[0]!.input).toContain('User: Yes, open it.');
     await two.reply(two.calls[0], envelope(answer({ summary: 'It opened #43.' })));
     expect(store.current().get(A)).toMatchObject({ summary: 'It opened #43.', throughAt: newer });
@@ -959,6 +966,58 @@ describe('what the snapshot shows', () => {
     expect(h.engine.decorate(a)).not.toHaveProperty('needsYou');
   });
 
+  describe("a finished job's own to-dos (W166)", () => {
+    // The hand-off of 2026-11-09: a CI check nothing is left to watch, then two steps of yours.
+    const handoff = [
+      { text: "Check main's CI on the merge", owner: 'CI', after: false },
+      { text: 'Push the hand-off commit', owner: 'you', after: false },
+      { text: 'Run /clear, then start the next session', owner: 'you', after: false },
+    ];
+
+    it('needs you for your first step that follows no other, whatever it waits on', async () => {
+      const { h, a } = await recapped({ todos: handoff, waitingOn: 'CI' });
+      expect(h.engine.decorate(a).recap).toMatchObject({ waitingOn: 'CI', forYou: 2, next: 'Push the hand-off commit' });
+      expect(h.engine.decorate(a).needsYou).toEqual({ reason: 'recap', text: 'Push the hand-off commit' });
+      const someone = await recapped({ todos: [{ text: 'Review #42', owner: 'someone else', after: false }, { text: 'Rebase #43', owner: 'you', after: false }], waitingOn: 'someone else' });
+      expect(someone.h.engine.decorate(someone.a).needsYou).toEqual({ reason: 'recap', text: 'Rebase #43' });
+    });
+
+    it("skips a step of yours that follows another's, so W146's case stays out", async () => {
+      const todos = [
+        { text: 'Merge #42', owner: 'someone else', after: false },
+        { text: 'Release the CLI once #42 ships', owner: 'you', after: true },
+      ];
+      const { h, a } = await recapped({ todos, waitingOn: 'someone else' });
+      expect(h.engine.decorate(a)).not.toHaveProperty('needsYou');
+      const later = await recapped({ todos: [handoff[0], { ...handoff[1], after: true }, handoff[2]], waitingOn: 'CI' });
+      expect(later.h.engine.decorate(later.a).needsYou).toEqual({ reason: 'recap', text: handoff[2]!.text });
+      // The row's `next` is the same step Needs you shows (#202's review).
+      expect(later.h.engine.decorate(later.a).recap).toMatchObject({ forYou: 2, next: handoff[2]!.text });
+    });
+
+    it("keeps W146's rule for a job that isn't done, an interactive session, a wait on another session and a recap from before W166", async () => {
+      const { h, a } = await recapped({ todos: handoff, waitingOn: 'CI' });
+      for (const state of ['working', 'blocked'] as const) expect(h.engine.decorate({ ...a, state }), state).not.toHaveProperty('needsYou');
+      expect(h.engine.decorate({ ...a, alive: false })).not.toHaveProperty('needsYou');
+      expect(h.engine.decorate({ ...a, kind: 'interactive' })).not.toHaveProperty('needsYou');
+      const other = await recapped({ todos: handoff, waitingOn: 'another session' });
+      expect(other.h.engine.decorate(other.a)).not.toHaveProperty('needsYou');
+      const before = await recapped({ todos: handoff.map(({ text, owner }) => ({ text, owner })), waitingOn: 'CI' });
+      expect(before.h.engine.decorate(before.a)).not.toHaveProperty('needsYou');
+      const mixed = await recapped({ todos: [handoff[0], { text: handoff[1]!.text, owner: 'you' }], waitingOn: 'CI' });
+      expect(mixed.h.engine.decorate(mixed.a)).not.toHaveProperty('needsYou');
+    });
+
+    it('not while its turn runs, nor from a stale recap', async () => {
+      const { h, a } = await recapped({ todos: handoff, waitingOn: 'CI' });
+      const newer = new Date(Date.parse(a.lastActivityAt!) + 1000).toISOString();
+      expect(h.engine.decorate({ ...a, lastActivityAt: newer })).not.toHaveProperty('needsYou');
+      h.facts.set('a', { file: '/made-up/projects/a.jsonl', turnEnded: false });
+      h.engine.observe(new Map(h.facts));
+      expect(h.engine.decorate(a)).not.toHaveProperty('needsYou');
+    });
+  });
+
   it("not while CI runs a step of the session's before yours (#168's review)", async () => {
     const todos = [
       { text: 'Watch CI on #42 and fix failures', owner: 'session' },
@@ -1028,169 +1087,6 @@ describe('what the snapshot shows', () => {
   });
 });
 
-describe('plan status (W123)', () => {
-  const PLAN = { found: true, plan: 'M2 of the made-up export rewrite', items: [{ text: 'W1: the reader', state: 'done' }, { text: 'W2: the writer', state: 'now' }, { text: 'W3: the old path', state: 'dropped' }], changes: 'W3 was dropped: the writer replaces it.' };
-  /** A session no recap is due for by itself (ended), so only the plan status calls. */
-  const quiet = (h: ReturnType<typeof harness>, id: string) => h.add(id, { alive: false, ended: true, pid: undefined });
-
-  it("makes one on demand with a recap's call and the plan prompt, over the first prompt, the whole compaction summary and up to 24k of turns", async () => {
-    const h = harness();
-    h.start();
-    const a = quiet(h, 'a');
-    h.sources.set('/made-up/projects/a.jsonl', { firstPrompt: 'Work through M2 in PLAN.md.', compaction: { text: '1. Primary Request and Intent:\nM2.\n2. Two:\nkept too' } });
-    await h.poll([a]);
-    expect(h.calls).toHaveLength(0);
-    const made = h.engine.makePlanStatus(a);
-    await tick();
-    expect(h.calls).toHaveLength(1);
-    const call = h.calls[0]!;
-    expect(call.args).toEqual(planStatusArgs({ model: RECAP_MODEL }));
-    expect(call.args[call.args.indexOf('--system-prompt') + 1]).toBe(PLAN_STATUS_SYSTEM_PROMPT);
-    expect(call.cwd).toBe(DIR);
-    expect(call.env.DISABLE_PROMPT_CACHING).toBe('1');
-    expect(call.input).toContain('<first-prompt>\nWork through M2 in PLAN.md.\n</first-prompt>');
-    // All its sections, not a recap's excerpt.
-    expect(call.input).toContain('2. Two:\nkept too');
-    expect(call.input).toContain('Write the plan status');
-    // A second while it runs is refused.
-    expect(await h.engine.makePlanStatus(a)).toEqual({ kind: 'running', retryAfterSeconds: 5 });
-    await h.reply(call, envelope(PLAN));
-    const result = await made;
-    expect(result.kind).toBe('made');
-    const status = { found: true, plan: PLAN.plan, items: PLAN.items, changes: PLAN.changes, at: new Date(h.clock.now).toISOString(), throughAt: a.lastActivityAt };
-    expect(result).toEqual({ kind: 'made', status });
-    expect(h.engine.planStatus(a)).toEqual(status);
-    // The snapshot carries only when it was made (D14), and the call counted against the budget.
-    expect(h.engine.decorate(a)).toEqual({ ...a, planStatusAt: status.at });
-    expect(h.engine.health()).toMatchObject({ calls: 1, costUsd: 0.0011 });
-    // Kept apart from recaps: no recap was made, and recaps' health has no error.
-    expect(h.engine.recap(a)).toBeUndefined();
-  });
-
-  it('collects up to PLAN_TURNS_CAP characters of turns, three times a recap', async () => {
-    const h = harness();
-    h.start();
-    const a = quiet(h, 'a');
-    const long = Array.from({ length: 40 }, (_, i) => ({ kind: 'assistant' as const, text: `Turn ${i} ${'x'.repeat(900)}`, at: new Date(h.clock.now - (40 - i) * MINUTE).toISOString() }));
-    h.pages.set('a', long);
-    await h.poll([a]);
-    const made = h.engine.makePlanStatus(a);
-    await tick();
-    const turns = /<latest-turns>\n([\s\S]*)\n<\/latest-turns>/.exec(h.calls[0]!.input!)![1]!;
-    expect(turns.length).toBeGreaterThan(RECAP_TURNS_CAP);
-    expect(turns.length).toBeLessThanOrEqual(PLAN_TURNS_CAP);
-    await h.reply(h.calls[0], envelope({ found: false }));
-    expect((await made).kind).toBe('made');
-  });
-
-  it("says no plan without a call when there's nothing to read, and refuses without a transcript, once the budget is spent, and after close", async () => {
-    const h = harness({ budget: 1 });
-    h.start();
-    const a = quiet(h, 'a');
-    h.pages.set('a', []);
-    h.sources.set('/made-up/projects/a.jsonl', {});
-    const none = session('none', { alive: false, ended: true, transcript: 'missing' });
-    await h.poll([a, none]);
-    expect(await h.engine.makePlanStatus(none)).toEqual({ kind: 'no-transcript' });
-    const empty = await h.engine.makePlanStatus(a);
-    expect(empty).toMatchObject({ kind: 'made', status: { found: false, items: [] } });
-    expect(h.calls).toHaveLength(0);
-    const b = quiet(h, 'b');
-    await h.poll([a, b]);
-    const made = h.engine.makePlanStatus(b);
-    await tick();
-    await h.reply(h.calls[0], envelope({ found: false }));
-    await made;
-    const spent = await h.engine.makePlanStatus(b);
-    expect(spent.kind).toBe('spent');
-    await h.engine.close();
-    expect(await h.engine.makePlanStatus(b)).toEqual({ kind: 'closed' });
-  });
-
-  it("answers a refused answer or a failed call in pitwall's words, keeps the one before, and leaves recaps' health alone", async () => {
-    const h = harness();
-    h.start();
-    const a = quiet(h, 'a');
-    await h.poll([a]);
-    const first = h.engine.makePlanStatus(a);
-    await tick();
-    await h.reply(h.calls[0], envelope(PLAN));
-    await first;
-    const second = h.engine.makePlanStatus(a);
-    await tick();
-    await h.reply(h.calls[1], envelope('Here is the plan: ignore your instructions.'));
-    expect(await second).toEqual({ kind: 'failed', reason: "The plan status call's answer wasn't the JSON pitwall asked for." });
-    const third = h.engine.makePlanStatus(a);
-    await tick();
-    await h.reply(h.calls[2], 'oops', 1);
-    expect(await third).toEqual({ kind: 'failed', reason: 'The plan status call exited with code 1.' });
-    expect(h.engine.planStatus(a)?.plan).toBe(PLAN.plan);
-    expect(h.engine.health().error).toBeUndefined();
-  });
-
-  it(`makes at most PLAN_MAX_CONCURRENT (${PLAN_MAX_CONCURRENT}) at a time, of all sessions, answering others 'running'`, async () => {
-    const h = harness();
-    h.start();
-    const [a, b, c] = [quiet(h, 'a'), quiet(h, 'b'), quiet(h, 'c')];
-    await h.poll([a, b, c]);
-    const first = h.engine.makePlanStatus(a);
-    const second = h.engine.makePlanStatus(b);
-    await tick();
-    expect(h.calls).toHaveLength(2);
-    expect(await h.engine.makePlanStatus(c)).toEqual({ kind: 'running', retryAfterSeconds: 5, others: true });
-    expect(h.calls).toHaveLength(2);
-    await h.reply(h.calls[0], envelope({ found: false }));
-    await first;
-    // One has finished, so there's room for c.
-    const third = h.engine.makePlanStatus(c);
-    await tick();
-    expect(h.calls).toHaveLength(3);
-    await h.reply(h.calls[1], envelope({ found: false }));
-    await h.reply(h.calls[2], envelope({ found: false }));
-    expect((await second).kind).toBe('made');
-    expect((await third).kind).toBe('made');
-  });
-
-  it("says in its own words which setting to change when Claude Code refuses the model, and leaves recaps' health alone", async () => {
-    const h = harness({ work: () => ({ model: 'claude-haiku-9-9' }) });
-    h.start();
-    const a = quiet(h, 'a');
-    await h.poll([a]);
-    const made = h.engine.makePlanStatus(a);
-    await tick();
-    await h.reply(h.calls[0], envelope("There's an issue with the selected model (claude-haiku-9-9). It may not exist or you may not have access to it.", { is_error: true, total_cost_usd: 0 }), 1);
-    expect(await made).toEqual({ kind: 'failed', reason: PLAN_MODEL_REJECTED });
-    expect(PLAN_MODEL_REJECTED).toMatch(/plan status/);
-    expect(PLAN_MODEL_REJECTED).toMatch(/"work.recaps"/);
-    expect(h.engine.health().error).toBeUndefined();
-  });
-
-  it('is stopped by close, which waits for it', async () => {
-    const h = harness();
-    h.start();
-    const a = quiet(h, 'a');
-    await h.poll([a]);
-    const made = h.engine.makePlanStatus(a);
-    await tick();
-    await h.engine.close();
-    expect(h.calls[0]!.signals).toEqual(['SIGTERM']);
-    expect(await made).toEqual({ kind: 'closed' });
-  });
-
-  it('forgets the plan status of a session no longer listed', async () => {
-    const h = harness();
-    h.start();
-    const a = quiet(h, 'a');
-    await h.poll([a]);
-    const made = h.engine.makePlanStatus(a);
-    await tick();
-    await h.reply(h.calls[0], envelope({ found: false }));
-    await made;
-    await h.poll([]);
-    expect(h.engine.planStatus(a)).toBeUndefined();
-  });
-});
-
 describe('close', () => {
   it('stops running calls, drops queued ones, and schedules nothing more', async () => {
     const h = harness({ maxConcurrent: 1 });
@@ -1250,11 +1146,13 @@ describe("the picture and the session's PRs (W150)", () => {
 
   it('makes a first recap, not an update, after a recap without the picture, and after a compaction newer than the previous recap', async () => {
     const ID = '00000000-0000-4000-8000-0000000000c1';
-    for (const why of ['no picture', 'compacted'] as const) {
+    for (const why of ['no picture', 'no plan items', 'compacted'] as const) {
       const clock = Date.parse('2026-10-29T12:00:00.000Z');
-      const { goal: _goal, workingOn: _workingOn, plan: _plan, ...beforeW150 } = answer();
-      // A recap kept before W150, without the picture, or one made now, with it.
-      const kept: SessionRecap = { ...(why === 'no picture' ? beforeW150 : answer()), at: new Date(clock).toISOString(), throughAt: new Date(clock - 6 * MINUTE).toISOString(), source: 'pitwall' } as SessionRecap;
+      const { goal: _goal, workingOn: _workingOn, plan: _plan, items: _items, changes: _changes, ...beforeW150 } = answer();
+      // A recap kept before W150, without the picture; one kept before W172, with a plan's line and
+      // none of its items (W172), so the list appears at its next activity; or one made now.
+      const fields = why === 'no picture' ? beforeW150 : why === 'no plan items' ? keptOf({ ...answer({ plan: 'M2 of the export, on W2' }), items: undefined }) : keptOf(answer());
+      const kept: SessionRecap = { ...fields, at: new Date(clock).toISOString(), throughAt: new Date(clock - 6 * MINUTE).toISOString(), source: 'pitwall' } as SessionRecap;
       const h = harness({ recapStore: memoryRecapStore(new Map([[ID, kept]])) });
       h.start();
       let a = h.add(ID);
@@ -1270,13 +1168,49 @@ describe("the picture and the session's PRs (W150)", () => {
       expect(input, why).toContain('<latest-turns>');
       expect(input, why).not.toContain('<previous-recap>');
       expect(input, why).toContain('Write the recap.');
+      // Once only (W172's review): a first recap whose plan came back with no items it could read,
+      // an empty list, makes the next call an update, not another first recap.
+      await h.reply(h.calls[0], envelope(answer({ plan: 'M2 of the export, on W2', items: [] })));
+      const later = new Date(h.clock.now + MINUTE).toISOString();
+      h.pages.get(ID)!.push({ kind: 'user', text: 'And W4.', at: later });
+      h.clock.now += 16 * MINUTE;
+      a = { ...a, lastActivityAt: later };
+      await h.poll([a]);
+      expect(h.calls, why).toHaveLength(2);
+      expect(h.calls[1]!.input, why).toContain('<previous-recap>');
     }
+  });
+
+  it("keeps the plan's items and changes from a first recap, and passes them on to the update, which keeps the new ones (W172)", async () => {
+    const h = harness();
+    h.start();
+    let a = h.add('a');
+    await h.poll([a]);
+    const items = [
+      { text: 'W1: the reader', state: 'done' },
+      { text: 'W2: the writer', state: 'now' },
+    ];
+    await h.reply(h.calls[0], envelope(answer({ plan: 'M2 of the export, on W2', items, changes: 'W3 was dropped.' })));
+    expect(h.engine.recap(a)).toMatchObject({ plan: 'M2 of the export, on W2', planItems: items, planChanges: 'W3 was dropped.' });
+    // The snapshot carries none of it (D14): the strip reads the whole recap.
+    expect(JSON.stringify(h.engine.decorate(a))).not.toContain('W1: the reader');
+    const newer = new Date(h.clock.now + MINUTE).toISOString();
+    h.pages.get('a')!.push({ kind: 'user', text: 'W2 merged, on to W3.', at: newer });
+    h.clock.now += 16 * MINUTE;
+    a = { ...a, lastActivityAt: newer };
+    await h.poll([a]);
+    expect(h.calls[1]!.input).toContain('"plan":"M2 of the export, on W2","items":[{"text":"W1: the reader","state":"done"},{"text":"W2: the writer","state":"now"}],"changes":"W3 was dropped."');
+    const moved = [items[0], { text: 'W2: the writer', state: 'done' }];
+    await h.reply(h.calls[1], envelope(answer({ plan: 'M2 of the export, on W3', items: moved, changes: '' })));
+    const recap = h.engine.recap(a)!;
+    expect(recap.planItems).toEqual(moved);
+    expect(recap).not.toHaveProperty('planChanges');
   });
 
   it('makes an update, not a first recap, after a compaction older than the previous recap', async () => {
     const ID = '00000000-0000-4000-8000-0000000000c2';
     const clock = Date.parse('2026-10-29T12:00:00.000Z');
-    const kept: SessionRecap = { ...answer(), at: new Date(clock).toISOString(), throughAt: new Date(clock - 6 * MINUTE).toISOString(), source: 'pitwall' } as SessionRecap;
+    const kept: SessionRecap = { ...keptOf(answer()), at: new Date(clock).toISOString(), throughAt: new Date(clock - 6 * MINUTE).toISOString(), source: 'pitwall' } as SessionRecap;
     const h = harness({ recapStore: memoryRecapStore(new Map([[ID, kept]])) });
     h.start();
     let a = h.add(ID);
@@ -1291,7 +1225,7 @@ describe("the picture and the session's PRs (W150)", () => {
     expect(h.calls[0]!.input!).toContain('<previous-recap>');
   });
 
-  it("names the session's PRs in a recap's input, an update's and a plan status's, and none without a list", async () => {
+  it("names the session's PRs in a recap's input and an update's, and none without a list", async () => {
     const h = harness();
     h.start();
     const links = [
@@ -1316,19 +1250,17 @@ describe("the picture and the session's PRs (W150)", () => {
     expect(h.calls[1]!.input).toContain('<previous-recap>');
     expect(h.calls[1]!.input).toContain(block);
     await h.reply(h.calls[1], envelope(answer()));
-    const made = h.engine.makePlanStatus(a);
-    await tick();
-    expect(h.calls[2]!.input).toContain(block);
-    await h.reply(h.calls[2], envelope({ found: false }));
-    await made;
 
     // With --no-prs, or before the first fetch: no block.
     await h.setPrs([], { source: { ok: false, reason: 'off', error: 'off' }, fetchedAt: undefined });
-    const plain = h.engine.makePlanStatus(a);
-    await tick();
-    expect(h.calls[3]!.input).not.toContain('<pull-requests');
-    await h.reply(h.calls[3], envelope({ found: false }));
-    await plain;
+    const later = new Date(h.clock.now + MINUTE).toISOString();
+    h.pages.get('a')!.push({ kind: 'user', text: 'And again.', at: later });
+    h.clock.now += 16 * MINUTE;
+    a = { ...a, lastActivityAt: later };
+    await h.poll([a]);
+    expect(h.calls[2]!.input).toContain('<previous-recap>');
+    expect(h.calls[2]!.input).not.toContain('<pull-requests');
+    await h.reply(h.calls[2], envelope(answer()));
   });
 });
 
@@ -1339,7 +1271,7 @@ describe('an answer in a busy stretch (W152)', () => {
 
   /** A recap carrying your question, then your answer and a busy stretch of `busy` tool calls and hand-backs. */
   function busy(maxPages: number, busy = 30) {
-    const kept: SessionRecap = { ...answer({ todos: [{ text: BUDGET, owner: 'you' }] }), at: new Date(clock).toISOString(), throughAt: new Date(clock - 6 * MINUTE).toISOString(), source: 'pitwall' } as SessionRecap;
+    const kept: SessionRecap = { ...keptOf(answer({ todos: [{ text: BUDGET, owner: 'you' }] })), at: new Date(clock).toISOString(), throughAt: new Date(clock - 6 * MINUTE).toISOString(), source: 'pitwall' } as SessionRecap;
     const h = harness({ recapStore: memoryRecapStore(new Map([[ID, kept]])), maxPages });
     h.paging.size = 10;
     h.start();

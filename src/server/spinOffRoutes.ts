@@ -68,7 +68,7 @@ export function registerSpinOffs(app: Hono, sources: SpinOffRouteSources): void 
       const input = { directory: proposal.folder, prompt: proposal.prompt, ...(proposal.name === undefined ? {} : { name: proposal.name }) };
       const checked = await checkSpawn(input, sources.snapshots.latest());
       if (!checked.ok) return answer(c, { ok: false, error: checked.error }, 409);
-      const { cwd, name, prompt } = checked.value;
+      const { cwd, name, prompt } = checked.value.spawn;
       return answer(c, { ok: true, cwd, prompt, ...(name === undefined ? {} : { name }) }, 200);
     },
   );

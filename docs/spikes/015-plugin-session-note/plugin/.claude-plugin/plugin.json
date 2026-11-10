@@ -1,0 +1,7 @@
+{
+  "name": "pitwall",
+  "version": "0.0.0-spike015",
+  "description": "SPIKE 015 PROTOTYPE, not for installing: a SessionStart note that tells a session pitwall watches it, and a pitwall skill that proposes a new session with W163's spin-off block.",
+  "author": { "name": "pitwall" },
+  "license": "Apache-2.0"
+}

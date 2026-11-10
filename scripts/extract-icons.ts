@@ -100,13 +100,15 @@ const ICONS: Readonly<Record<string, string | readonly [glyph: string, style: ty
   'flag-on': ['flag', FILLED],
   // The session view's Sub-agents tab (W77): a session and the sub-agents it started, some of them by another.
   subagents: 'account_tree',
-  // The repo list's Supervisor item and its view (W114): a headset, the pit wall's race engineer on the radio.
+  // The header's Supervisor button (W182) and its view (W114): a headset, the pit wall's race engineer on the radio.
   supervisor: 'support_agent',
   // New session's Attach files (W82), and the type of each file in its list: an image, a PDF, or text.
   attach: 'attach_file',
   image: 'image',
   pdf: 'picture_as_pdf',
   file: 'description',
+  // The header's Usage (W158), which opens the Usage view: a bar chart, what the view mostly is.
+  usage: 'bar_chart',
   'theme-system': 'computer',
   'theme-light': 'light_mode',
   'theme-dark': 'dark_mode',

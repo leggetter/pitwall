@@ -8,7 +8,7 @@
 // the parameter, and popstate makes the view follow the URL.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { PR_PARAM, parseSession, SESSION_PARAM, SUPERVISOR_PARAM, withoutParams } from './openSession.js';
+import { PR_PARAM, parseSession, SESSION_PARAM, supervisorLast, withoutParams } from './openSession.js';
 import { isRepoKey } from './prs.js';
 import { browserNavigation, type NavigationEnv } from './selection.js';
 import type { HistoryMode } from './openSession.js';
@@ -27,13 +27,14 @@ export function parsePr(search: string): string | undefined {
 }
 
 /**
- * `search` with ?pr= set to `key`, in place of any ?session= or ?supervisor (W114), or removed when it's undefined, every
- * other parameter kept, in order, with the PR last. Its `/` stay readable, as a selection's do.
+ * `search` with ?pr= set to `key`, in place of any ?session=, or removed when it's undefined, every
+ * other parameter kept, in order, with the PR last but for ?supervisor, whose panel stays open beside
+ * it (W177). Its `/` stay readable, as a selection's do.
  */
 export function withPr(search: string, key: string | undefined): string {
-  const kept = withoutParams(search, key === undefined ? [PR_PARAM] : [PR_PARAM, SESSION_PARAM, SUPERVISOR_PARAM]);
+  const kept = withoutParams(search, key === undefined ? [PR_PARAM] : [PR_PARAM, SESSION_PARAM]);
   if (key === undefined) return kept;
-  return `${kept === '' ? '?' : `${kept}&`}${PR_PARAM}=${encodeURIComponent(key).replace(/%2F/gi, '/')}`;
+  return supervisorLast(`${kept === '' ? '?' : `${kept}&`}${PR_PARAM}=${encodeURIComponent(key).replace(/%2F/gi, '/')}`);
 }
 
 export interface OpenPr {

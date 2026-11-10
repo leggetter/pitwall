@@ -42,8 +42,6 @@ import type {
   EndSessionResult,
   IndexSnapshot,
   PullRequestList,
-  PlanStatus,
-  PlanStatusResult,
   RecapRefreshResult,
   RelayResult,
   SessionRecap,
@@ -53,8 +51,9 @@ import type {
   SpawnResult,
   SubagentList,
   SupervisorDecision,
+  UsageWindowKey,
 } from '../../src/shared/protocol.js';
-import { COPY_SHORT_ID, NAMES, PLAN_CALL_MS, RECAP_CALL_MS, SUPERVISOR_HELD_ERROR, SUPERVISOR_STEP_MS, terminalScreen, World, type ResetOptions, type TerminalSize } from './fixtures.js';
+import { COPY_SHORT_ID, NAMES, RECAP_CALL_MS, SUPERVISOR_HELD_ERROR, SUPERVISOR_STEP_MS, terminalScreen, World, type ResetOptions, type TerminalSize } from './fixtures.js';
 
 type Security = typeof import('../../src/server/security.js');
 type Static = typeof import('../../src/server/static.js');
@@ -94,7 +93,16 @@ export interface Records {
   /** Every size the page gave an attached session, in order: its `open`'s, then each resize's (W74). */
   sizes: Array<{ name: string; from: 'open' | 'resize' } & TerminalSize>;
   /** `attachments` only when the request had them (W82). */
-  spawns: Array<{ cwd: string; name?: string | undefined; model?: string | undefined; effort?: string | undefined; promptLength: number; attachments?: string[] | undefined }>;
+  spawns: Array<{
+    cwd: string;
+    name?: string | undefined;
+    profile?: string | undefined;
+    model?: string | undefined;
+    effort?: string | undefined;
+    subagentModel?: string | undefined;
+    promptLength: number;
+    attachments?: string[] | undefined;
+  }>;
   /** Each POST of WORK_PATH (W119): the overrides sent, and the status they got. */
   workPosts: Array<{ overrides: unknown; status: number }>;
   /**
@@ -124,10 +132,6 @@ export interface Records {
   recapFetches: Array<{ name: string; status: number }>;
   /** Each POST asking for a new recap (W111), by the session's name and its status: 200, 404, 409 or 429. */
   recapRefreshes: Array<{ name: string; status: number }>;
-  /** Each GET of a session's plan status (W123), by the session's name and its status: 200 or 404. */
-  planFetches: Array<{ name: string; status: number }>;
-  /** Each POST making a plan status (W123), by the session's name and its status: 200, 404, 409 or 429. */
-  planMakes: Array<{ name: string; status: number }>;
   /** Each Clone and start the server answered (W107): the repo the page sent, and the status it got. */
   clones: Array<{ repo: unknown; status: number }>;
   /** Each message to the supervisor (W114), by its length and the status it got. Never its text. */
@@ -137,7 +141,7 @@ export interface Records {
   supervisorStops: number[];
   /** Each New conversation (W136), with the status it got. */
   supervisorNewConversations: number[];
-  decisions: Array<{ id: string; decision: string; length?: number; status: number }>;
+  decisions: Array<{ id: string; decision: string; length?: number; profile?: string | null; status: number }>;
   /** Every HTTP request and upgrade, as `METHOD /path status`. */
   requests: string[];
 }
@@ -159,8 +163,6 @@ const emptyRecords = (): Records => ({
   refreshes: [],
   recapFetches: [],
   recapRefreshes: [],
-  planFetches: [],
-  planMakes: [],
   clones: [],
   supervisorMessages: [],
   supervisorStarts: [],
@@ -289,6 +291,8 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
   const madeUpWork = () =>
     built.work.createWorkStore({
       config: { ...built.work.emptyChoices(), session: { effort: 'high' }, subagents: { model: 'haiku' } },
+      // Review replaced by a made-up config file's, with a skill, as Phil's mockup has it (W155).
+      profiles: [{ name: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet', skill: 'agent-roles:role-reviewer', source: 'config' }],
       configFile: '/Users/example/.pitwall/config.json',
       claude: async (layers, dir) => {
         const user = { scope: 'user' as const, model: 'claude-opus-5-5' };
@@ -361,6 +365,15 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (method === 'POST' && url.pathname === protocol.PRS_REFRESH_PATH) return refreshPrs(req, res);
     if (method === 'POST' && url.pathname === protocol.CLONE_PATH) return clone(req, res);
     if (method === 'GET' && url.pathname === protocol.WORK_PATH) return json(res, 200, await work.describe(url.searchParams.get('dir') || undefined));
+    if (method === 'GET' && url.pathname === protocol.USAGE_PATH) {
+      // The Usage view (W158): made-up figures for the window, or the failure the world is set to.
+      const key = url.searchParams.get('window') ?? 'week';
+      if (!(protocol.USAGE_WINDOWS as readonly string[]).includes(key)) return end(res, 400);
+      const answer = world.usage(key as UsageWindowKey);
+      return answer.body === undefined ? end(res, answer.status) : json(res, answer.status, answer.body);
+    }
+    // The header's run rate (W159): the made-up state the world is set to.
+    if (method === 'GET' && url.pathname === protocol.RUN_RATE_PATH) return json(res, 200, world.runRate());
     if (method === 'POST' && url.pathname === protocol.WORK_PATH) {
       const body = await readJson(req);
       const result = work.update(body);
@@ -387,11 +400,8 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     // Refresh a session's recap (W111): recapRefreshPath(id).
     const recapRefresh = /^\/api\/sessions\/([^/]+)\/recap\/refresh$/.exec(url.pathname);
     if (recapRefresh && method === 'POST') return refreshRecap(req, res, decodeURIComponent(recapRefresh[1]!));
-    // Make a session's plan status (W123): planStatusRefreshPath(id).
-    const planMake = /^\/api\/sessions\/([^/]+)\/plan-status\/refresh$/.exec(url.pathname);
-    if (planMake && method === 'POST') return makePlanStatus(req, res, decodeURIComponent(planMake[1]!));
 
-    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|flag|unflag|snooze|unsnooze|spin-off|stop|remove|resume|open|subagents|end|recap|plan-status)$/.exec(url.pathname);
+    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|flag|unflag|snooze|unsnooze|spin-off|stop|remove|resume|open|subagents|end|recap)$/.exec(url.pathname);
     if (!match) return end(res, 404);
     const session = world.session(decodeURIComponent(match[1]!));
     if (!session) return end(res, 404);
@@ -403,12 +413,6 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       const recap = world.recapHealth() ? world.recap(session.sessionId) : undefined;
       records.recapFetches.push({ name: session.name, status: recap ? 200 : 404 });
       return recap ? json(res, 200, recap satisfies SessionRecap) : end(res, 404);
-    }
-    if (route === 'plan-status' && method === 'GET') {
-      // planStatusPath(id) (W123): the newest plan status, or 404 before one is made.
-      const status = world.planStatus(session.sessionId);
-      records.planFetches.push({ name: session.name, status: status ? 200 : 404 });
-      return status ? json(res, 200, status satisfies PlanStatus) : end(res, 404);
     }
     if (route === 'relay' && method === 'POST') {
       if (session.kind !== 'interactive' || !session.alive) return json(res, 409, { status: 'failed', detail: 'Made up: only a running interactive session.' } satisfies RelayResult);
@@ -590,38 +594,6 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
   }
 
   /**
-   * Make a plan status (W123), as the contract has planStatusRefreshPath() answer, in made-up words:
-   * no body is read; 404, 409 and 429 as for a recap; otherwise 200 with the plan status once the
-   * made-up call ends, PLAN_CALL_MS later, and the snapshot flags it.
-   */
-  async function makePlanStatus(req: IncomingMessage, res: ServerResponse, sessionId: string) {
-    await readJson(req);
-    const session = world.session(sessionId);
-    const answer = session ? world.makePlanStatus(sessionId) : ({ result: 'not-recapped' } as const);
-    const record = (status: number) => {
-      if (session) records.planMakes.push({ name: session.name, status });
-    };
-    if (answer.result === 'off') {
-      record(409);
-      return json(res, 409, { ok: false, error: 'Made up: plan status is off, as with --no-recaps.' } satisfies PlanStatusResult);
-    }
-    if (answer.result === 'not-recapped') {
-      record(404);
-      return json(res, 404, { ok: false, error: "Made up: pitwall can't read this session's plan." } satisfies PlanStatusResult);
-    }
-    if (answer.result === 'spent' || answer.result === 'running') {
-      record(429);
-      return json(res, 429, { ok: false, error: answer.result === 'spent' ? "Made up: today's recaps are used up." : 'Made up: a plan status of it is being made.', busy: answer.result } satisfies PlanStatusResult);
-    }
-    later(PLAN_CALL_MS, () => {
-      const status = answer.done();
-      record(200);
-      json(res, 200, { ok: true, status } satisfies PlanStatusResult);
-      broadcast();
-    });
-  }
-
-  /**
    * The supervisor's routes (W114), as the contract answers them, in made-up words, running no claude:
    * its conversation, 404 while it has none; a message, `{ text }` as JSON, 409 with none or while it's
    * held, 413 over SUPERVISOR_MESSAGE_MAX, then the made-up turn's steps a moment apart; Start, 409 the
@@ -698,7 +670,13 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       const body = await readJson(req);
       const decision = asDecision(body);
       const answer = (status: number, result: ActionResult) => {
-        records.decisions.push({ id, decision: decision?.decision ?? 'invalid', ...(decision?.decision === 'edit' ? { length: decision.text.length } : {}), status });
+        records.decisions.push({
+          id,
+          decision: decision?.decision ?? 'invalid',
+          ...(decision?.decision === 'edit' ? { length: decision.text.length } : {}),
+          ...(decision !== undefined && decision.decision !== 'decline' && decision.profile !== undefined ? { profile: decision.profile } : {}),
+          status,
+        });
         json(res, status, result);
       };
       if (!decision) return answer(400, { ok: false, error: 'The decision must be send, edit with its text, or decline.' });
@@ -909,6 +887,10 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (!isRecord(body) || typeof body.cwd !== 'string' || typeof body.prompt !== 'string' || body.prompt.trim() === '') {
       return json(res, 400, { ok: false, error: 'Made up: a directory and a prompt.' } satisfies SpawnResult);
     }
+    // A work profile (W155) only by a name the store has, as the real server checks it.
+    if (body.profile !== undefined && (typeof body.profile !== 'string' || work.profile(body.profile) === undefined)) {
+      return json(res, 400, { ok: false, error: "That profile isn't one pitwall has. Reopen New session to see the profiles now." } satisfies SpawnResult);
+    }
     const root = world.rootFor(body.cwd);
     if (root === undefined) return json(res, 400, { ok: false, error: 'Made up: that directory is under no root.' } satisfies SpawnResult);
     // The files (W82): uploads this server kept and no spawn has used, each once, at most ATTACHMENTS_MAX_PER_SESSION.
@@ -928,11 +910,13 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       cwd: body.cwd,
       prompt: body.prompt,
       ...(typeof body.name === 'string' ? { name: body.name } : {}),
+      ...(typeof body.profile === 'string' ? { profile: body.profile } : {}),
       ...(typeof body.model === 'string' ? { model: body.model } : {}),
       ...(typeof body.effort === 'string' && (protocol.EFFORT_LEVELS as readonly string[]).includes(body.effort) ? { effort: body.effort as SpawnRequest['effort'] } : {}),
+      ...(body.subagentModel === protocol.WORK_DEFAULT || protocol.isWorkModel(body.subagentModel, 'subagents') ? { subagentModel: body.subagentModel as string } : {}),
       ...(attachments ? { attachments } : {}),
     };
-    records.spawns.push({ cwd: request.cwd, name: request.name, model: request.model, effort: request.effort, promptLength: request.prompt.length, attachments: request.attachments });
+    records.spawns.push({ cwd: request.cwd, name: request.name, profile: request.profile, model: request.model, effort: request.effort, subagentModel: request.subagentModel, promptLength: request.prompt.length, attachments: request.attachments });
     const started = world.spawn(request, root);
     json(res, 201, { ok: true, shortId: started.summary.shortId ?? '', name: started.summary.name } satisfies SpawnResult);
     later(options.listDelayMs ?? 800, () => {
@@ -1145,8 +1129,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** A SupervisorDecision, exactly: send or decline alone, or edit with its text and nothing else. */
 function asDecision(body: unknown): SupervisorDecision | undefined {
   if (!isRecord(body)) return undefined;
-  const keys = Object.keys(body).sort().join(',');
-  if ((body.decision === 'send' || body.decision === 'decline') && keys === 'decision') return { decision: body.decision };
-  if (body.decision === 'edit' && keys === 'decision,text' && typeof body.text === 'string' && body.text.trim() !== '' && body.text.length <= 20_000) return { decision: 'edit', text: body.text };
+  // W156: a profile's name, or null for a resume as it started, on Send and Send edit.
+  const hasProfile = Object.hasOwn(body, 'profile');
+  if (hasProfile && body.profile !== null && typeof body.profile !== 'string') return undefined;
+  const picked = hasProfile ? { profile: body.profile as string | null } : {};
+  const keys = Object.keys(body).filter((key) => key !== 'profile').sort().join(',');
+  if (body.decision === 'send' && keys === 'decision') return { decision: 'send', ...picked };
+  if (body.decision === 'decline' && keys === 'decision' && !hasProfile) return { decision: 'decline' };
+  if (body.decision === 'edit' && keys === 'decision,text' && typeof body.text === 'string' && body.text.trim() !== '' && body.text.length <= 20_000) return { decision: 'edit', text: body.text, ...picked };
   return undefined;
 }

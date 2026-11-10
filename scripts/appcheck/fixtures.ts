@@ -9,6 +9,7 @@
 // Parts refer to sessions by the names in NAMES, so a fixture can change without touching a part.
 
 import type {
+  ApprovalProfile,
   ConversationEntry,
   ConversationPage,
   DirectoryList,
@@ -21,7 +22,6 @@ import type {
   RecapHealth,
   RelayExchange,
   SessionGroup,
-  PlanStatus,
   SessionRecap,
   SessionSummary,
   SpawnRequest,
@@ -33,8 +33,14 @@ import type {
   SupervisorDecision,
   SupervisorState,
   SupervisorStatus,
+  UsageTokens,
+  UsageView,
+  UsageWindowKey,
+  RunRate,
+  RunRateChart,
 } from '../../src/shared/protocol.js';
 import { withSupervisorFooter } from '../../src/shared/protocol.js';
+import { chartOf, DEFAULT_RUN_RATE_TARGET, levelOf, paceAt, project, WEEK_MS, type WeekReading } from '../../src/usage/runRate.js';
 import { REFUSED_TO_SUPERVISOR_NOTICE } from '../../src/index/conversation.js';
 
 export const CODE = '/Users/example/code';
@@ -243,30 +249,34 @@ export const RECAPS_ERROR = "Made up: claude -p didn't answer within 60 seconds.
 /** How long a made-up recap call takes, so Refresh shows its spinner. */
 export const RECAP_CALL_MS = 600;
 
-/** How long a made-up plan status call takes (W123), so Plan status shows its spinner. */
-export const PLAN_CALL_MS = 700;
-
-/** The picture of RECAPPED.you's recap (W150): the goal, what it's on and why, and the plan's line. */
+/**
+ * The picture of RECAPPED.you's recap (W150): the goal, what it's on and why, and the plan's line,
+ * with the plan's items and how it changed (W172).
+ */
 export const RECAP_PICTURE = {
   goal: 'Give the made-up API a health route that the load balancer can check.',
   workingOn: '#51: the health route and its test, which the load balancer needs before the old ping can go.',
   plan: 'The made-up API plan: #51, then the load balancer, then retiring the ping; on #51 now',
-} as const;
-
-/** The sessions whose made-up transcript shows no plan (W123): the rest work through PLANNED's. */
-export const NO_PLAN = NAMES.finished;
-
-/** The made-up plan a plan status finds (W123), for every session but NO_PLAN. */
-export const PLANNED = {
-  plan: 'Add the made-up health route to the API, in its plan file',
-  items: [
+  planItems: [
     { text: 'W1: the route and its test', state: 'done' },
     { text: 'W2: fix the lint errors on #51', state: 'now' },
     { text: 'W3: rate limit the route', state: 'dropped' },
-    { text: 'W4: mark #51 ready', state: 'next' },
-    { text: 'W5: document the route in the made-up API guide', state: 'next' },
+    { text: 'W4: point the made-up load balancer at the route', state: 'next' },
+    { text: 'W5: retire the old ping and document the route in the made-up API guide', state: 'next' },
   ],
-  changes: 'W3 was dropped: the made-up gateway already limits the route.',
+  planChanges: 'W3 was dropped: the made-up gateway already limits the route.',
+} as const;
+
+/** The picture of RECAPPED.anotherSession's recap: a plan with items and no changes (W172). */
+export const RECAP_PICTURE_STEADY = {
+  goal: 'Add a made-up route on top of the health route, so the load balancer can check both.',
+  workingOn: 'Step 2: drafting the route and its tests, which need the health route from pitwall-test-api first.',
+  plan: 'The made-up route plan, in three steps; on step 2 now',
+  planItems: [
+    { text: 'Step 1: agree the route with the health route session', state: 'done' },
+    { text: 'Step 2: draft the route and its tests', state: 'now' },
+    { text: 'Step 3: open the PR once the health route lands', state: 'next' },
+  ],
 } as const;
 
 /**
@@ -328,6 +338,14 @@ export const SUPERVISOR_APPROVALS = {
   longer: 'pt136-approval-longer',
 } as const;
 
+/** The profiles a new session's and a resume's card offer (W156), resolved as pitwall's built-ins are, Review with a made-up skill. */
+export const APPROVAL_PROFILES: readonly ApprovalProfile[] = [
+  { name: 'Build', model: 'claude-opus-5-5', effort: 'high', subagentModel: 'sonnet' },
+  { name: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet', skill: 'agent-roles:role-reviewer' },
+  { name: 'Security review', model: 'claude-opus-5-5', effort: 'xhigh', subagentModel: 'opus' },
+  { name: 'Docs', model: 'sonnet', effort: 'medium', subagentModel: 'sonnet' },
+];
+
 /** The cursor of SUBAGENTS.drafting's newest page, for its Load earlier. */
 const SUBAGENT_CURSOR = 'pt77-older';
 
@@ -361,7 +379,24 @@ export interface ResetOptions {
   supervisorRaced?: boolean;
   /** Whether NAMES.cloned is listed too (W145), a session that started in docs-site and worked in sdk-cli alone. */
   cloned?: boolean;
+  /**
+   * What GET USAGE_PATH answers (W158): 'ok', made-up figures with the plan's week; 'unavailable',
+   * the same figures without it, the last 7 days; 'empty', the plan's week with no calls in it;
+   * 'failing', HTTP 500.
+   */
+  usage?: UsageWorldState;
+  /**
+   * The header's run rate (W159): 'off', the default, as with --no-usage, so the snapshot has no
+   * planUsage and the header no figures; 'normal', under the line; 'ahead', over it; 'amber' at 74%
+   * with the five hours at 35%; 'red' at 93%; 'old', a reading 25 minutes old; 'unavailable'. For
+   * the Usage view's chart (W181): 'burst', under the line after a fast last 8 hours; 'thin', readings
+   * of the last 3 hours only; 'past', 100% reached 3 hours ago.
+   */
+  runRate?: RunRateWorldState;
 }
+
+export type UsageWorldState = 'ok' | 'unavailable' | 'empty' | 'failing';
+export type RunRateWorldState = 'off' | 'normal' | 'ahead' | 'amber' | 'red' | 'old' | 'unavailable' | 'burst' | 'thin' | 'past';
 
 /** The made-up index: a snapshot, conversations, and what POSTs have changed since the last reset. */
 export class World {
@@ -373,6 +408,10 @@ export class World {
   #nextSpawn = 0;
   /** NAMES.inApi has the most sub-agents a list carries, and more (manySubagents()). */
   #manySubagents = false;
+  /** What the Usage view's route answers (W158), and the windows asked for since the last reset. */
+  #usage: UsageWorldState = 'ok';
+  /** What the run rate's route answers (W159). */
+  #runRate: RunRateWorldState = 'off';
   /** The sessions whose running turn `endTurn()` has ended, until the next reset (W102). */
   #turnsEnded = new Set<string>();
   /** What the PR source says, and whether a fetch is running (W95). */
@@ -384,9 +423,6 @@ export class World {
   /** Recaps (W111): their state, the recaps by session id, today's calls, the calls running, and the day's budget. */
   #recapsState: RecapsState = 'off';
   #recaps = new Map<string, SessionRecap>();
-  /** Plan statuses made (W123), by session id, and the calls running. */
-  #plans = new Map<string, PlanStatus>();
-  #planning = new Set<string>();
   #recapCalls = 0;
   #recapping = new Set<string>();
   #recapBudget = 200;
@@ -431,6 +467,8 @@ export class World {
     this.#labels = options.labels ?? {};
     this.#spawned = [];
     this.#manySubagents = false;
+    this.#usage = options.usage ?? 'ok';
+    this.#runRate = options.runRate ?? 'off';
     this.#turnsEnded = new Set();
     this.#prs = options.prs ?? 'ok';
     this.#prsRefreshing = false;
@@ -444,8 +482,6 @@ export class World {
     this.#recapsState = options.recaps ?? 'off';
     this.#recapCalls = this.#recapsState === 'spent' ? this.#recapBudget : 37;
     this.#recapping = new Set();
-    this.#plans = new Map();
-    this.#planning = new Set();
     this.#recapErrorAt = this.#now - 3 * MINUTE;
     this.#recaps = new Map(this.#recapsState === 'off' ? [] : this.#baseRecaps().map((each) => [this.byName(each.name).sessionId, each.recap]));
     this.#supervisorTurn += 1;
@@ -632,6 +668,9 @@ export class World {
         prompt: 'Review https://github.com/example/demo-app/pull/57. Say what blocks it, if anything.',
         at: this.#ago(2),
         expiresAt: this.#ago(-27),
+        // W156: the supervisor's pick, and every profile as pitwall resolves them, one with a skill.
+        profile: 'Review',
+        profiles: APPROVAL_PROFILES.map((each) => ({ ...each })),
       },
     ];
   }
@@ -652,6 +691,9 @@ export class World {
       ...(ended.lastActivityAt === undefined ? {} : { lastActivityAt: ended.lastActivityAt }),
       sameName: 2,
       permission: { kind: 'mode', mode: 'bypassPermissions' },
+      // W155, W156: the profile it started on, kept, and every profile to resume it on instead.
+      launch: { profile: 'Build', model: 'claude-opus-5-5', effort: 'high', subagentModel: 'sonnet' },
+      profiles: APPROVAL_PROFILES.map((each) => ({ ...each })),
     };
   }
 
@@ -740,6 +782,7 @@ export class World {
       source: { ok: true },
       ...(health ? { recaps: health } : {}),
       ...(this.#supervisor === 'none' ? {} : { supervisor: this.supervisorState() }),
+      ...(this.#runRate === 'off' ? {} : { planUsage: 'on' as const }),
     };
   }
 
@@ -790,46 +833,10 @@ export class World {
     };
   }
 
-  /** A listed session's newest plan status (W123), as GET planStatusPath() answers it; undefined before one is made. */
-  planStatus(sessionId: string): PlanStatus | undefined {
-    return this.#recapsState === 'off' ? undefined : this.#plans.get(sessionId);
-  }
-
-  /**
-   * Plan status (W123), in the order the contract gives planStatusRefreshPath()'s answers: 'off' (409),
-   * 'not-recapped' (404), 'spent' or 'running' (429), otherwise 'started', and `done`, which ends the
-   * call and gives its plan status: PLANNED, or no plan for NO_PLAN. Counted as a recap call.
-   */
-  makePlanStatus(sessionId: string): { result: 'off' } | { result: 'not-recapped' } | { result: 'spent' } | { result: 'running' } | { result: 'started'; done: () => PlanStatus } {
-    if (this.#recapsState === 'off') return { result: 'off' };
-    const session = this.#sessions.get(sessionId);
-    if (!session || session.transcript !== 'ok') return { result: 'not-recapped' };
-    if (this.#recapCalls >= this.#recapBudget) return { result: 'spent' };
-    if (this.#planning.has(sessionId)) return { result: 'running' };
-    this.#planning.add(sessionId);
-    this.#recapCalls += 1;
-    return {
-      result: 'started',
-      done: () => {
-        this.#planning.delete(sessionId);
-        const at = new Date().toISOString();
-        const through = this.#sessions.get(sessionId)?.lastActivityAt ?? at;
-        const status: PlanStatus =
-          session.name === NO_PLAN
-            ? { found: false, items: [], at, throughAt: through }
-            : { found: true, plan: PLANNED.plan, items: PLANNED.items.map((item) => ({ ...item })), changes: PLANNED.changes, at, throughAt: through };
-        this.#plans.set(sessionId, status);
-        return status;
-      },
-    };
-  }
-
   /** The session as the snapshot lists it with its recap (W111): the summary, the title from it, and Needs you's 'recap' while it's current and waits on you. */
   #withRecap(session: SessionSummary): SessionSummary {
     const recap = this.#recapsState === 'off' ? undefined : this.recap(session.sessionId);
-    const planAt = this.planStatus(session.sessionId)?.at;
-    if (!recap) return planAt === undefined ? session : { ...session, planStatusAt: planAt };
-    if (planAt !== undefined) session = { ...session, planStatusAt: planAt };
+    if (!recap) return session;
     const yours = recap.todos.filter((todo) => todo.owner === 'you');
     const next = yours[0]?.text;
     const summary = { waitingOn: recap.waitingOn, title: recap.title, forYou: yours.length, at: recap.at, source: recap.source, ...(next === undefined ? {} : { next }), ...(recap.stale ? { stale: true as const } : {}) };
@@ -865,8 +872,8 @@ export class World {
       },
     });
     return [
-      // W150's picture: the goal, what it's on and why, and the plan's line.
-      made(RECAPPED.you, { ...RECAP_PICTURE }),
+      // W150's picture: the goal, what it's on and why, and the plan's line, with W172's items and changes.
+      made(RECAPPED.you, { ...RECAP_PICTURE, planItems: RECAP_PICTURE.planItems.map((item) => ({ ...item })) }),
       made(RECAPPED.stale, {
         summary: 'You asked it to review the made-up retry change. It reviewed it and asked whether to retry the failed batch now.',
         todos: [{ text: 'Say whether to retry the made-up failed batch now, or wait for tonight', owner: 'you' }],
@@ -879,7 +886,7 @@ export class World {
         todos: [{ text: 'Approve #19', owner: 'someone else' }],
         waitingOn: 'someone else',
         title: 'Tidy both made-up services',
-        // A picture with no plan (W150).
+        // A picture with no plan (W150): no Plan section (W172).
         goal: 'Tidy both made-up services so they share one config loader.',
         workingOn: '#19: the shared loader, which both services need before the old one can go.',
         plan: '',
@@ -892,6 +899,9 @@ export class World {
         ],
         waitingOn: 'another session',
         title: 'Add a made-up route',
+        // A plan with items and no changes (W172).
+        ...RECAP_PICTURE_STEADY,
+        planItems: RECAP_PICTURE_STEADY.planItems.map((item) => ({ ...item })),
       }),
       made(RECAPPED.ci, {
         summary: 'You asked it to make the made-up retry worker back off. It pushed the backoff to its branch.',
@@ -1032,6 +1042,163 @@ export class World {
   /** The session with this id, if the snapshot lists it. */
   session(sessionId: string): SessionSummary | undefined {
     return this.#sessions.get(sessionId);
+  }
+
+  /**
+   * GET USAGE_PATH's answer (W158): made-up figures for the window, shaped as src/usage/view.ts builds
+   * them. Three listed sessions, one not listed, and pitwall's own recap calls; a kept day in 30 days.
+   */
+  usage(key: UsageWindowKey): { status: number; body?: UsageView } {
+    if (this.#usage === 'failing') return { status: 500 };
+    const HOUR = 60 * MINUTE;
+    const DAY = 24 * HOUR;
+    const midnight = (ms: number) => {
+      const d = new Date(ms);
+      d.setHours(0, 0, 0, 0);
+      return d.getTime();
+    };
+    const plan = this.#usage !== 'unavailable';
+    // The plan's week reset 4 days ago at 14:00, so it resets in 3 days; with the run rate on, its week (W159).
+    const reset = this.#runRate === 'off' ? midnight(this.#now - 4 * DAY) + 14 * HOUR : this.#runRateWeek().resetsAt - WEEK_MS;
+    const since =
+      key === '24h' ? Math.floor((this.#now - 23 * HOUR) / HOUR) * HOUR : key === 'week' && plan ? reset : midnight(this.#now) - ((key === '30d' ? 30 : key === '14d' ? 14 : 7) - 1) * DAY;
+    const bucket = key === '24h' ? 'hour' : 'day';
+    const scale = this.#usage === 'empty' ? 0 : key === '24h' ? 0.2 : key === '30d' ? 3.5 : key === '14d' ? 1.8 : 1;
+    const t = (cost: number, calls: number): UsageTokens => ({
+      calls: Math.round(calls * scale),
+      input: Math.round(calls * 37 * scale),
+      cacheWrite: Math.round(calls * 4_100 * scale),
+      cacheRead: Math.round(calls * 182_000 * scale),
+      output: Math.round(calls * 610 * scale),
+      cost: cost * scale,
+    });
+    const starts: number[] = [];
+    if (bucket === 'hour') for (let at = since; at < this.#now; at += HOUR) starts.push(at);
+    else for (let at = midnight(since); at < this.#now; at = midnight(at + DAY + 2 * HOUR)) starts.push(at);
+    // A made-up shape: quiet nights and a busy middle, a quiet day here and there.
+    const weight = (i: number) => (bucket === 'hour' ? [0.1, 0.1, 0.05, 0, 0, 0, 0.2, 0.6, 1, 1.4, 1.2, 0.9][i % 12]! : [1, 1.6, 0.4, 2.1, 1.2, 0.2, 0.9][i % 7]!);
+    const buckets = starts.map((start, i) => ({
+      start: new Date(start).toISOString(),
+      ...t(scale === 0 ? 0 : (42 * weight(i)) / scale / (bucket === 'hour' ? 6 : 1), 300 * weight(i)),
+      ...(key === '30d' && i === 1 ? { history: true as const } : {}),
+    }));
+    const id = (name: string) => this.byName(name).sessionId;
+    const sessions = [
+      { sessionId: id(NAMES.conversation), repo: '~/code/api-server', kind: 'main' as const, model: 'claude-opus-5-5', subagentRuns: 6, subagentCost: 31.4 * scale, ...t(96.2, 2_100) },
+      { sessionId: id(NAMES.running), repo: '~/code/data-pipeline', kind: 'main' as const, model: 'claude-sonnet-5-5', subagentRuns: 0, subagentCost: 0, ...t(41.75, 1_350) },
+      { sessionId: '00000000-0000-4000-8000-00000000dead', repo: '~/code/docs-site', kind: 'main' as const, model: 'claude-opus-5-5', subagentRuns: 2, subagentCost: 4.1 * scale, ...t(18.3, 640) },
+      { sessionId: id(NAMES.waiting), repo: '~/code/docs-site', kind: 'main' as const, model: 'claude-opus-5-5', subagentRuns: 1, subagentCost: 0.9 * scale, ...t(7.06, 230) },
+      { sessionId: '00000000-0000-4000-8000-0000000000aa', repo: "pitwall's own: recap", kind: 'pitwall' as const, model: 'claude-haiku-5-5', subagentRuns: 0, subagentCost: 0, ...t(0.004, 190) },
+    ];
+    const view: UsageView = {
+      window: { key, since: new Date(since).toISOString(), until: new Date(this.#now).toISOString(), from: key === '24h' ? 'hours' : key === 'week' && plan ? 'reset' : 'days', bucket },
+      plan: plan
+        ? { status: 'available', readAt: new Date(this.#now - MINUTE).toISOString(), fiveHour: null, sevenDay: { usedPercentage: 63, resetsAt: new Date(reset + 7 * DAY).toISOString() } }
+        : { status: 'unavailable', readAt: new Date(this.#now - MINUTE).toISOString(), reason: 'no-report' },
+      costLabel: "API list price, a stand-in: how your plan's usage limits weigh tokens isn't published",
+      totals: t(163.3, 4_510),
+      buckets,
+      byRepo: {
+        rows: [
+          { repo: '~/code/api-server', sessions: 3, ...t(96.2, 2_100) },
+          { repo: '~/code/data-pipeline', sessions: 1, ...t(41.75, 1_350) },
+          { repo: '~/code/docs-site', sessions: 2, ...t(25.36, 870) },
+          { repo: "pitwall's own: recap", sessions: 41, ...t(0.004, 190) },
+        ],
+        ...(key === '30d' ? { rest: { count: 3, ...t(2.2, 80) } } : {}),
+      },
+      bySession: { rows: sessions },
+      byModel: [
+        { model: 'claude-opus-5-5', ...t(121.5, 2_970) },
+        { model: 'claude-sonnet-5-5', ...t(41.75, 1_350) },
+        { model: 'claude-haiku-5-5', ...t(0.004, 190) },
+      ],
+      split: { main: { sessions: 46, ...t(127.0, 3_900) }, subagent: { runs: 9, ...t(36.3, 610) } },
+      ...(key === '30d' ? { history: { days: 1, ...t(12.4, 300) } } : {}),
+      scan: { at: new Date(this.#now - 2_000).toISOString(), files: 865, unreadable: 0, malformed: 0 },
+    };
+    if (this.#runRate !== 'off') {
+      const { rate, chart } = this.#runRateAndChart();
+      view.runRate = rate;
+      if (key === 'week' && chart !== undefined) view.runRateChart = chart;
+      // The plan's week is the run rate's, so the view's two figures agree.
+      if (rate.status === 'available' && rate.sevenDay !== null && view.plan.status === 'available') {
+        view.plan = { ...view.plan, sevenDay: { usedPercentage: rate.sevenDay.usedPercentage, resetsAt: rate.sevenDay.resetsAt } };
+      }
+    }
+    if (this.#usage === 'empty') return { status: 200, body: { ...view, byRepo: { rows: [] }, bySession: { rows: [] }, byModel: [] } };
+    return { status: 200, body: view };
+  }
+
+  /**
+   * GET RUN_RATE_PATH's answer (W159), worked out by pitwall's own runRate.ts from made-up readings:
+   * a week that resets on the next Sunday at 12:00, as Phil's does (spike 013), so the reserve's Friday
+   * 18:00 falls late in it, with hourly readings at a steady rate up to the state's percentage. The
+   * Usage view's plan's week shows the same week then.
+   */
+  /** The run rate's week: it resets on the next Sunday at 12:00, local time. */
+  #runRateWeek(): { resetsAt: number } {
+    const reset = new Date(this.#now);
+    reset.setHours(12, 0, 0, 0);
+    while (reset.getDay() !== 0 || reset.getTime() <= this.#now) reset.setDate(reset.getDate() + 1);
+    return { resetsAt: reset.getTime() };
+  }
+
+  runRate(): RunRate {
+    return this.#runRateAndChart().rate;
+  }
+
+  /**
+   * The run rate and its chart (W181), from made-up readings every 5 minutes from 08:00 to 23:00 each
+   * day of the week so far, so the chart's line breaks across each night: a steady rate up to the
+   * state's percentage; for 'burst', quiet until the last 8 hours, then fast; for 'thin', the last 3
+   * hours' only, so there's no projection yet; for 'past', 100% reached 3 hours ago.
+   */
+  #runRateAndChart(): { rate: RunRate; chart?: RunRateChart } {
+    if (this.#runRate === 'off') return { rate: { status: 'off' } };
+    if (this.#runRate === 'unavailable') return { rate: { status: 'unavailable', readAt: new Date(this.#now).toISOString(), reason: 'timeout' } };
+    const HOUR = 60 * MINUTE;
+    const { resetsAt } = this.#runRateWeek();
+    const start = resetsAt - WEEK_MS;
+    const readAt = this.#runRate === 'old' ? this.#now - 25 * MINUTE : this.#now - MINUTE;
+    const line = paceAt(readAt, 0, resetsAt, DEFAULT_RUN_RATE_TARGET).line;
+    const used = {
+      normal: Math.max(1, Math.round(line - 6)),
+      old: Math.max(1, Math.round(line - 6)),
+      thin: Math.max(1, Math.round(line - 6)),
+      ahead: Math.min(99, Math.round(line + 12)),
+      burst: Math.max(1, Math.round(line - 4)),
+      amber: 74,
+      red: 93,
+      past: 100,
+    }[this.#runRate];
+    const awake = (at: number) => {
+      const hour = new Date(at).getHours();
+      return hour >= 8 && hour < 23;
+    };
+    const times: number[] = [];
+    const from = this.#runRate === 'thin' ? readAt - 3 * HOUR : start + 5 * MINUTE;
+    for (let at = readAt; at >= from; at -= 5 * MINUTE) if (awake(at) || at > readAt - HOUR) times.unshift(at);
+    const elapsed = readAt - start;
+    const shape = (at: number): number => {
+      const share = (at - start) / elapsed;
+      if (this.#runRate === 'burst') {
+        const turn = readAt - 8 * HOUR;
+        return at <= turn ? 0.35 * ((at - start) / (turn - start)) : 0.35 + 0.65 * ((at - turn) / (readAt - turn));
+      }
+      if (this.#runRate === 'past') return Math.min(1, share / (1 - (3 * HOUR) / elapsed));
+      return share;
+    };
+    const history: WeekReading[] = times.map((at) => ({ at, used: Math.round(used * shape(at)), resetsAt }));
+    const reading: WeekReading = { at: readAt, used, resetsAt };
+    const rate: RunRate = {
+      status: 'available',
+      readAt: new Date(readAt).toISOString(),
+      target: DEFAULT_RUN_RATE_TARGET,
+      sevenDay: { usedPercentage: used, resetsAt: new Date(resetsAt).toISOString(), level: levelOf(used), pace: paceAt(readAt, used, resetsAt, DEFAULT_RUN_RATE_TARGET), projection: project(reading, history) },
+      fiveHour: this.#runRate === 'amber' ? { usedPercentage: 35, resetsAt: new Date(this.#now + 2 * HOUR).toISOString(), level: levelOf(35) } : null,
+    };
+    return { rate, chart: chartOf(reading, history, DEFAULT_RUN_RATE_TARGET) };
   }
 
   byName(name: string): SessionSummary {
@@ -1216,7 +1383,7 @@ export class World {
    * Code, a prompt on screen or a new reason, any of which brings a session marked not needed now back
    * to Needs you.
    */
-  need(sessionId: string, change: Partial<Pick<SessionSummary, 'needsYou' | 'askedYou' | 'state' | 'status' | 'waitingFor'>>): void {
+  need(sessionId: string, change: Partial<Pick<SessionSummary, 'needsYou' | 'askedYou' | 'state' | 'status' | 'waitingFor' | 'jobPr'>>): void {
     const session = this.#sessions.get(sessionId);
     if (session) this.#sessions.set(sessionId, { ...session, ...change });
   }

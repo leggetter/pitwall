@@ -159,17 +159,46 @@ textarea {
 }
 
 /*
- * 760 px, or the width the divider set (Divider.tsx sets it on the pane), but never more than what the
- * repo list and the session list's 360 px leave, which is 600 px at 1,200 px. 100cqw is the app's width.
+ * 760 px, or the width the divider set (Divider.tsx sets it on the pane as --pw-view-w), but never more
+ * than what the repo list and the session list's 360 px leave, which is 600 px at 1,200 px. 100cqw is
+ * the app's width.
  */
 .app[data-layout='three-columns'] .session-pane {
   position: relative;
   grid-area: view;
   display: flex;
-  width: var(--pw-panel-w);
+  width: var(--pw-view-w);
   min-width: 0;
   max-width: calc(100cqw - var(--pw-sidebar-w) - var(--pw-list-min-w));
   min-height: 0;
+}
+
+/* The views in the pane, inert under the supervisor's panel below 1,200 px (W177): no box of their own. */
+.pane-views {
+  display: contents;
+}
+
+/*
+ * The supervisor's panel open (W177): the pane widens by the panel's width, as far as the session list's
+ * 360 px allows, so on a wide window the view keeps its width beside it, and on a narrower one the panel
+ * covers the view's right. The view keeps its own width either way, so its terminal never reflows as
+ * the panel opens or closes.
+ */
+.app[data-layout='three-columns'] .session-pane[data-panel-open] {
+  width: calc(var(--pw-view-w) + var(--pw-supervisor-w));
+}
+
+.app[data-layout='three-columns'] .session-pane[data-panel-open] .session-view.in-column:not(.view-panel) {
+  flex: none;
+  width: min(var(--pw-view-w), 100%);
+}
+
+/*
+ * "Select a session" fills the pane but keeps clear of the panel, by the panel's own width (below), so
+ * it's centred in what the panel leaves in sight: at least the repo list's 240 px.
+ */
+.app[data-layout='three-columns'] .session-pane[data-panel-open] .session-view-empty {
+  padding-right: max(var(--pw-list-min-w), min(var(--pw-supervisor-w), 100% - var(--pw-sidebar-w)));
 }
 
 /*
@@ -453,7 +482,7 @@ textarea {
   overscroll-behavior: contain;
   padding: var(--pw-space-3) var(--pw-space-4) 0;
   /* The alerts' actions wrap under their text when the column is narrow (Alerts, below). */
-  container: page-alerts / inline-size;
+  container: alerts / inline-size;
 }
 
 .session-list-head {
@@ -661,11 +690,50 @@ textarea {
   font-variant-ligatures: none;
 }
 
+/* The right side: the controls, then the Supervisor button (W182), kept on one line together. */
+.app-header-actions,
 .app-header-end {
   display: flex;
   flex: none;
   align-items: center;
   gap: var(--pw-space-2) var(--pw-space-3);
+}
+
+.app-header-supervisor {
+  display: flex;
+  flex: none;
+}
+
+/*
+ * With the Supervisor button (W182), the header wraps when its line has no room, as with root tabs
+ * (below), rather than cut the wordmark or run past the window: the right side goes under the
+ * wordmark, at the right, and wraps within itself if it's wider than a line. The wordmark's side keeps
+ * 6rem before it does, so a long root's path still ends in an ellipsis first. Below 1,000 px the
+ * button's label is hidden (supervisor.css), so the usual states keep one line from 900 px; only the
+ * fullest, with its status, drafts and the run rate ahead of pace, takes two below about 950 px.
+ */
+.app-header.has-supervisor {
+  flex-wrap: wrap;
+  padding-block: var(--pw-space-3);
+}
+
+.app-header.has-supervisor:not(.has-tabs) .app-header-start {
+  flex-basis: 6rem;
+}
+
+.app-header.has-supervisor .app-header-actions {
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
+  margin-inline-start: auto;
+}
+
+.app-header.has-supervisor .app-header-end {
+  flex-shrink: 1;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
 /*
@@ -976,16 +1044,32 @@ textarea {
   visibility: hidden;
 }
 
-/* At 600 px and narrower, the header's right side wraps under the wordmark. */
-
-
+/*
+ * At 600 px and narrower, the header's right side wraps under the wordmark, but for the Supervisor
+ * button (W182), the most important control, which stays on the top line, at its right: the actions'
+ * box steps aside so the button and the controls are the header's own items, the wordmark's side
+ * takes what the button leaves, and the controls take a whole line of their own.
+ */
 @container pitwall (max-width: 600px) {
   .app-header {
     flex-wrap: wrap;
     padding-block: var(--pw-space-3);
   }
 
+  .app-header-actions {
+    display: contents;
+  }
+
+  .app-header-start {
+    flex: 1 1 0;
+  }
+
+  .app-header-supervisor {
+    order: 1;
+  }
+
   .app-header-end {
+    order: 2;
     flex: 1 1 100%;
     flex-wrap: wrap;
   }
@@ -1205,9 +1289,11 @@ h2.empty-state-title:focus {
   color: var(--pw-state-busy-fg);
 }
 
+/* A done job waiting on someone else, CI or another session (W170) is neutral, as idle is: it's not done, and not yours. */
 .badge.state-idle,
 .badge.state-stopped,
 .badge.state-ended,
+.badge.state-waiting-on,
 .badge.state-unknown {
   background: var(--pw-state-idle-bg);
   box-shadow: inset 0 0 0 1px var(--pw-state-idle-border);
@@ -2162,8 +2248,28 @@ mark.match {
   }
 }
 
-/* Sliding in from the right as it opens over the list; not when the window crosses 1,200 px. */
-.session-view.overlay.opening {
+/*
+ * The supervisor's panel (W177; docs/design-system.md, 4: Supervisor): over the page, at
+ * --pw-z-supervisor, above the view it's beside. From 1,200 px, at the right of the third column, full
+ * height, --pw-supervisor-w wide, but leaving at least the repo list's width of the view in sight, and
+ * never narrower than the session list may be. Below, it's the view over the list, as wide, over it.
+ */
+.session-view.view-panel {
+  z-index: var(--pw-z-supervisor);
+}
+
+.app[data-layout='three-columns'] .session-pane > .session-view.view-panel {
+  position: absolute;
+  inset-block: 0;
+  right: 0;
+  width: max(var(--pw-list-min-w), min(var(--pw-supervisor-w), 100% - var(--pw-sidebar-w)));
+  min-width: 0;
+  box-shadow: var(--pw-shadow-overlay);
+}
+
+/* Sliding in from the right as it opens over the list, or as the supervisor's panel; not when the window crosses 1,200 px. */
+.session-view.overlay.opening,
+.session-view.view-panel.opening {
   animation: session-view-in var(--pw-duration-base) var(--pw-ease-out);
 }
 
@@ -2175,7 +2281,8 @@ mark.match {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .session-view.overlay.opening {
+  .session-view.overlay.opening,
+  .session-view.view-panel.opening {
     animation: none;
   }
 }
@@ -2327,6 +2434,12 @@ mark.match {
 
 .session-view-context-value {
   font-variant-numeric: tabular-nums;
+}
+
+/* The PR a waiting job's own file links (W170), after its badge: a link, whole, in the meta text's size. */
+.session-view-waiting-pr {
+  flex: none;
+  white-space: nowrap;
 }
 
 /* "You flagged this" or "Snoozed until …" after the outlined status badge, in line 2's meta text, as the row says it. */
@@ -2514,7 +2627,11 @@ mark.match {
   color: var(--pw-danger-tint-fg);
 }
 
-/* Under the text, which starts after the 16 px icon and its 8 px gap: in an app 600 px wide or narrower, or a session list column that is. */
+/*
+ * Under the text, which starts after the 16 px icon and its 8 px gap: in an app 600 px wide or
+ * narrower, or in an alerts container that is: the page alerts' area, or Needs you's supervisor notice
+ * in a session list column that is, in a wider app.
+ */
 @container pitwall (max-width: 600px) {
   .inline-alert {
     flex-wrap: wrap;
@@ -2526,7 +2643,7 @@ mark.match {
   }
 }
 
-@container page-alerts (max-width: 600px) {
+@container alerts (max-width: 600px) {
   .inline-alert {
     flex-wrap: wrap;
   }
@@ -2619,8 +2736,8 @@ mark.match {
  * The recap strip (section 4: Recap strip, W111): between the session view's header and its tabs, on
  * --pw-surface-muted, as the footer is, with a bottom --pw-border. Line 1: the disclosure button, the
  * age, Refresh right after it (W150), and "May be out of date" while it's stale. Then the picture
- * (W150): Goal, Working on, on one line with an ellipsis while it's collapsed, Plan with Show plan, and
- * your to-dos; or, for a recap without one, the summary and, while it's open, the to-dos (W121). At
+ * (W150): Goal, Working on, on one line with an ellipsis while it's collapsed, the Plan section (W172),
+ * and your to-dos; or, for a recap without one, the summary and, while it's open, the to-dos (W121). At
  * most 35% of the view's height, scrolling inside itself past that, as the footer does at half, so the
  * body always keeps its room.
  */
@@ -2648,46 +2765,8 @@ mark.match {
   min-width: 0;
 }
 
-/* The plan status panel's Make a new one and Close (W123), together at the end of its line 1. */
-.recap-actions {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--pw-space-1);
-  margin-left: auto;
-}
-
 /*
- * Plan status, or Show plan on the picture's Plan line (W150): a ghost sm text button, a disclosure
- * with the chevron, turned down while the panel is open, its block margins taken back so its line
- * keeps its height.
- */
-.button.recap-plan-button {
-  flex: none;
-  margin-block: calc(-1 * var(--pw-space-0-5));
-  vertical-align: baseline;
-}
-
-.recap-plan-button .chevron {
-  flex: none;
-  transition: transform var(--pw-duration-fast) var(--pw-ease-standard);
-}
-
-.recap-plan-button[aria-expanded='true'] .chevron {
-  transform: rotate(90deg);
-}
-
-/* Plan status's own line in a recap without the picture (W150), under the to-dos. */
-.recap-plan-action {
-  margin: 0;
-}
-
-.recap-plan-action .button.recap-plan-button {
-  margin-left: calc(-1 * var(--pw-space-2));
-}
-
-/*
- * The picture's lines (W150): "Goal:", "Working on:", "Plan:" and "For you (n):", each label in 500
+ * The picture's lines (W150): "Goal:", "Working on:" and "For you (n):", each label in 500
  * --pw-text, then its text, wrapping while the strip is open.
  */
 .recap-line {
@@ -2869,51 +2948,69 @@ mark.match {
   color: var(--pw-text-muted);
 }
 
-/* While the plan status is open, the strip may take half the view, as the footer may, since the plan can run to 15 items. */
-.session-recap[data-plan='open'] {
+/* While its Plan section is open, the strip may take half the view, as the footer may, since the plan can run to 15 items (W172). */
+.session-recap:has(.recap-plan[data-open='true']) {
   max-height: 50%;
 }
 
 /*
- * The plan status panel (W123): under its button, a top --pw-border, its heading, age,
- * Make a new one and Close on its line 1; then the plan's one line, its items in order, each with its
- * state as a small tag, and how the plan changed.
+ * The Plan section (W172), in the picture's body: its head mirrors the strip's, the disclosure, "Plan",
+ * in 500 --pw-text, and the plan's line on the same row, top-aligned, the line padded as the toggle
+ * is, so their first lines share a centre and a baseline, however far the line wraps. Collapsed, the line is one line with an ellipsis; open, or with no items to
+ * open, it wraps. Open, the items in order, each with its state as a small tag, then how the plan changed.
  */
 .recap-plan {
   display: flex;
   flex-direction: column;
   gap: var(--pw-space-1);
-  margin-top: var(--pw-space-1);
-  padding-top: var(--pw-space-2);
-  border-top: 1px solid var(--pw-border);
-}
-
-.recap-plan[hidden] {
-  display: none;
+  min-width: 0;
 }
 
 .recap-plan-head {
   display: flex;
-  align-items: center;
-  gap: var(--pw-space-2);
+  align-items: flex-start;
+  gap: var(--pw-space-1);
   min-width: 0;
 }
 
-.recap-plan-head .icon-button {
-  flex: none;
-  margin-block: calc(-1 * var(--pw-space-0-5));
-}
-
 .recap-plan-heading {
+  flex: none;
   margin: 0;
   font-size: var(--pw-text-s);
   font-weight: var(--pw-weight-medium);
   line-height: var(--pw-leading-s);
 }
 
+/* With no items to open, a plain heading, padded as the toggle is. */
+.recap-plan-title {
+  display: inline-block;
+  padding: var(--pw-space-0-5) 0;
+}
+
 .recap-plan-line {
+  flex: 1 1 auto;
+  min-width: 0;
   margin: 0;
+  padding-block: var(--pw-space-0-5);
   overflow-wrap: anywhere;
+}
+
+/* Collapsed: the line's first line, its whole in a tooltip when it's cut. */
+.recap-plan[data-open='false'] .recap-plan-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recap-plan-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pw-space-1);
+  min-width: 0;
+}
+
+.recap-plan-body[hidden] {
+  display: none;
 }
 
 .recap-plan-items {
@@ -4386,7 +4483,8 @@ ol.md-list {
   }
 
   /* What sits over the page: the session view over the list, the drawer, dialogs, menus, toasts and tooltips. */
-  .session-view.overlay {
+  .session-view.overlay,
+  .session-view.view-panel {
     border-left: 1px solid CanvasText;
   }
 

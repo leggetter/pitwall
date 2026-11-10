@@ -20,6 +20,7 @@ import {
 } from '../shared/protocol.js';
 import { pitwallOrigin, proofFor } from '../test/proof.js';
 import { CommandSlots } from './actions.js';
+import type { UsageSource } from '../usage/service.js';
 import { DEFAULT_END_RATE, END_SIGNAL, isRelayName, isSupervisorName, parseEndRequest, workingError, type EndOptions, type Signaller } from './end.js';
 import type { RunningServer } from './index.js';
 import type { ProcessInfo, ProcessLookup, ProcessParents, Processes } from './processes.js';
@@ -229,6 +230,7 @@ interface StartOptions {
   end?: Omit<EndOptions, 'slots'>;
   internals?: ServerInternals;
   relay?: RelayManager;
+  usage?: UsageSource;
 }
 
 async function start(options: StartOptions = {}): Promise<Started> {
@@ -237,7 +239,7 @@ async function start(options: StartOptions = {}): Promise<Started> {
   const processes = options.processes ?? fakeProcesses();
   const signal = fakeSignal(processes, options.behaviour);
   const server = await startServerWithInternals(
-    { indexer, token: TOKEN, webRoot, port: 0, ...(options.relay ? { relay: options.relay } : {}) },
+    { indexer, token: TOKEN, webRoot, port: 0, ...(options.relay ? { relay: options.relay } : {}), ...(options.usage ? { usage: options.usage } : {}) },
     {
       end: { agents, processes: processes.api, signal, selfPid: SELF, pollMs: 10, ...options.end },
       ...options.internals,
@@ -545,6 +547,26 @@ describe('end session: the fresh listing’s guards', () => {
     const res = await end(started);
     expect(res.status).toBe(409);
     expect(res.json).toMatchObject({ error: expect.stringMatching(/pitwall's own relay/) });
+    expectNothingSignalled(started);
+  });
+
+  it('never ends the Usage view’s `/usage` call (W158), by its source’s isOwn()', async () => {
+    const usage: UsageSource = {
+      planReads: true,
+      view: async () => {
+        throw new Error('not read here');
+      },
+      runRate: async () => ({ status: 'off' }),
+      report: async () => {
+        throw new Error('not read here');
+      },
+      isOwn: (each) => each.pid === PID,
+      close: () => {},
+    };
+    const started = await start({ usage });
+    const res = await end(started);
+    expect(res.status).toBe(409);
+    expect(res.json).toMatchObject({ error: "That's pitwall's own process, which pitwall never ends." });
     expectNothingSignalled(started);
   });
 

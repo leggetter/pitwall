@@ -37,9 +37,11 @@ import {
   type WorkChoice,
   type WorkChoices,
   type WorkKind,
+  type WorkProfile,
   type WorkSettings,
 } from '../shared/protocol.js';
 import type { ClaudeDefaultsReader } from './claudeDefaults.js';
+import { mergeProfiles } from './profiles.js';
 import { RELAY_MODEL } from './relayPrompt.js';
 
 /** pitwall's own model and effort for each kind of work: today's behaviour, before W119. */
@@ -156,18 +158,22 @@ export function setsEffort(choice: WorkChoice): boolean {
 
 /**
  * `env` for a process given `choice`: without CLAUDE_CODE_EFFORT_LEVEL when it sets an effort, since
- * that variable takes precedence over `--effort` (env-vars, "Precedence"); with
- * CLAUDE_CODE_SUBAGENT_MODEL when `subagents` sets a model, and as inherited otherwise. A new object;
- * `env` is left alone.
+ * that variable takes precedence over `--effort` (env-vars, "Precedence"), or when its effort is
+ * WORK_DEFAULT, Claude Code's own default, which an inherited variable would quietly replace (W180's
+ * I2); with CLAUDE_CODE_SUBAGENT_MODEL when `subagents` sets a model, and without it when that's
+ * WORK_DEFAULT, in either case without an inherited CLAUDE_CODE_SUBAGENT_MODEL_FORCE, so what runs is
+ * what pitwall showed. With neither set, as inherited. A new object; `env` is left alone.
  */
 export function withEffort<T extends NodeJS.ProcessEnv | Record<string, string>>(env: T, choice: WorkChoice, subagents: WorkChoice = {}): T {
   const result = { ...env };
-  if (setsEffort(choice)) {
-    for (const name of Object.keys(result)) if (name.toUpperCase() === 'CLAUDE_CODE_EFFORT_LEVEL') delete result[name];
-  }
-  if (subagents.model !== undefined && subagents.model !== WORK_DEFAULT) {
-    for (const name of Object.keys(result)) if (name.toUpperCase() === 'CLAUDE_CODE_SUBAGENT_MODEL') delete result[name];
-    (result as Record<string, string>).CLAUDE_CODE_SUBAGENT_MODEL = subagents.model;
+  const drop = (variable: string) => {
+    for (const name of Object.keys(result)) if (name.toUpperCase() === variable) delete result[name];
+  };
+  if (choice.effort !== undefined) drop('CLAUDE_CODE_EFFORT_LEVEL');
+  if (subagents.model !== undefined) {
+    drop('CLAUDE_CODE_SUBAGENT_MODEL');
+    drop('CLAUDE_CODE_SUBAGENT_MODEL_FORCE');
+    if (subagents.model !== WORK_DEFAULT) (result as Record<string, string>).CLAUDE_CODE_SUBAGENT_MODEL = subagents.model;
   }
   return result;
 }
@@ -198,6 +204,8 @@ export interface WorkStore {
   describe(dir?: string): Promise<WorkSettings>;
   /** Replaces the overrides with `body`'s, a WorkUpdate, once it passes every check. */
   update(body: unknown): { ok: true; settings: WorkSettings } | { ok: false; error: string };
+  /** The work profile named exactly `name` (W155), a copy, or undefined. */
+  profile(name: string): WorkProfile | undefined;
 }
 
 export interface WorkStoreOptions {
@@ -205,6 +213,8 @@ export interface WorkStoreOptions {
   config?: WorkChoices;
   /** The config file's path, when one was read. */
   configFile?: string;
+  /** The config file's `profiles` (W155), checked (LoadedConfig.profiles). The built-ins apply either way. */
+  profiles?: readonly WorkProfile[];
   /** Reads Claude Code's defaults (W122, claudeDefaults.ts). Absent: the answers have no `claude`. */
   claude?: ClaudeDefaultsReader;
 }
@@ -212,6 +222,7 @@ export interface WorkStoreOptions {
 export function createWorkStore(options: WorkStoreOptions = {}): WorkStore {
   const config = options.config ?? emptyChoices();
   let overrides = emptyChoices();
+  const profiles = mergeProfiles(options.profiles);
   const choice = (kind: WorkKind) => mergeChoices(overrides[kind], config[kind], BUILT_IN_WORK[kind]);
   const settings = (): WorkSettings => {
     const effective = emptyChoices();
@@ -222,6 +233,7 @@ export function createWorkStore(options: WorkStoreOptions = {}): WorkStore {
       overrides: copy(overrides),
       effective,
       ...(options.configFile === undefined ? {} : { configFile: options.configFile }),
+      profiles: profiles.map((profile) => ({ ...profile })),
     };
   };
   return {
@@ -248,6 +260,10 @@ export function createWorkStore(options: WorkStoreOptions = {}): WorkStore {
         throw error;
       }
       return { ok: true, settings: settings() };
+    },
+    profile(name) {
+      const found = profiles.find((profile) => profile.name === name);
+      return found === undefined ? undefined : { ...found };
     },
   };
 }

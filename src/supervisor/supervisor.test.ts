@@ -214,7 +214,7 @@ describe('starting the supervisor', () => {
     expect(flag(args, '--permission-prompt-tool')).toBe('mcp__pitwall__approve');
     expect(flag(args, '--setting-sources')).toBe('');
     expect(args).toContain('--strict-mcp-config');
-    expect(flag(args, '--allowed-tools')).toBe('mcp__pitwall__list_sessions,mcp__pitwall__read_session,mcp__pitwall__list_prs,mcp__pitwall__get_recap');
+    expect(flag(args, '--allowed-tools')).toBe('mcp__pitwall__list_sessions,mcp__pitwall__read_session,mcp__pitwall__list_prs,mcp__pitwall__get_recap,mcp__pitwall__get_usage');
     const settings = JSON.parse(flag(args, '--settings')!) as Record<string, unknown>;
     expect(settings).toMatchObject({ autoMemoryEnabled: false, crossSessionInbound: 'refuse', permissions: { ask: [...SUPERVISOR_ASK_TOOLS] } });
     // The recipient gate: a deny-only hook on SendMessage, which blocks if it can't run.

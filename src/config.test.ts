@@ -112,6 +112,44 @@ describe('parseConfig', () => {
     expect(roots?.map((root) => root.owners)).toEqual([undefined, undefined]);
   });
 
+  it('reads "profiles" (W155), with or without roots, warning of a field it doesn\'t know and naming the file in a problem', () => {
+    const { profiles, roots, warnings } = parse(`{
+      "profiles": {
+        // replaces the built-in Review
+        "Review": { "model": "sonnet", "effort": "high", "subagentModel": "sonnet", "skill": "agent-roles:role-reviewer", "colour": "blue" },
+        "Quick fix": { "model": "haiku", "effort": "low" },
+      },
+    }`);
+    expect(roots).toBeUndefined();
+    expect(profiles).toEqual([
+      { name: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet', skill: 'agent-roles:role-reviewer', source: 'config' },
+      { name: 'Quick fix', model: 'haiku', effort: 'low', source: 'config' },
+    ]);
+    expect(warnings).toEqual([`${FILE}: unknown key "profiles.Review.colour", ignored. A newer pitwall may use it.`]);
+    expect(parse('{ "roots": ["/a"], "profiles": {} }').profiles).toEqual([]);
+    expect(fails('{ "profiles": { "Review": { "skill": "role reviewer; rm -rf ~" } } }')).toThrow(
+      `${FILE}: "profiles.Review.skill" must be a skill's name without its "/": letters, digits and hyphens, with one optional "plugin:" part, such as "agent-roles:role-reviewer"`,
+    );
+  });
+
+  it('reads "runRate" (W159), the weekend reserve, each field defaulting, and refuses a bad one', () => {
+    expect(parse('{}').runRate).toBeUndefined();
+    expect(parse('{ "runRate": {} }').runRate).toEqual({ percent: 80, day: 'friday', time: '18:00' });
+    const { runRate, warnings } = parse('{ "runRate": { "percent": 75, "day": "Thursday", "time": "21:30", "colour": "red" } }');
+    expect(runRate).toEqual({ percent: 75, day: 'thursday', time: '21:30' });
+    expect(warnings).toEqual([`${FILE}: unknown key "runRate.colour", ignored. A newer pitwall may use it.`]);
+    expect(fails('{ "runRate": 80 }')).toThrow(`${FILE}: "runRate" must be an object, such as { "percent": 80, "day": "friday", "time": "18:00" }`);
+    for (const percent of ['0', '101', '79.5', '"80"']) expect(fails(`{ "runRate": { "percent": ${percent} } }`)).toThrow(`${FILE}: "runRate.percent" must be a whole number from 1 to 100`);
+    for (const day of ['"fri"', '"weekend"', '5']) expect(fails(`{ "runRate": { "day": ${day} } }`)).toThrow(`${FILE}: "runRate.day" must be a day of the week, such as "friday"`);
+    for (const time of ['"18"', '"24:00"', '"6:00"', '"18:00:00"']) expect(fails(`{ "runRate": { "time": ${time} } }`)).toThrow(/"runRate.time" must be a time of day as HH:MM/);
+  });
+
+  it('refuses a profile named Customized or Custom, the name New session uses for its own choice (W155)', () => {
+    expect(fails('{ "profiles": { "Customized": { "model": "sonnet" } } }')).toThrow(`${FILE}: "profiles.Customized" is a name New session uses for its own choice, Customized. Choose another.`);
+    expect(fails('{ "profiles": { "customized": {} } }')).toThrow(/"profiles.customized" is a name New session uses/);
+    expect(fails('{ "profiles": { "Custom": {} } }')).toThrow(/"profiles.Custom" is a name New session uses/);
+  });
+
   it('has no roots for a file without "roots", or an empty object', () => {
     expect(parse('{}')).toEqual({ warnings: [] });
     expect(parse('// nothing yet\n{ }')).toEqual({ warnings: [] });

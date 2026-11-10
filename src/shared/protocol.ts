@@ -2,6 +2,8 @@
 // the web UI exchange. The index, server and UI are built in parallel against
 // this file, so change it deliberately and in its own commit.
 
+import { isBuiltInCommand } from './builtInCommands.js';
+
 /** Where a session runs. Matches `kind` in `claude agents --json`. */
 export type SessionKind = 'interactive' | 'background';
 
@@ -244,12 +246,6 @@ export interface SessionSummary {
    * W112's supervisor included (D26).
    */
   recap?: RecapSummary;
-  /**
-   * ISO 8601: when the session's newest plan status was made (M5, W123), the only word of it the
-   * snapshot carries (D14), so a view can tell there's one to fetch, and a newer one, with
-   * planStatusPath(). Absent until one is made, and with `--no-recaps`.
-   */
-  planStatusAt?: string;
   /** ISO 8601 timestamp of the newest transcript entry, when the transcript was readable. */
   lastActivityAt?: string;
   /**
@@ -320,6 +316,22 @@ export interface SessionSummary {
    * when they can't be read, and when none is left.
    */
   prLinks?: PrLink[];
+  /**
+   * The one pull request a background job's own `state.json` links in its `children` (W170, the job
+   * adapter, src/index/jobs.ts): what a job waiting on someone else, on CI or on another session
+   * usually waits on, so the row's line 2 and the session view name it. Set only when the job links
+   * exactly one, read while the job hasn't finished, as its `needs` line is; any PR, open or not,
+   * whoever's, since the job says so itself. Absent for an interactive session.
+   */
+  jobPr?: JobPr;
+}
+
+/** A pull request by its repo and number (SessionSummary.jobPr). */
+export interface JobPr {
+  /** Lowercase `owner/name`. */
+  repo: string;
+  /** A positive whole number. */
+  number: number;
 }
 
 /**
@@ -528,6 +540,11 @@ export interface IndexSnapshot {
   recaps?: RecapHealth;
   /** The supervisor (M5, SupervisorState): absent with `--no-supervisor`. */
   supervisor?: SupervisorState;
+  /**
+   * 'on' when pitwall reads the plan's percentages for the header's run rate (W159): the page then
+   * asks RUN_RATE_PATH while it's visible. Absent with `--no-usage`, and the header shows none.
+   */
+  planUsage?: 'on';
 }
 
 /** Why pitwall stopped using its relay for this run (D8). */
@@ -1069,6 +1086,22 @@ export interface SpawnRequest {
   model?: string;
   /** Optional effort (W119): an EffortLevel, or WORK_DEFAULT. Absent: the defaults for sessions. */
   effort?: EffortLevel | typeof WORK_DEFAULT;
+  /**
+   * Optional sub-agents' default model (W155; Phil, 2026-11-09), CLAUDE_CODE_SUBAGENT_MODEL for the
+   * session, never forced: as isWorkModel(…, 'subagents') allows, or WORK_DEFAULT for none whatever
+   * the profile and pitwall's defaults say. Absent: the profile's, else the defaults for sub-agents
+   * (WorkSettings.effective.subagents).
+   */
+  subagentModel?: string;
+  /**
+   * Optional work profile (W155): the name of one of WorkSettings.profiles, exactly. The server looks
+   * it up in its own profiles, and 400s for a name it doesn't have. Its model, effort and sub-agents'
+   * model apply where `model`, `effort` and `subagentModel` are absent; its skill always applies, from
+   * the server's profile, never from the request. Absent: no profile, as before W155: pitwall's
+   * defaults for sessions and their sub-agents apply. New session sends one once the profiles load
+   * (Phil, 2026-11-09: Customized, never None), with all three fields as the dialog shows them.
+   */
+  profile?: string;
   /**
    * Optional files for the first prompt (W79, spike 008): ids from
    * AttachmentResult, at most ATTACHMENTS_MAX_PER_SESSION, each used once.
@@ -1852,6 +1885,12 @@ export const RECAP_TODO_OWNERS: readonly RecapTodoOwner[] = ['you', 'session', '
 export interface RecapTodo {
   text: string;
   owner: RecapTodoOwner;
+  /**
+   * W166: true when it can only happen once an earlier to-do in the list is done, such as a release
+   * after a merge; false when it can be done now. Absent from a recap made before W166, which keeps
+   * W146's rule alone (needsYouOf(), src/recaps/engine.ts).
+   */
+  after?: boolean;
 }
 
 /** The most to-dos a recap keeps: the first ones, in order. */
@@ -1898,6 +1937,15 @@ export interface SessionRecap {
   workingOn?: string;
   /** W150: the plan it works through, in one line; empty when the material shows none. */
   plan?: string;
+  /**
+   * W172 (the plan is part of the recap): the plan's milestones, work items or steps in its own
+   * order, at most PLAN_ITEMS_MAX, each done, now, next or dropped. Only with a non-empty plan, and
+   * then always, though possibly empty, but in a recap stored from W150 until W172, which has the
+   * plan's line alone until its next first recap.
+   */
+  planItems?: PlanItem[];
+  /** W172: how the plan changed during the session, at most RECAP_FIELD_MAX characters. Absent when it records no change. */
+  planChanges?: string;
   /** ISO 8601: when it was made. */
   at: string;
   /** ISO 8601: the newest transcript entry it covers. */
@@ -1976,7 +2024,7 @@ export const RECAP_FIRST_PROMPT_CAP = 1500;
 export const RECAP_FIELD_MAX = 400;
 
 /**
- * The most of a session's PRs a recap's or a plan status's input names (W150): its strong links
+ * The most of a session's PRs a recap's input names (W150): its strong links
  * (prLinkIsStrong()), newest first, each PR once.
  */
 export const RECAP_PRS_MAX = 5;
@@ -2008,10 +2056,10 @@ export function recapRefreshPath(sessionId: string): string {
  */
 export type RecapRefreshResult = ActionResult | { ok: false; error: string; busy: 'spent' | 'running' };
 
-// --- Plan status (M5, W123) -----------------------------------------------------------------------
+// --- The plan's items (M5, W123; part of the recap since W172) -----------------------------------
 
 /**
- * Where one of a plan's items is (W123), by the plan status call's prompt:
+ * Where one of a plan's items is (W123), by the recap call's prompt (W172):
  * - 'done': finished, by the transcript: merged, shipped, checked off or said to be done.
  * - 'now': what the session is on at its latest turn.
  * - 'next': still to come, or started and not finished, and not what it's on now.
@@ -2022,76 +2070,29 @@ export type PlanItemState = 'done' | 'now' | 'next' | 'dropped';
 /** The values, for checking a model's answer. */
 export const PLAN_ITEM_STATES: readonly PlanItemState[] = ['done', 'now', 'next', 'dropped'];
 
-/** One of a plan's milestones, work items or steps. `text` is plain, at most PLAN_ITEM_MAX characters. */
+/** One of a plan's milestones, work items or steps (SessionRecap.planItems). `text` is plain, at most PLAN_ITEM_MAX characters. */
 export interface PlanItem {
   text: string;
   state: PlanItemState;
 }
 
-/**
- * A session's plan status (M5, W123; Phil, 2026-11-02: "I want it to be clear that work is done as
- * part of a plan... we're working our way through that plan. That plan can change."): a reminder of
- * where the session is in the bigger picture, made when you press Plan status on the recap strip,
- * never by itself. One `claude -p` call, as a recap's (D26), over more of the transcript: its first
- * prompt, its newest compaction summary, all its sections, and its latest turns up to
- * PLAN_TURNS_CAP characters. Nothing is sent to the session. GET planStatusPath(); kept in memory
- * only, the newest per session, and the snapshot says only when it was made
- * (SessionSummary.planStatusAt, D14). All text is plain, never Markdown. Untrusted, as a recap is: a
- * transcript can steer what the model writes, so it's shown as plain text and read as data (D26).
- */
-export interface PlanStatus {
-  /** False when the transcript shows no plan the session works through: then there's no `plan`, `items` is empty and there's no `changes`. */
-  found: boolean;
-  /** What the plan is, in one line, at most RECAP_FIELD_MAX characters. */
-  plan?: string;
-  /** Its milestones, work items or steps in the plan's own order, at most PLAN_ITEMS_MAX. At least one when `found`. */
-  items: PlanItem[];
-  /** How the plan changed during the session, when the transcript records a change; at most RECAP_FIELD_MAX characters. */
-  changes?: string;
-  /** ISO 8601: when it was made. */
-  at: string;
-  /** ISO 8601: the newest transcript entry it covers. */
-  throughAt: string;
-}
-
-/** The most items a plan status keeps: the first ones, in the plan's order. */
+/** The most items a recap keeps of a plan: the first ones, in the plan's order. */
 export const PLAN_ITEMS_MAX = 15;
 
 /** The longest item, in characters. */
 export const PLAN_ITEM_MAX = 200;
 
-/** Characters of the latest turns a plan status reads: three times a recap's, for the bigger picture. */
+/**
+ * Characters of the latest turns a first recap reads (W150): three times an update's, for the bigger
+ * picture. Named for W123's plan status, which read the same, until W172 folded it into the recap.
+ */
 export const PLAN_TURNS_CAP = 24_000;
 
-/** Characters of the first prompt a plan status reads, keeping its start and end: twice a recap's, since a plan is often set out there. */
+/** Characters of the first prompt a first recap reads, keeping its start and end: twice an update's, since a plan is often set out there. */
 export const PLAN_FIRST_PROMPT_CAP = 3000;
 
-/** Characters of the newest compaction summary a plan status reads, all its sections, keeping its start and end. */
+/** Characters of the newest compaction summary a first recap reads, all its sections, keeping its start and end. */
 export const PLAN_COMPACTION_CAP = 12_000;
-
-/** GET: the session's newest PlanStatus, or 404 when none has been made. The same authorization as SNAPSHOT_PATH. */
-export function planStatusPath(sessionId: string): string {
-  return `/api/sessions/${encodeURIComponent(sessionId)}/plan-status`;
-}
-
-/**
- * POST, no body: make the session's plan status now, answered with a PlanStatusResult once the call
- * has finished, a few seconds to a minute. It needs what every state-changing request needs: the
- * apiKey, pitwall's Origin and its exact Host. It counts against the day's recap budget
- * (RECAP_DAILY_BUDGET) as a recap call. 404 when pitwall has no transcript of the session, 409 with
- * `--no-recaps`, 429 when the day's budget is spent or a plan status of it is being made already,
- * which the answer's `busy` says, or when two of other sessions' are (busy 'running', with `others`), 502 when the call failed, with why in pitwall's words, 503 while
- * the server closes.
- */
-export function planStatusRefreshPath(sessionId: string): string {
-  return `/api/sessions/${encodeURIComponent(sessionId)}/plan-status/refresh`;
-}
-
-/** planStatusRefreshPath()'s answer: the new plan status, or why not. */
-export type PlanStatusResult =
-  | { ok: true; status: PlanStatus }
-  /** `others`: busy with other sessions' plan statuses, as many as pitwall makes at a time, so none of this one is coming. */
-  | { ok: false; error: string; busy?: 'spent' | 'running'; others?: true };
 
 // --- The supervisor (M5; spike 009; D4 reopened, option B) ----------------------------------------
 
@@ -2189,7 +2190,22 @@ export type SavedPermission = { kind: 'mode'; mode: PermissionModeName } | { kin
  */
 export type SupervisorApproval =
   | { id: string; kind: 'message'; to: string; text: string; at: string; expiresAt: string }
-  | { id: string; kind: 'spawn'; directory: string; name?: string; prompt: string; at: string; expiresAt: string }
+  | {
+      id: string;
+      kind: 'spawn';
+      directory: string;
+      name?: string;
+      prompt: string;
+      at: string;
+      expiresAt: string;
+      /**
+       * The work profile it starts with (W156): the supervisor's choice, or DEFAULT_PROFILE when it named
+       * none, one of `profiles` by its exact name. Absent, with `profiles`, where pitwall has no profiles.
+       */
+      profile?: string;
+      /** The profiles you can pick instead, each as it would start, resolved when the card was made (W156). */
+      profiles?: ApprovalProfile[];
+    }
   | {
       id: string;
       kind: 'resume';
@@ -2205,14 +2221,40 @@ export type SupervisorApproval =
       sameName: number;
       /** The permission mode it resumes in, as far as pitwall can tell (W129, L1). */
       permission: SavedPermission;
+      /** The profile's settings pitwall started it with, which it resumes with (W155). Absent: none kept. */
+      launch?: SessionLaunch;
+      /**
+       * A work profile it resumes on instead of what it started with (W156), one of `profiles` by its
+       * exact name: the supervisor's choice. Absent: as it started, `launch`'s, or the defaults for sessions.
+       */
+      profile?: string;
+      /** The profiles you can pick, each as it would resume, resolved when the card was made (W156). */
+      profiles?: ApprovalProfile[];
     };
+
+/**
+ * A work profile on a draft card (W156): its name and exactly what a session started, or resumed, with
+ * it gets, resolved when the card was made, the profile's own fields first, then the defaults for
+ * sessions and sub-agents (WorkSettings.effective), WORK_DEFAULT for none. What the card shows is what
+ * goes: an approval launches with these values, never a later resolution. `skill` is the profile's,
+ * which a new session starts with and a resume never runs.
+ */
+export interface ApprovalProfile {
+  name: string;
+  model: string;
+  effort: EffortLevel | typeof WORK_DEFAULT;
+  subagentModel: string;
+  skill?: string;
+}
 
 /**
  * Your answer to an approval (POST supervisorApprovalPath()): send it as it is, send your edit
  * (`text` replaces the message or the prompt), or don't send it. The supervisor is told which, and
- * on an edit, what was sent.
+ * on an edit, what was sent. On a new session's or a resume's card, `profile` is the one you picked
+ * (W156), by its exact name among the card's `profiles`; `null`, on a resume's only, resumes it as it
+ * started. Absent: the card's own.
  */
-export type SupervisorDecision = { decision: 'send' } | { decision: 'edit'; text: string } | { decision: 'decline' };
+export type SupervisorDecision = { decision: 'send'; profile?: string | null } | { decision: 'edit'; text: string; profile?: string | null } | { decision: 'decline' };
 
 /** The supervisor's model (Phil, 2026-10-29), at its default effort. */
 export const SUPERVISOR_MODEL = 'claude-opus-5-5';
@@ -2315,6 +2357,7 @@ export const MCP_TOOLS = {
   readSession: 'read_session',
   listPrs: 'list_prs',
   getRecap: 'get_recap',
+  getUsage: 'get_usage',
   spawnSession: 'spawn_session',
   resumeSession: 'resume_session',
   approve: 'approve',
@@ -2415,6 +2458,12 @@ export interface WorkSettings {
   /** The config file it read, for the words "in <file>". Absent when there's none. */
   configFile?: string;
   /**
+   * The work profiles (W155): the built-ins, Build, Review, Security review and Docs, in that order,
+   * each replaced in place by the config file's of the same name, then the config file's others, in
+   * its order. Absent from a server before W155.
+   */
+  profiles?: WorkProfile[];
+  /**
    * What Claude Code would use where pitwall passes no `--model` or `--effort` (W122), read from its
    * documented settings files and environment variables as the request came in. Absent when the
    * server wasn't given a reader (tests, the gallery) or the read failed.
@@ -2479,6 +2528,76 @@ export interface ClaudeDefaults {
 }
 
 /**
+ * A work profile (W155): a session's launch settings, by name. New session's Profile picker fills its
+ * Model, Effort and Sub-agents; the server adds its skill. A field it lacks is left to the defaults for
+ * sessions and sub-agents (WorkSettings.effective), as a dialog field left on its default is.
+ */
+export interface WorkProfile {
+  /** WORK_PROFILE_NAME_PATTERN; unique ignoring case. */
+  name: string;
+  /** As WorkChoice's for `session`: isWorkModel(), or WORK_DEFAULT. */
+  model?: string;
+  effort?: EffortLevel | typeof WORK_DEFAULT;
+  /**
+   * CLAUDE_CODE_SUBAGENT_MODEL for the session, a default only (Claude Code v2.1.251: an Agent call's
+   * own `model`, or an agent definition's, wins): isWorkModel(…, 'subagents'), or WORK_DEFAULT for
+   * none. pitwall never sets CLAUDE_CODE_SUBAGENT_MODEL_FORCE.
+   */
+  subagentModel?: string;
+  /**
+   * A skill the session starts with, SKILL_NAME_PATTERN, without its `/`: the first prompt becomes
+   * `/<skill> <prompt>`, which Claude Code runs as if typed (W155's check).
+   */
+  skill?: string;
+  /** pitwall's own, or the config file's `profiles`, which replaces a built-in of the same name. */
+  source: 'built-in' | 'config';
+}
+
+/** The profile New session starts on (W155). Always one of the profiles: a config file can replace it, not remove it. */
+export const DEFAULT_PROFILE = 'Build';
+
+/**
+ * The settings pitwall started a session with from a work profile (W155; Phil, 2026-11-09), which it
+ * reuses when it resumes that session: the profile's name, whether its model, effort or sub-agents'
+ * model were changed in the dialog (Customized), and what was used. `model`, `effort` and
+ * `subagentModel` are as WorkProfile's, WORK_DEFAULT for none. Never the skill: it was the first prompt's prefix, and runs once.
+ */
+export interface SessionLaunch {
+  profile?: string;
+  custom?: true;
+  model?: string;
+  effort?: EffortLevel | typeof WORK_DEFAULT;
+  subagentModel?: string;
+}
+
+/** A profile's name: letters, digits, spaces, `.`, `_` and `-`, 1 to 40, starting with a letter or digit and not ending with a space. */
+export const WORK_PROFILE_NAME_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9 ._-]{0,38}[A-Za-z0-9._-])?$/;
+
+/** The most profiles the config file may name. */
+export const WORK_PROFILES_MAX = 30;
+
+/** pitwall's own profiles, Build, Review, Security review and Docs (src/server/profiles.ts' BUILT_IN_PROFILES). */
+export const WORK_PROFILES_BUILT_IN = 4;
+
+/**
+ * The most profiles the server resolves, and so sends, the built-ins and the config file's together:
+ * what the page takes, in WorkSettings and on a supervisor's card alike (W180's F2).
+ */
+export const WORK_PROFILES_TOTAL_MAX = WORK_PROFILES_MAX + WORK_PROFILES_BUILT_IN;
+
+/**
+ * A skill's name, as a profile gives it: letters, digits and hyphens, starting with a letter or
+ * digit, with one optional `plugin:` part of the same characters; at most 64 a part. Never free text on
+ * a command line: no space, quote, `/`, `.`, newline or second `:`, and never a leading `-`.
+ */
+export const SKILL_NAME_PATTERN = /^(?:[A-Za-z0-9][A-Za-z0-9-]{0,63}:)?[A-Za-z0-9][A-Za-z0-9-]{0,63}$/;
+
+/** A skill's name as SKILL_NAME_PATTERN allows, and never one of Claude Code's built-in commands, which `/<name>` would run instead (W180's I3). */
+export function isSkillName(value: unknown): value is string {
+  return typeof value === 'string' && SKILL_NAME_PATTERN.test(value) && !isBuiltInCommand(value);
+}
+
+/**
  * POST WORK_PATH's body: the whole set of overrides, which replaces the last. A kind or a field left
  * out has no override. Each model must pass isWorkModel(), or be WORK_DEFAULT, and each effort
  * isEffortLevel(), or WORK_DEFAULT; sub-agents take no effort. Else 400 with `{ error }`, in pitwall's
@@ -2494,3 +2613,270 @@ export interface WorkUpdate {
  * `claude`'s defaults for sessions. One that isn't is left out, as if none were given.
  */
 export const WORK_PATH = '/api/work';
+
+// --- Usage (M5.2, W158) -----------------------------------------------------------------------------
+
+/**
+ * The Usage view's data (W158): GET USAGE_PATH?window=<UsageWindowKey>. Token counts from the
+ * transcripts' own usage records, read on from where the last read stopped, with each day's totals
+ * kept in pitwall's home so a day whose transcripts Claude Code has deleted still counts. Numbers,
+ * model ids, repo directories and session ids only: never a prompt, a message or a title.
+ *
+ * Cache reads and cache writes are their own figures, never summed into one total with fresh input
+ * and output (97.7% of tokens are cache reads, W131). `cost` is a stand-in, at API list prices
+ * (`costLabel`): how a plan's usage limits weigh tokens isn't published.
+ */
+export const USAGE_PATH = '/api/usage';
+
+/**
+ * Which window: 'week', the plan's week, from its reset (W157's `sevenDay.resetsAt`), or the last 7
+ * days when that's unavailable; '24h', the last 24 hours, by hour; '14d' and '30d', today and the
+ * days before it, by day.
+ */
+export type UsageWindowKey = 'week' | '24h' | '14d' | '30d';
+
+export const USAGE_WINDOWS: readonly UsageWindowKey[] = ['week', '24h', '14d', '30d'];
+
+export interface UsageTokens {
+  /** API responses, each counted once however many lines repeat it. */
+  calls: number;
+  /** Fresh input tokens. */
+  input: number;
+  cacheWrite: number;
+  cacheRead: number;
+  output: number;
+  /** USD at API list prices, a stand-in; a model without a price adds nothing. */
+  cost: number;
+}
+
+/** One bar of the chart: a local day, or an hour for '24h'. */
+export interface UsageBucket extends UsageTokens {
+  /** Its start, ISO 8601. */
+  start: string;
+  /** True when its figures are the kept day's, its transcripts since deleted in part or whole. */
+  history?: true;
+}
+
+export interface UsageRepoRow extends UsageTokens {
+  /** The repo's directory, home as ~; or "pitwall's own: recap" and the like. */
+  repo: string;
+  sessions: number;
+}
+
+export type UsageSessionKind = 'main' | 'subagent' | 'pitwall';
+
+export interface UsageSessionRow extends UsageTokens {
+  sessionId: string;
+  repo: string;
+  /** 'pitwall' for pitwall's own calls (recaps, the relay, the supervisor, the usage read). */
+  kind: UsageSessionKind;
+  /** The model with the most of its tokens. */
+  model: string;
+  /** Its sub-agents' runs, whose figures are in the row's. */
+  subagentRuns: number;
+  subagentCost: number;
+}
+
+export interface UsageModelRow extends UsageTokens {
+  model: string;
+}
+
+/** The plan's week, from `/usage` (W157); W159's run rate adds the pace beside it. */
+export type UsagePlan =
+  | {
+      status: 'available';
+      readAt: string;
+      /** null when the server sent no weekly row. */
+      sevenDay: { usedPercentage: number; resetsAt: string | null } | null;
+      fiveHour: { usedPercentage: number; resetsAt: string | null } | null;
+    }
+  | { status: 'unavailable'; readAt: string; reason: string };
+
+export interface UsageView {
+  window: {
+    key: UsageWindowKey;
+    since: string;
+    until: string;
+    /** 'reset' when the week starts at the plan's reset; otherwise the window is days or hours back from now. */
+    from: 'reset' | 'days' | 'hours';
+    bucket: 'day' | 'hour';
+  };
+  plan: UsagePlan;
+  costLabel: string;
+  totals: UsageTokens;
+  buckets: UsageBucket[];
+  /** By stand-in cost, at most USAGE_ROWS_MAX; `rest` sums what's left out. */
+  byRepo: { rows: UsageRepoRow[]; rest?: UsageTokens & { count: number } };
+  bySession: { rows: UsageSessionRow[]; rest?: UsageTokens & { count: number } };
+  byModel: UsageModelRow[];
+  /** Main sessions' own calls against their sub-agents'. pitwall's own calls are main. */
+  split: { main: UsageTokens & { sessions: number }; subagent: UsageTokens & { runs: number } };
+  /**
+   * What the kept days add that no transcript left shows: in the totals, the buckets, by model and
+   * the split, but in no repo's or session's row. Absent when nothing.
+   */
+  history?: UsageTokens & { days: number };
+  /** The pace beside the plan's week (W159), from the same read. Absent where no source sets it. */
+  runRate?: RunRate;
+  /**
+   * The run rate as a chart (W181), for 'week' only, from the same read and the kept readings: set
+   * while `runRate` has the week's figures with a reset, absent otherwise.
+   */
+  runRateChart?: RunRateChart;
+  scan: {
+    at: string;
+    files: number;
+    /** Files or directories that couldn't be read, and lines that weren't JSON. */
+    unreadable: number;
+    malformed: number;
+  };
+}
+
+export const USAGE_ROWS_MAX = 25;
+
+// --- The run rate (M5.2, W159) ----------------------------------------------------------------------
+
+/**
+ * The header's run rate (W159): GET RUN_RATE_PATH answers RunRate. The plan's percentages from
+ * `/usage` (W157), read through the reader's 5-minute cache only when a visible page asks, and the
+ * pace against a weekend reserve, with a projection once the week's own readings allow one.
+ */
+export const RUN_RATE_PATH = '/api/run-rate';
+
+/** How often a visible page asks: the reader keeps a read this long anyway (RATE_LIMITS_TTL_MS). */
+export const RUN_RATE_POLL_MS = 5 * 60_000;
+/** A figure older than this shows its age, so a stale one is never presented as current. */
+export const RUN_RATE_AGE_SHOWN_MS = 10 * 60_000;
+/** A window's figure turns amber at this share used, and red at the next. */
+export const USAGE_AMBER_PERCENT = 70;
+export const USAGE_RED_PERCENT = 90;
+
+export type UsageLevel = 'normal' | 'amber' | 'red';
+
+export const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
+export type Weekday = (typeof WEEKDAYS)[number];
+
+/**
+ * The weekend reserve (Phil, 2026-11-06): at most `percent` of the plan's week used by `day` at
+ * `time`, local time. The config file's `runRate` (README's Configuration); 80% by Friday 18:00 unless
+ * it says otherwise.
+ */
+export interface RunRateTarget {
+  percent: number;
+  day: Weekday;
+  /** HH:MM, 24-hour. */
+  time: string;
+}
+
+export interface RunRatePace {
+  /** When the target falls in this week, ISO 8601. */
+  targetAt: string;
+  /**
+   * The line: what the week may have used by the reading's time to keep the reserve. From 0 at the
+   * week's start to the target's percent at targetAt, then on to 100 at the reset.
+   */
+  line: number;
+  /** Used less the line, in percentage points: above 0 is over the line. */
+  points: number;
+  /** Over the line by RUN_RATE_AHEAD_POINTS or more. */
+  ahead: boolean;
+  /** The target's time has passed: the line now runs from the target's percent to 100 at the reset. */
+  pastTarget: boolean;
+}
+
+/** How far over the line counts as ahead of pace, so a point's rounding doesn't flip the badge. */
+export const RUN_RATE_AHEAD_POINTS = 3;
+
+/**
+ * When the week would reach 100% at this rate, as a range (W159, PLAN.md): between the week's own
+ * average since its reset and the last day's rate, each widened by the readings' rounding. 'thin'
+ * until the week's readings span RUN_RATE_MIN_SPAN_HOURS.
+ */
+export type RunRateProjection =
+  | { status: 'thin' }
+  | { status: 'used-up' }
+  /** Even at the faster rate it lasts to the reset. */
+  | { status: 'lasts' }
+  | {
+      status: 'range';
+      /** At the faster rate, ISO 8601. */
+      earliest: string;
+      /** At the slower rate, ISO 8601; null when that lasts past the reset. */
+      latest: string | null;
+      /** The two rates, in percentage points an hour. */
+      perHour: { low: number; high: number };
+    };
+
+export const RUN_RATE_MIN_SPAN_HOURS = 6;
+
+export interface RunRateWindow {
+  usedPercentage: number;
+  /** ISO 8601; null when the server gave none. */
+  resetsAt: string | null;
+  level: UsageLevel;
+}
+
+export interface RunRateWeek extends RunRateWindow {
+  /** Null without a reset time, since the week's start isn't known. */
+  pace: RunRatePace | null;
+  projection: RunRateProjection | null;
+}
+
+export type RunRate =
+  /** `--no-usage`: pitwall reads no percentages. */
+  | { status: 'off' }
+  | { status: 'unavailable'; readAt: string; reason: string }
+  | {
+      status: 'available';
+      /** When the figures were read, ISO 8601: older than RUN_RATE_AGE_SHOWN_MS, the page says so. */
+      readAt: string;
+      /**
+       * Set when the latest read failed and these are the last kept reading's, the week only: why the
+       * read failed. The page shows its age.
+       */
+      fallback?: { reason: string };
+      target: RunRateTarget;
+      sevenDay: RunRateWeek | null;
+      fiveHour: RunRateWindow | null;
+    };
+
+/** A point on the run rate's chart (W181): a time, Unix ms, and a percentage of the plan's week. */
+export interface RunRateChartPoint {
+  at: number;
+  percent: number;
+}
+
+/**
+ * The run rate as a chart (W181, PLAN.md): the plan's week from its start (the reset less 7 days) to
+ * its reset, numbers only. Worked out by pitwall's runRate.ts from the same reading as `runRate`, so
+ * the chart and the sentences beside it agree.
+ */
+export interface RunRateChart {
+  /** The week's start and its reset, Unix ms. */
+  start: number;
+  end: number;
+  /** The reading's time, Unix ms: "now" on the chart while the reading is fresh. */
+  at: number;
+  /**
+   * The week's kept readings up to and with this one, oldest first: at most RUN_RATE_CHART_POINTS, the
+   * last of each slot of the week. Readings more than RUN_RATE_CHART_GAP_MS apart aren't joined.
+   */
+  readings: RunRateChartPoint[];
+  /** The reserve's line, as the pace's: 0 at the start, the target's percent at its time, 100 at the reset. */
+  line: RunRateChartPoint[];
+  /**
+   * The trend from the reading, at the projection's two rates and their middle: each ends where it
+   * reaches 100%, or at the reset. Null with no projection's rates: too few readings, or used up.
+   */
+  trend: { low: RunRateChartPoint; mid: RunRateChartPoint; high: RunRateChartPoint } | null;
+  /**
+   * When the trend's middle crosses the line after the reading, before the reset, Unix ms, and which
+   * way it goes; null when it doesn't.
+   */
+  crossesLine: { at: number; to: 'over' | 'under' } | null;
+}
+
+/** The chart's readings: one a half hour of the week at most. */
+export const RUN_RATE_CHART_POINTS = 336;
+/** Readings further apart than this, as across a night with no page open, aren't joined by a line. */
+export const RUN_RATE_CHART_GAP_MS = 90 * 60_000;
