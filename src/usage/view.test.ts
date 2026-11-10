@@ -274,6 +274,25 @@ describe('the source', () => {
     expect(reader.reads).toBe(2);
   });
 
+  it('the supervisor’s report (W160) reads through the same floor: with the run rate, at most once in 5 minutes', async () => {
+    let now = NOW;
+    const reader = fakeReader({ status: 'unavailable', readAt: NOW, reason: 'timeout' });
+    const source = createUsageSource({ configDir: path.join(dir, 'none'), home: dir, now: () => now, rateLimits: reader, resolveRepo: async (cwd) => cwd });
+    expect((await source.report()).runRate).toMatchObject({ status: 'unavailable', reason: 'timeout' });
+    expect(reader.reads).toBe(1);
+    now += RUN_RATE_READ_MS - 1;
+    await source.report();
+    await source.runRate();
+    await source.report();
+    expect(reader.reads).toBe(1);
+    now += 1;
+    await source.report();
+    expect(reader.reads).toBe(2);
+    // The Usage view, which reads only when it's opened, still goes to the reader's own cache.
+    await source.view('week');
+    expect(reader.reads).toBe(3);
+  });
+
   it('with --no-usage: never reads the plan’s percentages, keeps no readings, and the week is the last 7 days', async () => {
     const reader = fakeReader({ status: 'available', readAt: NOW, fiveHour: null, sevenDay: { usedPercentage: 10, resetsAt: Math.round((NOW + DAY) / 1000) } });
     const home = path.join(dir, 'pitwall');

@@ -17,8 +17,8 @@
 //   get_recap       one session's whole recap
 //   get_usage       the run rate (W160): the plan's week, its pace against the weekend reserve and the
 //                   projection (W159), the week's token totals and heaviest sessions, through the
-//                   usage source's report(), whose `/usage` read goes through W157's reader cache, so
-//                   at most one in RATE_LIMITS_TTL_MS; and the unfinished sessions whose context is
+//                   usage source's report(), whose `/usage` read shares the run rate's floor, so with
+//                   the header's at most one in RUN_RATE_READ_MS; and the unfinished sessions whose context is
 //                   over CONTEXT_WARN_TOKENS (W133), from the snapshot. Names, ids and figures only.
 //                   With `--no-usage`, the transcripts' totals and a plan that says it's off; a failed
 //                   or slow read is an answer that says "unavailable", never a tool error.
