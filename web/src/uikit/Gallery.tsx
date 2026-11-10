@@ -93,7 +93,7 @@ const SECTIONS: Section[] = [
     id: 'supervisor',
     title: 'Supervisor',
     intro:
-      "M5 (W114): the repo list's Supervisor item in each state, with its drafts' count; its view in each of the supervisor's states, off with a new conversation, starting, idle, working, held and failed, and with --no-supervisor; its draft cards of both kinds, long, editing, sending, failed and gone; its message box sending, queued, refused, maybe sent and stopping; and the page with its view open and Needs you counting its drafts, and the app strip's line.",
+      "M5 (W114): the header's Supervisor button (W182) in each state, with its drafts' count; its view in each of the supervisor's states, off with a new conversation, starting, idle, working, held and failed, and with --no-supervisor; its draft cards of both kinds, long, editing, sending, failed and gone; its message box sending, queued, refused, maybe sent and stopping; and the page with its view open and Needs you counting its drafts, and the app strip's line.",
     Content: SupervisorSpecimens,
   },
   { id: 'menus', title: 'Menus', intro: 'MenuButton: an icon button and its menu, which the session view\'s actions use, and its radio group, which nothing in the app uses since Preferences became a dialog (W59).', Content: Menus },

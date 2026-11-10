@@ -468,12 +468,55 @@
   .approval-text {
     border: 1px solid ButtonText;
   }
+
+  /* The Supervisor button while its panel is open (W182): a thicker edge in Highlight, its padding giving back what the border takes. */
+  .supervisor-button[aria-expanded='true'] {
+    border: 2px solid Highlight;
+    padding: calc(var(--pw-space-1) - 1px) calc(var(--pw-space-2) - 1px);
+  }
 }
 
-/* The repo list's Supervisor item (3: Repo list): its status badge before the drafts' count, neither giving way. */
-.supervisor-item-status {
+/*
+ * The header's Supervisor button (W182; 3: Header): an outline md button, its status badge and its
+ * drafts' count after its label, none giving way. While its panel is open, the selected look, as a
+ * pressed chip's and the selected repo's.
+ */
+.supervisor-button-status {
   display: inline-flex;
   flex: none;
+}
+
+.supervisor-button .badge {
+  flex: none;
+}
+
+.supervisor-button[aria-expanded='true'],
+.supervisor-button[aria-expanded='true']:hover {
+  background: var(--pw-selected);
+  box-shadow: var(--pw-ring-selected);
+}
+
+.supervisor-button[aria-expanded='true']:focus-visible {
+  box-shadow: var(--pw-ring-selected), var(--pw-ring-focus);
+}
+
+/*
+ * Below 1,000 px, where the header's line is short, its label is hidden, but still its name, with a
+ * tooltip (Header.tsx); the icon, the edge and the badges stay. At 600 px and narrower it's on the
+ * header's top line, at its right (styles.css).
+ */
+@container pitwall (max-width: 999px) {
+  .supervisor-button-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
 }
 
 /* Needs you's notice while the supervisor's drafts wait on you, over the rows, as the PR list's notices are. */

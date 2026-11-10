@@ -1,4 +1,4 @@
-// The supervisor (M5, W114): the real repo list item in each of its states, the real SupervisorView in
+// The supervisor (M5, W114): the real header button (W182) in each of its states, the real SupervisorView in
 // each of the supervisor's states, its draft cards of both kinds, editing, sending and failing, its
 // message box sending, queued, refused and stopping, and the page with Needs you saying its drafts
 // wait. Each specimen has its own stub API (stubs.ts) and its own drafts in memory, so typing in one
@@ -8,18 +8,17 @@ import { useState, type ReactNode } from 'react';
 import type { IndexSnapshot, SupervisorApproval, SupervisorState } from '../../../src/shared/protocol.js';
 import { AppStrips } from '../components/AppStrip.js';
 import { Dashboard } from '../components/Dashboard.js';
-import { RepoList } from '../components/RepoList.js';
+import { SupervisorButton } from '../components/SupervisorButton.js';
 import { SupervisorOffView, SupervisorView } from '../components/SupervisorView.js';
 import { ToastProvider } from '../components/Toast.js';
 import { DraftStorageContext } from '../drafts.js';
-import { memoryNavigation, type Selection } from '../selection.js';
-import { ago, APP_GROUP, JOBS_GROUP, LIST_SNAPSHOT, NOTES_GROUP, snapshot, SUPERVISOR_MESSAGE, SUPERVISOR_RESUME, SUPERVISOR_SPAWN } from './fixtures.js';
+import { memoryNavigation } from '../selection.js';
+import { ago, APP_GROUP, JOBS_GROUP, NOTES_GROUP, snapshot, SUPERVISOR_MESSAGE, SUPERVISOR_RESUME, SUPERVISOR_SPAWN } from './fixtures.js';
 import { element, Scenario, Specimen, type } from './kit.js';
 import { memoryDrafts, memoryStorage, type StubOptions } from './stubs.js';
 import { Stubbed } from './views.js';
 
 const noop = () => {};
-const ALL: Selection = { view: 'all' };
 
 const IDLE: SupervisorState = { status: 'idle', sessionId: 'pitwall-test-supervisor', approvals: [], lastTurnAt: ago(3), costUsd: 0.042, contextTokens: 84_010 };
 const HELD_ERROR =
@@ -46,18 +45,10 @@ function View({ state, options = {}, run }: { state: SupervisorState; options?: 
   return run ? <Scenario run={run}>{view}</Scenario> : view;
 }
 
-/** The repo list with the Supervisor item first, in `state`. */
-function Item({ state, open = false }: { state: SupervisorState; open?: boolean }) {
-  const [selection, setSelection] = useState<Selection>(ALL);
-  return (
-    <RepoList
-      groups={LIST_SNAPSHOT.groups}
-      roots={LIST_SNAPSHOT.roots}
-      selection={selection}
-      onSelect={setSelection}
-      supervisor={{ status: state.status, approvals: state.approvals.length, open, href: '?view=all&supervisor', onOpen: noop }}
-    />
-  );
+/** The header's Supervisor button (W182) in `state`; Toggle opens and closes it here, as in the header. */
+function HeaderButton({ state, open = false, narrow = false }: { state: SupervisorState; open?: boolean; narrow?: boolean }) {
+  const [shown, setShown] = useState(open);
+  return <SupervisorButton status={state.status} approvals={state.approvals.length} open={shown} onToggle={() => setShown(!shown)} narrow={narrow} />;
 }
 
 /** The whole page, as the app has it, with the supervisor in `state`, from `search`. */
@@ -96,20 +87,20 @@ const LONG_DRAFT: SupervisorApproval = {
 export function SupervisorSpecimens() {
   return (
     <>
-      <Specimen title="The Supervisor item, idle" note="First in the repo list, above Needs you, in every root tab. Idle and off show nothing after its name." width={240}>
-        <Item state={IDLE} />
+      <Specimen title="The header's Supervisor button, idle" note="Last on the header's right, above the panel it opens (W182): outline with its label, where the controls before it are ghost icon buttons. Idle and off show nothing after its name." width={640}>
+        <HeaderButton state={IDLE} />
       </Specimen>
-      <Specimen title="Working, its view open" note="A subtle info badge with its dot, as a working session's; marked current while its view is open, as an open session's row is." width={240}>
-        <Item state={{ ...IDLE, status: 'working' }} open />
+      <Specimen title="Working, its panel open" note="A subtle info badge with its dot, as a working session's; the selected look and aria-expanded while its panel is open. Press it to close it." width={640}>
+        <HeaderButton state={{ ...IDLE, status: 'working' }} open />
       </Specimen>
-      <Specimen title="Drafts waiting" note="Its drafts that wait on you, a solid count, as Needs you's; Needs you counts them too." width={240}>
-        <Item state={{ ...IDLE, approvals: APPROVALS }} />
+      <Specimen title="Drafts waiting" note="Its drafts that wait on you, a solid count, as Needs you's; Needs you counts them too. Its name: Supervisor, 3 drafts need you." width={640}>
+        <HeaderButton state={{ ...IDLE, approvals: APPROVALS }} />
       </Specimen>
-      <Specimen title="Held" note="A background session has its conversation: subtle warning, never solid." width={240}>
-        <Item state={{ ...IDLE, status: 'held', error: HELD_ERROR }} />
+      <Specimen title="Held" note="A background session has its conversation: subtle warning, never solid." width={640}>
+        <HeaderButton state={{ ...IDLE, status: 'held', error: HELD_ERROR }} />
       </Specimen>
-      <Specimen title="Failed, with a draft" note="Subtle danger, then the draft's count." width={240}>
-        <Item state={{ ...IDLE, status: 'failed', error: FAILED_ERROR, approvals: [SUPERVISOR_MESSAGE] }} />
+      <Specimen title="Failed, with a draft, below 1,000 px" note="Subtle danger, then the draft's count. Its label hidden, still its name, with a tooltip; at 600 px and narrower, on the header's top line, at its right." width={240}>
+        <HeaderButton state={{ ...IDLE, status: 'failed', error: FAILED_ERROR, approvals: [SUPERVISOR_MESSAGE] }} narrow />
       </Specimen>
 
       <Specimen title="Off: a new conversation" note="It isn't running, and there's no conversation yet: what it's for, and questions that fill the message box. Start, or a message, starts it; opening the view doesn't." frame="view">
@@ -212,7 +203,7 @@ export function SupervisorSpecimens() {
         <View state={{ ...IDLE, status: 'working' }} options={{ supervisorStop: 'busy' }} run={async (root) => (await element<HTMLButtonElement>(root, '[data-supervisor-stop]')).click()} />
       </Specimen>
 
-      <Specimen title="The page: its view open" note="In the third column, as ?supervisor, in a session's place." frame="page" width={1280}>
+      <Specimen title="The page: its view open" note="Over the page from the right, as ?supervisor (W177), with the header's Supervisor button pressed (W182)." frame="page" width={1280}>
         <Page state={{ ...IDLE, approvals: APPROVALS }} search="?view=all&supervisor" />
       </Specimen>
       <Specimen title="The page: Needs you" note="Its drafts count in Needs you's badge and the page title; Needs you says they wait, with a way to its view." frame="page">

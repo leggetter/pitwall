@@ -1,7 +1,9 @@
 // The app's header (docs/design-system.md, 3): the Repos button below the sidebar breakpoint, the
 // wordmark and the roots on the left; New session, the connection badge, when the list was updated,
 // Usage (W158, UsageDialog.tsx), with the run rate on it (W159, UsageButton.tsx), the theme switch, Preferences (W59, Preferences.tsx) and the
-// keyboard shortcuts button on the right. At 600 px and narrower the right side wraps under the wordmark. The roots show home as ~,
+// keyboard shortcuts button on the right, then, last and heaviest, the Supervisor button (W182,
+// SupervisorButton.tsx), above the panel it opens from the right (W177). At 600 px and narrower the
+// right side wraps under the wordmark, and the Supervisor button stays on the top line, at its right. The roots show home as ~,
 // with the full paths in a tooltip; the update time ticks on the shared clock, with the absolute
 // time in its tooltip.
 //
@@ -30,6 +32,7 @@ import { Icon } from './Icon.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
 import { PREFERENCES_LABEL } from './Preferences.js';
 import { RootTabs, type RootTabsProps } from './RootTabs.js';
+import { SupervisorButton, type HeaderSupervisor } from './SupervisorButton.js';
 import { ThemeSwitch } from './ThemeSwitch.js';
 import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
@@ -59,15 +62,19 @@ export interface HeaderProps {
   onUsage?: (() => void) | undefined;
   /** The run rate on the Usage button (W159), while the page asks for it. */
   runRate?: RunRate | undefined;
+  /** The Supervisor button (W182), last on the right, while pitwall runs one: none with --no-supervisor. */
+  supervisor?: HeaderSupervisor | undefined;
+  /** Below 1,000 px, where the Supervisor button hides its label and its tooltip says it (W182). */
+  narrow?: boolean;
 }
 
 export const SHORTCUTS_LABEL = 'Keyboard shortcuts';
 
-export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOpen = false, reposRef, onShortcuts, tabs, onPreferences, onUsage, runRate }: HeaderProps) {
+export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOpen = false, reposRef, onShortcuts, tabs, onPreferences, onUsage, runRate, supervisor, narrow = false }: HeaderProps) {
   const shortcuts = useShortcuts();
   const tabbed = tabs !== undefined && tabs.tabs.length > 1;
   return (
-    <header className={tabbed ? 'app-header has-tabs' : 'app-header'}>
+    <header className={['app-header', tabbed && 'has-tabs', supervisor && 'has-supervisor'].filter(Boolean).join(' ')}>
       <div className="app-header-start">
         {onRepos && (
           <Tooltip content="Repos" relation="label">
@@ -87,37 +94,46 @@ export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOp
           </Tooltip>
         )}
       </div>
-      <div className="app-header-end">
-        {onNewSession && (
-          // Its name is its label, which the tooltip repeats only to show the shortcut.
-          <Tooltip content={shortcuts.on ? 'New session' : undefined} keys={SHORTCUT_KEYS.newSession} relation="label">
-            <Button icon="add" aria-haspopup="dialog" aria-keyshortcuts={shortcuts.on ? 'n' : undefined} onClick={onNewSession}>
-              New session
-            </Button>
-          </Tooltip>
-        )}
-        <ConnectionBadge state={state} />
-        {updatedAt && <Timestamp className="updated" at={updatedAt} format="updated" />}
-        {onUsage && <UsageButton onUsage={onUsage} runRate={runRate} />}
-        <ThemeSwitch />
-        {onPreferences && (
-          <Tooltip content={PREFERENCES_LABEL} relation="label">
-            <button type="button" className="icon-button ghost md" aria-haspopup="dialog" onClick={onPreferences}>
-              <Icon name="preferences" />
-            </button>
-          </Tooltip>
-        )}
-        {onShortcuts && (
-          <Tooltip content={SHORTCUTS_LABEL} keys={SHORTCUT_KEYS.shortcuts} relation="label">
-            <button
-              type="button"
-              className="icon-button ghost md"
-              aria-haspopup="dialog"
-              onClick={onShortcuts}
-            >
-              <Icon name="keyboard" />
-            </button>
-          </Tooltip>
+      {/* The right side: the controls, then the Supervisor button, kept together on one line from 601 px. */}
+      <div className="app-header-actions">
+        <div className="app-header-end">
+          {onNewSession && (
+            // Its name is its label, which the tooltip repeats only to show the shortcut.
+            <Tooltip content={shortcuts.on ? 'New session' : undefined} keys={SHORTCUT_KEYS.newSession} relation="label">
+              <Button icon="add" aria-haspopup="dialog" aria-keyshortcuts={shortcuts.on ? 'n' : undefined} onClick={onNewSession}>
+                New session
+              </Button>
+            </Tooltip>
+          )}
+          <ConnectionBadge state={state} />
+          {updatedAt && <Timestamp className="updated" at={updatedAt} format="updated" />}
+          {onUsage && <UsageButton onUsage={onUsage} runRate={runRate} />}
+          <ThemeSwitch />
+          {onPreferences && (
+            <Tooltip content={PREFERENCES_LABEL} relation="label">
+              <button type="button" className="icon-button ghost md" aria-haspopup="dialog" onClick={onPreferences}>
+                <Icon name="preferences" />
+              </button>
+            </Tooltip>
+          )}
+          {onShortcuts && (
+            <Tooltip content={SHORTCUTS_LABEL} keys={SHORTCUT_KEYS.shortcuts} relation="label">
+              <button
+                type="button"
+                className="icon-button ghost md"
+                aria-haspopup="dialog"
+                onClick={onShortcuts}
+              >
+                <Icon name="keyboard" />
+              </button>
+            </Tooltip>
+          )}
+        </div>
+        {/* After the rest in the DOM, as on screen from 601 px; at 600 px and narrower styles.css puts it on the top line. */}
+        {supervisor && (
+          <div className="app-header-supervisor">
+            <SupervisorButton {...supervisor} narrow={narrow} />
+          </div>
         )}
       </div>
     </header>

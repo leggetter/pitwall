@@ -9,7 +9,7 @@
 //   which stays (W177): opening it keeps ?session= and ?pr=, and opening either keeps ?supervisor,
 //   each in one pushed history entry.
 // - The state is read defensively, as the 'prs' message is: an approval that isn't well formed is
-//   left out, and a state that isn't one at all is no supervisor, so the page shows no item for it.
+//   left out, and a state that isn't one at all is no supervisor, so the page shows no button for it.
 // - Approvals' text is the model's: shown as plain text, never markdown, and sent as you leave it.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -72,10 +72,10 @@ export function codeParts(text: string): Array<{ code: boolean; text: string }> 
     .map((part) => (/^`[^`\n]+`$/.test(part) ? { code: true, text: part.slice(1, -1) } : { code: false, text: part }));
 }
 
-/** The supervisor's name, as the repo list's item and its view's heading say it. */
+/** The supervisor's name, as the header's button (W182) and its view's heading say it. */
 export const SUPERVISOR_NAME = 'Supervisor';
 
-/** Its view's region id, which the repo list's item controls while it's open. */
+/** Its view's region id, which the header's button controls while it's open (W182). */
 export const SUPERVISOR_VIEW_ID = 'supervisor-view';
 
 /** The key its message box's draft is kept under in the tab's sessionStorage (drafts.ts, D14): `pitwall.draft.v1:supervisor`. */

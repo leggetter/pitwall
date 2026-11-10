@@ -103,8 +103,8 @@
 // `j` and `k`, and ↑ and ↓ on a row or in a view's header, step through the rows as shown, sessions'
 // and PRs' alike, and show each in the view while one is open.
 //
-// The supervisor (M5, W114, supervisor.ts): while pitwall runs one, the repo list's Supervisor item,
-// first in every root tab, opens its panel over the page (SupervisorView.tsx, W177), as ?supervisor,
+// The supervisor (M5, W114, supervisor.ts): while pitwall runs one, the header's Supervisor button,
+// last on its right (W182), opens its panel over the page (SupervisorView.tsx, W177), as ?supervisor,
 // beside the open session's or PR's view, which stays, in one pushed history entry. It stays open as
 // the selection, the open session or the root tab changes, until it's closed. From 1,200 px it covers
 // the right of the third column, which widens for it while the session list keeps its 360 px; below,
@@ -998,12 +998,15 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     return () => cancelAnimationFrame(frame);
   }, [prOpen, openId, layout, tab, viewCovered]);
 
-  // The supervisor's panel (W114, W177): opened from the repo list's item, the app strip's Open or Needs
-  // you's notice, its heading takes focus. Closed with Close, Back or Escape, focus goes back to what
-  // opened it, or, when that's gone or covered, to the item, or the heading of the view or list in sight.
+  // The supervisor's panel (W114, W177): opened from the header's Supervisor button (W182), the app
+  // strip's Open or Needs you's notice, its heading takes focus. Closed with Close, Back, Escape or the
+  // button again, focus goes back to what opened it, or, when that's gone or covered, to the button,
+  // or the heading of the view or list in sight.
   const supervisorHeading = useRef<HTMLHeadingElement>(null);
   const focusSupervisorView = useRef(false);
   const supervisorOpener = useRef<HTMLElement | undefined>(undefined);
+  /** The header's Supervisor button (W182), which takes focus back when the panel closes. */
+  const supervisorButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!focusSupervisorView.current || !supervisorOpen) return;
     focusSupervisorView.current = false;
@@ -1024,6 +1027,15 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const closeSupervisor = () => {
     returnSupervisorFocus.current = true;
     supervisorUrl.close();
+  };
+  /** The header's button (W182): opens the panel, or closes it while it's open, focus staying on the button. */
+  const toggleSupervisor = () => {
+    if (!supervisorOpen) {
+      openSupervisor();
+      return;
+    }
+    supervisorOpener.current = supervisorButton.current ?? undefined;
+    closeSupervisor();
   };
   const previousSupervisor = useRef(supervisorOpen);
   useEffect(() => {
@@ -1046,7 +1058,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     const restore = () =>
       (
         usable(opener) ??
-        usable(app.current?.querySelector<HTMLElement>('.columns > .repo-list [data-supervisor-item]')) ??
+        usable(supervisorButton.current) ??
         (overlaid ? viewHeading.current : listHeading.current)
       )?.focus();
     if (layout === 'three-columns') {
@@ -1779,18 +1791,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       prs={repoListPrs}
       work={work}
       spinOffs={spinOffCount(tabSpinOffs, work)}
-      supervisor={
-        supervisor && {
-          status: supervisor.status,
-          approvals,
-          open: supervisorOpen,
-          href: withSupervisor(withPr(withSession(selectionHref(selection), openId), prOpen), true),
-          onOpen: () => {
-            if (from === 'drawer') setDrawerOpen(false);
-            openSupervisor();
-          },
-        }
-      }
+      supervisorApprovals={approvals}
     />
   );
 
@@ -2033,6 +2034,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         onPreferences={() => setPreferencesOpen(true)}
         onUsage={() => usageUrl.show()}
         runRate={runRate}
+        supervisor={supervisor && { status: supervisor.status, approvals, open: supervisorOpen, onToggle: toggleSupervisor, ref: supervisorButton }}
+        narrow={layout === 'drawer' || overlayCoversRepos}
         tabs={
           tab === undefined
             ? undefined

@@ -1,7 +1,9 @@
-// The supervisor (M5, W114; docs/design-system.md, 4: Supervisor): the repo list's item, first, above
-// Needs you, with its status and its drafts' count, which Needs you and the page title count too; its
-// panel over the page as ?supervisor, one history entry, beside a session's view, which stays (W177; from the URL
-// from 900 to 999 px, where the repo list and its item are inert under the view):
+// The supervisor (M5, W114; docs/design-system.md, 4: Supervisor): the header's Supervisor button, last
+// on its right and its heaviest control, on the top line at 600 px and narrower, the header still
+// fitting the window at its fullest (W182), with its status and its drafts' count, which Needs you and
+// the page title count too; its panel over the page as ?supervisor, one history entry, toggled by the
+// button, beside a session's view, which stays (W177; from the button at every width, 900 to 999 px
+// too, where the repo list is inert under the view, W182):
 // from 1,200 px covering the right of the widened third column, below over the view, which is inert
 // under it; Escape closes it first, and a session opened from it keeps it from 1,200 px; a new
 // conversation's questions, which fill the box; a message that starts it, the working line, and its
@@ -23,10 +25,40 @@ import { REFUSED_TO_SUPERVISOR_NOTICE } from '../../../src/index/conversation.js
 import { SUPERVISOR_MESSAGE_FOOTER } from '../../../src/shared/protocol.js';
 import { CODE, DEMO_APP, NAMES, OSS, SUPERVISOR_APPROVALS, SUPERVISOR_RACE_REFUSAL } from '../fixtures.js';
 import type { Case, Part } from '../runner.js';
-import { focused, listHeading, openFromRow, openRepoList, repoLabels, selectedRepo, VIEW, viewClose, viewName } from './_dom.js';
+import { focused, openFromRow, openRepoList, repoLabels, selectedRepo, VIEW, viewClose, viewName } from './_dom.js';
 
 const q = JSON.stringify;
-const ITEM = `document.querySelector('nav[aria-label="Repos"] a[data-supervisor-item]')`;
+/** The header's Supervisor button (W182). */
+const ITEM = `document.querySelector('header button[data-supervisor-button]')`;
+/**
+ * Where the button sits: last of the header's buttons, inside the header and the window, at the
+ * header's right edge; on the controls' line from 601 px, or above it, on the wordmark's, at 600 px and
+ * narrower; its label shown or only in its name; and whether it outweighs Usage and Preferences, an
+ * outline button with its edge where they're ghost buttons with none.
+ */
+const HEADER = `(() => {
+  const header = document.querySelector('header');
+  const b = ${ITEM};
+  const h = header.getBoundingClientRect(), r = b.getBoundingClientRect();
+  const end = header.querySelector('.app-header-end').getBoundingClientRect();
+  const brand = header.querySelector('.brand').getBoundingClientRect();
+  const label = b.querySelector('.supervisor-button-label').getBoundingClientRect();
+  const shadow = (el) => (el ? getComputedStyle(el).boxShadow : null);
+  const prefs = header.querySelector('button[aria-label="Preferences"]');
+  const usage = header.querySelector('.usage-button');
+  return {
+    last: [...header.querySelectorAll('button')].at(-1) === b,
+    inside: document.documentElement.scrollWidth <= innerWidth && r.left >= h.left && r.right <= h.right + 0.5 && r.top >= h.top && r.bottom <= h.bottom + 0.5,
+    atRight: Math.abs(h.right - parseFloat(getComputedStyle(header).paddingRight) - r.right) < 1,
+    line: Math.abs((r.top + r.bottom) / 2 - (end.top + end.bottom) / 2) < 3 ? 'controls' : r.bottom <= end.top + 0.5 && r.top < brand.bottom && r.bottom > brand.top ? 'wordmark' : 'elsewhere',
+    labelShown: label.width > 1,
+    brandWhole: header.querySelector('.brand').scrollWidth <= Math.ceil(brand.width),
+    outweighs: shadow(b) !== 'none' && shadow(prefs) === 'none' && (usage === null || shadow(usage) === 'none'),
+    expanded: b.getAttribute('aria-expanded'),
+  };
+})()`;
+/** The header button's place, as it should be at this width: its label shown from 1,000 px. */
+const headerAt = (width: number) => ({ last: true, inside: true, atRight: true, line: width <= 600 ? 'wordmark' : 'controls', labelShown: width >= 1000, brandWhole: true, outweighs: true, expanded: 'false' });
 const SVIEW = `document.querySelector('#supervisor-view')`;
 const STATUS = `(${SVIEW}?.querySelector('[data-supervisor-status]')?.dataset.supervisorStatus ?? null)`;
 const BOX = `${SVIEW}?.querySelector('.supervisor-box textarea')`;
@@ -74,7 +106,7 @@ async function attach(t: Case, file: { name: string; bytes: Buffer }): Promise<v
 
 const part: Part = {
   name: 'supervisor',
-  title: 'The supervisor: its repo list item and counts, its view as ?supervisor, a message, its reply, the draft cards, Stop, held, failed, and no start on load',
+  title: 'The supervisor: its header button and counts, its view as ?supervisor, a message, its reply, the draft cards, Stop, held, failed, and no start on load',
   async run(t) {
     const { page, server } = t;
     // A fresh page gives the server new records, so they're read from it each time.
@@ -102,27 +134,35 @@ const part: Part = {
     // From 1,200 px the panel stays open beside a session opened from it; below, it closes so the session is in sight (W177).
     const beside = t.layout === 'three-columns';
     const PANEL_AS_LAYOUT = beside ? `!!${SVIEW}` : `!${SVIEW}`;
+    /** Shuts the repo drawer below 900 px, which covers the header's button while it's open. */
+    const shutRepoList = async () => {
+      if (!(await page.evaluate<boolean>(`!!document.querySelector('.repo-drawer')`))) return;
+      await page.key('Escape');
+      await page.waitFor('the drawer to close', `!document.querySelector('.repo-drawer')`);
+    };
     const closeIt = async () => {
       await page.click('Close', viewClose);
       await page.waitFor('the view to close', `!${SVIEW}`);
     };
 
-    await t.step('the item: first, above Needs you, and nothing starts as the page loads', async () => {
+    await t.step('the header’s button (W182): last on its right, outweighing Usage and Preferences, on the top line at 600 px and narrower; no item in the repo list; nothing starts as the page loads', async () => {
       allowNew();
       await t.fresh({ search: '?view=all', supervisor: 'off' });
-      await openRepoList(t);
-      const labels = await page.evaluate<string[]>(repoLabels);
-      t.expectEqual(labels.slice(0, 2), ['Supervisor', 'Needs you'], 'Supervisor first, then Needs you');
-      t.expectEqual(await page.evaluate(`${ITEM}.getAttribute('href')`), '?view=all&supervisor', 'a link to its view');
+      await page.waitFor('the Supervisor button', `!!${ITEM}`);
+      t.expectEqual(await page.evaluate(HEADER), headerAt(t.viewport.width), 'its place and weight in the header');
+      t.expectEqual(await page.evaluate(`${ITEM}.textContent`), 'Supervisor', 'named Supervisor, with nothing after it while off');
+      // Below 900 px the repo list is a drawer, shut: nothing of it to look in.
+      if (t.layout !== 'drawer') t.expectEqual((await page.evaluate<string[]>(repoLabels))[0], 'Needs you', 'Needs you first in the repo list: no Supervisor item');
       t.expectEqual([records.supervisorStarts.length, records.supervisorMessages.length], [0, 0], 'nothing started or sent');
-      await t.shot('item');
+      await t.shot('header');
     });
 
     await t.step('its view: in the third column as ?supervisor, one history entry, with focus on its heading', async () => {
       allowNew();
-      await page.click('the Supervisor item', ITEM);
+      await page.click('the Supervisor button', ITEM);
       await page.waitFor('the supervisor view', `!!${SVIEW}?.querySelector('h2')`);
       t.expectEqual(await page.evaluate('location.search'), '?view=all&supervisor', 'its place in the URL');
+      t.expectEqual(await page.evaluate(`[${ITEM}.getAttribute('aria-expanded'), ${ITEM}.getAttribute('aria-controls')]`), ['true', 'supervisor-view'], 'the button says the panel is open');
       t.expectEqual(await page.evaluate(focused), 'the view heading', 'focus on its heading');
       // One pushed entry: back closes it, and forward opens it again. (Chrome caps history.length at 50.)
       await page.evaluate('history.back()');
@@ -147,7 +187,7 @@ const part: Part = {
       await page.waitFor('it to start', `${STATUS} === 'starting' || ${STATUS} === 'working'`);
       t.expectEqual(records.supervisorMessages, [{ length: 32, status: 200 }], 'sent once, as typed');
       await page.waitFor('it to work, with the working line', `${STATUS} === 'working' && !!${SVIEW}.querySelector('.working-line')`, 8_000);
-      if (t.layout !== 'drawer') t.expectEqual(await page.evaluate(`${ITEM}.querySelector('.supervisor-item-status')?.textContent ?? null`), 'Working', 'the item says it works');
+      t.expectEqual(await page.evaluate(`${ITEM}.querySelector('.supervisor-button-status')?.textContent ?? null`), 'Working', 'the header’s button says it works');
       await t.shot('working');
       await page.waitFor('its reply', `[...${SVIEW}.querySelectorAll('li.entry-assistant')].some((li) => li.querySelector('strong')?.textContent === 'pitwall-test-docs')`, 10_000);
       await page.waitFor('it to be idle', `${STATUS} === 'idle' && !${SVIEW}.querySelector('.working-line')`, 8_000);
@@ -225,23 +265,31 @@ const part: Part = {
       await page.waitFor('it to be idle', `${STATUS} === 'idle' && !${SVIEW}.querySelector('.working-line')`, 15_000);
     });
 
-    await t.step('Close gives focus back to the item, or the list’s heading where the repo list is a shut drawer', async () => {
+    await t.step('Close gives focus back to the header’s button, and the button toggles it: pressed again, it closes the panel, focus staying on it', async () => {
       await closeIt();
       await page.settle(50);
-      if (t.layout === 'drawer') t.expectEqual(await page.evaluate(focused), await page.evaluate(listHeading), 'the session list’s heading');
-      else t.expect(await page.evaluate<boolean>(`document.activeElement === ${ITEM}`), 'the Supervisor item', await page.evaluate(focused));
+      t.expect(await page.evaluate<boolean>(`document.activeElement === ${ITEM}`), 'the Supervisor button', await page.evaluate(focused));
+      await page.click('the Supervisor button', ITEM);
+      await page.waitFor('the panel', `!!${SVIEW}?.querySelector('h2')`);
+      await t.shot('button-open');
+      await page.click('the Supervisor button, again', ITEM);
+      await page.waitFor('the panel to close', `!${SVIEW}`);
+      t.expectEqual(await page.evaluate(`${ITEM}.getAttribute('aria-expanded')`), 'false', 'the button says it’s closed');
+      t.expect(await page.evaluate<boolean>(`document.activeElement === ${ITEM}`), 'focus still on the button', await page.evaluate(focused));
+      t.expectEqual(await page.evaluate('location.search'), '?view=all', 'and ?supervisor gone');
     });
 
     await t.step('drafts: in its item’s count, Needs you’s and the title, as cards with headings, oldest first', async () => {
       await t.fresh({ search: '?view=all', supervisor: 'idle', approvals: true });
+      t.expectEqual(await page.evaluate(`${ITEM}.querySelector('.badge-attention')?.firstChild?.textContent ?? null`), '2', 'the header’s button counts its two drafts');
       await openRepoList(t);
-      t.expectEqual(await page.evaluate(`${ITEM}.querySelector('.badge-attention')?.firstChild?.textContent ?? null`), '2', 'the item counts its two drafts');
       const needs = await page.evaluate<number>(NEEDS_YOU);
+      await shutRepoList();
       t.expect(needs >= 2, 'Needs you counts them', needs);
       t.expectEqual(await page.evaluate<number>(TITLE_COUNT), needs, 'and the page title');
       counts.needs = needs;
       counts.title = needs;
-      await page.click('the Supervisor item', ITEM);
+      await page.click('the Supervisor button', ITEM);
       await page.waitFor('two cards', `${CARDS}.length === 2`);
       const headings = await page.evaluate<string[]>(`${CARDS}.map((li) => li.querySelector('h4').textContent)`);
       t.expectEqual(headings, ['Message to pitwall-test-review', 'New session in ~/code/demo-app, named pr-57'], 'what each would do, oldest first');
@@ -318,8 +366,7 @@ const part: Part = {
 
     await t.step('sent and started (W124): each session with its state, Needs you’s notice, and Open, which opens it', async () => {
       await t.fresh({ search: '?view=all', supervisor: 'idle', approvals: true });
-      await openRepoList(t);
-      await page.click('the Supervisor item', ITEM);
+      await page.click('the Supervisor button', ITEM);
       await page.waitFor('two cards', `${CARDS}.length === 2`);
       await page.click('Send', cardButton(0, 'Send'));
       await page.waitFor('the message’s row', `${HANDOFFS}.length === 1`);
@@ -352,8 +399,7 @@ const part: Part = {
     await t.step('Open from the other root’s tab (W144): the session’s tab and group come with it, in one entry, and Back returns', async () => {
       const start = `?view=all&root=${OSS}`;
       await t.fresh({ search: start, supervisor: 'idle', approvals: true, roots: 2 });
-      await openRepoList(t);
-      await page.click('the Supervisor item', ITEM);
+      await page.click('the Supervisor button', ITEM);
       await page.waitFor('two cards', `${CARDS}.length === 2`);
       await page.click('Send', cardButton(0, 'Send'));
       await page.waitFor('the message’s row', `${HANDOFFS}.length === 1`);
@@ -773,20 +819,15 @@ const part: Part = {
       allowNew();
       await t.fresh({ search: '?view=all', supervisor: 'idle' });
       await openFromRow(t, NAMES.conversation);
-      // From 900 to 999 px the view over the list reaches into the repo list, which is inert under it with
-      // the Supervisor item (3: Session view, "overlay clears the sidebar"): no click opens the panel beside
-      // the session there, so a link or a reload with both in the URL does, as it does at any width.
-      const reposCovered = t.layout === 'sidebar' && t.viewport.width < 1000;
-      if (reposCovered) {
-        t.expect(await page.evaluate<boolean>(`!!${ITEM}?.closest('[inert]')`), 'below 1,000 px the Supervisor item is inert under the view, with the repo list');
-        allowNew();
-        await t.fresh({ search: `${await page.evaluate<string>('location.search')}&supervisor`, supervisor: 'idle' });
-        await page.waitFor('the panel over the session view', `!!${SVIEW}?.querySelector('h2') && ${viewName} === ${JSON.stringify(NAMES.conversation)}`);
-      } else {
-        await openRepoList(t);
-        await page.click('the Supervisor item', ITEM);
-        await page.waitFor('the panel', `!!${SVIEW}?.querySelector('h2') && document.activeElement === ${SVIEW}.querySelector('h2')`);
+      // From 900 to 999 px the view over the list reaches into the repo list, which is inert under it
+      // (3: Session view, "overlay clears the sidebar"); the header isn't, so its button opens the panel
+      // beside the session there too, as at every width (W182).
+      if (t.layout === 'sidebar' && t.viewport.width < 1000) {
+        t.expect(await page.evaluate<boolean>(`!!document.querySelector('.columns > .repo-list')?.closest('[inert]')`), 'below 1,000 px the repo list is inert under the view');
+        t.expect(await page.evaluate<boolean>(`!${ITEM}.closest('[inert]')`), 'and the header’s button isn’t');
       }
+      await page.click('the Supervisor button', ITEM);
+      await page.waitFor('the panel', `!!${SVIEW}?.querySelector('h2') && document.activeElement === ${SVIEW}.querySelector('h2')`);
       const search = await page.evaluate<string>('location.search');
       t.expect(search.includes('session=') && search.endsWith('&supervisor'), 'the session kept in the URL, the panel added', search);
       t.expectEqual(
@@ -821,16 +862,27 @@ const part: Part = {
       await page.key('Escape');
       await page.waitFor('the panel closed, the session view kept', `!${SVIEW} && !!document.querySelector('#session-view')`);
       t.expect(!(await page.evaluate<string>('location.search')).includes('supervisor'), 'and gone from the URL');
-      // Where the item is inert, and opened nothing, focus goes to the session view's heading.
-      if (reposCovered) await page.waitFor('focus on the session view’s heading', `${focused} === 'the view heading'`);
-      else if (t.layout !== 'drawer') await page.waitFor('focus back on the item', `document.activeElement === ${ITEM}`);
+      await page.waitFor('focus back on the button', `document.activeElement === ${ITEM}`);
     });
 
-    await t.step('with --no-supervisor: no item, and ?supervisor says it’s off', async () => {
+    await t.step('the header at its fullest (W182): working, two drafts and the run rate ahead, the button still in its place and the header fitting the window', async () => {
+      await t.fresh({ search: '?view=all', supervisor: 'working', approvals: true, runRate: 'ahead' });
+      await page.waitFor('the button with its status and count', `!!${ITEM}?.querySelector('.supervisor-button-status') && !!${ITEM}.querySelector('.badge-attention') && !!document.querySelector('header .usage-meter')`);
+      t.expectEqual(await page.evaluate(HEADER), headerAt(t.viewport.width), 'its place and weight in the header');
+      t.expectEqual(
+        await page.evaluate(`${ITEM}.querySelector('.supervisor-button-label').textContent + [...${ITEM}.querySelectorAll(':scope > .visually-hidden, .badge-attention')].map((el) => el.textContent).join('')`),
+        'Supervisor, working, 2 drafts need you',
+        'its status and drafts in its name, not by colour alone',
+      );
+      t.expectEqual(await page.evaluate(`${ITEM}.querySelector('.supervisor-button-status')?.textContent`), 'Working', 'its status badge on screen');
+      await t.shot('header-full');
+    });
+
+    await t.step('with --no-supervisor: no button, and ?supervisor says it’s off', async () => {
       await t.fresh({ search: '?view=all&supervisor' });
       await page.waitFor('the off view', `${VIEW}?.querySelector('h2')?.textContent === 'The supervisor is off'`);
+      t.expect(await page.evaluate<boolean>(`!${ITEM}`), 'no Supervisor button in the header');
       await openRepoList(t);
-      t.expect(await page.evaluate<boolean>(`!${ITEM}`), 'no Supervisor item');
       t.expectEqual((await page.evaluate<string[]>(repoLabels))[0], 'Needs you', 'Needs you first, as before');
     });
   },
