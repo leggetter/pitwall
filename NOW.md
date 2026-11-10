@@ -20,6 +20,7 @@ Last updated: 2026-11-10, on `fix/handoff-rows`: a fix from daily use, the super
 | Item | State |
 | --- | --- |
 | **W176 (a pitwall plugin: every session knows it's watched, links sessions, and can propose one)** | **First in M5.3** (Phil, 2026-11-10), from spike 015's design (`docs/spikes/015-plugin-session-note.md`): a fresh session; the plugin's `SessionStart` note points a session at W163's (spin-off proposals) `spin-off` block |
+| list_sessions `pr` lookup said `prOpen: false` for an open PR it never fetched (hookdeck/hookdeck-cli#490, 2026-11-10) | PR open: `prOpen` is now `true` (listed) or `null` (not fetched, state unknown) with a `prNote`. Which PRs are fetched is unchanged (Phil: it works as wanted). A per-repo opt-in is noted in PLAN.md's Nice to have |
 | W165 (a diagnostics log: why a row is in Needs you) | Planned; approved for planning 2026-11-09 ([#199](https://github.com/leggetter/pitwall/pull/199)) |
 | W167 (session lineage), W168 (Clear and continue: a hand-off you start with one click; spike 014 is done) | Planned; Phil approved both on 2026-11-09 |
 | W171 (a team's open request doesn't keep a reviewed PR in Needs you), W173 (a moved-past to-do), W174 (a working session's to-dos), W175 (a pitwall link opens in a new tab; needs a security review) | Planned (Phil, 2026-11-09, planning only) |

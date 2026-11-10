@@ -294,7 +294,7 @@ export function createSupervisorTools(sources: SupervisorToolSources): McpTool[]
       type: 'object',
       properties: {
         repo: { type: 'string', description: 'Only the sessions in this repo: its name as pitwall labels it, or owner/name.' },
-        pr: { type: 'string', description: 'Only the sessions linked to this pull request, as owner/repo#123. Includes finished ones unless finished is false.' },
+        pr: { type: 'string', description: 'Only the sessions linked to this pull request, as owner/repo#123. Includes finished ones unless finished is false. The answer says prOpen: true when pitwall lists the PR as open, and prOpen: null when it is not fetched, which is not the same as closed.' },
         query: { type: 'string', description: "Only the sessions whose name, title or recap has every one of these words, ignoring case." },
         needsYou: { type: 'boolean', description: 'Only the sessions that need the user.' },
         finished: { type: 'boolean', description: 'Include sessions that have ended or finished.' },
@@ -352,7 +352,12 @@ export function createSupervisorTools(sources: SupervisorToolSources): McpTool[]
         matched: chosen.length,
       };
       const base: Record<string, unknown> = { ...header(), counts, recaps: sources.recaps === undefined ? 'off' : 'on' };
-      if (wantedPr !== undefined && target === undefined) base.prOpen = false;
+      if (wantedPr !== undefined) {
+        // Listed means open when pitwall last fetched; not listed means not fetched, never closed: pitwall asks GitHub
+        // only for PRs you opened, whose review is asked of you or a team of yours, or that mention you.
+        base.prOpen = target === undefined ? null : true;
+        if (target === undefined) base.prNote = 'This PR is not fetched: pitwall lists only PRs opened by you, asking your review (or a team of yours), or mentioning you, so whether it is open on GitHub is unknown. Check with gh pr view.';
+      }
       // Room for `truncated` and `hint`, which go on after fit() has measured, so the answer stays under the cap.
       const answer = fit(base, 'sessions', items, LIST_MAX_ITEMS, (detail ? ANSWER_MAX_CHARS : LIST_SLIM_MAX_CHARS) - HINT_ROOM);
       if ((answer.omitted as number) > 0) {

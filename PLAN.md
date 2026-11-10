@@ -398,6 +398,8 @@ On `m5.3/integration`. The ten items split off M5.2 at W180 (Phil, 2026-11-10), 
 
 ## Nice to have, later
 
+- **Watch repos:** a `watchRepos` list in `~/.pitwall/config.json` (next to the roots and GitHub owners) names repos where you want every open PR, not only those you opened, are asked to review or are mentioned in. One more search per repo, `repo:owner/name is:pr is:open -author:@me archived:false`, shown under its own group, never in Needs you. Opt-in per repo keeps it quiet. Why: hookdeck/hookdeck-cli#490 was open and correctly unlisted, and Phil (2026-11-10) could see users wanting to name repos to be told of all their PRs. Not planned yet; an `assignee:@me` search was considered and left out.
+
 Small improvements that aren't needed now, gathered from reviews and try-outs so they don't get lost (Phil, 2026-11-02). None is planned yet. Bigger items have their own issues: Peers ([#99](https://github.com/leggetter/pitwall/issues/99)), chatting with a session and hosted sessions ([#108](https://github.com/leggetter/pitwall/issues/108)), and the rest of the config file ([#101](https://github.com/leggetter/pitwall/issues/101)).
 
 - **Web UI**

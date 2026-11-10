@@ -321,10 +321,18 @@ describe('list_sessions', () => {
       ['mentioned', 'mentioned', false],
     ]);
     expect(((await call(made.list_sessions!, { pr: 'made-up/repo#42', finished: false })).json.sessions as { id: string }[]).map((row) => row.id)).not.toContain('owner');
-    // A PR pitwall doesn't list as open: by repo and number alone, and it says so.
-    const closed = await call(made.list_sessions!, { pr: 'https://github.com/made-up/repo/pull/7' });
-    expect(closed.json.prOpen).toBe(false);
-    expect((closed.json.sessions as { id: string }[]).map((row) => row.id)).toEqual(['other']);
+    // A PR pitwall doesn't list: by repo and number alone. Not listed isn't closed: GitHub's state is unknown, and it says so.
+    const unlisted = await call(made.list_sessions!, { pr: 'https://github.com/made-up/repo/pull/7' });
+    expect(unlisted.json.prOpen).toBeNull();
+    expect(unlisted.json.prOpen).not.toBe(false);
+    expect(unlisted.json.prNote).toEqual(expect.stringContaining('not fetched'));
+    expect(unlisted.json.prNote).toEqual(expect.stringContaining('opened by you'));
+    expect((unlisted.json.sessions as { id: string }[]).map((row) => row.id)).toEqual(['other']);
+    // One that is in the list was open when pitwall last fetched it.
+    expect((await call(made.list_sessions!, { pr: 'made-up/repo#42' })).json).toMatchObject({ prOpen: true });
+    expect((await call(made.list_sessions!, { pr: 'made-up/repo#42' })).json.prNote).toBeUndefined();
+    // Without pr, neither field is there.
+    expect(Object.keys((await call(made.list_sessions!, {})).json)).not.toContain('prOpen');
     expect(await call(made.list_sessions!, { pr: 'repo 42' })).toMatchObject({ isError: true });
   });
 
