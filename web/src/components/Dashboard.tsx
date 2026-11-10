@@ -152,7 +152,7 @@ import { useLayout } from '../layout.js';
 import { supervisorLast, useOpenSession, withSession, type OpenSession } from '../openSession.js';
 import { useOpenPr, withPr } from '../openPr.js';
 import { useOpenUsage } from '../usage.js';
-import { useRunRate } from '../runRate.js';
+import { RunRateContext, useRunRate } from '../runRate.js';
 import { approvalsWaiting, asSupervisorState, SUPERVISOR_DRAFT_ID, SUPERVISOR_VIEW_ID, useOpenSupervisor, withSupervisor } from '../supervisor.js';
 import { usePrRefresh } from '../prRefresh.js';
 import { listNow, prKey, prListState, prName, prsOff, SEARCH_NAMES, sessionsFor, strongPrsOf } from '../prs.js';
@@ -2017,6 +2017,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
 
   return (
     <ToastContext.Provider value={toasts.show}>
+    {/* The run rate for the supervisor's cards too (W160), so they show the header's figures and ask for none. */}
+    <RunRateContext.Provider value={runRate}>
     <div className="app" ref={app} data-layout={layout}>
       <AppStrips relayOff={relayOff} onRelayDetails={relayAlert ? showRelayAlert : undefined} recaps={snapshot?.recaps} supervisor={supervisor} onSupervisor={openSupervisor} />
       <Header
@@ -2200,6 +2202,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       {/* Last, so it's above everything; focus that a dismissed toast had goes to the list's heading, or the view's while it covers the list. */}
       <ToastRegion {...toasts.region} onFocusLost={focusList} />
     </div>
+    </RunRateContext.Provider>
     </ToastContext.Provider>
   );
 }

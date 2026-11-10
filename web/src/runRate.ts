@@ -10,7 +10,7 @@
 // Never a stale figure as current: a figure older than RUN_RATE_AGE_SHOWN_MS says how old, one of a
 // week that has since reset isn't shown, and while the connection is down the header shows none.
 
-import { useEffect, useState } from 'react';
+import { createContext, useEffect, useState } from 'react';
 import {
   RUN_RATE_AGE_SHOWN_MS,
   RUN_RATE_PATH,
@@ -25,6 +25,7 @@ import {
   type UsageLevel,
 } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
+import { relativeTime } from './format.js';
 import { resetText } from './usage.js';
 
 // --- Reading the answer ---------------------------------------------------------------------------
@@ -215,4 +216,26 @@ export function meterHint(rate: RunRate & { status: 'available' }, week: RunRate
   if (five !== undefined) parts.push(`The five hours: ${Math.round(five.usedPercentage)}% used${five.resetsAt === null ? '' : `, resets ${dayTimeText(five.resetsAt)}`}.`);
   if (rate.fallback !== undefined) parts.push("pitwall's latest read of these failed, so they're from the one before.");
   return parts.join(' ');
+}
+
+// --- On the supervisor's cards (W160) -------------------------------------------------------------
+
+/**
+ * The run rate the page asked for (useRunRate()), for what shows it below the header: the supervisor's
+ * new-session and resume cards. Undefined while off or before the first answer, as the header's.
+ */
+export const RunRateContext = createContext<RunRate | undefined>(undefined);
+
+/**
+ * The pace beside a card's profile (W160): "The plan's week: 62% used, 12 points ahead of pace.", with
+ * the reading's age when it's old or a stand-in. Undefined without the week's figures, as the header
+ * shows none then.
+ */
+export function cardPace(rate: RunRate | undefined, now: number): { text: string; ahead: boolean } | undefined {
+  const week = currentWeek(rate, now);
+  if (rate?.status !== 'available' || week === undefined) return undefined;
+  // paceText()'s words mid-sentence: "on pace", "12 points ahead of pace", "8 points under the line".
+  const pace = week.pace === null ? '' : `, ${paceText(week.pace).replace(/^On pace$/, 'on pace')}`;
+  const old = rate.fallback !== undefined || showsAge(rate.readAt, now);
+  return { text: `The plan's week: ${Math.round(week.usedPercentage)}% used${pace}${old ? ` (read ${relativeTime(rate.readAt, now)})` : ''}.`, ahead: week.pace?.ahead === true };
 }

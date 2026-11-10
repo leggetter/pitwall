@@ -2355,6 +2355,7 @@ export const MCP_TOOLS = {
   readSession: 'read_session',
   listPrs: 'list_prs',
   getRecap: 'get_recap',
+  getUsage: 'get_usage',
   spawnSession: 'spawn_session',
   resumeSession: 'resume_session',
   approve: 'approve',

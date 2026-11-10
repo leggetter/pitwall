@@ -6,7 +6,7 @@ import { act, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RUN_RATE_PATH, RUN_RATE_POLL_MS, USAGE_PATH, type RunRate, type RunRateWeek, type UsageView } from '../../../src/shared/protocol.js';
 import { ApiContext, createApiClient, type ApiClient, type FetchLike } from '../api.js';
-import { asRunRate, paceText, projectionText, useRunRate, type VisibilityEnv } from '../runRate.js';
+import { asRunRate, cardPace, paceText, projectionText, useRunRate, type VisibilityEnv } from '../runRate.js';
 import { group, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
 import { Dashboard } from './Dashboard.js';
@@ -243,5 +243,28 @@ describe('the Usage view’s pace', () => {
     dialog({ ...VIEW, runRate: { status: 'off' } });
     expect(await screen.findByText('57% used')).toBeTruthy();
     expect(screen.queryByText(/^Pace for/)).toBeNull();
+  });
+});
+
+describe('the pace on the supervisor’s cards (W160)', () => {
+  it('says the week and its pace in a sentence, ahead of pace flagged', () => {
+    expect(cardPace(rate(week(57)), NOW)).toEqual({ text: "The plan's week: 57% used, 12 points ahead of pace.", ahead: true });
+    expect(cardPace(rate(week(46)), NOW)).toEqual({ text: "The plan's week: 46% used, on pace.", ahead: false });
+    expect(cardPace(rate(week(37)), NOW)).toEqual({ text: "The plan's week: 37% used, 8 points under the line.", ahead: false });
+    expect(cardPace(rate(week(37, { pace: null, resetsAt: null })), NOW)).toEqual({ text: "The plan's week: 37% used.", ahead: false });
+  });
+
+  it('says how old an old or stand-in reading is', () => {
+    expect(cardPace(rate(week(46), { readAt: new Date(NOW - 25 * 60_000).toISOString() }), NOW)?.text).toBe("The plan's week: 46% used, on pace (read 25m ago).");
+    expect(cardPace(rate(week(46), { fallback: { reason: 'timeout' } }), NOW)?.text).toBe("The plan's week: 46% used, on pace (read 1m ago).");
+  });
+
+  it('is nothing without the week’s figures, as the header shows none', () => {
+    expect(cardPace(undefined, NOW)).toBeUndefined();
+    expect(cardPace({ status: 'off' }, NOW)).toBeUndefined();
+    expect(cardPace({ status: 'unavailable', readAt: new Date(NOW).toISOString(), reason: 'failed' }, NOW)).toBeUndefined();
+    expect(cardPace(rate(null), NOW)).toBeUndefined();
+    // Its week has reset since.
+    expect(cardPace(rate(week(46)), Date.parse(RESETS) + 1)).toBeUndefined();
   });
 });
