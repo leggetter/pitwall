@@ -3,14 +3,15 @@
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
 
-Last updated: 2026-11-10, on `fix/handoff-rows`: a fix from daily use, the supervisor's Sent and started rows say the name once, with the state, when and "Open →" on the right of one line, and the reason a session needs you under it (Phil's screenshot: the Open button sat alone on its own line, and the name was said three times). Before it, on `docs/supervisor-connectors`: Phil asked for the supervisor to read Slack, Notion and Gmail, and any connector later, read-only. D28 (the supervisor reads through connectors you choose, read-only) is written, spike 016 (read-only connectors under the strict command line) is done, and W184 to W186 are planned in M5.3. Before it, on `docs/split-m5.2`: M5.2 is split at W180. Its built items and spikes 014 and 015 moved to `docs/plan-archive.md` ("M5.2 - Efficiency", "M5.2 work breakdown"); the unbuilt ones carry on in `PLAN.md` as M5.3. Phil answered the five questions ("go with your leans"), listed below. The M5.2 → `main` PR is opened and merged by the coordinating session after this lands; it adds the PR number to `AGENTS.md`'s Status and `PLAN.md`'s Milestones in a follow-up. Full app check at c4ab3a7: 2,462 of 2,466 steps passed, the 2 failures the check's own (fixed, [#230](https://github.com/leggetter/pitwall/pull/230)); full `npm test` 6,076 passed.
+Last updated: 2026-11-10, evening, on `docs/m5.3-coordination`: M5.2 is merged into `main` ([#234](https://github.com/leggetter/pitwall/pull/234)), and `m5.3/integration` is branched from it with [#236](https://github.com/leggetter/pitwall/pull/236) (fix(mcp): list_sessions reports `prOpen` null, not false, for a PR it didn't fetch; merged straight into `main`), [#237](https://github.com/leggetter/pitwall/pull/237) (docs: D28, the supervisor reads through read-only connectors; spike 016 (read-only connectors under the strict command line); W183 to W186) and [#238](https://github.com/leggetter/pitwall/pull/238) (fix(web): the supervisor's Sent and started rows on one line, the name said once). Phil answered the five M5.2 questions ("go with your leans"), listed below. The next free W number is W187.
 
-**Try-out server:** port 4519, from `.worktrees/m52-check`, with its own `PITWALL_HOME`. The coordinating session stops it once Phil is done; 4518 stays on `main`.
+**Servers:** 4518 runs `main` at f4458a7, restarted 21:44 on 2026-11-10. The 4519 try-out is stopped and its worktree removed.
 
 ## Current milestone
 
-**M5.3, after M5.2, next,** on `m5.3/integration`, to be branched from `main` after M5.2 merges (`PLAN.md`, "M5.3 - After M5.2" and "M5.3 work breakdown"). M5.2 (efficiency) is done: its detail is in `docs/plan-archive.md` ("M5.2 - Efficiency", "M5.2 work breakdown"), with M0 to M5.1 before it.
+**M5.3, after M5.2, in progress,** on `m5.3/integration` (`PLAN.md`, "M5.3 - After M5.2" and "M5.3 work breakdown"). M5.2 (efficiency) is done and merged: its detail is in `docs/plan-archive.md` ("M5.2 - Efficiency", "M5.2 work breakdown"), with M0 to M5.1 before it.
 
+- **Coordination** (Phil, 2026-11-10): one coordinating session directs pitwall's work and keeps `NOW.md`. Other pitwall sessions open PRs into `m5.3/integration` and report to the coordinator; they don't edit `NOW.md`. Builders and reviewers are sub-agents, in `.worktrees/<name>`. Each PR gets a fresh sub-agent review and is merged only on green CI. No other pitwall session has work in progress (asked 2026-11-10).
 - **What the usage showed** (W131, the usage report; 14 days to 11-02, every repo): 11.35B tokens, 97.7% of them cache reads, 87% of those at more than 200K of context; sub-agents 58%. Phil: "The problem isn't the global rules. It's pitwall" (2026-11-03).
 - **Effort:** Phil's `~/.claude/settings.json` sets Opus 5.5 to high since 10-30 (it was xhigh from about 10-08). Measured 2026-11-09 (`usage-report.ts --days 21 --json`, by day, every repo): 10-20 to 10-29 at xhigh, 9 active days, 1.12B tokens a day, 3,264 calls, 2.56M output, 785 output and 344K total a call; 11-02 to 11-09 at high, 7 active days, 750M a day (-33%), 3,294 calls (flat), 2.43M output (-5%), 739 output (-6%) and 228K total a call (-34%). The drop is shorter contexts (cache reads), not effort: output, which holds the thinking, fell only 6% a call. The work mix differs between the weeks.
 - **The merge rule** (Phil, 2026-11-06): merge each item after a fresh sub-agent review and its fixes, without waiting for a try-out; his feedback from real use becomes new work items. Claude Code's auto mode refused a `gh pr merge` into `main` until Phil said "you merge" (2026-11-09).
@@ -35,17 +36,17 @@ Last updated: 2026-11-10, on `fix/handoff-rows`: a fix from daily use, the super
 
 ## Next, in order
 
-1. **This PR merges into `m5.2/integration`,** then the coordinating session opens and merges [`m5.2/integration` → `main`](https://github.com/leggetter/pitwall/compare/main...m5.2/integration), and adds the PR number to `AGENTS.md`'s Status and `PLAN.md`'s Milestones.
-2. **Branch `m5.3/integration` from `main`.**
-3. **W176 (the pitwall plugin) first,** in a fresh session, from spike 015's design.
-4. **W184 (the supervisor's connectors) and W185 (a spike with real Slack, Notion and Gmail accounts, needing Phil's OK per service), then W186 (their security review),** one session each, any time in M5.3 after W176.
-5. **Then the rest of M5.3,** one session per item (`AGENTS.md`, Efficiency): W165, W167, W168, W171, W173, W174, W175, W178, W179.
-6. **One blog-editing session on Sonnet for Phil to judge** (agreed; not the evals post).
-7. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
+1. **W176 (the pitwall plugin) first,** in a fresh session, from spike 015's design (`docs/spikes/015-plugin-session-note.md`).
+2. **Then the rest of M5.3** (`PLAN.md`), one session per item (`AGENTS.md`, Efficiency): W165, W167, W168, W171, W173, W174, W175, W178, W179.
+3. **W184 (the supervisor's connectors), W185 (spike: Slack, Notion and Gmail with real accounts) and W186 (their security review),** once Phil says go (open questions); one session each.
+4. **One blog-editing session on Sonnet for Phil to judge** (agreed; not the evals post).
+5. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
 
 ## Open questions for Phil
 
-None open.
+1. **Go for W184 (the supervisor's connectors: config, tool choice and launch)?** Yes starts it after W176; no leaves D28 (the supervisor reads through read-only connectors) unbuilt. Lean: yes, after W176 (the pitwall plugin).
+2. **For W185 (spike: Slack, Notion and Gmail with real accounts), which services, with your per-service OK?** Each needs your account's access. Lean: Slack and Notion first, Gmail later.
+3. **Stop finished pitwall sessions after their work merges?** Yes frees them; a stopped session can be resumed. Lean: yes.
 
 Answered (Phil, 2026-11-10, "go with your leans"): (a) the M5.2 → `main` PR as drafted; (b) split M5.2 at W180, as M5.1 was at W164; (c) build W176 (the pitwall plugin) next, as M5.3's first item; (d) the builders' decisions are confirmed as built (recorded in the archive's M5.2 work breakdown: W156, W158, W159, W160, W177, W180); (e) the Supervisor button below 1,000 px stays as built (W182, the supervisor's button in the header).
 
