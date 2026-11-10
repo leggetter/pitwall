@@ -3,7 +3,7 @@
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
 
-Last updated: 2026-11-10, on `docs/split-m5.2`: M5.2 is split at W180. Its built items and spikes 014 and 015 moved to `docs/plan-archive.md` ("M5.2 - Efficiency", "M5.2 work breakdown"); the unbuilt ones carry on in `PLAN.md` as M5.3. Phil answered the five questions ("go with your leans"), listed below. The M5.2 → `main` PR is opened and merged by the coordinating session after this lands; it adds the PR number to `AGENTS.md`'s Status and `PLAN.md`'s Milestones in a follow-up. Full app check at c4ab3a7: 2,462 of 2,466 steps passed, the 2 failures the check's own (fixed, [#230](https://github.com/leggetter/pitwall/pull/230)); full `npm test` 6,076 passed.
+Last updated: 2026-11-10, on `docs/supervisor-connectors`: Phil asked for the supervisor to read Slack, Notion and Gmail, and any connector later, read-only. D28 (the supervisor reads through connectors you choose, read-only) is written, spike 016 (read-only connectors under the strict command line) is done, and W184 to W186 are planned in M5.3. Before it, on `docs/split-m5.2`: M5.2 is split at W180. Its built items and spikes 014 and 015 moved to `docs/plan-archive.md` ("M5.2 - Efficiency", "M5.2 work breakdown"); the unbuilt ones carry on in `PLAN.md` as M5.3. Phil answered the five questions ("go with your leans"), listed below. The M5.2 → `main` PR is opened and merged by the coordinating session after this lands; it adds the PR number to `AGENTS.md`'s Status and `PLAN.md`'s Milestones in a follow-up. Full app check at c4ab3a7: 2,462 of 2,466 steps passed, the 2 failures the check's own (fixed, [#230](https://github.com/leggetter/pitwall/pull/230)); full `npm test` 6,076 passed.
 
 **Try-out server:** port 4519, from `.worktrees/m52-check`, with its own `PITWALL_HOME`. The coordinating session stops it once Phil is done; 4518 stays on `main`.
 
@@ -37,9 +37,10 @@ Last updated: 2026-11-10, on `docs/split-m5.2`: M5.2 is split at W180. Its built
 1. **This PR merges into `m5.2/integration`,** then the coordinating session opens and merges [`m5.2/integration` → `main`](https://github.com/leggetter/pitwall/compare/main...m5.2/integration), and adds the PR number to `AGENTS.md`'s Status and `PLAN.md`'s Milestones.
 2. **Branch `m5.3/integration` from `main`.**
 3. **W176 (the pitwall plugin) first,** in a fresh session, from spike 015's design.
-4. **Then the rest of M5.3,** one session per item (`AGENTS.md`, Efficiency): W165, W167, W168, W171, W173, W174, W175, W178, W179.
-5. **One blog-editing session on Sonnet for Phil to judge** (agreed; not the evals post).
-6. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
+4. **W184 (the supervisor's connectors) and W185 (a spike with real Slack, Notion and Gmail accounts, needing Phil's OK per service), then W186 (their security review),** one session each, any time in M5.3 after W176.
+5. **Then the rest of M5.3,** one session per item (`AGENTS.md`, Efficiency): W165, W167, W168, W171, W173, W174, W175, W178, W179.
+6. **One blog-editing session on Sonnet for Phil to judge** (agreed; not the evals post).
+7. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
 
 ## Open questions for Phil
 
