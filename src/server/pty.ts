@@ -106,7 +106,8 @@ export function makeExecutable(path: string): void {
     const uid = process.getuid?.();
     if (!stat.isFile() || (uid !== undefined && stat.uid !== uid)) return;
     if ((stat.mode & 0o100) !== 0) return;
-    fchmodSync(fd, (stat.mode & 0o7777) | 0o111);
+    // Without setuid, setgid or sticky bits: only the permission bits, plus execute (W180's N6).
+    fchmodSync(fd, (stat.mode & 0o777) | 0o111);
   } catch {
     // A link, a read-only install, or no file: the spawn then fails with node-pty's own error.
   } finally {

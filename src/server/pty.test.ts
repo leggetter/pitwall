@@ -75,6 +75,10 @@ describe('makeExecutable', () => {
     chmodSync(helper, 0o600);
     makeExecutable(helper);
     expect(mode(helper)).toBe(0o711);
+    // Never keeps a setuid or setgid bit (W180, N6).
+    chmodSync(helper, 0o6600);
+    makeExecutable(helper);
+    expect(statSync(helper).mode & 0o7777).toBe(0o711);
   });
 
   it('does not throw when the helper is gone', () => {

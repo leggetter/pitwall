@@ -114,16 +114,29 @@ describe('the kept days', () => {
     expect(readDaysFile(path.join(home, 'missing.json'), NOW)).toEqual([]);
   });
 
-  it('keeps no day with a figure it could not read back, such as Infinity or NaN (W180, U-F2)', () => {
+  it('keeps no day with a figure it could not read back, such as Infinity, NaN or a fraction of a token (W180, U-F2)', () => {
     const store = new DayStore({ home, now: () => NOW });
     store.update([
       { ...day('2026-11-09', 2), main: { ...tokens(2), input: Number.POSITIVE_INFINITY } },
       { ...day('2026-11-08', 2), main: { ...tokens(2), cost: Number.NaN } },
-      day('2026-11-07', 2, { 'claude-opus-5-5': { ...tokens(2), output: 2e15 } }),
+      day('2026-11-07', 2, { 'claude-opus-5-5': { ...tokens(2), output: 1.5 } }),
       day('2026-11-06', 2),
     ]);
     expect(store.all().map((each) => each.day)).toEqual(['2026-11-06']);
     expect(readDaysFile(path.join(home, DAYS_FILE_NAME), NOW).map((each) => each.day)).toEqual(['2026-11-06']);
+  });
+
+  it('keeps a day past MAX_FIGURE at the cap, so its totals never freeze (W180, N1)', () => {
+    const store = new DayStore({ home, now: () => NOW });
+    store.update([day('2026-11-09', 2)]);
+    // 1,001 planted calls at count()'s cap of 1e12: over 1e15.
+    const huge = { ...tokens(1003), input: 1001e12 + 20 };
+    store.update([{ ...day('2026-11-09', 1003), main: huge, models: { 'claude-opus-5-5': huge } }]);
+    expect(store.get('2026-11-09')?.main).toMatchObject({ calls: 1003, input: 1e15 });
+    // And it still grows with a real call after.
+    store.update([{ ...day('2026-11-09', 1004), main: { ...huge, calls: 1004 }, models: { 'claude-opus-5-5': { ...huge, calls: 1004 } } }]);
+    const back = readDaysFile(path.join(home, DAYS_FILE_NAME), NOW).find((each) => each.day === '2026-11-09');
+    expect(back?.main).toMatchObject({ calls: 1004, input: 1e15 });
   });
 
   it('keeps no day after tomorrow, and drops days by age, never by count, so future ones push out nothing (W180, U-F3)', () => {

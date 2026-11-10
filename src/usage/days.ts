@@ -183,9 +183,33 @@ function latestKept(now: number): string {
   return localDay(now + 86_400_000);
 }
 
-/** True when every figure of `day` is one the file would take back: whole, finite, not negative, under MAX_FIGURE. */
-function figuresOk(day: DayTotals): boolean {
-  return readTokens(day.main) !== undefined && readTokens(day.subagent) !== undefined && Object.values(day.models).every((tokens) => readTokens(tokens) !== undefined);
+/**
+ * `tokens` as the file would take it back: each figure at most MAX_FIGURE, so a day past it, as from
+ * many planted calls at count()'s cap, is kept at the cap rather than frozen (W180's N1). Undefined
+ * for a figure that isn't finite, is negative, or is a fraction of a token.
+ */
+function clampedTokens(tokens: UsageTokens): UsageTokens | undefined {
+  const clamped = emptyTokens();
+  for (const field of ['calls', 'input', 'cacheWrite', 'cacheRead', 'output', 'cost'] as const) {
+    const figure = tokens[field];
+    if (!Number.isFinite(figure) || figure < 0 || (field !== 'cost' && !Number.isInteger(figure))) return undefined;
+    clamped[field] = Math.min(figure, MAX_FIGURE);
+  }
+  return clamped;
+}
+
+/** `day` with each figure clamped (clampedTokens()), or undefined when one can't be kept (W180's U-F2). */
+function clampedDay(day: DayTotals): DayTotals | undefined {
+  const main = clampedTokens(day.main);
+  const subagent = clampedTokens(day.subagent);
+  if (main === undefined || subagent === undefined) return undefined;
+  const models = modelRecord();
+  for (const [model, tokens] of Object.entries(day.models)) {
+    const each = clampedTokens(tokens);
+    if (each === undefined) return undefined;
+    models[model] = each;
+  }
+  return { day: day.day, main, subagent, models };
 }
 
 export interface DayStoreOptions {
@@ -227,8 +251,9 @@ export class DayStore {
     const now = this.#now();
     const latest = latestKept(now);
     const oldest = oldestKept(now);
-    for (const day of live) {
-      if (!DAY.test(day.day) || day.day > latest || day.day < oldest || !figuresOk(day) || !showsMore(day, this.#days.get(day.day))) continue;
+    for (const each of live) {
+      const day = clampedDay(each);
+      if (day === undefined || !DAY.test(day.day) || day.day > latest || day.day < oldest || !showsMore(day, this.#days.get(day.day))) continue;
       const models = modelRecord();
       for (const [model, tokens] of Object.entries(day.models)) addModel(models, model, tokens);
       this.#days.set(day.day, { day: day.day, main: { ...day.main }, subagent: { ...day.subagent }, models: capModels(models) });
