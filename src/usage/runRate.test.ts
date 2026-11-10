@@ -3,8 +3,9 @@
 // hold in any time zone.
 import { describe, expect, it } from 'vitest';
 import type { RateLimits } from './rateLimits.js';
-import { DEFAULT_RUN_RATE_TARGET, levelOf, paceAt, project, targetTime, WEEK_MS, type WeekReading } from './runRate.js';
-import { FALLBACK_MAX_MS, runRateOf } from './service.js';
+import { RUN_RATE_CHART_POINTS } from '../shared/protocol.js';
+import { chartOf, DEFAULT_RUN_RATE_TARGET, levelOf, paceAt, project, targetTime, WEEK_MS, type WeekReading } from './runRate.js';
+import { chartFor, FALLBACK_MAX_MS, runRateOf } from './service.js';
 
 const HOUR = 3_600_000;
 /** The week resets on Sunday 15 Nov 2026 at 12:00, local time, so it started Sunday 8 Nov at 12:00. */
@@ -179,5 +180,137 @@ describe('the run rate', () => {
     const planted = [{ at: at(73) + 23 * HOUR, used: 999, resetsAt: RESET }];
     expect(runRateOf(failed(at(73)), planted, DEFAULT_RUN_RATE_TARGET, at(73))).toMatchObject({ status: 'unavailable', reason: 'timeout' });
     expect(runRateOf({ status: 'unavailable', readAt: at(1), reason: 'off' }, history, DEFAULT_RUN_RATE_TARGET, at(1))).toEqual({ status: 'off' });
+  });
+});
+
+describe('the chart (W181)', () => {
+  const T = DEFAULT_RUN_RATE_TARGET;
+  /** Every 5 minutes from `from` to `to` hours into the week, as a page open all along would read. */
+  function dense(from: number, to: number, used: (h: number) => number): WeekReading[] {
+    const out: WeekReading[] = [];
+    for (let m = from * 60; m <= to * 60; m += 5) out.push({ at: at(m / 60), used: Math.round(used(m / 60)), resetsAt: RESET });
+    return out;
+  }
+
+  it('spans the week, with the line’s three points, and its readings bounded and ending at the reading', () => {
+    const history = dense(0, 150, (h) => 0.5 * h);
+    expect(history.length).toBeGreaterThan(1800);
+    const now = history.at(-1)!;
+    const chart = chartOf(now, history, T);
+    expect([chart.start, chart.end, chart.at]).toEqual([START, RESET, now.at]);
+    expect(chart.line).toEqual([
+      { at: START, percent: 0 },
+      { at: FRIDAY, percent: 80 },
+      { at: RESET, percent: 100 },
+    ]);
+    expect(chart.readings.length).toBeLessThanOrEqual(RUN_RATE_CHART_POINTS);
+    expect(chart.readings.length).toBeGreaterThan(290);
+    expect(chart.readings.at(-1)).toEqual({ at: now.at, percent: 75 });
+    expect(chart.readings.every((p, i, all) => i === 0 || p.at > all[i - 1]!.at)).toBe(true);
+    // Numbers only: a time and a percentage.
+    expect(Object.keys(chart.readings[0]!).sort()).toEqual(['at', 'percent']);
+  });
+
+  it('leaves out other weeks’ readings and any after the reading', () => {
+    const previous = { at: START - HOUR, used: 90, resetsAt: START };
+    const later = { at: at(80), used: 50, resetsAt: RESET };
+    const history = [previous, ...readings(40, 72, (h) => 0.5 * h), later];
+    const chart = chartOf(history.at(-2)!, history, T);
+    expect(chart.readings.map((p) => p.at)).toEqual(readings(40, 72, () => 0).map((r) => r.at));
+  });
+
+  it('thin history: the readings, no trend, no crossing', () => {
+    const history = readings(0, 3, (h) => h);
+    const chart = chartOf(history.at(-1)!, history, T);
+    expect(chart.readings).toHaveLength(4);
+    expect(chart.trend).toBeNull();
+    expect(chart.crossesLine).toBeNull();
+  });
+
+  it('a steady rate: the trend’s ends agree with the projection’s range, the middle between them', () => {
+    const history = readings(40, 72, (h) => 0.8 * h);
+    const now = history.at(-1)!;
+    const chart = chartOf(now, history, T);
+    const projection = project(now, history);
+    if (projection.status !== 'range' || chart.trend === null) throw new Error('expected a range and a trend');
+    expect(chart.trend.high).toEqual({ at: Math.round(Date.parse(projection.earliest)), percent: 100 });
+    expect(Math.abs(chart.trend.low.at - Date.parse(projection.latest!))).toBeLessThan(1000);
+    expect(chart.trend.low.percent).toBe(100);
+    expect(chart.trend.mid.at).toBeGreaterThan(chart.trend.high.at);
+    expect(chart.trend.mid.at).toBeLessThan(chart.trend.low.at);
+  });
+
+  it('a burst: the faster end reaches 100% before the reset, the slower lasts to it below 100, and the middle crosses the line', () => {
+    // Quiet at 0.2 an hour for 70 hours, then 4 an hour for 8: under the line, rising fast.
+    const used = (h: number) => (h <= 70 ? 0.2 * h : 14 + 4 * (h - 70));
+    const history = readings(30, 78, used);
+    const now = history.at(-1)!;
+    expect(now.used).toBe(46);
+    const chart = chartOf(now, history, T);
+    if (chart.trend === null) throw new Error('expected a trend');
+    expect(chart.trend.high.percent).toBe(100);
+    expect(chart.trend.high.at).toBeLessThan(RESET);
+    expect(chart.trend.low.at).toBe(RESET);
+    expect(chart.trend.low.percent).toBeLessThan(100);
+    // The reading is under the line (about 49.5 at 78 hours); the middle rate goes over it later.
+    expect(paceAt(now.at, now.used, RESET, T).points).toBeLessThan(0);
+    expect(chart.crossesLine?.to).toBe('over');
+    const crossing = chart.crossesLine!.at;
+    expect(crossing).toBeGreaterThan(now.at);
+    expect(crossing).toBeLessThan(RESET);
+    // At the crossing, the middle and the line agree.
+    const mid = now.used + ((chart.trend.mid.percent - now.used) * (crossing - now.at)) / (chart.trend.mid.at - now.at);
+    expect(Math.abs(mid - paceAt(crossing, 0, RESET, T).line)).toBeLessThan(0.1);
+  });
+
+  it('ahead of pace and slowing: the middle crosses back under the line', () => {
+    // 1 an hour for 40 hours, then 0.3 an hour: well over the line, then slower than it.
+    const history = readings(20, 64, (h) => (h <= 40 ? h : 40 + 0.3 * (h - 40)));
+    const now = history.at(-1)!;
+    expect(paceAt(now.at, now.used, RESET, T).points).toBeGreaterThan(0);
+    const chart = chartOf(now, history, T);
+    expect(chart.crossesLine?.to).toBe('under');
+  });
+
+  it('past 100%: no trend, the readings still drawn', () => {
+    const history = readings(60, 100, (h) => h);
+    const now = history.at(-1)!;
+    expect(now.used).toBe(100);
+    const chart = chartOf(now, history, T);
+    expect(chart.trend).toBeNull();
+    expect(chart.crossesLine).toBeNull();
+    expect(chart.readings.at(-1)).toEqual({ at: now.at, percent: 100 });
+  });
+
+  it('the target time already passed: the line still runs on to 100 at the reset, and the trend from the reading', () => {
+    // Saturday 10:00, 160 hours in: past Friday 18:00.
+    const history = readings(130, 160, (h) => 0.55 * h);
+    const now = history.at(-1)!;
+    expect(now.at).toBeGreaterThan(FRIDAY);
+    const chart = chartOf(now, history, T);
+    expect(chart.line.at(-1)).toEqual({ at: RESET, percent: 100 });
+    if (chart.trend === null) throw new Error('expected a trend');
+    expect(chart.trend.low.at).toBeGreaterThan(now.at);
+    expect(chart.trend.low.at).toBeLessThanOrEqual(RESET);
+  });
+
+  it('a week that resets at the target: the line goes straight to the target at the reset', () => {
+    const resetAtTarget = FRIDAY;
+    const reading = { at: resetAtTarget - 10 * HOUR, used: 50, resetsAt: resetAtTarget };
+    const chart = chartOf(reading, [reading], T);
+    expect(chart.line).toEqual([
+      { at: resetAtTarget - WEEK_MS, percent: 0 },
+      { at: resetAtTarget, percent: 100 },
+    ]);
+  });
+
+  it('chartFor: from the run rate’s reading, the stand-in’s too; none without the week’s reset', () => {
+    const history = readings(40, 72, (h) => 0.5 * h);
+    const failed: RateLimits = { status: 'unavailable', readAt: at(73), reason: 'timeout' };
+    const rate = runRateOf(failed, history, T, at(73));
+    expect(chartFor(rate, history, T)?.at).toBe(at(72));
+    expect(chartFor({ status: 'off' }, history, T)).toBeUndefined();
+    const noReset: RateLimits = { status: 'available', readAt: at(10), sevenDay: { usedPercentage: 12, resetsAt: null }, fiveHour: null };
+    expect(chartFor(runRateOf(noReset, [], T, at(10)), [], T)).toBeUndefined();
   });
 });

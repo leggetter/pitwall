@@ -335,3 +335,176 @@
 .usage-pace-value[data-ahead] {
   color: var(--pw-warning-fg);
 }
+
+/*
+ * The run rate as a chart (W181), under the summary on This week: the chart, then the pace's
+ * sentences beside it where there's room, else under it. Two hues only: the readings and the trend in
+ * the indicator blue (--pw-selected-border, 3:1 on the card in both themes), the reserve's line in
+ * muted ink, and 100% in the danger colour, each told apart by its style and label too: the readings
+ * solid, the trend and the line dashed differently, 100% solid and labelled.
+ */
+.usage-runrate-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--pw-space-3) var(--pw-space-5);
+  padding: var(--pw-space-3);
+  border: 1px solid var(--pw-border);
+  border-radius: var(--pw-radius-md);
+  background: var(--pw-surface);
+}
+
+.rr-chart {
+  flex: 1 1 26rem;
+  min-width: 0;
+}
+
+.rr-chart svg {
+  display: block;
+  overflow: visible;
+  font-family: var(--pw-font-sans);
+  font-size: var(--pw-text-xs);
+}
+
+.usage-runrate-body .usage-pace {
+  flex: 1 1 13rem;
+  max-width: none;
+}
+
+.rr-grid {
+  stroke: var(--pw-border);
+  stroke-width: 1;
+}
+
+.rr-tick {
+  fill: var(--pw-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.rr-tick-limit,
+.rr-label-strong {
+  fill: var(--pw-text);
+  font-weight: var(--pw-weight-medium);
+}
+
+.rr-label {
+  fill: var(--pw-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rr-label-strong {
+  fill: var(--pw-text);
+}
+
+.rr-limit {
+  stroke: var(--pw-danger-fg);
+  stroke-width: 1.5;
+}
+
+.rr-limit-dot {
+  fill: var(--pw-danger-fg);
+  stroke: var(--pw-surface);
+  stroke-width: 2;
+}
+
+.rr-target {
+  fill: none;
+  stroke: var(--pw-text-muted);
+  stroke-width: 2;
+  stroke-dasharray: 8 5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.rr-target-dot {
+  fill: var(--pw-text-muted);
+  stroke: var(--pw-surface);
+  stroke-width: 2;
+}
+
+.rr-now {
+  stroke: var(--pw-border-control);
+  stroke-width: 1;
+}
+
+.rr-gap {
+  stroke: var(--pw-text-muted);
+  stroke-width: 1.5;
+}
+
+.rr-band {
+  fill: var(--pw-selected-border);
+  fill-opacity: 0.12;
+  stroke: none;
+}
+
+/* The band needs more of its hue to show on the dark card. */
+:root[data-theme='dark'] .rr-band {
+  fill-opacity: 0.22;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .rr-band {
+    fill-opacity: 0.22;
+  }
+}
+
+.rr-trend {
+  fill: none;
+  stroke: var(--pw-selected-border);
+  stroke-width: 2;
+  stroke-dasharray: 2 4;
+  stroke-linecap: round;
+}
+
+.rr-readings {
+  fill: none;
+  stroke: var(--pw-selected-border);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.rr-reading-dot,
+.rr-last {
+  fill: var(--pw-selected-border);
+}
+
+.rr-last {
+  stroke: var(--pw-surface);
+  stroke-width: 2;
+}
+
+@media (forced-colors: active) {
+  .rr-grid,
+  .rr-now {
+    stroke: GrayText;
+  }
+
+  .rr-tick,
+  .rr-label,
+  .rr-tick-limit,
+  .rr-label-strong {
+    fill: CanvasText;
+  }
+
+  .rr-limit,
+  .rr-target,
+  .rr-gap,
+  .rr-trend,
+  .rr-readings {
+    stroke: CanvasText;
+  }
+
+  .rr-band {
+    fill: CanvasText;
+  }
+
+  .rr-limit-dot,
+  .rr-target-dot,
+  .rr-reading-dot,
+  .rr-last {
+    fill: CanvasText;
+    stroke: Canvas;
+  }
+}
