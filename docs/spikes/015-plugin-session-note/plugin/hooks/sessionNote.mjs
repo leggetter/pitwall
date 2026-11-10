@@ -11,8 +11,10 @@
 // pitwall's URL comes from `<PITWALL_HOME or ~/.pitwall>/server.json`, `{ "url": "http://127.0.0.1:<port>" }`,
 // which pitwall doesn't write yet (W176 adds it). The file holds no token. It's read as untrusted: a regular
 // file of this user's, not a link, not writable by group or others, at most 1 KiB, the URL exactly
-// `http://127.0.0.1:<port>`. A background session's hooks get the background service's environment, not
-// the shell's that ran `claude --bg`, so PITWALL_HOME reaches only foreground sessions (finding 3).
+// `http://127.0.0.1:<port>`. It's opened with O_NONBLOCK: a FIFO planted there would otherwise block the
+// open until the hook's 5 s timeout, before the isFile() check could refuse it. A background session's
+// hooks get the background service's environment, not the shell's that ran `claude --bg`, so PITWALL_HOME
+// reaches only foreground sessions (finding 3).
 // Then a TCP connect to that port, within 300 ms, says pitwall is listening.
 //
 // For the spike only: with PITWALL_SPIKE015_LOG set, each run appends `{ at, source, session_id }` to that
@@ -38,7 +40,7 @@ function pitwallUrl() {
   const home = process.env.PITWALL_HOME && path.isAbsolute(process.env.PITWALL_HOME) ? process.env.PITWALL_HOME : path.join(os.homedir(), '.pitwall');
   let fd;
   try {
-    fd = openSync(path.join(home, 'server.json'), constants.O_RDONLY | constants.O_NOFOLLOW);
+    fd = openSync(path.join(home, 'server.json'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const stat = fstatSync(fd);
     if (!stat.isFile() || stat.size > 1024) return undefined;
     if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) return undefined;

@@ -93,7 +93,7 @@ In every way below, the defence against the first two is the same as W163's: the
 
 - **HTTP:** a route like `/mcp`, outside `/api/*`, with the `Host` check, any `Origin` refused (a browser always sends one on a cross-origin POST, so a web page can't reach it), and no token, since none can be given to a session. It would answer any local process. It could create only a card, and it would need rate and size limits.
 - **A file under `~/.pitwall`:** a 0700 folder pitwall watches, each file read as untrusted, as the flag log and the snoozes are: a regular file of Phil's, not a link, bounded, each field checked. It's the same as HTTP, without the feedback.
-- **The inbox:** a session has `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN` in its environment, its Bash tool's included. pitwall would have to take messages in, which the relay and the supervisor both refuse today (W113's review: otherwise any session could start an Opus turn at Phil's expense). The wire format is internal (`AGENTS.md`: behind one adapter, failing soft). This is the weakest of the three.
+- **The inbox:** a session has `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN` in its environment, its Bash tool's included. pitwall would have to take messages in, which the relay and the supervisor both refuse today (the review of W113, the supervisor process: otherwise any session could start an Opus turn at Phil's expense). The wire format is internal (`AGENTS.md`: behind one adapter, failing soft). This is the weakest of the three.
 
 ### Recommendation
 
