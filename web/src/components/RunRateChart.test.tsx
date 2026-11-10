@@ -59,6 +59,9 @@ function rate(extra: Partial<RunRate & { status: 'available' }> = {}): RunRate &
   return { status: 'available', readAt: new Date(READ_AT).toISOString(), target: TARGET, sevenDay: week(), fiveHour: null, ...extra };
 }
 
+/** The made-up chart's line at `at`, in percent. */
+const lineAtPx = (at: number) => (at <= TARGET_AT ? (80 * (at - START)) / (TARGET_AT - START) : 80 + (20 * (at - TARGET_AT)) / (END - TARGET_AT));
+
 const input = (extra: Partial<ChartInput> = {}): ChartInput => ({ chart: chart(), target: TARGET, pace: week().pace, stale: false, now: NOW, thin: false, ...extra });
 
 describe('reading the chart', () => {
@@ -107,6 +110,20 @@ describe('its layout', () => {
     const lasts = layoutChart(input({ chart: chart({ trend: { low: { at: END, percent: 60 }, mid: { at: END, percent: 70 }, high: { at: END, percent: 80 } } }) }), 640);
     expect(lasts.trend?.marks).toHaveLength(0);
     expect(lasts.trend?.label).toBeUndefined();
+    // The "or not": how far it gets by the reset, at both rates when they differ.
+    expect(lasts.trend?.end?.text).toBe('~60–80% at reset');
+    // The faster reaches 100%, the slower doesn't: the slower's end.
+    expect(layoutChart(input(), 900).trend?.end?.text).toBe('~84% at reset');
+    expect(both.trend?.end).toBeUndefined();
+  });
+
+  it('puts the pace’s and the target’s labels where the line doesn’t run', () => {
+    // Over the line: the label goes on the open side, not across the dashed line under the reading.
+    const ahead = layoutChart(input({ pace: { ...week().pace!, line: 25, points: 11, ahead: true } }), 640);
+    const label = ahead.gap!.label!;
+    const lineY = ahead.plot.bottom - (lineAtPx(READ_AT) / 100) * (ahead.plot.bottom - ahead.plot.top);
+    expect(label.text).toBe('11 points ahead of pace');
+    expect(lineY < label.y - 11 || lineY > label.y + 3).toBe(true);
   });
 
   it('a stale reading: the readings and the lines with its age, no now, no trend, no crossing', () => {
@@ -151,7 +168,7 @@ describe('its words', () => {
     expect(text).toContain('10 points under the line: the line is at 46% now.');
     expect(text).toMatch(/reaches 100% at \S+ \d\d:\d\d at the faster rate and 84% at the reset at the slower\./);
     expect(text).toMatch(/goes over the line from \S+ \d\d:\d\d\.$/);
-    expect(crossingText(chart({ crossesLine: { at: START + 90 * HOUR, to: 'under' } }), false)).toMatch(/^At the middle of that range, it's back under the line from/);
+    expect(crossingText(chart({ crossesLine: { at: START + 90 * HOUR, to: 'under' } }), false)).toMatch(/^At the middle rate, it's back under the line from/);
     expect(crossingText(chart(), true)).toBeUndefined();
     expect(chartDescription(input({ stale: true, now: READ_AT + 2 * HOUR }))).toContain('The latest reading, 2h ago, was 36%; no trend is drawn from it.');
     expect(chartDescription(input({ chart: chart({ trend: null, crossesLine: null }), thin: true }))).toContain('No trend yet: not enough readings this week.');
@@ -190,7 +207,7 @@ describe('in the Usage view', () => {
     expect(within(section).getByRole('heading', { name: "The plan's week, at this rate" })).toBeTruthy();
     expect(within(section).getByText('Pace for 80% by Fri 18:00')).toBeTruthy();
     expect(section.querySelector('.usage-pace-value')?.textContent).toBe('10 points under the line');
-    expect(within(section).getByText(/^At the middle of that range, it goes over the line from/)).toBeTruthy();
+    expect(within(section).getByText(/^At the middle rate, it goes over the line from/)).toBeTruthy();
     expect(document.querySelector('.usage-summary .usage-pace')).toBeNull();
     expect(image.querySelectorAll('.rr-readings')).toHaveLength(2);
     expect(image.querySelector('.rr-band')).not.toBeNull();

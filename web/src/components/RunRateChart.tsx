@@ -96,6 +96,7 @@ export function RunRateChart({ chart, rate, stale, now }: RunRateChartProps) {
             <circle key={mark.x} className="rr-limit-dot" cx={mark.x} cy={mark.y} r={4} />
           ))}
           {layout.trend?.label && <Label label={layout.trend.label} className="rr-label" />}
+          {layout.trend?.end && <Label label={layout.trend.end} className="rr-label" />}
           {layout.crossing && (
             <>
               <circle className="rr-target-dot" cx={layout.crossing.x} cy={layout.crossing.y} r={4} />

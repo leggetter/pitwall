@@ -78,7 +78,14 @@ export interface ChartLayout {
   /** Between the reading and the line at its time: the pace's "14 points under the line". */
   gap: { x: number; y1: number; y2: number; label: ChartLabel | undefined } | undefined;
   /** Only with a fresh reading and the projection's rates. */
-  trend: { band: string; mid: string; marks: Array<{ x: number; y: number }>; label: ChartLabel | undefined } | undefined;
+  trend: {
+    band: string;
+    mid: string;
+    marks: Array<{ x: number; y: number }>;
+    label: ChartLabel | undefined;
+    /** Where the trend ends below 100% at the reset: "~79% at reset", the chart's "or not". */
+    end: ChartLabel | undefined;
+  } | undefined;
   crossing: { x: number; y: number; label: ChartLabel | undefined } | undefined;
   /** The reading's age, where "now" would be, for a stale one. */
   age: ChartLabel | undefined;
@@ -171,16 +178,63 @@ export function layoutChart(input: ChartInput, width: number): ChartLayout {
   const last = { x: x(reading.at), y: y(reading.percent) };
 
   const line = `M${chart.line.map(pt).join('L')}`;
+
+  // What's drawn at a time, in px, so a label can be put where no line or band runs (W181's review):
+  // the line, the trend's middle and its band, and the readings.
+  const atOf = (px: number) => chart.start + ((px - plot.left) / (plot.right - plot.left)) * (chart.end - chart.start);
+  const along = (to: RunRateChartPoint, at: number): number | undefined => {
+    if (stale || at < reading.at || at > to.at || to.at <= reading.at) return undefined;
+    return reading.percent + ((to.percent - reading.percent) * (at - reading.at)) / (to.at - reading.at);
+  };
+  const capped = (to: RunRateChartPoint, at: number): number | undefined => (to.percent >= 100 && at > to.at && at >= reading.at ? 100 : along(to, at));
+  const readingAt = (at: number): number | undefined => {
+    for (let i = 1; i < chart.readings.length; i++) {
+      const a = chart.readings[i - 1]!;
+      const b = chart.readings[i]!;
+      if (at >= a.at && at <= b.at) return b.at - a.at > RUN_RATE_CHART_GAP_MS ? undefined : a.percent + ((b.percent - a.percent) * (at - a.at)) / (b.at - a.at);
+    }
+    return undefined;
+  };
+  /** How many of a label's sample points a line or the band runs through. */
+  const hits = (label: ChartLabel): number => {
+    const [from, to] = extent(label);
+    const top = label.y - 11;
+    const bottom = label.y + 3;
+    const through = (percent: number | undefined) => percent !== undefined && y(percent) >= top && y(percent) <= bottom;
+    let count = 0;
+    for (let i = 0; i <= 10; i++) {
+      const at = atOf(from + ((to - from) * i) / 10);
+      if (through(lineAt(chart, at)) || through(readingAt(at))) count++;
+      if (chart.trend !== null) {
+        if (through(along(chart.trend.mid, at))) count++;
+        const high = capped(chart.trend.high, at);
+        const low = capped(chart.trend.low, at);
+        if (high !== undefined && low !== undefined && y(high) <= bottom && y(low) >= top) count++;
+      }
+    }
+    return count;
+  };
+  /** The candidate that the fewest lines run through, the first of equals; kept inside the plot. */
+  const choose = (...candidates: ChartLabel[]): ChartLabel => {
+    const inside = candidates.map((label) => ({ ...label, y: Math.min(plot.bottom - 4, Math.max(plot.top + 14, label.y)) }));
+    return inside.reduce((best, each) => (hits(each) < hits(best) ? each : best));
+  };
+
   const targetPoint = chart.line.length === 3 ? chart.line[1] : undefined;
   const target_: ChartLayout['target'] = targetPoint && {
     x: x(targetPoint.at),
     y: y(targetPoint.percent),
-    // Above and left of its point, unless the reading is over the line, when the trend runs there:
-    // then below and right, where nothing does.
-    label:
-      reading.percent > lineAt(chart, reading.at) && !stale
-        ? fit(x(targetPoint.at) + 8, y(targetPoint.percent) + 18, compact ? `${target.percent}% ${targetText(target)}` : `${target.percent}% by ${targetText(target)}`, 'start', plot.left, plot.right)
-        : fit(x(targetPoint.at) - 8, y(targetPoint.percent) - 8, compact ? `${target.percent}% ${targetText(target)}` : `${target.percent}% by ${targetText(target)}`, 'end', plot.left, plot.right),
+    // Beside its point, on whichever side no line or the band runs.
+    label: (() => {
+      const text = compact ? `${target.percent}% ${targetText(target)}` : `${target.percent}% by ${targetText(target)}`;
+      const [tx, ty] = [x(targetPoint.at), y(targetPoint.percent)];
+      return choose(
+        fit(tx - 8, ty - 8, text, 'end', plot.left, plot.right),
+        fit(tx + 8, ty + 18, text, 'start', plot.left, plot.right),
+        fit(tx - 8, ty + 18, text, 'end', plot.left, plot.right),
+        fit(tx + 8, ty - 8, text, 'start', plot.left, plot.right),
+      );
+    })(),
   };
 
   // Top labels, in the margin above 100%: "now", then the trend's 100%, kept apart.
@@ -199,14 +253,18 @@ export function layoutChart(input: ChartInput, width: number): ChartLayout {
       x: last.x,
       y1: Math.min(lineY, last.y),
       y2: Math.max(lineY, last.y),
-      // Where neither line runs: under the line, below and right of the reading, where the trend rises
-      // away above it; over it, right of the connector's middle, under the trend and over the line.
-      label:
-        tall < GAP_LABEL_MIN_PX || words === 'On pace'
-          ? undefined
-          : last.y > lineY
-            ? fit(last.x + 8, Math.min(plot.bottom - 4, last.y + 18), compact ? short : words, 'start', plot.left, plot.right)
-            : fit(last.x + 8, round((lineY + last.y) / 2 + 4), compact ? short : words, 'start', plot.left, plot.right),
+      // On the open side: under the line, first below and right of the reading, where the trend rises
+      // away above it; over it, first above and left, where the readings came from below.
+      label: (() => {
+        if (tall < GAP_LABEL_MIN_PX || words === 'On pace') return undefined;
+        const text = compact ? short : words;
+        const middle = round((lineY + last.y) / 2 + 4);
+        const below = fit(last.x + 8, last.y + 18, text, 'start', plot.left, plot.right);
+        const aboveLeft = fit(last.x - 8, last.y - 10, text, 'end', plot.left, plot.right);
+        const besideRight = fit(last.x + 8, middle, text, 'start', plot.left, plot.right);
+        const besideLeft = fit(last.x - 8, middle, text, 'end', plot.left, plot.right);
+        return last.y > lineY ? choose(below, besideRight, besideLeft, aboveLeft) : choose(aboveLeft, besideLeft, besideRight, below);
+      })(),
     };
   }
 
@@ -232,14 +290,29 @@ export function layoutChart(input: ChartInput, width: number): ChartLayout {
         label = overlaps(moved, nowLabel) ? undefined : moved;
       }
     }
-    trend = { band: `M${band.join('L')}Z`, mid: `M${from}L${pt(mid)}`, marks, label };
+    // The "or not": where the trend ends below 100% at the reset, how far it gets.
+    let end: ChartLabel | undefined;
+    if (low.percent < 100 && low.at >= chart.end) {
+      const text = high.percent < 100 && high.at >= chart.end && Math.round(high.percent) !== Math.round(low.percent) ? `~${Math.round(low.percent)}–${Math.round(high.percent)}% at reset` : `~${Math.round(low.percent)}% at reset`;
+      // Under the slower end, stepping down past the band's lower edge, which falls to the left; else over the faster end.
+      end = choose(
+        ...[16, 32, 48].map((dy) => fit(plot.right, y(low.percent) + dy, text, 'end', plot.left, plot.right)),
+        fit(plot.right, y(high.percent) - 8, text, 'end', plot.left, plot.right),
+      );
+    }
+    trend = { band: `M${band.join('L')}Z`, mid: `M${from}L${pt(mid)}`, marks, label, end };
     if (chart.crossesLine !== null) {
       const cx = x(chart.crossesLine.at);
       const cy = y(lineAt(chart, chart.crossesLine.at));
       const words = `${chart.crossesLine.to === 'over' ? 'Over' : 'Under'} the line ${dayTimeText(new Date(chart.crossesLine.at).toISOString())}`;
-      // Below the line when going over it, where the band isn't yet; above when going under.
-      const ly = chart.crossesLine.to === 'over' ? cy + 18 : cy - 10;
-      crossing = { x: cx, y: cy, label: compact ? undefined : fit(cx + 8, ly, words, 'start', plot.left, plot.right) };
+      // Below the line when going over it, where the band isn't yet; above when going under; or where it's clear.
+      const first = chart.crossesLine.to === 'over' ? cy + 18 : cy - 10;
+      const other = chart.crossesLine.to === 'over' ? cy - 10 : cy + 18;
+      crossing = {
+        x: cx,
+        y: cy,
+        label: compact ? undefined : choose(fit(cx + 8, first, words, 'start', plot.left, plot.right), fit(cx - 8, first, words, 'end', plot.left, plot.right), fit(cx + 8, other, words, 'start', plot.left, plot.right)),
+      };
     }
   }
 
@@ -256,6 +329,7 @@ export function layoutChart(input: ChartInput, width: number): ChartLayout {
   if (target_) target_.label = keep(target_.label);
   if (gap) gap.label = keep(gap.label);
   if (crossing) crossing.label = keep(crossing.label);
+  if (trend) trend.end = keep(trend.end);
   const note =
     !stale && chart.trend === null && input.thin
       ? // Low and right of now, where the trend would start and nothing else is drawn.
@@ -277,11 +351,11 @@ export function lineAt(chart: RunRateChart, at: number): number {
 
 // --- Words ----------------------------------------------------------------------------------------
 
-/** The crossing in a sentence, or undefined without one: "At the trend's middle, over the line from Wed 10:00." */
+/** The crossing in a sentence, or undefined without one: "At the middle rate, it goes over the line from Wed 10:00." */
 export function crossingText(chart: RunRateChart, stale: boolean): string | undefined {
   if (stale || chart.trend === null || chart.crossesLine === null) return undefined;
   const when = dayTimeText(new Date(chart.crossesLine.at).toISOString());
-  return chart.crossesLine.to === 'over' ? `At the middle of that range, it goes over the line from ${when}.` : `At the middle of that range, it's back under the line from ${when}.`;
+  return chart.crossesLine.to === 'over' ? `At the middle rate, it goes over the line from ${when}.` : `At the middle rate, it's back under the line from ${when}.`;
 }
 
 /** The chart in words, for its accessible name: everything it draws, as the sentences beside it say it. */

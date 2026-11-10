@@ -387,6 +387,15 @@
   font-weight: var(--pw-weight-medium);
 }
 
+/* A halo in the card's colour, so a line or the band under a label never strikes it through. */
+.rr-label,
+.rr-label-strong {
+  paint-order: stroke;
+  stroke: var(--pw-surface);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
 .rr-label {
   fill: var(--pw-text-muted);
   font-variant-numeric: tabular-nums;
@@ -398,7 +407,7 @@
 
 .rr-limit {
   stroke: var(--pw-danger-fg);
-  stroke-width: 1.5;
+  stroke-width: 2;
 }
 
 .rr-limit-dot {
@@ -486,6 +495,11 @@
   .rr-tick-limit,
   .rr-label-strong {
     fill: CanvasText;
+  }
+
+  .rr-label,
+  .rr-label-strong {
+    stroke: Canvas;
   }
 
   .rr-limit,
