@@ -462,7 +462,7 @@ export function newConversationBlocked(state: SupervisorState): string | undefin
 /** The context gauge's info button (W136): what the number is, and what to do about it. */
 export const SUPERVISOR_CONTEXT_INFO = `The tokens of context its last call carried in this run, from what Claude Code reported: everything the model read again, cached or not. Every message sends all of it again. Flagged over ${formatTokens(CONTEXT_WARN_TOKENS)}, and in red over ${formatTokens(CONTEXT_HIGH_TOKENS)}: start a new conversation when you're done with this one.`;
 
-/** The repo list's item's status, visually hidden after its name: nothing for idle and off, which show nothing. */
+/** The header's button's status, visually hidden after its name: nothing for idle and off, which show nothing. */
 export function itemStatusText(status: SupervisorStatus): string | undefined {
   return status === 'working' || status === 'starting' || status === 'held' || status === 'failed' ? STATUS_LABELS[status].toLowerCase() : undefined;
 }

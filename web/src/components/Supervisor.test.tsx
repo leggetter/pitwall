@@ -1,4 +1,4 @@
-// The supervisor's panel (M5, W114; docs/design-system.md, 4: Supervisor): the repo list's item in
+// The supervisor's panel (M5, W114; docs/design-system.md, 4: Supervisor): the header's button in
 // every root tab, its status and its drafts' count, which Needs you and the page title count too; its
 // panel over the page, as ?supervisor, one pushed history entry, beside a session's or a PR's view (W177,
 // and SupervisorPanel.test.tsx);
