@@ -389,6 +389,10 @@ const part: Part = {
       t.expectEqual(await page.evaluate(`${SVIEW}.querySelector('[data-supervisor-handoffs] h3')?.textContent`), 'Sent and started (2)', 'under their heading');
       const box = await page.evaluate<{ right: number }>(`(() => { const r = ${HANDOFFS}[0].querySelector('[data-handoff-open]').getBoundingClientRect(); return { right: r.right }; })()`);
       t.expect(box.right <= t.viewport.width + 0.5, 'Open inside the window', box);
+      const spill = await page.evaluate<{ meta: number; row: number }[]>(
+        `${HANDOFFS}.map((li) => ({ meta: li.querySelector('.supervisor-handoff-meta').getBoundingClientRect().right, row: li.getBoundingClientRect().right }))`,
+      );
+      t.expect(spill.every((r) => r.meta <= r.row + 0.5), 'each row’s state, when and Open inside its card', spill);
       await t.shot('handoffs');
       await page.click('Open pr-57', `${HANDOFFS}[0].querySelector('[data-handoff-open]')`);
       await page.waitFor('its session view, beside the panel or in sight', `${PANEL_AS_LAYOUT} && !!document.querySelector('#session-view')`);
