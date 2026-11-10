@@ -50,7 +50,7 @@ Checked against the current docs:
 
 | Needs | Way | How fresh | Absent when |
 | --- | --- | --- | --- |
-| W158: the week's reset, `seven_day.resets_at` | (c): `sevenDay.resetsAt` from `src/usage/rateLimits.ts` | Read when asked, kept 5 minutes | Not a claude.ai login, no weekly row, or the call fails: W158 uses the last 7 days |
+| W158: the week's reset, `seven_day.resets_at` | (c): `sevenDay.resetsAt` from `src/usage/rateLimits.ts` | Read when asked, kept 5 minutes (a failure 1 minute) | Not a claude.ai login, no weekly row, or the call fails: W158 uses the last 7 days |
 | W159: the week's percentage, `seven_day.used_percentage` | (c): `sevenDay.usedPercentage` | Read when asked, kept 5 minutes | As above: W159 shows "unavailable" |
 | W159: the five hours' percentage, `five_hour.used_percentage` | (c): `fiveHour.usedPercentage` | As above | Not seen on this account: W159 shows the week alone |
 
@@ -58,9 +58,11 @@ Checked against the current docs:
 
 - Read the percentages from `/usage`'s `usage_report`, (c). It's documented, though experimental, spends no model call, reaches no session's settings, and pitwall chooses when to read.
 - The adapter is `src/usage/rateLimits.ts`, the one module that reads the report:
-  - `readRateLimits()` runs `claude -p` with `/usage` over stdin, with the recap call's isolation: no transcript, no tools, none of your settings, hooks, plugins or MCP servers, and the relay's environment.
-  - `createRateLimitsReader()` keeps a read for 5 minutes and shares a call in flight, so W158 and W159 can call it freely without hitting the usage endpoint's limit.
+  - `readRateLimits()` runs `claude -p` with `/usage` over stdin, with the recap call's isolation and environment: no transcript, no tools, none of your settings, hooks, plugins or MCP servers, output capped, so the call stays bounded should `/usage` ever reach the model.
+  - `createRateLimitsReader()` runs it from a 0700 `$PITWALL_HOME/rate-limits`. It keeps a read for 5 minutes and a failure for 1, never keeps one stopped at shutdown, and shares a call in flight, so W158 and W159 can call it freely without hitting the usage endpoint's limit.
+  - Its `isOwn(row)` knows the call by pid while it runs, by its folder, and by its name, `pitwall-usage`, for `OWN_NAME_MS`, as the recap engine's does. W158, the first caller, wires it into the index's exclude and the server's `isRelay`.
+  - A percentage outside 0 to 1000 is unreadable and leaves its window `null`; the server sends 0 to 100. A reset that is missing or unreadable is `null`, and the percentage is kept.
   - It reads `rate_limits.limits` only and drops the message's text and session block unread.
-  - Every failure is `unavailable`, with a reason: `not-found`, `failed`, `timeout`, `no-report` or `no-limits`. A missing window is `null`.
+  - Every failure is `unavailable`, with a reason: `not-found`, `failed`, `timeout`, `stopped`, `no-report` or `no-limits`. A missing window is `null`.
 - Not (a): undocumented for the percentage, and only on model calls.
 - Not (b) for now: it covers only sessions pitwall starts while they work, and replaces a person's own status line in them. It's the fallback if `usage_report` is withdrawn.

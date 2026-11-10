@@ -13,15 +13,29 @@
 //
 // The usage endpoint behind `/usage` is rate limited and shared with your own `/usage` (the costs
 // docs' "When the usage request fails"), so createRateLimitsReader() keeps a read for
-// RATE_LIMITS_TTL_MS and runs at most one call at a time.
-import os from 'node:os';
+// RATE_LIMITS_TTL_MS, a failure for RATE_LIMITS_FAILURE_TTL_MS, and runs one call at a time.
+//
+// The call runs from one fixed 0700 directory, `$PITWALL_HOME/rate-limits`. While it runs, Claude
+// Code may list it in `claude agents --json`, as it does a recap call (spike 010, finding 1), so the
+// reader's isOwn() leaves it out of the index as the recap engine's does: by its pid while it runs,
+// by its directory, and by its name when the row started under OWN_NAME_MS ago. The first caller
+// (W158) wires it into the index's exclude and the server's isRelay.
+import { realpathSync } from 'node:fs';
+import path from 'node:path';
 import { isRecord } from '../index/guards.js';
-import { runRecapCall, spawnRecapChild, type RecapSpawner } from '../recaps/call.js';
-import { relayEnvironment } from '../server/relay.js';
+import { runRecapCall, spawnRecapChild, type CallOutcome, type RecapSpawner } from '../recaps/call.js';
+import { OWN_NAME_MS } from '../recaps/engine.js';
+import { recapEnvironment } from '../recaps/prompt.js';
+import { pitwallHome } from '../server/launch.js';
+import { prepareRelayDir } from '../server/relay.js';
 
 /** One window of the plan's limit. */
 export interface RateWindow {
-  /** Share of the window used, 0 to 100 as the server reports it. */
+  /**
+   * Share of the window used, as the server reports it: 0 to 100 (spike 013), not a 0-to-1 fraction
+   * as `rate_limit_event`'s undocumented `utilization` is. Over 100 is kept, in case a window can be
+   * overrun; anything outside 0 to 1000 is taken as unreadable.
+   */
   usedPercentage: number;
   /** When the window resets, in Unix seconds rounded to the minute; null when the server gave none. */
   resetsAt: number | null;
@@ -31,9 +45,11 @@ export interface RateWindow {
 export type RateLimitsUnavailable =
   /** `claude` wasn't found. */
   | 'not-found'
-  /** The call didn't start, exited non-zero, was too large or was stopped. */
+  /** The call didn't start, exited non-zero, or printed too much. */
   | 'failed'
   | 'timeout'
+  /** pitwall stopped it, as when it's closing. Never cached. */
+  | 'stopped'
   /**
    * No `usage_report` came back: not a claude.ai login (an API key, Bedrock, Vertex), a
    * `claude setup-token` token, usage-based billing, or a Claude Code too old to send it.
@@ -99,19 +115,16 @@ function toMinute(ms: number): number {
   return Math.round(ms / 60_000) * 60;
 }
 
+/** The most a percentage may be before it's taken as unreadable. */
+const MAX_PERCENT = 1000;
+
+/** A row's window; undefined when its percentage is unreadable. A reset that is missing or unreadable is null. */
 function readWindow(row: Record<string, unknown>): RateWindow | undefined {
   const percent = row.percent;
-  if (typeof percent !== 'number' || !Number.isFinite(percent) || percent < 0) return undefined;
+  if (typeof percent !== 'number' || !Number.isFinite(percent) || percent < 0 || percent > MAX_PERCENT) return undefined;
   const resets = row.resets_at;
-  let resetsAt: number | null = null;
-  if (typeof resets === 'string') {
-    const ms = Date.parse(resets);
-    if (!Number.isFinite(ms)) return undefined;
-    resetsAt = toMinute(ms);
-  } else if (resets !== null && resets !== undefined) {
-    return undefined;
-  }
-  return { usedPercentage: percent, resetsAt };
+  const ms = typeof resets === 'string' ? Date.parse(resets) : NaN;
+  return { usedPercentage: percent, resetsAt: Number.isFinite(ms) ? toMinute(ms) : null };
 }
 
 /**
@@ -156,9 +169,7 @@ export function parseRateLimits(stdout: string, readAt: number): RateLimits {
 
 export interface ReadRateLimitsOptions {
   claudeBin?: string;
-  /** Where the call runs; it reads nothing there. The OS's temporary folder unless given. */
-  cwd?: string;
-  /** pitwall's environment; the relay's rules apply (relayEnvironment()). */
+  /** pitwall's environment; the recap call's rules apply (recapEnvironment()). */
   env?: NodeJS.ProcessEnv;
   /** Tests pass a fake, so no test runs `claude` (src/test/noClaude.ts). */
   spawn?: RecapSpawner;
@@ -172,21 +183,37 @@ export interface ReadRateLimitsOptions {
 /** About 3.5 s in spike 013; the rest is slack for a slow network. */
 export const RATE_LIMITS_TIMEOUT_MS = 30_000;
 
-/** Runs `/usage` once. Never rejects. */
-export async function readRateLimits(options: ReadRateLimitsOptions = {}): Promise<RateLimits> {
+/**
+ * Runs `/usage` once, from `cwd`, which it reads nothing from. Never rejects. The environment is the
+ * recap call's: no code-loading variables, no effort variables, output capped, so the call stays
+ * bounded should `/usage` ever reach the model.
+ */
+export async function readRateLimits(cwd: string, options: ReadRateLimitsOptions = {}): Promise<RateLimits> {
   const now = options.now ?? Date.now;
-  const outcome = await runRecapCall({
+  let outcome: CallOutcome;
+  try {
+    outcome = await callUsage(cwd, options);
+  } catch {
+    outcome = { kind: 'spawn-error', notFound: false };
+  }
+  return readOutcome(outcome, now());
+}
+
+function callUsage(cwd: string, options: ReadRateLimitsOptions): Promise<CallOutcome> {
+  return runRecapCall({
     claudeBin: options.claudeBin ?? 'claude',
     args: rateLimitsArgs(),
-    cwd: options.cwd ?? os.tmpdir(),
-    env: relayEnvironment(options.env ?? process.env),
+    cwd,
+    env: recapEnvironment(options.env ?? process.env),
     input: RATE_LIMITS_INPUT,
     timeoutMs: options.timeoutMs ?? RATE_LIMITS_TIMEOUT_MS,
     spawn: options.spawn ?? spawnRecapChild,
     onPid: options.onPid ?? (() => undefined),
     signal: options.signal ?? new AbortController().signal,
   });
-  const readAt = now();
+}
+
+function readOutcome(outcome: CallOutcome, readAt: number): RateLimits {
   switch (outcome.kind) {
     case 'exit':
       if (outcome.code !== 0) return { status: 'unavailable', readAt, reason: 'failed' };
@@ -195,36 +222,102 @@ export async function readRateLimits(options: ReadRateLimitsOptions = {}): Promi
       return { status: 'unavailable', readAt, reason: outcome.notFound ? 'not-found' : 'failed' };
     case 'timeout':
       return { status: 'unavailable', readAt, reason: 'timeout' };
-    default:
+    case 'stopped':
+      return { status: 'unavailable', readAt, reason: 'stopped' };
+    case 'too-large':
       return { status: 'unavailable', readAt, reason: 'failed' };
   }
 }
 
 /** How long a read is kept: the usage endpoint is rate limited, and your own `/usage` shares it. */
 export const RATE_LIMITS_TTL_MS = 5 * 60_000;
+/** How long a failed or timed-out read is kept, so a passing failure clears sooner. */
+export const RATE_LIMITS_FAILURE_TTL_MS = 60_000;
+/** The call's directory under `$PITWALL_HOME`. */
+export const RATE_LIMITS_DIR_NAME = 'rate-limits';
 
 export interface RateLimitsReader {
-  /** The last read if it's younger than the TTL, otherwise a new one; callers at once share one call. */
+  /** The last read if it's still kept, otherwise a new one; callers at once share one call. Never rejects. */
   read(): Promise<RateLimits>;
   /** The last read, without a call; undefined before the first. */
   last(): RateLimits | undefined;
+  /**
+   * True for a `claude agents` row that is this reader's call: by its pid while it runs, by its
+   * directory, or by its name when the row started under OWN_NAME_MS ago. For the index's `exclude`
+   * and the server's isRelay, as the recap engine's isOwn().
+   */
+  isOwn(row: { name: string; cwd: string; pid?: number | undefined; startedAt?: string | undefined }): boolean;
 }
 
-export function createRateLimitsReader(options: ReadRateLimitsOptions & { ttlMs?: number } = {}): RateLimitsReader {
+export interface RateLimitsReaderOptions extends Omit<ReadRateLimitsOptions, 'onPid'> {
+  /** The call's directory, `$PITWALL_HOME/rate-limits` unless given; made 0700 before the first call. */
+  dir?: string;
+  /** Makes `dir` and returns its real path; prepareRelayDir() unless given. */
+  prepareDir?(dir: string): string;
+  ttlMs?: number;
+  failureTtlMs?: number;
+}
+
+export function createRateLimitsReader(options: RateLimitsReaderOptions = {}): RateLimitsReader {
   const now = options.now ?? Date.now;
   const ttlMs = options.ttlMs ?? RATE_LIMITS_TTL_MS;
+  const failureTtlMs = options.failureTtlMs ?? RATE_LIMITS_FAILURE_TTL_MS;
+  const dir = path.resolve(options.dir ?? path.join(pitwallHome(options.env ?? process.env), RATE_LIMITS_DIR_NAME));
+  const prepareDir = options.prepareDir ?? prepareRelayDir;
+  const dirs = new Set<string>([dir]);
+  try {
+    dirs.add(realpathSync(dir));
+  } catch {
+    // Not made yet: prepareDir() adds its real path on the first read.
+  }
+  const pids = new Set<number>();
   let cached: RateLimits | undefined;
   let pending: Promise<RateLimits> | undefined;
+
+  function kept(result: RateLimits): boolean {
+    if (result.status === 'available') return now() - result.readAt < ttlMs;
+    if (result.reason === 'stopped') return false;
+    return now() - result.readAt < failureTtlMs;
+  }
+  async function readOnce(): Promise<RateLimits> {
+    let cwd: string;
+    try {
+      cwd = prepareDir(dir);
+      dirs.add(cwd);
+    } catch {
+      return { status: 'unavailable', readAt: now(), reason: 'failed' };
+    }
+    let pid: number | undefined;
+    try {
+      return await readRateLimits(cwd, {
+        ...options,
+        onPid(given) {
+          pid = given;
+          pids.add(given);
+        },
+      });
+    } finally {
+      if (pid !== undefined) pids.delete(pid);
+    }
+  }
   return {
     read() {
-      if (cached !== undefined && now() - cached.readAt < ttlMs) return Promise.resolve(cached);
-      pending ??= readRateLimits(options).then((result) => {
-        cached = result;
+      if (cached !== undefined && kept(cached)) return Promise.resolve(cached);
+      pending ??= readOnce().then((result) => {
         pending = undefined;
+        if (result.status === 'unavailable' && result.reason === 'stopped') return result;
+        cached = result;
         return result;
       });
       return pending;
     },
     last: () => cached,
+    isOwn(row) {
+      if (row.pid !== undefined && pids.has(row.pid)) return true;
+      if (dirs.has(path.resolve(row.cwd))) return true;
+      if (row.name !== RATE_LIMITS_NAME) return false;
+      const started = row.startedAt === undefined ? NaN : Date.parse(row.startedAt);
+      return Number.isFinite(started) && now() - started < OWN_NAME_MS;
+    },
   };
 }
