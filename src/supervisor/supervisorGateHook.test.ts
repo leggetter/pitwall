@@ -35,6 +35,8 @@ describe('refusal()', () => {
     expect(refusal(plain('Pitwall-Test-Target'), names)).toMatch(/one running session/);
     expect(refusal(plain('pitwall-relay'), new Set(['pitwall-relay']))).toMatch(/pitwall’s own/);
     expect(refusal(plain('PITWALL-SUPERVISOR'), names)).toMatch(/pitwall’s own/);
+    // The /usage reader's name too (W180, U-F5).
+    expect(refusal(plain('pitwall-usage'), new Set(['pitwall-usage']))).toMatch(/pitwall’s own/);
     expect(refusal(plain('uds:/tmp/cc-socks/1.sock', { recipient_kind: 'address' }), names)).toMatch(/something other than a session’s name/);
     expect(refusal(plain(TARGET, { recipient: 'pitwall-test-other' }), names)).toMatch(/two different/);
     expect(refusal(plain(TARGET, { notify_when_idle: true }), names)).toMatch(/idle/);

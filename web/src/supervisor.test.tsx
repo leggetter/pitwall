@@ -3,7 +3,7 @@
 // to a request means. Made-up sessions, ids and text only.
 
 import { describe, expect, it, vi } from 'vitest';
-import { SUPERVISOR_MESSAGE_PATH, SUPERVISOR_NEW_CONVERSATION_PATH, supervisorApprovalPath, type ConversationEntry, type SupervisorApproval } from '../../src/shared/protocol.js';
+import { SUPERVISOR_MESSAGE_PATH, SUPERVISOR_NEW_CONVERSATION_PATH, supervisorApprovalPath, WORK_PROFILES_TOTAL_MAX, type ConversationEntry, type SupervisorApproval } from '../../src/shared/protocol.js';
 import { createApiClient, type FetchLike } from './api.js';
 import { supervisorStripText } from './components/AppStrip.js';
 import { withPr } from './openPr.js';
@@ -193,6 +193,14 @@ describe('its words', () => {
     expect(read({ profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet' })).toMatchObject({ launch: { profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet' } });
     expect(read({ profile: 'Bad\nname', custom: 'yes', model: 'opus --x', effort: 'high', subagentModel: 'opusplan' })).toMatchObject({ launch: { effort: 'high' } });
     for (const launch of [undefined, 'Review', { profile: 'Review' }, { model: 'x y' }]) expect(read(launch)).not.toHaveProperty('launch');
+  });
+
+  it('shows a card with as many profiles as the server resolves, the 4 built-ins and 30 of the config file’s, and none past that (W180, F2)', () => {
+    const profiles = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `Profile ${i}`, model: 'sonnet', effort: 'high', subagentModel: 'sonnet' }));
+    const read = (n: number) => asSupervisorState({ status: 'idle', approvals: [{ ...resume, profiles: profiles(n) }] })?.approvals;
+    expect(WORK_PROFILES_TOTAL_MAX).toBe(34);
+    expect(read(WORK_PROFILES_TOTAL_MAX)?.[0]).toMatchObject({ profiles: profiles(WORK_PROFILES_TOTAL_MAX) });
+    expect(read(WORK_PROFILES_TOTAL_MAX + 1)).toEqual([]);
   });
 });
 

@@ -19,6 +19,13 @@ export const LEDGER_KEEP_MS = 31 * 86_400_000;
 /** Bytes read at a time. */
 const CHUNK = 1024 * 1024;
 
+/**
+ * The longest line kept to parse, as the ended scanner's (src/index/ended.ts): past it the line's bytes
+ * are dropped, the rest of it skipped to its newline, and it counts as malformed (W180's U-F1), so a
+ * line with no newline can't grow memory without bound or be read again at every refresh.
+ */
+export const LEDGER_MAX_LINE_BYTES = 16 << 20;
+
 const MARKER_BYTES = MARKERS.map((marker) => Buffer.from(marker, 'utf8'));
 
 /** The bytes at the file's start that are hashed, to tell a file cut short and grown again in place. */
@@ -33,6 +40,8 @@ interface Followed {
   mtimeMs: number;
   /** A hash of its first `headLength` bytes as last read. */
   head?: { length: number; hash: string };
+  /** True while inside a line over the cap: what's read is dropped until its newline. */
+  skipping: boolean;
   state: TranscriptState;
 }
 
@@ -64,18 +73,21 @@ export interface LedgerOptions {
   keepMs?: number;
   /** Files read at once. */
   concurrency?: number;
+  /** LEDGER_MAX_LINE_BYTES unless a test sets it. */
+  maxLineBytes?: number;
 }
 
 export function createUsageLedger(options: LedgerOptions): UsageLedger {
   const now = options.now ?? Date.now;
   const keepMs = options.keepMs ?? LEDGER_KEEP_MS;
   const concurrency = options.concurrency ?? 4;
+  const maxLineBytes = options.maxLineBytes ?? LEDGER_MAX_LINE_BYTES;
   const followed = new Map<string, Followed>();
   let pending: { since: number; done: Promise<LedgerStats> } | undefined;
 
   async function start(found: FoundFile, cutoff: number): Promise<Followed> {
     const agentType = found.subagent ? await agentTypeOf(found.file) : undefined;
-    return { found, ino: found.ino, offset: 0, mtimeMs: found.mtimeMs, state: createTranscriptState(found, cutoff, Number.POSITIVE_INFINITY, agentType) };
+    return { found, ino: found.ino, offset: 0, mtimeMs: found.mtimeMs, skipping: false, state: createTranscriptState(found, cutoff, Number.POSITIVE_INFINITY, agentType) };
   }
 
   /**
@@ -96,23 +108,44 @@ export function createUsageLedger(options: LedgerOptions): UsageLedger {
       }
       const buffer = Buffer.alloc(CHUNK);
       let position = entry.offset;
-      // The current line's parts, before its newline.
+      // The current line's parts, before its newline, and their length.
       let parts: Buffer[] = [];
+      let partsLength = 0;
       while (position < size) {
         const { bytesRead } = await handle.read(buffer, 0, Math.min(CHUNK, size - position), position);
         if (bytesRead === 0) break;
         read += bytesRead;
         let from = 0;
         for (let at = buffer.indexOf(0x0a, 0); at !== -1 && at < bytesRead; at = buffer.indexOf(0x0a, from)) {
-          parts.push(buffer.subarray(from, at));
-          feed(entry.state, parts.length === 1 ? (parts[0] as Buffer) : Buffer.concat(parts));
+          if (entry.skipping || partsLength + (at - from) > maxLineBytes) {
+            // The end of a line over the cap: counted, never parsed.
+            entry.skipping = false;
+            entry.state.scan.lines++;
+            entry.state.scan.malformed++;
+          } else {
+            parts.push(buffer.subarray(from, at));
+            feed(entry.state, parts.length === 1 ? (parts[0] as Buffer) : Buffer.concat(parts));
+          }
           parts = [];
+          partsLength = 0;
           from = at + 1;
           entry.offset = position + from;
         }
-        // Copied: the buffer is read into again.
-        if (from < bytesRead) parts.push(Buffer.from(buffer.subarray(from, bytesRead)));
+        if (from < bytesRead && !entry.skipping) {
+          if (partsLength + (bytesRead - from) > maxLineBytes) {
+            // Over the cap: dropped, and the rest of the line skipped, so it isn't read again.
+            parts = [];
+            partsLength = 0;
+            entry.skipping = true;
+          } else {
+            // Copied: the buffer is read into again.
+            parts.push(Buffer.from(buffer.subarray(from, bytesRead)));
+            partsLength += bytesRead - from;
+          }
+        }
         position += bytesRead;
+        // Inside a skipped line, what's read is gone: the next read starts after it.
+        if (entry.skipping) entry.offset = position;
       }
       if ((entry.head?.length ?? 0) < HEAD_BYTES && entry.offset > (entry.head?.length ?? 0)) {
         const head = Buffer.alloc(Math.min(entry.offset, HEAD_BYTES));

@@ -1622,11 +1622,12 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
       expect(Object.keys(second?.options.env ?? {}).some((name) => /FORCE/i.test(name))).toBe(false);
     });
 
-    it("the request's sub-agents' model on Claude Code's default leaves the inherited environment's alone, over the profile's", async () => {
-      const env = { PATH: '/usr/bin', CLAUDE_CODE_SUBAGENT_MODEL: 'fable' };
+    it("the request's sub-agents' model on Claude Code's default drops the inherited environment's, over the profile's (W180, I2)", async () => {
+      const env = { PATH: '/usr/bin', CLAUDE_CODE_SUBAGENT_MODEL: 'fable', CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1' };
       const started = await startWith(profiled(), fakeRunner(backgrounded()), env);
       await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Review', subagentModel: 'default' });
-      expect(started.run.calls[0]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('fable');
+      expect(started.run.calls[0]?.options.env).not.toHaveProperty('CLAUDE_CODE_SUBAGENT_MODEL');
+      expect(started.run.calls[0]?.options.env).not.toHaveProperty('CLAUDE_CODE_SUBAGENT_MODEL_FORCE');
     });
 
     it("refuses a sub-agents' model W119 wouldn't allow for sub-agents, and never quotes it; nothing starts", async () => {
@@ -1639,11 +1640,11 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
       expect(started.run.calls).toEqual([]);
     });
 
-    it("a profile's sub-agents on Claude Code's default leave the inherited environment's alone, over the defaults'", async () => {
+    it("a profile's sub-agents on Claude Code's default drop the inherited environment's, over the defaults' (W180, I2)", async () => {
       const env = { PATH: '/usr/bin', CLAUDE_CODE_SUBAGENT_MODEL: 'fable' };
       const started = await startWith(profiled(), fakeRunner(backgrounded()), env);
       await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Inherit' });
-      expect(started.run.calls[0]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('fable');
+      expect(started.run.calls[0]?.options.env).not.toHaveProperty('CLAUDE_CODE_SUBAGENT_MODEL');
     });
 
     it("refuses a profile the server doesn't have, by its exact name, and never quotes it; nothing starts", async () => {

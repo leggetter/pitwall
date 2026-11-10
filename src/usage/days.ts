@@ -23,7 +23,10 @@ import type { UsageTokens } from '../shared/protocol.js';
 export const DAYS_FILE_NAME = 'usage-days.json';
 /** About 400 bytes a model a day: 400 days of several models fit. */
 export const DAYS_FILE_MAX_BYTES = 1024 * 1024;
-/** The most days kept: past it the oldest go. */
+/**
+ * The days kept, by age: a day more than this many days before today goes. By age, never by count, so
+ * days a planted transcript dates in the future can't push out a real one (W180, U-F3).
+ */
 export const DAYS_KEPT_MAX = 400;
 /** The most models a day keeps; the rest are summed as OTHER_MODEL. */
 export const DAY_MODELS_MAX = 12;
@@ -160,13 +163,29 @@ export function readDaysFile(file: string, now: number = Date.now()): DayTotals[
   }
   if (!isRecord(value) || value.v !== 1 || !Array.isArray(value.days)) return [];
   // A day after tomorrow is a clock or a planted file; a day of slack for time zones.
-  const latest = localDay(now + 86_400_000);
+  const latest = latestKept(now);
   const days = new Map<string, DayTotals>();
   for (const entry of value.days as unknown[]) {
     const day = readDay(entry, latest);
     if (day !== undefined && !days.has(day.day)) days.set(day.day, day);
   }
-  return [...days.values()].sort((a, b) => a.day.localeCompare(b.day)).slice(-DAYS_KEPT_MAX);
+  const oldest = oldestKept(now);
+  return [...days.values()].filter((day) => day.day >= oldest).sort((a, b) => a.day.localeCompare(b.day));
+}
+
+/** The oldest day kept at `now`: DAYS_KEPT_MAX days before today. */
+function oldestKept(now: number): string {
+  return localDay(now - DAYS_KEPT_MAX * 86_400_000);
+}
+
+/** The latest day kept at `now`: tomorrow, a day of slack for time zones; a later one is a clock or a planted line. */
+function latestKept(now: number): string {
+  return localDay(now + 86_400_000);
+}
+
+/** True when every figure of `day` is one the file would take back: whole, finite, not negative, under MAX_FIGURE. */
+function figuresOk(day: DayTotals): boolean {
+  return readTokens(day.main) !== undefined && readTokens(day.subagent) !== undefined && Object.values(day.models).every((tokens) => readTokens(tokens) !== undefined);
 }
 
 export interface DayStoreOptions {
@@ -180,11 +199,13 @@ export class DayStore {
   readonly #home: string | undefined;
   readonly #file: string | undefined;
   readonly #days = new Map<string, DayTotals>();
+  readonly #now: () => number;
 
   constructor(options: DayStoreOptions = {}) {
     this.#home = options.home === undefined ? undefined : path.resolve(options.home);
     this.#file = this.#home === undefined ? undefined : path.join(this.#home, DAYS_FILE_NAME);
-    if (this.#file !== undefined) for (const day of readDaysFile(this.#file, (options.now ?? Date.now)())) this.#days.set(day.day, day);
+    this.#now = options.now ?? Date.now;
+    if (this.#file !== undefined) for (const day of readDaysFile(this.#file, this.#now())) this.#days.set(day.day, day);
   }
 
   get(day: string): DayTotals | undefined {
@@ -196,20 +217,32 @@ export class DayStore {
     return [...this.#days.values()].sort((a, b) => a.day.localeCompare(b.day));
   }
 
-  /** Keeps each of `live` that shows more of its day than what's kept; writes the file when one did. */
+  /**
+   * Keeps each of `live` that shows more of its day than what's kept; writes the file when one did. A
+   * day after tomorrow, before the oldest kept, or with a figure the file wouldn't take back (not
+   * finite, say) isn't kept (W180, U-F2 and U-F3).
+   */
   update(live: Iterable<DayTotals>): void {
     let changed = false;
+    const now = this.#now();
+    const latest = latestKept(now);
+    const oldest = oldestKept(now);
     for (const day of live) {
-      if (!DAY.test(day.day) || !showsMore(day, this.#days.get(day.day))) continue;
+      if (!DAY.test(day.day) || day.day > latest || day.day < oldest || !figuresOk(day) || !showsMore(day, this.#days.get(day.day))) continue;
       const models = modelRecord();
       for (const [model, tokens] of Object.entries(day.models)) addModel(models, model, tokens);
       this.#days.set(day.day, { day: day.day, main: { ...day.main }, subagent: { ...day.subagent }, models: capModels(models) });
       changed = true;
     }
     if (!changed) return;
-    const days = this.all();
-    for (const old of days.slice(0, Math.max(0, days.length - DAYS_KEPT_MAX))) this.#days.delete(old.day);
+    this.#prune(now);
     this.#write();
+  }
+
+  /** Drops the days older than DAYS_KEPT_MAX days. */
+  #prune(now: number): void {
+    const oldest = oldestKept(now);
+    for (const day of this.#days.keys()) if (day < oldest) this.#days.delete(day);
   }
 
   /**
@@ -219,9 +252,9 @@ export class DayStore {
    */
   #write(): void {
     if (this.#file === undefined || this.#home === undefined) return;
-    for (const day of readDaysFile(this.#file)) if (showsMore(day, this.#days.get(day.day))) this.#days.set(day.day, day);
-    const all = this.all();
-    for (const old of all.slice(0, Math.max(0, all.length - DAYS_KEPT_MAX))) this.#days.delete(old.day);
+    const now = this.#now();
+    for (const day of readDaysFile(this.#file, now)) if (showsMore(day, this.#days.get(day.day))) this.#days.set(day.day, day);
+    this.#prune(now);
     const temporary = `${this.#file}.${randomBytes(6).toString('hex')}.tmp`;
     try {
       ensureLaunchDir(this.#home);

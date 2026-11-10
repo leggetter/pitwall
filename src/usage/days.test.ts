@@ -114,6 +114,35 @@ describe('the kept days', () => {
     expect(readDaysFile(path.join(home, 'missing.json'), NOW)).toEqual([]);
   });
 
+  it('keeps no day with a figure it could not read back, such as Infinity or NaN (W180, U-F2)', () => {
+    const store = new DayStore({ home, now: () => NOW });
+    store.update([
+      { ...day('2026-11-09', 2), main: { ...tokens(2), input: Number.POSITIVE_INFINITY } },
+      { ...day('2026-11-08', 2), main: { ...tokens(2), cost: Number.NaN } },
+      day('2026-11-07', 2, { 'claude-opus-5-5': { ...tokens(2), output: 2e15 } }),
+      day('2026-11-06', 2),
+    ]);
+    expect(store.all().map((each) => each.day)).toEqual(['2026-11-06']);
+    expect(readDaysFile(path.join(home, DAYS_FILE_NAME), NOW).map((each) => each.day)).toEqual(['2026-11-06']);
+  });
+
+  it('keeps no day after tomorrow, and drops days by age, never by count, so future ones push out nothing (W180, U-F3)', () => {
+    const store = new DayStore({ home, now: () => NOW });
+    // A real day 60 days back, whose transcripts are gone.
+    store.update([day('2026-09-11', 4)]);
+    const future: DayTotals[] = [];
+    for (let i = 3; i < 403; i++) {
+      const when = new Date(NOW + i * 86_400_000);
+      future.push(day(`${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, '0')}-${String(when.getDate()).padStart(2, '0')}`, 1));
+    }
+    store.update([...future, day('2026-11-11', 1)]);
+    expect(store.all().map((each) => each.day)).toEqual(['2026-09-11', '2026-11-11']);
+    // Older than DAYS_KEPT_MAX days: dropped as the next day is written.
+    const later = new DayStore({ home, now: () => NOW + 345 * 86_400_000 });
+    expect(later.get('2026-09-11')).toBeUndefined();
+    expect(later.get('2026-11-11')?.main.calls).toBe(1);
+  });
+
   it('without a home, keeps the days in memory and writes nothing', () => {
     const store = new DayStore({ now: () => NOW });
     store.update([day('2026-11-09', 1)]);

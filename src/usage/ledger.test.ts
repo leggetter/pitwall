@@ -147,6 +147,27 @@ describe('the ledger', () => {
     expect(scans.map((scan) => scan.agentType)).toEqual([undefined, undefined]);
   }, 5000);
 
+  it('drops a line over the cap, counts it as malformed, and never reads it again (W180, U-F1)', async () => {
+    const a = file('aaaaaaaa-0000-4000-8000-000000000001.jsonl');
+    // A line with no newline, longer than the cap: what's read of it is dropped, not kept for later.
+    await writeFile(a, `${call('m1', at(3))}\n${'y'.repeat(3000)}`);
+    await touch(a, 2);
+    const ledger = createUsageLedger({ projectsDir: projects, now: () => NOW, maxLineBytes: 1000 });
+    const first = await ledger.refresh(NOW - 86_400_000);
+    expect(ledger.scans()[0]!.calls.map((c) => c.id)).toEqual(['m1']);
+    expect(first.bytesRead).toBeGreaterThan(3000);
+    // Written to again, the skipped line isn't read again: only what's new.
+    await appendFile(a, `${'y'.repeat(500)}\n${call('m2', at(1))}\n${'z'.repeat(1500)}\n${call('m3', at(1))}\n`);
+    await touch(a, 1);
+    const second = await ledger.refresh(NOW - 86_400_000);
+    expect(second.bytesRead).toBeLessThan(3000 + call('m2', at(1)).length + call('m3', at(1)).length);
+    const scan = ledger.scans()[0]!;
+    expect(scan.calls.map((c) => c.id)).toEqual(['m1', 'm2', 'm3']);
+    // The long line and the 1,500-byte one, a line each, never parsed.
+    expect(scan.malformed).toBe(2);
+    expect(scan.lines).toBe(5);
+  });
+
   it('copes with no projects folder', async () => {
     const ledger = createUsageLedger({ projectsDir: path.join(dir, 'missing'), now: () => NOW });
     const stats = await ledger.refresh(0);

@@ -5,7 +5,7 @@
 // node-pty is loaded on the first attach, not at startup. A missing or broken
 // native build then fails that attach with a message, and the rest of pitwall
 // (the index, the session view) keeps working.
-import { accessSync, chmodSync, constants, existsSync } from 'node:fs';
+import { closeSync, constants, existsSync, fchmodSync, fstatSync, openSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 
@@ -92,17 +92,30 @@ export function findSpawnHelper(root: string, platformArch: string): string | un
   return undefined;
 }
 
-/** Adds the execute bit when it's missing. Never throws. */
+/**
+ * Adds the execute bits when the owner's is missing, and nothing else. Never throws. Opened without
+ * following a link, then fstat'ed, and changed through that descriptor only when it's a regular file
+ * of this user's, so a link planted in its place, or a file swapped in after the check, is never
+ * changed, and no read bit is ever added (W180's F1).
+ */
 export function makeExecutable(path: string): void {
+  let fd: number | undefined;
   try {
-    accessSync(path, constants.X_OK);
-    return;
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const stat = fstatSync(fd);
+    const uid = process.getuid?.();
+    if (!stat.isFile() || (uid !== undefined && stat.uid !== uid)) return;
+    if ((stat.mode & 0o100) !== 0) return;
+    fchmodSync(fd, (stat.mode & 0o7777) | 0o111);
   } catch {
-    // Not executable, or gone mid-reinstall: try to set it.
-  }
-  try {
-    chmodSync(path, 0o755);
-  } catch {
-    // Read-only install, or no file: the spawn then fails with node-pty's own error.
+    // A link, a read-only install, or no file: the spawn then fails with node-pty's own error.
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // Already closed.
+      }
+    }
   }
 }

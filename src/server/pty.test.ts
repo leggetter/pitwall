@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -55,6 +55,26 @@ describe('makeExecutable', () => {
     chmodSync(helper, 0o700);
     makeExecutable(helper);
     expect(mode(helper)).toBe(0o700);
+  });
+
+  it('never follows a link, and adds execute bits only, never read ones (W180, F1)', () => {
+    const root = fakeInstall(['prebuilds/darwin-arm64']);
+    const helper = join(root, 'prebuilds/darwin-arm64/spawn-helper');
+    // A private file of the user's, with a link to it where the helper is.
+    const secret = join(root, 'secret');
+    writeFileSync(secret, 'made up');
+    chmodSync(secret, 0o600);
+    rmSync(helper);
+    symlinkSync(secret, helper);
+    makeExecutable(helper);
+    expect(mode(secret)).toBe(0o600);
+    expect(lstatSync(helper).isSymbolicLink()).toBe(true);
+    // A helper of 0600 gets its execute bits, and no read bit.
+    rmSync(helper);
+    writeFileSync(helper, '');
+    chmodSync(helper, 0o600);
+    makeExecutable(helper);
+    expect(mode(helper)).toBe(0o711);
   });
 
   it('does not throw when the helper is gone', () => {

@@ -87,13 +87,15 @@ describe('the arguments and environment each process gets', () => {
     expect(flagsOf(relayArgs({ settings: '{}', model: 'default' }))).toEqual([]);
   });
 
-  it('drops an inherited CLAUDE_CODE_EFFORT_LEVEL only when an effort is passed, and sets the sub-agents\' model only when chosen', () => {
-    const env = { PATH: '/usr/bin', CLAUDE_CODE_EFFORT_LEVEL: 'max', CLAUDE_CODE_SUBAGENT_MODEL: 'opus' };
+  it('drops an inherited CLAUDE_CODE_EFFORT_LEVEL when an effort or Claude Code\'s default is chosen, and sets the sub-agents\' model only when chosen', () => {
+    const env = { PATH: '/usr/bin', CLAUDE_CODE_EFFORT_LEVEL: 'max', CLAUDE_CODE_SUBAGENT_MODEL: 'opus', CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1' };
     expect(withEffort(env, {})).toEqual(env);
-    expect(withEffort(env, { effort: 'default' })).toEqual(env);
-    expect(withEffort(env, { effort: 'low' })).toEqual({ PATH: '/usr/bin', CLAUDE_CODE_SUBAGENT_MODEL: 'opus' });
-    expect(withEffort(env, {}, { model: 'haiku' })).toEqual({ ...env, CLAUDE_CODE_SUBAGENT_MODEL: 'haiku' });
-    expect(withEffort(env, {}, { model: 'default' })).toEqual(env);
+    expect(withEffort(env, { effort: 'low' })).toEqual({ PATH: '/usr/bin', CLAUDE_CODE_SUBAGENT_MODEL: 'opus', CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1' });
+    // "Claude Code's default" means none inherited either, so what runs is what pitwall showed (W180, I2).
+    expect(withEffort(env, { effort: 'default' })).toEqual({ PATH: '/usr/bin', CLAUDE_CODE_SUBAGENT_MODEL: 'opus', CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1' });
+    expect(withEffort(env, {}, { model: 'haiku' })).toEqual({ PATH: '/usr/bin', CLAUDE_CODE_EFFORT_LEVEL: 'max', CLAUDE_CODE_SUBAGENT_MODEL: 'haiku' });
+    expect(withEffort(env, {}, { model: 'default' })).toEqual({ PATH: '/usr/bin', CLAUDE_CODE_EFFORT_LEVEL: 'max' });
+    expect(withEffort({ ...env, claude_code_subagent_model_force: '1' }, {}, { model: 'default' })).toEqual({ PATH: '/usr/bin', CLAUDE_CODE_EFFORT_LEVEL: 'max' });
     // A new object: what it was given is unchanged.
     expect(env.CLAUDE_CODE_EFFORT_LEVEL).toBe('max');
   });

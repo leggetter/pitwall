@@ -69,8 +69,10 @@ export function priceKey(model: string): string {
     .replace(/[-@]\d{8}$/, '');
 }
 
+/** Only the table's own keys: a model id from a transcript such as `constructor` or `__proto__` is no price (W180, U-F2). */
 export function priceOf(model: string): ModelPrice | undefined {
-  return PRICES[priceKey(model)];
+  const key = priceKey(model);
+  return Object.hasOwn(PRICES, key) ? PRICES[key] : undefined;
 }
 
 export interface PricedUsage {
