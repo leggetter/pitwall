@@ -1,6 +1,7 @@
 // The supervisor (M5, W114; docs/design-system.md, 4: Supervisor): the repo list's item, first, above
 // Needs you, with its status and its drafts' count, which Needs you and the page title count too; its
-// panel over the page as ?supervisor, one history entry, beside a session's view, which stays (W177):
+// panel over the page as ?supervisor, one history entry, beside a session's view, which stays (W177; from the URL
+// from 900 to 999 px, where the repo list and its item are inert under the view):
 // from 1,200 px covering the right of the widened third column, below over the view, which is inert
 // under it; Escape closes it first, and a session opened from it keeps it from 1,200 px; a new
 // conversation's questions, which fill the box; a message that starts it, the working line, and its
@@ -772,9 +773,20 @@ const part: Part = {
       allowNew();
       await t.fresh({ search: '?view=all', supervisor: 'idle' });
       await openFromRow(t, NAMES.conversation);
-      await openRepoList(t);
-      await page.click('the Supervisor item', ITEM);
-      await page.waitFor('the panel', `!!${SVIEW}?.querySelector('h2') && document.activeElement === ${SVIEW}.querySelector('h2')`);
+      // From 900 to 999 px the view over the list reaches into the repo list, which is inert under it with
+      // the Supervisor item (3: Session view, "overlay clears the sidebar"): no click opens the panel beside
+      // the session there, so a link or a reload with both in the URL does, as it does at any width.
+      const reposCovered = t.layout === 'sidebar' && t.viewport.width < 1000;
+      if (reposCovered) {
+        t.expect(await page.evaluate<boolean>(`!!${ITEM}?.closest('[inert]')`), 'below 1,000 px the Supervisor item is inert under the view, with the repo list');
+        allowNew();
+        await t.fresh({ search: `${await page.evaluate<string>('location.search')}&supervisor`, supervisor: 'idle' });
+        await page.waitFor('the panel over the session view', `!!${SVIEW}?.querySelector('h2') && ${viewName} === ${JSON.stringify(NAMES.conversation)}`);
+      } else {
+        await openRepoList(t);
+        await page.click('the Supervisor item', ITEM);
+        await page.waitFor('the panel', `!!${SVIEW}?.querySelector('h2') && document.activeElement === ${SVIEW}.querySelector('h2')`);
+      }
       const search = await page.evaluate<string>('location.search');
       t.expect(search.includes('session=') && search.endsWith('&supervisor'), 'the session kept in the URL, the panel added', search);
       t.expectEqual(
@@ -809,7 +821,9 @@ const part: Part = {
       await page.key('Escape');
       await page.waitFor('the panel closed, the session view kept', `!${SVIEW} && !!document.querySelector('#session-view')`);
       t.expect(!(await page.evaluate<string>('location.search')).includes('supervisor'), 'and gone from the URL');
-      if (t.layout !== 'drawer') await page.waitFor('focus back on the item', `document.activeElement === ${ITEM}`);
+      // Where the item is inert, and opened nothing, focus goes to the session view's heading.
+      if (reposCovered) await page.waitFor('focus on the session view’s heading', `${focused} === 'the view heading'`);
+      else if (t.layout !== 'drawer') await page.waitFor('focus back on the item', `document.activeElement === ${ITEM}`);
     });
 
     await t.step('with --no-supervisor: no item, and ?supervisor says it’s off', async () => {
