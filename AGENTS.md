@@ -124,8 +124,10 @@ src/usage/               the usage report's reads and totals (M5.1, W131): scan.
                          numbers only, report.ts aggregates them by repo, model, day, hour and sub-agent,
                          prices.ts has the API list prices behind its stand-in cost, format.ts the text tables,
                          rateLimits.ts the plan's five-hour and weekly percentages from `/usage`, with no model
-                         call (W157, spike 013), fail-soft to "unavailable".
-                         Under src/, so built, because M5.2's Usage view will reuse it from the server
+                         call (W157, spike 013), fail-soft to "unavailable". The Usage view's (W158): ledger.ts
+                         reads each transcript on from where it stopped, days.ts keeps each day's totals in
+                         $PITWALL_HOME/usage-days.json, view.ts builds a window's figures, service.ts puts them
+                         together for src/server/usageRoutes.ts' GET /api/usage
 src/cli.ts               the `pitwall` command (bin, built to dist/cli.js)
 src/config.ts            the config file (W103, D24): ~/.pitwall/config.json or --config, JSON with comments,
                          the roots and each root's GitHub owners, ownersByRoot() for the PR side, and `work`,

@@ -32,6 +32,8 @@ import { childEnvironment } from './server/command.js';
 import { createRelayManager, DEFAULT_PORT, PortInUseError, startServer } from './server/index.js';
 import { createClaudeDefaultsReader } from './server/claudeDefaults.js';
 import { createWorkStore } from './server/work.js';
+import { isPitwallOwn } from './server/own.js';
+import { createUsageSource } from './usage/service.js';
 import { type DirCheckContext, LaunchDirError, pitwallHome, prepareLaunchDir, removeWhenUsed, writeLaunchFile } from './server/launch.js';
 import { RELAY_NAME } from './server/relayPrompt.js';
 import { SUPERVISOR_NAME } from './supervisor/prompt.js';
@@ -601,10 +603,13 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   // The supervisor (M5, W113): started only when the page asks. The index leaves it out, as it does the relay.
   // With --no-supervisor, there's none, and pitwall never runs it.
   const supervisor = command.supervisor ? createSupervisor({ work: () => work.choice('supervisor') }) : undefined;
+  // The Usage view's source (W158): reads the transcripts and the plan's week from `/usage` (W157) only
+  // when the view asks. The index leaves its `/usage` call out, as it does a recap call.
+  const usage = createUsageSource({ pitwallHome: pitwallHome() });
   const indexer = startIndexer({
     roots,
     intervalMs,
-    exclude: (row) => relay.isRelay(row) || recaps?.isOwn(row) === true || supervisor?.isOwn(row) === true,
+    exclude: isPitwallOwn({ relay, recaps, supervisor, usage }),
     ...(recaps === undefined ? {} : { sessionFacts: (facts) => recaps.observe(facts) }),
     relayExchange: (sessionId) => relay.exchange(sessionId),
     relayAlert: () => relay.alert(),
@@ -638,12 +643,14 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
       prs: command.prs ? createPrPoller({ index: indexer, ownersByRoot: ownersByRoot(config, roots) }) : prsOff(),
       ...(recaps === undefined ? {} : { recaps }),
       ...(supervisor === undefined ? {} : { supervisor }),
+      usage,
       ...(command.port === undefined ? {} : { port: command.port }),
     });
   } catch (error) {
     indexer.stop();
     void recaps?.close();
     void supervisor?.close();
+    usage.close();
     if (error instanceof PortInUseError) {
       console.error(
         `pitwall: port ${error.port} on 127.0.0.1 is already in use. Pick another with --port <n>, or use --port 0 for a free one.`,

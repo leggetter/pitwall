@@ -33,7 +33,8 @@
 //      sessionPids()). It isn't a relay: this pitwall's (relay.ts' isRelay), or any session named
 //      RELAY_NAME, as another pitwall's relay is, in the snapshot or the listing. Nor the supervisor
 //      (M5, W113): this pitwall's (Supervisor.isOwn()), or any interactive session named
-//      SUPERVISOR_NAME, as another pitwall's is.
+//      SUPERVISOR_NAME, as another pitwall's is. Nor the Usage view's `/usage` call (W158), by its
+//      source's isOwn().
 //   4. The process started no later than the session did, by the listing's startedAt: ps's `lstart`
 //      is whole seconds, rounded down, so it's never later than the real start, and Claude Code
 //      writes startedAt after its process has started, so the session's own process always passes.
@@ -99,6 +100,8 @@ export interface EndOptions {
   isRelay?: (row: AgentRow) => boolean;
   /** True for a `claude agents` row that is pitwall's supervisor (Supervisor.isOwn()). Default none. */
   isSupervisor?: (row: AgentRow) => boolean;
+  /** True for a `claude agents` row that is another of pitwall's own processes, the Usage view's `/usage` call (W158). Default none. */
+  isOwnProcess?: (row: AgentRow) => boolean;
   /** pitwall's own pid. Default process.pid. */
   selfPid?: number;
   /** The slots shared with stop, remove, resume and open (actions.ts). The server passes its own. Default: new ones. */
@@ -183,6 +186,7 @@ export function registerEndSession(
   const signal = options.signal ?? defaultSignal;
   const isRelay = options.isRelay ?? (() => false);
   const isSupervisor = options.isSupervisor ?? (() => false);
+  const isOwnProcess = options.isOwnProcess ?? (() => false);
   const selfPid = options.selfPid ?? process.pid;
   const slots = options.slots ?? new CommandSlots();
   const endRate = options.endRate ?? DEFAULT_END_RATE;
@@ -286,6 +290,7 @@ export function registerEndSession(
         if (isRelayName(row.name)) return refuse(c, "That's a pitwall relay, which pitwall never ends.", 409);
         if (isSupervisor(row)) return refuse(c, "That's pitwall's own supervisor, which pitwall never ends.", 409);
         if (isSupervisorName(row.name)) return refuse(c, "That's a pitwall supervisor, which pitwall never ends.", 409);
+        if (isOwnProcess(row)) return refuse(c, "That's pitwall's own process, which pitwall never ends.", 409);
 
         // 4. A process that started after the session did isn't the session's: lstart is rounded down, and startedAt is written after the start.
         const sessionStart = Date.parse(row.startedAt);

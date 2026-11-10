@@ -57,6 +57,8 @@
 // The model and effort for each kind of work (W119), pitwall's defaults, the config file's and the
 // app's overrides for this run (work.ts):
 //
+//   GET /api/usage                      then usageRoutes.ts: the Usage view's figures (W158), read only when
+//                                      asked; 404 without a usage source
 //   GET /api/work, POST /api/work       then work.ts: WorkSettings; POST replaces the overrides, JSON,
 //                                      at most 4 KiB, each value checked, else 400 and nothing changes
 //   /mcp                                outside /api/*, so neither the token nor the apiKey is taken
@@ -133,6 +135,7 @@ import { resolveSession } from './sessions.js';
 import { BUILDING_PAGE, BUILDING_SCRIPT, BUILDING_SCRIPT_PATH, resolveStaticFile } from './static.js';
 import { HandshakeSlots } from './handshake.js';
 import { DEFAULT_AUTH_TIMEOUT_MS, handleClient, MAX_PAYLOAD_BYTES } from './websocket.js';
+import { registerUsage } from './usageRoutes.js';
 import { createWorkStore, registerWork } from './work.js';
 
 export const DEFAULT_PORT = 4517;
@@ -368,6 +371,7 @@ export async function startServerWithInternals(
     registerEndSession(app, indexer, {
       isRelay: (row) => relay.isRelay(row) || recaps?.isOwn(row) === true,
       isSupervisor: (row) => supervisor?.isOwn(row) === true,
+      isOwnProcess: (row) => options.usage?.isOwn(row) === true,
       ...internals.end,
       slots: commandSlots,
     });
@@ -378,6 +382,7 @@ export async function startServerWithInternals(
     registerSpinOffs(app, { snapshots: indexer });
     registerSupervisor(app, supervisor, supervisorActions);
     registerMcp(app, mcp);
+    registerUsage(app, options.usage);
     registerWork(app, work, async (dir) => {
       const checked = await checkDirectory(dir, indexer.latest()?.roots ?? []);
       return checked.ok ? checked.path : undefined;
@@ -486,6 +491,8 @@ export async function startServerWithInternals(
         recaps?.close(),
         // Its stdin closed, then SIGTERM and SIGKILL if it lingers; its MCP config removed.
         supervisor?.close(),
+        // The Usage view's `/usage` call, if one is running (W158).
+        options.usage?.close(),
       ]).then(() => undefined);
       return closed;
     },
