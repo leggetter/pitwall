@@ -538,6 +538,11 @@ export interface IndexSnapshot {
   recaps?: RecapHealth;
   /** The supervisor (M5, SupervisorState): absent with `--no-supervisor`. */
   supervisor?: SupervisorState;
+  /**
+   * 'on' when pitwall reads the plan's percentages for the header's run rate (W159): the page then
+   * asks RUN_RATE_PATH while it's visible. Absent with `--no-usage`, and the header shows none.
+   */
+  planUsage?: 'on';
 }
 
 /** Why pitwall stopped using its relay for this run (D8). */
@@ -2698,6 +2703,8 @@ export interface UsageView {
    * the split, but in no repo's or session's row. Absent when nothing.
    */
   history?: UsageTokens & { days: number };
+  /** The pace beside the plan's week (W159), from the same read. Absent where no source sets it. */
+  runRate?: RunRate;
   scan: {
     at: string;
     files: number;
@@ -2708,3 +2715,109 @@ export interface UsageView {
 }
 
 export const USAGE_ROWS_MAX = 25;
+
+// --- The run rate (M5.2, W159) ----------------------------------------------------------------------
+
+/**
+ * The header's run rate (W159): GET RUN_RATE_PATH answers RunRate. The plan's percentages from
+ * `/usage` (W157), read through the reader's 5-minute cache only when a visible page asks, and the
+ * pace against a weekend reserve, with a projection once the week's own readings allow one.
+ */
+export const RUN_RATE_PATH = '/api/run-rate';
+
+/** How often a visible page asks: the reader keeps a read this long anyway (RATE_LIMITS_TTL_MS). */
+export const RUN_RATE_POLL_MS = 5 * 60_000;
+/** A figure older than this shows its age, so a stale one is never presented as current. */
+export const RUN_RATE_AGE_SHOWN_MS = 10 * 60_000;
+/** A window's figure turns amber at this share used, and red at the next. */
+export const USAGE_AMBER_PERCENT = 70;
+export const USAGE_RED_PERCENT = 90;
+
+export type UsageLevel = 'normal' | 'amber' | 'red';
+
+export const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
+export type Weekday = (typeof WEEKDAYS)[number];
+
+/**
+ * The weekend reserve (Phil, 2026-11-06): at most `percent` of the plan's week used by `day` at
+ * `time`, local time. The config file's `runRate` (README's Configuration); 80% by Friday 18:00 unless
+ * it says otherwise.
+ */
+export interface RunRateTarget {
+  percent: number;
+  day: Weekday;
+  /** HH:MM, 24-hour. */
+  time: string;
+}
+
+export interface RunRatePace {
+  /** When the target falls in this week, ISO 8601. */
+  targetAt: string;
+  /**
+   * The line: what the week may have used by the reading's time to keep the reserve. From 0 at the
+   * week's start to the target's percent at targetAt, then on to 100 at the reset.
+   */
+  line: number;
+  /** Used less the line, in percentage points: above 0 is over the line. */
+  points: number;
+  /** Over the line by RUN_RATE_AHEAD_POINTS or more. */
+  ahead: boolean;
+  /** The target's time has passed: the line now runs from the target's percent to 100 at the reset. */
+  pastTarget: boolean;
+}
+
+/** How far over the line counts as ahead of pace, so a point's rounding doesn't flip the badge. */
+export const RUN_RATE_AHEAD_POINTS = 3;
+
+/**
+ * When the week would reach 100% at this rate, as a range (W159, PLAN.md): between the week's own
+ * average since its reset and the last day's rate, each widened by the readings' rounding. 'thin'
+ * until the week's readings span RUN_RATE_MIN_SPAN_HOURS.
+ */
+export type RunRateProjection =
+  | { status: 'thin' }
+  | { status: 'used-up' }
+  /** Even at the faster rate it lasts to the reset. */
+  | { status: 'lasts' }
+  | {
+      status: 'range';
+      /** At the faster rate, ISO 8601. */
+      earliest: string;
+      /** At the slower rate, ISO 8601; null when that lasts past the reset. */
+      latest: string | null;
+      /** The two rates, in percentage points an hour. */
+      perHour: { low: number; high: number };
+    };
+
+export const RUN_RATE_MIN_SPAN_HOURS = 6;
+
+export interface RunRateWindow {
+  usedPercentage: number;
+  /** ISO 8601; null when the server gave none. */
+  resetsAt: string | null;
+  level: UsageLevel;
+}
+
+export interface RunRateWeek extends RunRateWindow {
+  /** Null without a reset time, since the week's start isn't known. */
+  pace: RunRatePace | null;
+  projection: RunRateProjection | null;
+}
+
+export type RunRate =
+  /** `--no-usage`: pitwall reads no percentages. */
+  | { status: 'off' }
+  | { status: 'unavailable'; readAt: string; reason: string }
+  | {
+      status: 'available';
+      /** When the figures were read, ISO 8601: older than RUN_RATE_AGE_SHOWN_MS, the page says so. */
+      readAt: string;
+      /**
+       * Set when the latest read failed and these are the last kept reading's, the week only: why the
+       * read failed. The page shows its age.
+       */
+      fallback?: { reason: string };
+      target: RunRateTarget;
+      sevenDay: RunRateWeek | null;
+      fiveHour: RunRateWindow | null;
+    };

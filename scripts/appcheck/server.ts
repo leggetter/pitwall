@@ -372,6 +372,8 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       const answer = world.usage(key as UsageWindowKey);
       return answer.body === undefined ? end(res, answer.status) : json(res, answer.status, answer.body);
     }
+    // The header's run rate (W159): the made-up state the world is set to.
+    if (method === 'GET' && url.pathname === protocol.RUN_RATE_PATH) return json(res, 200, world.runRate());
     if (method === 'POST' && url.pathname === protocol.WORK_PATH) {
       const body = await readJson(req);
       const result = work.update(body);

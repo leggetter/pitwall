@@ -152,6 +152,7 @@ import { useLayout } from '../layout.js';
 import { supervisorLast, useOpenSession, withSession, type OpenSession } from '../openSession.js';
 import { useOpenPr, withPr } from '../openPr.js';
 import { useOpenUsage } from '../usage.js';
+import { useRunRate } from '../runRate.js';
 import { approvalsWaiting, asSupervisorState, SUPERVISOR_DRAFT_ID, SUPERVISOR_VIEW_ID, useOpenSupervisor, withSupervisor } from '../supervisor.js';
 import { usePrRefresh } from '../prRefresh.js';
 import { listNow, prKey, prListState, prName, prsOff, SEARCH_NAMES, sessionsFor, strongPrsOf } from '../prs.js';
@@ -1223,6 +1224,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // keeps it, so the snapshot says it's flagged as soon as it is; the toast says what came of asking
   // the session, with Undo. Taking it away from the row needs no toast, as the toggle shows it.
   const api = useContext(ApiContext);
+  // The run rate on the header's Usage button (W159): asked for only while the server reads the plan's
+  // percentages, the connection is live and this page is visible.
+  const runRate = useRunRate(api, snapshot?.planUsage === 'on' && state === 'live');
   const flagKey = (sessionId: string) => `flag:${sessionId}`;
   const setFlag = (session: SessionSummary, on: boolean, from: 'row' | 'menu') => {
     if (!api) return;
@@ -2026,6 +2030,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         onShortcuts={() => setShortcutsOpen(true)}
         onPreferences={() => setPreferencesOpen(true)}
         onUsage={() => usageUrl.show()}
+        runRate={runRate}
         tabs={
           tab === undefined
             ? undefined

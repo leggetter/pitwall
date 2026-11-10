@@ -1,6 +1,6 @@
 // The app's header (docs/design-system.md, 3): the Repos button below the sidebar breakpoint, the
 // wordmark and the roots on the left; New session, the connection badge, when the list was updated,
-// Usage (W158, UsageDialog.tsx), the theme switch, Preferences (W59, Preferences.tsx) and the
+// Usage (W158, UsageDialog.tsx), with the run rate on it (W159, UsageButton.tsx), the theme switch, Preferences (W59, Preferences.tsx) and the
 // keyboard shortcuts button on the right. At 600 px and narrower the right side wraps under the wordmark. The roots show home as ~,
 // with the full paths in a tooltip; the update time ticks on the shared clock, with the absolute
 // time in its tooltip.
@@ -20,6 +20,7 @@
 // badge on one, stays in sight at 320 px. With one root it's exactly as it was.
 
 import type { RefObject } from 'react';
+import type { RunRate } from '../../../src/shared/protocol.js';
 import type { ConnectionState } from '../connection.js';
 import { formatRoots, plainText } from '../format.js';
 import { SHORTCUT_KEYS, useShortcuts } from '../shortcuts.js';
@@ -32,7 +33,7 @@ import { RootTabs, type RootTabsProps } from './RootTabs.js';
 import { ThemeSwitch } from './ThemeSwitch.js';
 import { Timestamp } from './Timestamp.js';
 import { Tooltip } from './Tooltip.js';
-import { USAGE_LABEL } from '../usage.js';
+import { UsageButton } from './UsageButton.js';
 
 export interface HeaderProps {
   state: ConnectionState;
@@ -56,11 +57,13 @@ export interface HeaderProps {
   onPreferences?: (() => void) | undefined;
   /** Opens the Usage view (W158). Its button, before the theme switch, shows only when this is given. */
   onUsage?: (() => void) | undefined;
+  /** The run rate on the Usage button (W159), while the page asks for it. */
+  runRate?: RunRate | undefined;
 }
 
 export const SHORTCUTS_LABEL = 'Keyboard shortcuts';
 
-export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOpen = false, reposRef, onShortcuts, tabs, onPreferences, onUsage }: HeaderProps) {
+export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOpen = false, reposRef, onShortcuts, tabs, onPreferences, onUsage, runRate }: HeaderProps) {
   const shortcuts = useShortcuts();
   const tabbed = tabs !== undefined && tabs.tabs.length > 1;
   return (
@@ -95,13 +98,7 @@ export function Header({ state, roots, updatedAt, onNewSession, onRepos, reposOp
         )}
         <ConnectionBadge state={state} />
         {updatedAt && <Timestamp className="updated" at={updatedAt} format="updated" />}
-        {onUsage && (
-          <Tooltip content={USAGE_LABEL} relation="label">
-            <button type="button" className="icon-button ghost md" aria-haspopup="dialog" onClick={onUsage}>
-              <Icon name="usage" />
-            </button>
-          </Tooltip>
-        )}
+        {onUsage && <UsageButton onUsage={onUsage} runRate={runRate} />}
         <ThemeSwitch />
         {onPreferences && (
           <Tooltip content={PREFERENCES_LABEL} relation="label">

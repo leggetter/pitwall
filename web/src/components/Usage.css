@@ -257,3 +257,81 @@
     background: CanvasText;
   }
 }
+
+/*
+ * The header's Usage button with the run rate on it (W159): a ghost button, the icon, then each
+ * window's figure as a subtle badge in its level's tone, "Ahead of pace" while the week is over the
+ * reserve's line, and the reading's age once it's over 10 minutes old.
+ */
+.usage-meter {
+  gap: var(--pw-space-1-5);
+  padding-inline: var(--pw-space-1-5);
+}
+
+.usage-meter .badge {
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-meter-ahead-icon {
+  display: none;
+  width: 14px;
+  height: 14px;
+  margin-inline-end: var(--pw-space-0-5);
+  vertical-align: -2px;
+}
+
+/* At 600 px and narrower, the week's figure alone on screen; the rest stays in the button's name. */
+@container pitwall (max-width: 600px) {
+  .usage-meter .usage-meter-wide {
+    position: absolute;
+    /* A badge's own min-width would keep it 20 px wide. */
+    min-width: 0;
+    min-height: 0;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .usage-meter .usage-meter-ahead-icon {
+    display: inline-block;
+  }
+}
+
+.usage-meter-age {
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  font-weight: var(--pw-weight-regular);
+  line-height: var(--pw-leading-s);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The pace beside the plan's week in the Usage view's summary (W159). */
+.usage-pace {
+  flex: 0 1 auto;
+  min-width: 10rem;
+  max-width: min(100%, 26rem);
+}
+
+.usage-pace-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-1-5);
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-m);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-pace .field-hint + .field-hint {
+  margin-top: var(--pw-space-0-5);
+}
+
+.usage-pace-value[data-ahead] {
+  color: var(--pw-warning-fg);
+}

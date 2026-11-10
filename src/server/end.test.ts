@@ -552,7 +552,12 @@ describe('end session: the fresh listing’s guards', () => {
 
   it('never ends the Usage view’s `/usage` call (W158), by its source’s isOwn()', async () => {
     const usage: UsageSource = {
+      planReads: true,
       view: async () => {
+        throw new Error('not read here');
+      },
+      runRate: async () => ({ status: 'off' }),
+      report: async () => {
         throw new Error('not read here');
       },
       isOwn: (each) => each.pid === PID,

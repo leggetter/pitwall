@@ -5,7 +5,7 @@
 //
 // - The window is a row of tabs, This week first, which is the plan's week from its reset when
 //   pitwall can read it (W157), else the last 7 days. The plan's percentage and reset lead the
-//   summary; W159's pace goes beside them.
+//   summary, with the run rate's pace and projection beside them (W159).
 // - Cache writes and cache reads are columns of their own, never summed with input and output into
 //   one total: 97.7% of tokens are cache reads (W131). Cost is labelled as an estimate everywhere.
 // - Every figure is in a table. The by-day table's cost column carries a bar, one series in the
@@ -17,14 +17,16 @@ import { useContext, useId, useLayoutEffect, useRef, useState, type ReactNode, t
 import type { SessionSummary, UsageBucket, UsageTokens, UsageView, UsageWindowKey } from '../../../src/shared/protocol.js';
 import { USAGE_WINDOWS } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
-import { plainText } from '../format.js';
+import { plainText, relativeTime } from '../format.js';
 import { modelText } from '../modelEffort.js';
 import { moveTabFocus } from '../tabs.js';
+import { lineText, paceText, projectionText, showsAge, targetText } from '../runRate.js';
 import { bucketText, costText, planReasonText, resetText, tokenText, USAGE_LABEL, useUsage, WINDOW_LABELS, windowText } from '../usage.js';
 import { Alert } from './Alert.js';
 import { Button } from './Button.js';
 import { CodeText } from './CodeText.js';
 import { Dialog } from './Dialog.js';
+import { Icon } from './Icon.js';
 import { Spinner } from './Spinner.js';
 import { Timestamp } from './Timestamp.js';
 import './Usage.css';
@@ -128,6 +130,7 @@ function UsageBody({ view, sessions }: { view: UsageView; sessions: readonly Ses
         <p className="usage-window">{windowText(view)}</p>
         <div className="usage-summary">
           <PlanFigure view={view} />
+          <PaceFigure view={view} />
         </div>
         <p className="usage-empty">No calls in this window.</p>
       </>
@@ -138,6 +141,7 @@ function UsageBody({ view, sessions }: { view: UsageView; sessions: readonly Ses
       <p className="usage-window">{windowText(view)}</p>
       <div className="usage-summary">
         <PlanFigure view={view} />
+        <PaceFigure view={view} />
         <dl className="usage-stats">
           <Stat label="Est. cost" value={costText(view.totals.cost)} lead />
           {COLUMNS.map(([field, label]) => (
@@ -237,6 +241,36 @@ function PlanFigure({ view }: { view: UsageView }) {
       <p className="usage-plan-label">Plan's week</p>
       <p className="usage-plan-value">{Math.round(week.usedPercentage)}% used</p>
       {week.resetsAt !== null && <p className="field-hint">Resets {resetText(week.resetsAt)}</p>}
+    </div>
+  );
+}
+
+/**
+ * The pace against the weekend reserve (W159), beside the plan's week: how far over or under the line,
+ * the line itself, and the projection, or why there's none yet. Nothing when the week isn't read.
+ */
+function PaceFigure({ view }: { view: UsageView }) {
+  const rate = view.runRate;
+  if (rate?.status !== 'available' || rate.sevenDay === null || rate.sevenDay.pace === null) return null;
+  const { pace, projection } = rate.sevenDay;
+  // Never a stale reading as current: one over 10 minutes old, or standing in for a failed read, says how old.
+  const now = Date.now();
+  const projected = projectionText(projection);
+  return (
+    <div className="usage-pace">
+      <p className="usage-plan-label">Pace for {rate.target.percent}% by {targetText(rate.target)}</p>
+      <p className="usage-pace-value" data-ahead={pace.ahead || undefined}>
+        {pace.ahead && <Icon name="warning" />}
+        {paceText(pace)}
+      </p>
+      <p className="field-hint">{lineText(pace, rate.target)}</p>
+      {projected !== undefined && <p className="field-hint">{projected}</p>}
+      {(rate.fallback !== undefined || showsAge(rate.readAt, now)) && (
+        <p className="field-hint usage-pace-age">
+          From a reading {relativeTime(rate.readAt, now)}
+          {rate.fallback !== undefined ? ": pitwall's latest read of the plan's week failed." : '.'}
+        </p>
+      )}
     </div>
   );
 }
