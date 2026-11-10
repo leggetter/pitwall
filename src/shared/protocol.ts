@@ -2595,3 +2595,116 @@ export interface WorkUpdate {
  * `claude`'s defaults for sessions. One that isn't is left out, as if none were given.
  */
 export const WORK_PATH = '/api/work';
+
+// --- Usage (M5.2, W158) -----------------------------------------------------------------------------
+
+/**
+ * The Usage view's data (W158): GET USAGE_PATH?window=<UsageWindowKey>. Token counts from the
+ * transcripts' own usage records, read on from where the last read stopped, with each day's totals
+ * kept in pitwall's home so a day whose transcripts Claude Code has deleted still counts. Numbers,
+ * model ids, repo directories and session ids only: never a prompt, a message or a title.
+ *
+ * Cache reads and cache writes are their own figures, never summed into one total with fresh input
+ * and output (97.7% of tokens are cache reads, W131). `cost` is a stand-in, at API list prices
+ * (`costLabel`): how a plan's usage limits weigh tokens isn't published.
+ */
+export const USAGE_PATH = '/api/usage';
+
+/**
+ * Which window: 'week', the plan's week, from its reset (W157's `sevenDay.resetsAt`), or the last 7
+ * days when that's unavailable; '24h', the last 24 hours, by hour; '14d' and '30d', today and the
+ * days before it, by day.
+ */
+export type UsageWindowKey = 'week' | '24h' | '14d' | '30d';
+
+export const USAGE_WINDOWS: readonly UsageWindowKey[] = ['week', '24h', '14d', '30d'];
+
+export interface UsageTokens {
+  /** API responses, each counted once however many lines repeat it. */
+  calls: number;
+  /** Fresh input tokens. */
+  input: number;
+  cacheWrite: number;
+  cacheRead: number;
+  output: number;
+  /** USD at API list prices, a stand-in; a model without a price adds nothing. */
+  cost: number;
+}
+
+/** One bar of the chart: a local day, or an hour for '24h'. */
+export interface UsageBucket extends UsageTokens {
+  /** Its start, ISO 8601. */
+  start: string;
+  /** True when its figures are the kept day's, its transcripts since deleted in part or whole. */
+  history?: true;
+}
+
+export interface UsageRepoRow extends UsageTokens {
+  /** The repo's directory, home as ~; or "pitwall's own: recap" and the like. */
+  repo: string;
+  sessions: number;
+}
+
+export type UsageSessionKind = 'main' | 'subagent' | 'pitwall';
+
+export interface UsageSessionRow extends UsageTokens {
+  sessionId: string;
+  repo: string;
+  /** 'pitwall' for pitwall's own calls (recaps, the relay, the supervisor, the usage read). */
+  kind: UsageSessionKind;
+  /** The model with the most of its tokens. */
+  model: string;
+  /** Its sub-agents' runs, whose figures are in the row's. */
+  subagentRuns: number;
+  subagentCost: number;
+}
+
+export interface UsageModelRow extends UsageTokens {
+  model: string;
+}
+
+/** The plan's week, from `/usage` (W157); W159's run rate adds the pace beside it. */
+export type UsagePlan =
+  | {
+      status: 'available';
+      readAt: string;
+      /** null when the server sent no weekly row. */
+      sevenDay: { usedPercentage: number; resetsAt: string | null } | null;
+      fiveHour: { usedPercentage: number; resetsAt: string | null } | null;
+    }
+  | { status: 'unavailable'; readAt: string; reason: string };
+
+export interface UsageView {
+  window: {
+    key: UsageWindowKey;
+    since: string;
+    until: string;
+    /** 'reset' when the week starts at the plan's reset; otherwise the window is days or hours back from now. */
+    from: 'reset' | 'days' | 'hours';
+    bucket: 'day' | 'hour';
+  };
+  plan: UsagePlan;
+  costLabel: string;
+  totals: UsageTokens;
+  buckets: UsageBucket[];
+  /** By stand-in cost, at most USAGE_ROWS_MAX; `rest` sums what's left out. */
+  byRepo: { rows: UsageRepoRow[]; rest?: UsageTokens & { count: number } };
+  bySession: { rows: UsageSessionRow[]; rest?: UsageTokens & { count: number } };
+  byModel: UsageModelRow[];
+  /** Main sessions' own calls against their sub-agents'. pitwall's own calls are main. */
+  split: { main: UsageTokens & { sessions: number }; subagent: UsageTokens & { runs: number } };
+  /**
+   * What the kept days add that no transcript left shows: in the totals, the buckets, by model and
+   * the split, but in no repo's or session's row. Absent when nothing.
+   */
+  history?: UsageTokens & { days: number };
+  scan: {
+    at: string;
+    files: number;
+    /** Files or directories that couldn't be read, and lines that weren't JSON. */
+    unreadable: number;
+    malformed: number;
+  };
+}
+
+export const USAGE_ROWS_MAX = 25;

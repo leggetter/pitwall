@@ -80,6 +80,9 @@ export interface FoundFile {
   sessionId: string;
   subagent: boolean;
   mtimeMs: number;
+  /** Its size in bytes and inode, when found by findTranscripts(), so the ledger can tell it grew or was replaced. */
+  size?: number;
+  ino?: number;
 }
 
 export interface FindResult {
@@ -111,7 +114,7 @@ export async function findTranscripts(projectsDir: string, since: number): Promi
     try {
       const info = await stat(file);
       if (info.mtimeMs < since) result.olderThanWindow++;
-      else result.files.push({ file, sessionId, subagent, mtimeMs: info.mtimeMs });
+      else result.files.push({ file, sessionId, subagent, mtimeMs: info.mtimeMs, size: info.size, ino: info.ino });
     } catch {
       result.unreadable++;
     }
@@ -167,7 +170,7 @@ function resultSize(content: unknown): { chars: number; images: number } {
   return { chars, images };
 }
 
-async function agentTypeOf(file: string): Promise<string | undefined> {
+export async function agentTypeOf(file: string): Promise<string | undefined> {
   try {
     const meta: unknown = JSON.parse(await readFile(file.replace(/\.jsonl$/, '.meta.json'), 'utf8'));
     return isRecord(meta) ? plainName(meta.agentType) : undefined;
@@ -176,14 +179,31 @@ async function agentTypeOf(file: string): Promise<string | undefined> {
   }
 }
 
-const MARKERS = ['"assistant"', '"tool_result"', '"custom-title"', '"agent-name"', 'isCompactSummary', 'compact_boundary'];
+export const MARKERS = ['"assistant"', '"tool_result"', '"custom-title"', '"agent-name"', 'isCompactSummary', 'compact_boundary'];
 
-/** Reads one transcript, keeping only the entries at or after `since` and before `until`. */
-export async function scanTranscript(found: FoundFile, since: number, until: number = Number.POSITIVE_INFINITY): Promise<FileScan> {
+/**
+ * One transcript's reading so far, fed a line at a time: scanTranscript() feeds it a whole file, and
+ * the Usage view's ledger (W158, ledger.ts) feeds it what's new since its last read, so each file is
+ * read on from where the last read stopped. `scan` is up to date after every line.
+ */
+export interface TranscriptState {
+  scan: FileScan;
+  /** One line, without its newline. */
+  feed(line: string): void;
+  /**
+   * Drops the calls and tool results before `cutoff`, and their ids, so a file followed for weeks
+   * holds only what a window can still ask for.
+   */
+  prune(cutoff: number): void;
+}
+
+/** An empty reading of `found`, keeping only the entries at or after `since` and before `until`. */
+export function createTranscriptState(found: FoundFile, since: number, until: number = Number.POSITIVE_INFINITY, agentType?: string): TranscriptState {
   const scan: FileScan = {
     file: found.file,
     sessionId: found.sessionId,
     subagent: found.subagent,
+    ...(agentType === undefined ? {} : { agentType }),
     names: [],
     calls: [],
     toolResults: [],
@@ -198,117 +218,140 @@ export async function scanTranscript(found: FoundFile, since: number, until: num
     usageDiffered: 0,
     unreadable: false,
   };
-  if (found.subagent) scan.agentType = await agentTypeOf(found.file);
   const byId = new Map<string, CallRecord>();
   const toolNames = new Map<string, string>();
   const names = new Set<string>();
   let toolChars = 0;
 
-  try {
-    const lines = createInterface({ input: createReadStream(found.file, { encoding: 'utf8' }), crlfDelay: Infinity });
-    for await (const line of lines) {
-      scan.lines++;
-      if (!MARKERS.some((marker) => line.includes(marker))) continue;
-      let entry: unknown;
-      try {
-        entry = JSON.parse(line);
-      } catch {
-        scan.malformed++;
-        continue;
-      }
-      if (!isRecord(entry)) {
-        scan.malformed++;
-        continue;
-      }
-      scan.parsed++;
-      const name = setNameOf(entry);
-      if (name !== undefined) names.add(name);
-      if (scan.cwd === undefined && typeof entry.cwd === 'string' && path.isAbsolute(entry.cwd)) scan.cwd = entry.cwd;
-      if (entry.isCompactSummary === true || (entry.type === 'system' && entry.subtype === 'compact_boundary')) {
-        toolChars = 0;
-        continue;
-      }
-      const message = entry.message;
-      if (!isRecord(message)) continue;
+  function feed(line: string): void {
+    scan.lines++;
+    if (!MARKERS.some((marker) => line.includes(marker))) return;
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      scan.malformed++;
+      return;
+    }
+    if (!isRecord(entry)) {
+      scan.malformed++;
+      return;
+    }
+    scan.parsed++;
+    const name = setNameOf(entry);
+    if (name !== undefined && !names.has(name)) {
+      names.add(name);
+      scan.names = [...names];
+    }
+    if (scan.cwd === undefined && typeof entry.cwd === 'string' && path.isAbsolute(entry.cwd)) scan.cwd = entry.cwd;
+    if (entry.isCompactSummary === true || (entry.type === 'system' && entry.subtype === 'compact_boundary')) {
+      toolChars = 0;
+      return;
+    }
+    const message = entry.message;
+    if (!isRecord(message)) return;
 
-      if (entry.type === 'assistant') {
-        if (Array.isArray(message.content)) {
-          for (const block of message.content) {
-            if (isRecord(block) && block.type === 'tool_use' && typeof block.id === 'string') {
-              toolNames.set(block.id, plainName(block.name) ?? 'other');
-            }
+    if (entry.type === 'assistant') {
+      if (Array.isArray(message.content)) {
+        for (const block of message.content) {
+          if (isRecord(block) && block.type === 'tool_use' && typeof block.id === 'string') {
+            toolNames.set(block.id, plainName(block.name) ?? 'other');
           }
         }
-        if (typeof message.id !== 'string' || message.id === '') continue;
-        if (message.model === '<synthetic>') {
-          scan.synthetic++;
-          continue;
+      }
+      if (typeof message.id !== 'string' || message.id === '') return;
+      if (message.model === '<synthetic>') {
+        scan.synthetic++;
+        return;
+      }
+      const usage = message.usage;
+      if (!isRecord(usage) || typeof message.model !== 'string' || message.model === '') {
+        scan.noUsage++;
+        return;
+      }
+      const at = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : Number.NaN;
+      if (!Number.isFinite(at)) {
+        scan.noTimestamp++;
+        return;
+      }
+      const writes = count(usage.cache_creation_input_tokens);
+      const split = isRecord(usage.cache_creation) ? usage.cache_creation : undefined;
+      const write1h = split === undefined ? 0 : Math.min(count(split.ephemeral_1h_input_tokens), writes);
+      const call: CallRecord = {
+        id: message.id,
+        at,
+        model: message.model,
+        input: count(usage.input_tokens),
+        cacheWrite5m: writes - write1h,
+        cacheWrite1h: write1h,
+        splitKnown: split !== undefined || writes === 0,
+        cacheRead: count(usage.cache_read_input_tokens),
+        output: count(usage.output_tokens),
+        speed: typeof usage.speed === 'string' ? usage.speed : undefined,
+        geo: typeof usage.inference_geo === 'string' ? usage.inference_geo : undefined,
+        effort: plainName(entry.effort),
+        sidechain: entry.isSidechain === true,
+        toolContext: Math.round(toolChars / 4),
+      };
+      const seen = byId.get(call.id);
+      if (seen !== undefined) {
+        scan.sameFileDuplicates++;
+        if (seen.input !== call.input || seen.cacheRead !== call.cacheRead || seen.output !== call.output || seen.cacheWrite5m + seen.cacheWrite1h !== writes) {
+          scan.usageDiffered++;
+          if (call.output > seen.output) Object.assign(seen, { ...call, toolContext: seen.toolContext, at: seen.at });
         }
-        const usage = message.usage;
-        if (!isRecord(usage) || typeof message.model !== 'string' || message.model === '') {
-          scan.noUsage++;
-          continue;
-        }
-        const at = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : Number.NaN;
+        return;
+      }
+      byId.set(call.id, call);
+      if (at < since || at >= until) {
+        scan.outsideWindow++;
+        return;
+      }
+      scan.calls.push(call);
+      return;
+    }
+
+    if (entry.type === 'user' && Array.isArray(message.content)) {
+      const at = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : Number.NaN;
+      for (const block of message.content) {
+        if (!isRecord(block) || block.type !== 'tool_result' || typeof block.tool_use_id !== 'string') continue;
+        const size = resultSize(block.content);
+        toolChars += size.chars;
         if (!Number.isFinite(at)) {
           scan.noTimestamp++;
           continue;
         }
-        const writes = count(usage.cache_creation_input_tokens);
-        const split = isRecord(usage.cache_creation) ? usage.cache_creation : undefined;
-        const write1h = split === undefined ? 0 : Math.min(count(split.ephemeral_1h_input_tokens), writes);
-        const call: CallRecord = {
-          id: message.id,
-          at,
-          model: message.model,
-          input: count(usage.input_tokens),
-          cacheWrite5m: writes - write1h,
-          cacheWrite1h: write1h,
-          splitKnown: split !== undefined || writes === 0,
-          cacheRead: count(usage.cache_read_input_tokens),
-          output: count(usage.output_tokens),
-          speed: typeof usage.speed === 'string' ? usage.speed : undefined,
-          geo: typeof usage.inference_geo === 'string' ? usage.inference_geo : undefined,
-          effort: plainName(entry.effort),
-          sidechain: entry.isSidechain === true,
-          toolContext: Math.round(toolChars / 4),
-        };
-        const seen = byId.get(call.id);
-        if (seen !== undefined) {
-          scan.sameFileDuplicates++;
-          if (seen.input !== call.input || seen.cacheRead !== call.cacheRead || seen.output !== call.output || seen.cacheWrite5m + seen.cacheWrite1h !== writes) {
-            scan.usageDiffered++;
-            if (call.output > seen.output) Object.assign(seen, { ...call, toolContext: seen.toolContext, at: seen.at });
-          }
-          continue;
-        }
-        byId.set(call.id, call);
-        if (at < since || at >= until) {
-          scan.outsideWindow++;
-          continue;
-        }
-        scan.calls.push(call);
-        continue;
-      }
-
-      if (entry.type === 'user' && Array.isArray(message.content)) {
-        const at = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : Number.NaN;
-        for (const block of message.content) {
-          if (!isRecord(block) || block.type !== 'tool_result' || typeof block.tool_use_id !== 'string') continue;
-          const size = resultSize(block.content);
-          toolChars += size.chars;
-          if (!Number.isFinite(at)) {
-            scan.noTimestamp++;
-            continue;
-          }
-          if (at < since || at >= until) continue;
-          scan.toolResults.push({ id: block.tool_use_id, at, chars: size.chars, images: size.images, tool: toolNames.get(block.tool_use_id) });
-        }
+        if (at < since || at >= until) continue;
+        scan.toolResults.push({ id: block.tool_use_id, at, chars: size.chars, images: size.images, tool: toolNames.get(block.tool_use_id) });
       }
     }
-  } catch {
-    scan.unreadable = true;
   }
-  scan.names = [...names];
-  return scan;
+
+  function prune(cutoff: number): void {
+    if (scan.calls.some((call) => call.at < cutoff)) {
+      const kept: CallRecord[] = [];
+      for (const call of scan.calls) {
+        if (call.at >= cutoff) kept.push(call);
+        else byId.delete(call.id);
+      }
+      scan.calls = kept;
+    }
+    for (const [id, call] of byId) if (call.at < cutoff) byId.delete(id);
+    if (scan.toolResults.some((result) => result.at < cutoff)) scan.toolResults = scan.toolResults.filter((result) => result.at >= cutoff);
+    since = Math.max(since, cutoff);
+  }
+
+  return { scan, feed, prune };
+}
+
+/** Reads one transcript, keeping only the entries at or after `since` and before `until`. */
+export async function scanTranscript(found: FoundFile, since: number, until: number = Number.POSITIVE_INFINITY): Promise<FileScan> {
+  const state = createTranscriptState(found, since, until, found.subagent ? await agentTypeOf(found.file) : undefined);
+  try {
+    const lines = createInterface({ input: createReadStream(found.file, { encoding: 'utf8' }), crlfDelay: Infinity });
+    for await (const line of lines) state.feed(line);
+  } catch {
+    state.scan.unreadable = true;
+  }
+  return state.scan;
 }

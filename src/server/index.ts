@@ -2,6 +2,7 @@ import type { Indexer } from '../index/index.js';
 import type { PrSource } from '../prs/index.js';
 import type { RecapEngine } from '../recaps/engine.js';
 import type { Supervisor } from '../supervisor/supervisor.js';
+import type { UsageSource } from '../usage/service.js';
 import type { RelayManager } from './relay.js';
 import { startServerWithInternals } from './server.js';
 import type { WorkStore } from './work.js';
@@ -69,6 +70,13 @@ export interface ServerOptions {
    * one. Default: a new one with no config, which is pitwall's own defaults.
    */
   work?: WorkStore;
+  /**
+   * The Usage view's source (W158): the one the CLI makes with createUsageSource(), so the indexer can
+   * hide its `/usage` call. The server serves USAGE_PATH from it, End session refuses its call, and
+   * close() stops a call in flight. Without it, USAGE_PATH answers 404 and nothing runs `claude` or
+   * reads a transcript for it, so a test never does.
+   */
+  usage?: UsageSource;
 }
 
 export interface RunningServer {
