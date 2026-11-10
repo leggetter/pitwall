@@ -690,11 +690,50 @@ textarea {
   font-variant-ligatures: none;
 }
 
+/* The right side: the controls, then the Supervisor button (W182), kept on one line together. */
+.app-header-actions,
 .app-header-end {
   display: flex;
   flex: none;
   align-items: center;
   gap: var(--pw-space-2) var(--pw-space-3);
+}
+
+.app-header-supervisor {
+  display: flex;
+  flex: none;
+}
+
+/*
+ * With the Supervisor button (W182), the header wraps when its line has no room, as with root tabs
+ * (below), rather than cut the wordmark or run past the window: the right side goes under the
+ * wordmark, at the right, and wraps within itself if it's wider than a line. The wordmark's side keeps
+ * 6rem before it does, so a long root's path still ends in an ellipsis first. Below 1,000 px the
+ * button's label is hidden (supervisor.css), so the usual states keep one line from 900 px; only the
+ * fullest, with its status, drafts and the run rate ahead of pace, takes two below about 950 px.
+ */
+.app-header.has-supervisor {
+  flex-wrap: wrap;
+  padding-block: var(--pw-space-3);
+}
+
+.app-header.has-supervisor:not(.has-tabs) .app-header-start {
+  flex-basis: 6rem;
+}
+
+.app-header.has-supervisor .app-header-actions {
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
+  margin-inline-start: auto;
+}
+
+.app-header.has-supervisor .app-header-end {
+  flex-shrink: 1;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
 /*
@@ -1005,16 +1044,32 @@ textarea {
   visibility: hidden;
 }
 
-/* At 600 px and narrower, the header's right side wraps under the wordmark. */
-
-
+/*
+ * At 600 px and narrower, the header's right side wraps under the wordmark, but for the Supervisor
+ * button (W182), the most important control, which stays on the top line, at its right: the actions'
+ * box steps aside so the button and the controls are the header's own items, the wordmark's side
+ * takes what the button leaves, and the controls take a whole line of their own.
+ */
 @container pitwall (max-width: 600px) {
   .app-header {
     flex-wrap: wrap;
     padding-block: var(--pw-space-3);
   }
 
+  .app-header-actions {
+    display: contents;
+  }
+
+  .app-header-start {
+    flex: 1 1 0;
+  }
+
+  .app-header-supervisor {
+    order: 1;
+  }
+
   .app-header-end {
+    order: 2;
     flex: 1 1 100%;
     flex-wrap: wrap;
   }
