@@ -338,7 +338,8 @@
   min-width: 0;
 }
 
-.approval-label {
+.approval-label,
+.approval-profile-label {
   color: var(--pw-text-muted);
   font-size: var(--pw-text-s);
   font-weight: var(--pw-weight-medium);
@@ -486,4 +487,36 @@
 /* Attach file (W135), first on the message box's help line: a ghost sm button, its 24 px box overlapping the 20 px line. */
 .supervisor-attach {
   margin-block: calc(-1 * var(--pw-space-0-5));
+}
+
+/*
+ * A new session's or a resume's Profile (W156): its label, the select at its own width, as the card's
+ * sm buttons are, and under it what the pick starts or resumes the session on.
+ */
+.approval-profile {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-1) var(--pw-space-2);
+  min-width: 0;
+}
+
+.approval-profile .select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.approval-profile .select-input {
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--pw-control-sm);
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  text-overflow: ellipsis;
+}
+
+.approval-profile .approval-launch {
+  flex-basis: 100%;
 }

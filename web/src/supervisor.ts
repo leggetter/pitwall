@@ -17,6 +17,7 @@ import {
   CONTEXT_HIGH_TOKENS,
   CONTEXT_WARN_TOKENS,
   isEffortLevel,
+  isSkillName,
   isWorkModel,
   PERMISSION_MODES,
   SUPERVISOR_INTERRUPT_PATH,
@@ -28,6 +29,8 @@ import {
   supervisorApprovalPath,
   WORK_DEFAULT,
   WORK_PROFILE_NAME_PATTERN,
+  WORK_PROFILES_MAX,
+  type ApprovalProfile,
   type ConversationEntry,
   type SavedPermission,
   type SessionLaunch,
@@ -176,7 +179,11 @@ function asApproval(value: unknown): SupervisorApproval | undefined {
     const { directory, name, prompt } = value;
     if (!isText(directory) || directory === '' || !isText(prompt)) return undefined;
     if (name !== undefined && !isText(name)) return undefined;
-    return name === undefined || name.trim() === '' ? { id, kind, directory, prompt, at, expiresAt } : { id, kind, directory, name, prompt, at, expiresAt };
+    // W156: a card offers its profiles whole, or isn't shown, and a new session's always names one of them.
+    const profiles = asCardProfiles(value);
+    if (profiles === false || (profiles.profiles !== undefined && profiles.profile === undefined)) return undefined;
+    const approval: SupervisorApproval = name === undefined || name.trim() === '' ? { id, kind, directory, prompt, at, expiresAt } : { id, kind, directory, name, prompt, at, expiresAt };
+    return { ...approval, ...profiles };
   }
   if (kind === 'resume') {
     const { sessionId, name, directory, text } = value;
@@ -198,9 +205,40 @@ function asApproval(value: unknown): SupervisorApproval | undefined {
     if (isTime(lastActivityAt)) approval.lastActivityAt = lastActivityAt;
     const launch = asLaunch(value.launch);
     if (launch !== undefined) approval.launch = launch;
-    return approval;
+    const profiles = asCardProfiles(value);
+    if (profiles === false) return undefined;
+    return { ...approval, ...profiles };
   }
   return undefined;
+}
+
+/**
+ * A card's `profiles` and `profile` (W156), read whole: every profile well formed, as the server
+ * resolves them, each name once, at most WORK_PROFILES_MAX, and `profile` one of them. False when any
+ * of it isn't, so the card isn't shown, since what it shows must be what goes; nothing when it has none.
+ */
+function asCardProfiles(value: Record<string, unknown>): { profiles?: ApprovalProfile[]; profile?: string } | false {
+  if (value.profiles === undefined) return value.profile === undefined ? {} : false;
+  if (!Array.isArray(value.profiles) || value.profiles.length === 0 || value.profiles.length > WORK_PROFILES_MAX) return false;
+  const profiles: ApprovalProfile[] = [];
+  for (const entry of value.profiles) {
+    const profile = asApprovalProfile(entry);
+    if (profile === undefined || profiles.some((each) => each.name === profile.name)) return false;
+    profiles.push(profile);
+  }
+  if (value.profile === undefined) return { profiles };
+  if (typeof value.profile !== 'string' || !profiles.some((each) => each.name === value.profile)) return false;
+  return { profiles, profile: value.profile };
+}
+
+function asApprovalProfile(value: unknown): ApprovalProfile | undefined {
+  if (!isRecord(value) || typeof value.name !== 'string' || !WORK_PROFILE_NAME_PATTERN.test(value.name)) return undefined;
+  const { model, effort, subagentModel, skill } = value;
+  if (model !== WORK_DEFAULT && !isWorkModel(model, 'session')) return undefined;
+  if (effort !== WORK_DEFAULT && !isEffortLevel(effort)) return undefined;
+  if (subagentModel !== WORK_DEFAULT && !isWorkModel(subagentModel, 'subagents')) return undefined;
+  if (skill !== undefined && !isSkillName(skill)) return undefined;
+  return { name: value.name, model: model as string, effort: effort as ApprovalProfile['effort'], subagentModel: subagentModel as string, ...(skill === undefined ? {} : { skill: skill as string }) };
 }
 
 /**
@@ -501,6 +539,39 @@ export function resumeLaunchText(launch: SessionLaunch): string {
   ];
   const from = launch.profile === undefined ? 'a profile' : `the ${launch.profile} profile${launch.custom === true ? ', customized' : ''}`;
   return `pitwall resumes it on what it started it with, from ${from}: ${parts.join(', ')}.`;
+}
+
+/**
+ * A resume card's Profile choice for resuming as it started (W156): a NUL-prefixed value, as New
+ * session's Customized is, so no profile's name can be it. It sends `profile: null`.
+ */
+export const AS_STARTED = '\u0000as-started';
+
+/** That choice's words: as it started, naming the profile pitwall kept for it, if any (W155). */
+export function asStartedText(launch: SessionLaunch | undefined): string {
+  if (launch?.profile === undefined) return 'As it started';
+  return `As it started (${launch.profile}${launch.custom === true ? ', customized' : ''})`;
+}
+
+/** A profile's model, effort and sub-agents' model, as a card says them (W156). */
+function profileSettings(profile: ApprovalProfile): string {
+  const shown = (value: string) => (value === WORK_DEFAULT ? "Claude Code's default" : value);
+  return `model ${shown(profile.model)}, effort ${shown(profile.effort)}, sub-agents ${shown(profile.subagentModel)}`;
+}
+
+/**
+ * What a new session's card says under its Profile (W156): exactly what the session starts with, and
+ * the skill its first prompt starts with, which must be installed where it runs, as New session says.
+ */
+export function spawnProfileText(profile: ApprovalProfile): string {
+  const skill = profile.skill === undefined ? '' : ` Its first prompt starts with /${profile.skill}, which must be installed where the session runs.`;
+  return `Starts on ${profileSettings(profile)}.${skill}`;
+}
+
+/** What a resume card says under its Profile when one is picked (W156): what it resumes on, never the skill, which runs once. */
+export function resumeProfileText(profile: ApprovalProfile): string {
+  const skill = profile.skill === undefined ? '' : ` Not its skill, /${profile.skill}, which runs only when a session starts.`;
+  return `pitwall resumes it on the ${profile.name} profile: ${profileSettings(profile)}.${skill}`;
 }
 
 /** The warning on a resume card whose saved permission mode skips the prompts (W129, L1). */

@@ -28,7 +28,7 @@ import type { ConnectionView } from '../connection.js';
 import { draftKey } from '../drafts.js';
 import type { StorageSource } from '../groupState.js';
 import type { NavigationEnv } from '../selection.js';
-import { NEW_CONVERSATION_CONFIRM, NEW_CONVERSATION_DONE, SUPERVISOR_CONTEXT_INFO, SUPERVISOR_DRAFT_ID, needsReason } from '../supervisor.js';
+import { asSupervisorState, NEW_CONVERSATION_CONFIRM, NEW_CONVERSATION_DONE, SUPERVISOR_CONTEXT_INFO, SUPERVISOR_DRAFT_ID, needsReason } from '../supervisor.js';
 import { group, minutesAgo, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
 import { descriptionOf, hover, tooltipText } from '../test/tooltips.js';
@@ -911,6 +911,95 @@ describe('its draft cards', () => {
     fireEvent.click(within(main).getByRole('button', { name: 'Open the supervisor' }));
     await settle();
     expect(view()).toBeDefined();
+  });
+});
+
+describe('a draft card’s work profile (W156)', () => {
+  const PROFILES = [
+    { name: 'Build', model: 'claude-opus-5-5', effort: 'high' as const, subagentModel: 'sonnet' },
+    { name: 'Review', model: 'sonnet', effort: 'high' as const, subagentModel: 'sonnet', skill: 'agent-roles:role-reviewer' },
+    { name: 'Docs', model: 'sonnet', effort: 'medium' as const, subagentModel: 'default' },
+  ];
+  const card = () => view()!.querySelector<HTMLElement>('li.approval-card')!;
+  const picker = () => within(card()).getByRole('combobox', { name: 'Profile' }) as HTMLSelectElement;
+  const hint = () => document.getElementById(picker().getAttribute('aria-describedby')!)?.textContent;
+
+  it('a new session’s card shows the supervisor’s pick, what it starts on, and sends the profile you pick', async () => {
+    const fetch = fakeServer();
+    renderDashboard(snap({ status: 'idle', approvals: [{ ...spawn, profile: 'Review', profiles: PROFILES }] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    expect(picker().value).toBe('Review');
+    expect([...picker().options].map((option) => option.textContent)).toEqual(['Build', 'Review', 'Docs']);
+    expect(hint()).toBe(
+      'Starts on model sonnet, effort high, sub-agents sonnet. Its first prompt starts with /agent-roles:role-reviewer, which must be installed where the session runs.',
+    );
+    fireEvent.change(picker(), { target: { value: 'Docs' } });
+    expect(hint()).toBe("Starts on model sonnet, effort medium, sub-agents Claude Code's default.");
+    fireEvent.click(within(card()).getByRole('button', { name: 'Send' }));
+    await settle();
+    expect(posts(fetch)).toEqual([{ url: supervisorApprovalPath('spawn-1'), body: { decision: 'send', profile: 'Docs' } }]);
+    // Off while pitwall takes the answer.
+    expect(picker().disabled).toBe(true);
+  });
+
+  it('Send edit sends the pick too, and a card from a server with no profiles sends none, as before', async () => {
+    const fetch = fakeServer();
+    renderDashboard(snap({ status: 'idle', approvals: [{ ...spawn, profile: 'Build', profiles: PROFILES }, { ...spawn, id: 'spawn-2' }] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    const [first, second] = [...view()!.querySelectorAll<HTMLElement>('li.approval-card')];
+    expect(second!.querySelector('select')).toBeNull();
+    fireEvent.change(within(first!).getByRole('combobox', { name: 'Profile' }), { target: { value: 'Review' } });
+    fireEvent.click(within(first!).getByRole('button', { name: 'Edit' }));
+    await settle();
+    fireEvent.change(within(first!).getByRole('textbox', { name: 'Edit the first prompt' }), { target: { value: 'Only this.' } });
+    fireEvent.click(within(first!).getByRole('button', { name: 'Send edit' }));
+    fireEvent.click(within(second!).getByRole('button', { name: 'Send' }));
+    await settle();
+    expect(posts(fetch)).toEqual([
+      { url: supervisorApprovalPath('spawn-1'), body: { decision: 'edit', text: 'Only this.', profile: 'Review' } },
+      { url: supervisorApprovalPath('spawn-2'), body: { decision: 'send' } },
+    ]);
+  });
+
+  it('a resume’s card offers As it started first, saying what it kept, and sends null for it', async () => {
+    const fetch = fakeServer();
+    const resume: SupervisorApproval = {
+      id: 'r1',
+      kind: 'resume',
+      sessionId: '00000000-0000-4000-8000-00000000a156',
+      name: 'pitwall-test-resume',
+      directory: `${ROOT}/demo-app`,
+      text: 'The user asked me to pass this on: review what you built.',
+      at: minutesAgo(1),
+      expiresAt: minutesAgo(-28),
+      sameName: 1,
+      permission: { kind: 'unknown' },
+      launch: { profile: 'Build', model: 'claude-opus-5-5', effort: 'high', subagentModel: 'sonnet' },
+      profile: 'Review',
+      profiles: PROFILES,
+    };
+    renderDashboard(snap({ status: 'idle', approvals: [resume] }), { fetch, search: '?view=all&supervisor' });
+    await settle();
+    expect(picker().value).toBe('Review');
+    expect([...picker().options].map((option) => option.textContent)).toEqual(['As it started (Build)', 'Build', 'Review', 'Docs']);
+    expect(hint()).toBe('pitwall resumes it on the Review profile: model sonnet, effort high, sub-agents sonnet. Not its skill, /agent-roles:role-reviewer, which runs only when a session starts.');
+    // One launch line, the picker's.
+    expect(card().querySelectorAll('.approval-launch')).toHaveLength(1);
+    fireEvent.change(picker(), { target: { value: picker().options[0]!.value } });
+    expect(hint()).toBe('pitwall resumes it on what it started it with, from the Build profile: model claude-opus-5-5, effort high, sub-agents sonnet.');
+    fireEvent.click(within(card()).getByRole('button', { name: 'Send' }));
+    await settle();
+    expect(posts(fetch)).toEqual([{ url: supervisorApprovalPath('r1'), body: { decision: 'send', profile: null } }]);
+  });
+
+  it('a card whose profiles aren’t well formed isn’t shown, since what it shows must be what goes', () => {
+    const read = (approval: unknown) => asSupervisorState({ status: 'idle', approvals: [approval] })?.approvals;
+    expect(read({ ...spawn, profile: 'Review', profiles: PROFILES })).toHaveLength(1);
+    expect(read({ ...spawn, profile: 'Nope', profiles: PROFILES })).toEqual([]);
+    expect(read({ ...spawn, profiles: PROFILES })).toEqual([]);
+    expect(read({ ...spawn, profile: 'Build' })).toEqual([]);
+    expect(read({ ...spawn, profile: 'Build', profiles: [...PROFILES, { name: 'Bad', model: '--yolo', effort: 'high', subagentModel: 'sonnet' }] })).toEqual([]);
+    expect(read({ ...spawn, profile: 'Build', profiles: [...PROFILES, PROFILES[0]] })).toEqual([]);
   });
 });
 

@@ -252,6 +252,27 @@ const part: Part = {
       await t.shot('cards');
     });
 
+    await t.step('a new session’s Profile (W156): the supervisor’s pick, what it starts on, inside the card, and another pick changes it', async () => {
+      const card = `${CARDS}[1]`;
+      const SELECT = `${card}.querySelector('.approval-profile select')`;
+      const read = `(() => { const s = ${SELECT}; const c = ${card}.getBoundingClientRect(); const p = ${card}.querySelector('.approval-profile'); const r = p.getBoundingClientRect(); const sr = s.getBoundingClientRect(); return { label: p.querySelector('label')?.textContent ?? null, named: p.querySelector('label')?.htmlFor === s.id, value: s.value, hint: document.getElementById(s.getAttribute('aria-describedby'))?.textContent ?? null, inside: r.left >= c.left - 0.5 && r.right <= c.right + 0.5 && sr.right <= c.right + 0.5 && sr.height >= 24 }; })()`;
+      t.expectEqual(
+        await page.evaluate(read),
+        {
+          label: 'Profile',
+          named: true,
+          value: 'Review',
+          hint: 'Starts on model sonnet, effort high, sub-agents sonnet. Its first prompt starts with /agent-roles:role-reviewer, which must be installed where the session runs.',
+          inside: true,
+        },
+        'the supervisor’s pick, labelled, with what it starts on, inside the card',
+      );
+      await t.shot('profile');
+      // A pick, as the select's own change would make it: no key presses in the browser (W64).
+      await page.evaluate(`(() => { const s = ${SELECT}; const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set; set.call(s, 'Docs'); s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+      await page.waitFor('the Docs line', `document.getElementById(${SELECT}.getAttribute('aria-describedby'))?.textContent === 'Starts on model sonnet, effort medium, sub-agents sonnet.'`);
+    });
+
     await t.step('Edit, then Send edit: the edit sent, the card gone, and focus on the next card’s heading', async () => {
       await page.click('Edit', cardButton(0, 'Edit'));
       await page.waitFor('the editor, with focus', `document.activeElement?.matches('.approval-editor') === true`);
@@ -304,6 +325,8 @@ const part: Part = {
       await page.waitFor('focus on the next card’s heading', `document.activeElement === ${CARDS}[0]?.querySelector('h4')`);
       await page.click('Send', cardButton(0, 'Send'));
       await page.waitFor('both rows', `${HANDOFFS}.length === 2 && ${CARDS}.length === 0`);
+      // The new session's Send carries the profile its card showed, the supervisor's pick (W156).
+      t.expectEqual(records.decisions.at(-1), { id: SUPERVISOR_APPROVALS.spawn, decision: 'send', profile: 'Review', status: 200 }, 'the new session sent with its card’s profile');
       const rows = await page.evaluate<{ what: string; needs: string | null; open: string | null }[]>(
         `${HANDOFFS}.map((li) => ({ what: li.querySelector('.supervisor-handoff-what').textContent, needs: li.querySelector('[data-handoff-needs]')?.textContent ?? null, open: li.querySelector('[data-handoff-open]')?.textContent ?? null }))`,
       );
@@ -335,6 +358,8 @@ const part: Part = {
       await page.waitFor('the message’s row', `${HANDOFFS}.length === 1`);
       await page.click('Send', cardButton(0, 'Send'));
       await page.waitFor('both rows', `${HANDOFFS}.length === 2 && ${CARDS}.length === 0`);
+      // The new session's Send carries the profile its card showed, the supervisor's pick (W156).
+      t.expectEqual(records.decisions.at(-1), { id: SUPERVISOR_APPROVALS.spawn, decision: 'send', profile: 'Review', status: 200 }, 'the new session sent with its card’s profile');
       t.expectEqual(await page.evaluate(OPEN_TAB), '~/oss', 'in ~/oss’s tab');
       await page.click('Open pr-57', `${HANDOFFS}[0].querySelector('[data-handoff-open]')`);
       await page.waitFor('its session view, beside the panel or in sight', `${PANEL_AS_LAYOUT} && ${viewName} === 'pr-57'`);
@@ -574,6 +599,19 @@ const part: Part = {
       t.expectEqual(lines.permission, 'Claude Code resumes it with its own saved settings, its permission mode included: bypassPermissions.', 'its own saved settings, permission mode included');
       t.expect(lines.bypassShown && (lines.bypass ?? '').includes('no permission prompts'), 'a visible warning for bypassPermissions', lines.bypass);
       t.expect(lines.fits, 'the new lines wrap inside the card', lines);
+      // W156: its Profile, As it started first, naming the profile it was started on, and what it resumes on.
+      const profile = await page.evaluate<{ options: string[]; value: string; hint: string | null }>(
+        `(() => { const s = ${card}.querySelector('.approval-profile select'); return { options: [...s.options].map((o) => o.textContent), value: s.selectedOptions[0]?.textContent ?? '', hint: document.getElementById(s.getAttribute('aria-describedby'))?.textContent ?? null }; })()`,
+      );
+      t.expectEqual(
+        profile,
+        {
+          options: ['As it started (Build)', 'Build', 'Review', 'Security review', 'Docs'],
+          value: 'As it started (Build)',
+          hint: 'pitwall resumes it on what it started it with, from the Build profile: model claude-opus-5-5, effort high, sub-agents sonnet.',
+        },
+        'its Profile, on As it started, and what it resumes on',
+      );
       const buttons = await page.evaluate<string[]>(`[...${card}.querySelectorAll('button')].map((b) => b.textContent.trim())`);
       t.expectEqual(buttons, ['Send', 'Edit', "Don't send"], 'Send, Edit and Don’t send');
       const box = await page.evaluate<{ right: number }>(`(() => { const r = ${card}.getBoundingClientRect(); return { right: r.right }; })()`);
@@ -581,7 +619,8 @@ const part: Part = {
       await t.shot('resume-card');
       await page.click('Send', cardButton(0, 'Send'));
       await page.waitFor('its row, once the index lists it running', `${HANDOFFS}.length === 1 && !!${HANDOFFS}[0].querySelector('[data-handoff-open]')`);
-      t.expectEqual(records.decisions.at(-1), { id: SUPERVISOR_APPROVALS.resume, decision: 'send', status: 200 }, 'sent once');
+      // As it started, the card's own choice with no profile from the supervisor (W156): null.
+      t.expectEqual(records.decisions.at(-1), { id: SUPERVISOR_APPROVALS.resume, decision: 'send', profile: null, status: 200 }, 'sent once');
       const row = await page.evaluate<{ kind: string; what: string; open: string | null }>(
         `(() => { const li = ${HANDOFFS}[0]; return { kind: li.dataset.handoff, what: li.querySelector('.supervisor-handoff-what').textContent, open: li.querySelector('[data-handoff-open]')?.textContent ?? null }; })()`,
       );

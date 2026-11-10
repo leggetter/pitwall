@@ -2183,7 +2183,22 @@ export type SavedPermission = { kind: 'mode'; mode: PermissionModeName } | { kin
  */
 export type SupervisorApproval =
   | { id: string; kind: 'message'; to: string; text: string; at: string; expiresAt: string }
-  | { id: string; kind: 'spawn'; directory: string; name?: string; prompt: string; at: string; expiresAt: string }
+  | {
+      id: string;
+      kind: 'spawn';
+      directory: string;
+      name?: string;
+      prompt: string;
+      at: string;
+      expiresAt: string;
+      /**
+       * The work profile it starts with (W156): the supervisor's choice, or DEFAULT_PROFILE when it named
+       * none, one of `profiles` by its exact name. Absent, with `profiles`, where pitwall has no profiles.
+       */
+      profile?: string;
+      /** The profiles you can pick instead, each as it would start, resolved when the card was made (W156). */
+      profiles?: ApprovalProfile[];
+    }
   | {
       id: string;
       kind: 'resume';
@@ -2201,14 +2216,38 @@ export type SupervisorApproval =
       permission: SavedPermission;
       /** The profile's settings pitwall started it with, which it resumes with (W155). Absent: none kept. */
       launch?: SessionLaunch;
+      /**
+       * A work profile it resumes on instead of what it started with (W156), one of `profiles` by its
+       * exact name: the supervisor's choice. Absent: as it started, `launch`'s, or the defaults for sessions.
+       */
+      profile?: string;
+      /** The profiles you can pick, each as it would resume, resolved when the card was made (W156). */
+      profiles?: ApprovalProfile[];
     };
+
+/**
+ * A work profile on a draft card (W156): its name and exactly what a session started, or resumed, with
+ * it gets, resolved when the card was made, the profile's own fields first, then the defaults for
+ * sessions and sub-agents (WorkSettings.effective), WORK_DEFAULT for none. What the card shows is what
+ * goes: an approval launches with these values, never a later resolution. `skill` is the profile's,
+ * which a new session starts with and a resume never runs.
+ */
+export interface ApprovalProfile {
+  name: string;
+  model: string;
+  effort: EffortLevel | typeof WORK_DEFAULT;
+  subagentModel: string;
+  skill?: string;
+}
 
 /**
  * Your answer to an approval (POST supervisorApprovalPath()): send it as it is, send your edit
  * (`text` replaces the message or the prompt), or don't send it. The supervisor is told which, and
- * on an edit, what was sent.
+ * on an edit, what was sent. On a new session's or a resume's card, `profile` is the one you picked
+ * (W156), by its exact name among the card's `profiles`; `null`, on a resume's only, resumes it as it
+ * started. Absent: the card's own.
  */
-export type SupervisorDecision = { decision: 'send' } | { decision: 'edit'; text: string } | { decision: 'decline' };
+export type SupervisorDecision = { decision: 'send'; profile?: string | null } | { decision: 'edit'; text: string; profile?: string | null } | { decision: 'decline' };
 
 /** The supervisor's model (Phil, 2026-10-29), at its default effort. */
 export const SUPERVISOR_MODEL = 'claude-opus-5-5';
