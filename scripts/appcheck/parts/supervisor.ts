@@ -381,8 +381,8 @@ const part: Part = {
       t.expectEqual(
         rows,
         [
-          { what: 'Started pr-57', needs: 'pr-57 needs you: Which base branch should the made-up review compare against?', open: 'Open pr-57 →' },
-          { what: `Message approved for ${NAMES.asked}`, needs: rows[1]?.needs ?? null, open: `Open ${NAMES.asked} →` },
+          { what: 'Started pr-57', needs: 'Which base branch should the made-up review compare against?', open: 'Open →' },
+          { what: `Message approved for ${NAMES.asked}`, needs: rows[1]?.needs ?? null, open: 'Open →' },
         ],
         'needs you first, each with its Open',
       );
@@ -702,7 +702,7 @@ const part: Part = {
       const row = await page.evaluate<{ kind: string; what: string; open: string | null }>(
         `(() => { const li = ${HANDOFFS}[0]; return { kind: li.dataset.handoff, what: li.querySelector('.supervisor-handoff-what').textContent, open: li.querySelector('[data-handoff-open]')?.textContent ?? null }; })()`,
       );
-      t.expectEqual(row, { kind: 'resume', what: `Resumed ${NAMES.ended}`, open: `Open ${NAMES.ended} →` }, '“Resumed <name>” with Open');
+      t.expectEqual(row, { kind: 'resume', what: `Resumed ${NAMES.ended}`, open: 'Open →' }, '“Resumed <name>” with Open');
       await t.shot('resume-handoff');
       await page.click(`Open ${NAMES.ended}`, `${HANDOFFS}[0].querySelector('[data-handoff-open]')`);
       await page.waitFor('its session view, beside the panel or in sight', `${PANEL_AS_LAYOUT} && !!document.querySelector('#session-view')`);

@@ -205,24 +205,20 @@
   font-weight: var(--pw-weight-medium);
 }
 
+/* The state, when and Open: one group on the right, which wraps under the name as a whole, never apart. */
+.supervisor-handoff-meta {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--pw-space-2);
+  margin-inline-start: auto;
+  white-space: nowrap;
+}
+
 .supervisor-handoff-starting,
 .supervisor-handoff-at {
   color: var(--pw-text-subtle);
   font-size: var(--pw-text-s);
-}
-
-.supervisor-handoff-open {
-  margin-inline-start: auto;
-  max-width: 100%;
-}
-
-.supervisor-handoff-open bdi {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 16rem;
-  display: inline-block;
-  vertical-align: bottom;
 }
 
 .supervisor-handoff-needs {
