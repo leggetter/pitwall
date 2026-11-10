@@ -5,7 +5,8 @@
 //
 // - The window is a row of tabs, This week first, which is the plan's week from its reset when
 //   pitwall can read it (W157), else the last 7 days. The plan's percentage and reset lead the
-//   summary, with the run rate's pace and projection beside them (W159).
+//   summary, with the run rate's pace and projection beside them (W159). On This week, the run rate
+//   is a chart under the summary (W181), with the pace's sentences beside it instead.
 // - Cache writes and cache reads are columns of their own, never summed with input and output into
 //   one total: 97.7% of tokens are cache reads (W131). Cost is labelled as an estimate everywhere.
 // - Every figure is in a table. The by-day table's cost column carries a bar, one series in the
@@ -14,19 +15,21 @@
 //   with the figures already shown kept.
 
 import { useContext, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
-import type { SessionSummary, UsageBucket, UsageTokens, UsageView, UsageWindowKey } from '../../../src/shared/protocol.js';
+import type { RunRate, RunRateChart as RunRateChartData, SessionSummary, UsageBucket, UsageTokens, UsageView, UsageWindowKey } from '../../../src/shared/protocol.js';
 import { USAGE_WINDOWS } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { plainText, relativeTime } from '../format.js';
 import { modelText } from '../modelEffort.js';
 import { moveTabFocus } from '../tabs.js';
 import { lineText, paceText, projectionText, showsAge, targetText } from '../runRate.js';
+import { asRunRateChart, crossingText } from '../runRateChart.js';
 import { bucketText, costText, planReasonText, resetText, tokenText, USAGE_LABEL, useUsage, WINDOW_LABELS, windowText } from '../usage.js';
 import { Alert } from './Alert.js';
 import { Button } from './Button.js';
 import { CodeText } from './CodeText.js';
 import { Dialog } from './Dialog.js';
 import { Icon } from './Icon.js';
+import { RunRateChart } from './RunRateChart.js';
 import { Spinner } from './Spinner.js';
 import { Timestamp } from './Timestamp.js';
 import './Usage.css';
@@ -117,6 +120,8 @@ function UsageBody({ view, sessions }: { view: UsageView; sessions: readonly Ses
   const names = new Map(sessions.map((session) => [session.sessionId, session.name]));
   const byDay = view.window.bucket === 'day';
   const most = Math.max(0, ...view.buckets.map((bucket) => bucket.cost));
+  // This week's run rate as a chart (W181), with the pace's sentences beside it rather than in the summary.
+  const charted = chartedOf(view);
   const historyNote = view.history && (
     <p className="field-hint usage-note">
       Also {costText(view.history.cost)} on {view.history.days} {view.history.days === 1 ? 'day' : 'days'} whose transcripts Claude Code has deleted: in the totals, by day and by model, but in no row
@@ -130,8 +135,9 @@ function UsageBody({ view, sessions }: { view: UsageView; sessions: readonly Ses
         <p className="usage-window">{windowText(view)}</p>
         <div className="usage-summary">
           <PlanFigure view={view} />
-          <PaceFigure view={view} />
+          {charted === undefined && <PaceFigure view={view} />}
         </div>
+        {charted !== undefined && <RunRateSection view={view} charted={charted} />}
         <p className="usage-empty">No calls in this window.</p>
       </>
     );
@@ -141,7 +147,7 @@ function UsageBody({ view, sessions }: { view: UsageView; sessions: readonly Ses
       <p className="usage-window">{windowText(view)}</p>
       <div className="usage-summary">
         <PlanFigure view={view} />
-        <PaceFigure view={view} />
+        {charted === undefined && <PaceFigure view={view} />}
         <dl className="usage-stats">
           <Stat label="Est. cost" value={costText(view.totals.cost)} lead />
           {COLUMNS.map(([field, label]) => (
@@ -151,6 +157,7 @@ function UsageBody({ view, sessions }: { view: UsageView; sessions: readonly Ses
         </dl>
       </div>
       <p className="field-hint usage-note">Est. cost: {view.costLabel}.</p>
+      {charted !== undefined && <RunRateSection view={view} charted={charted} />}
 
       <UsageTable
         title={byDay ? 'By day' : 'By hour'}
@@ -245,17 +252,51 @@ function PlanFigure({ view }: { view: UsageView }) {
   );
 }
 
+interface Charted {
+  chart: RunRateChartData;
+  rate: RunRate & { status: 'available' };
+}
+
+/** The run rate's chart (W181), on This week while the week's pace is read; undefined otherwise. */
+function chartedOf(view: UsageView): Charted | undefined {
+  const rate = view.runRate;
+  if (view.window.key !== 'week' || rate?.status !== 'available' || rate.sevenDay === null || rate.sevenDay.pace === null) return undefined;
+  const chart = asRunRateChart(view.runRateChart);
+  return chart === undefined ? undefined : { chart, rate };
+}
+
+/**
+ * The run rate as a chart (W181), under the summary on This week, with the pace's sentences beside it
+ * where there's room, else under it, so the chart is never the only way to read them.
+ */
+function RunRateSection({ view, charted }: { view: UsageView; charted: Charted }) {
+  const now = Date.now();
+  const stale = charted.rate.fallback !== undefined || showsAge(charted.rate.readAt, now);
+  return (
+    <section className="usage-section usage-runrate">
+      <h3>The plan's week, at this rate</h3>
+      <div className="usage-runrate-body">
+        <RunRateChart chart={charted.chart} rate={charted.rate} stale={stale} now={now} />
+        <PaceFigure view={view} chart={charted.chart} />
+      </div>
+    </section>
+  );
+}
+
 /**
  * The pace against the weekend reserve (W159), beside the plan's week: how far over or under the line,
  * the line itself, and the projection, or why there's none yet. Nothing when the week isn't read.
+ * Beside the chart (W181), it adds where the trend crosses the line.
  */
-function PaceFigure({ view }: { view: UsageView }) {
+function PaceFigure({ view, chart }: { view: UsageView; chart?: RunRateChartData }) {
   const rate = view.runRate;
   if (rate?.status !== 'available' || rate.sevenDay === null || rate.sevenDay.pace === null) return null;
   const { pace, projection } = rate.sevenDay;
   // Never a stale reading as current: one over 10 minutes old, or standing in for a failed read, says how old.
   const now = Date.now();
+  const stale = rate.fallback !== undefined || showsAge(rate.readAt, now);
   const projected = projectionText(projection);
+  const crossed = chart === undefined ? undefined : crossingText(chart, stale);
   return (
     <div className="usage-pace">
       <p className="usage-plan-label">Pace for {rate.target.percent}% by {targetText(rate.target)}</p>
@@ -265,7 +306,8 @@ function PaceFigure({ view }: { view: UsageView }) {
       </p>
       <p className="field-hint">{lineText(pace, rate.target)}</p>
       {projected !== undefined && <p className="field-hint">{projected}</p>}
-      {(rate.fallback !== undefined || showsAge(rate.readAt, now)) && (
+      {crossed !== undefined && <p className="field-hint">{crossed}</p>}
+      {stale && (
         <p className="field-hint usage-pace-age">
           From a reading {relativeTime(rate.readAt, now)}
           {rate.fallback !== undefined ? ": pitwall's latest read of the plan's week failed." : '.'}

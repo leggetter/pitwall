@@ -37,9 +37,10 @@ import type {
   UsageView,
   UsageWindowKey,
   RunRate,
+  RunRateChart,
 } from '../../src/shared/protocol.js';
 import { withSupervisorFooter } from '../../src/shared/protocol.js';
-import { DEFAULT_RUN_RATE_TARGET, levelOf, paceAt, project, WEEK_MS, type WeekReading } from '../../src/usage/runRate.js';
+import { chartOf, DEFAULT_RUN_RATE_TARGET, levelOf, paceAt, project, WEEK_MS, type WeekReading } from '../../src/usage/runRate.js';
 import { REFUSED_TO_SUPERVISOR_NOTICE } from '../../src/index/conversation.js';
 
 export const CODE = '/Users/example/code';
@@ -387,13 +388,15 @@ export interface ResetOptions {
   /**
    * The header's run rate (W159): 'off', the default, as with --no-usage, so the snapshot has no
    * planUsage and the header no figures; 'normal', under the line; 'ahead', over it; 'amber' at 74%
-   * with the five hours at 35%; 'red' at 93%; 'old', a reading 25 minutes old; 'unavailable'.
+   * with the five hours at 35%; 'red' at 93%; 'old', a reading 25 minutes old; 'unavailable'. For
+   * the Usage view's chart (W181): 'burst', under the line after a fast last 8 hours; 'thin', readings
+   * of the last 3 hours only; 'past', 100% reached 3 hours ago.
    */
   runRate?: RunRateWorldState;
 }
 
 export type UsageWorldState = 'ok' | 'unavailable' | 'empty' | 'failing';
-export type RunRateWorldState = 'off' | 'normal' | 'ahead' | 'amber' | 'red' | 'old' | 'unavailable';
+export type RunRateWorldState = 'off' | 'normal' | 'ahead' | 'amber' | 'red' | 'old' | 'unavailable' | 'burst' | 'thin' | 'past';
 
 /** The made-up index: a snapshot, conversations, and what POSTs have changed since the last reset. */
 export class World {
@@ -1115,8 +1118,9 @@ export class World {
       scan: { at: new Date(this.#now - 2_000).toISOString(), files: 865, unreadable: 0, malformed: 0 },
     };
     if (this.#runRate !== 'off') {
-      const rate = this.runRate();
+      const { rate, chart } = this.#runRateAndChart();
       view.runRate = rate;
+      if (key === 'week' && chart !== undefined) view.runRateChart = chart;
       // The plan's week is the run rate's, so the view's two figures agree.
       if (rate.status === 'available' && rate.sevenDay !== null && view.plan.status === 'available') {
         view.plan = { ...view.plan, sevenDay: { usedPercentage: rate.sevenDay.usedPercentage, resetsAt: rate.sevenDay.resetsAt } };
@@ -1141,25 +1145,60 @@ export class World {
   }
 
   runRate(): RunRate {
-    if (this.#runRate === 'off') return { status: 'off' };
-    if (this.#runRate === 'unavailable') return { status: 'unavailable', readAt: new Date(this.#now).toISOString(), reason: 'timeout' };
+    return this.#runRateAndChart().rate;
+  }
+
+  /**
+   * The run rate and its chart (W181), from made-up readings every 5 minutes from 08:00 to 23:00 each
+   * day of the week so far, so the chart's line breaks across each night: a steady rate up to the
+   * state's percentage; for 'burst', quiet until the last 8 hours, then fast; for 'thin', the last 3
+   * hours' only, so there's no projection yet; for 'past', 100% reached 3 hours ago.
+   */
+  #runRateAndChart(): { rate: RunRate; chart?: RunRateChart } {
+    if (this.#runRate === 'off') return { rate: { status: 'off' } };
+    if (this.#runRate === 'unavailable') return { rate: { status: 'unavailable', readAt: new Date(this.#now).toISOString(), reason: 'timeout' } };
     const HOUR = 60 * MINUTE;
     const { resetsAt } = this.#runRateWeek();
-    const start = new Date(resetsAt - WEEK_MS);
+    const start = resetsAt - WEEK_MS;
     const readAt = this.#runRate === 'old' ? this.#now - 25 * MINUTE : this.#now - MINUTE;
     const line = paceAt(readAt, 0, resetsAt, DEFAULT_RUN_RATE_TARGET).line;
-    const used = { normal: Math.max(1, Math.round(line - 6)), old: Math.max(1, Math.round(line - 6)), ahead: Math.min(99, Math.round(line + 12)), amber: 74, red: 93 }[this.#runRate];
-    const elapsed = readAt - start.getTime();
-    const history: WeekReading[] = [];
-    for (let at = readAt - 30 * HOUR; at <= readAt; at += HOUR) history.push({ at, used: Math.round((used * (at - start.getTime())) / elapsed), resetsAt });
+    const used = {
+      normal: Math.max(1, Math.round(line - 6)),
+      old: Math.max(1, Math.round(line - 6)),
+      thin: Math.max(1, Math.round(line - 6)),
+      ahead: Math.min(99, Math.round(line + 12)),
+      burst: Math.max(1, Math.round(line - 4)),
+      amber: 74,
+      red: 93,
+      past: 100,
+    }[this.#runRate];
+    const awake = (at: number) => {
+      const hour = new Date(at).getHours();
+      return hour >= 8 && hour < 23;
+    };
+    const times: number[] = [];
+    const from = this.#runRate === 'thin' ? readAt - 3 * HOUR : start + 5 * MINUTE;
+    for (let at = readAt; at >= from; at -= 5 * MINUTE) if (awake(at) || at > readAt - HOUR) times.unshift(at);
+    const elapsed = readAt - start;
+    const shape = (at: number): number => {
+      const share = (at - start) / elapsed;
+      if (this.#runRate === 'burst') {
+        const turn = readAt - 8 * HOUR;
+        return at <= turn ? 0.35 * ((at - start) / (turn - start)) : 0.35 + 0.65 * ((at - turn) / (readAt - turn));
+      }
+      if (this.#runRate === 'past') return Math.min(1, share / (1 - (3 * HOUR) / elapsed));
+      return share;
+    };
+    const history: WeekReading[] = times.map((at) => ({ at, used: Math.round(used * shape(at)), resetsAt }));
     const reading: WeekReading = { at: readAt, used, resetsAt };
-    return {
+    const rate: RunRate = {
       status: 'available',
       readAt: new Date(readAt).toISOString(),
       target: DEFAULT_RUN_RATE_TARGET,
       sevenDay: { usedPercentage: used, resetsAt: new Date(resetsAt).toISOString(), level: levelOf(used), pace: paceAt(readAt, used, resetsAt, DEFAULT_RUN_RATE_TARGET), projection: project(reading, history) },
       fiveHour: this.#runRate === 'amber' ? { usedPercentage: 35, resetsAt: new Date(this.#now + 2 * HOUR).toISOString(), level: levelOf(35) } : null,
     };
+    return { rate, chart: chartOf(reading, history, DEFAULT_RUN_RATE_TARGET) };
   }
 
   byName(name: string): SessionSummary {

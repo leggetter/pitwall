@@ -261,6 +261,21 @@ describe('the source', () => {
     expect((await source.view('24h')).runRate).toEqual(rate);
   });
 
+  it('the run rate as a chart (W181): on the week’s view only, from the same read, with no read of its own', async () => {
+    const resetsAt = Math.round((NOW + 3 * DAY) / 1000);
+    const reader = fakeReader({ status: 'available', readAt: NOW - 1000, fiveHour: null, sevenDay: { usedPercentage: 40, resetsAt } });
+    const source = createUsageSource({ configDir: path.join(dir, 'none'), home: dir, now: () => NOW, rateLimits: reader, resolveRepo: async (cwd) => cwd });
+    const week = await source.view('week');
+    expect(reader.reads).toBe(1);
+    expect(week.runRateChart).toMatchObject({ start: resetsAt * 1000 - 7 * DAY, end: resetsAt * 1000, at: NOW - 1000, readings: [{ at: NOW - 1000, percent: 40 }], trend: null });
+    expect((await source.view('24h')).runRateChart).toBeUndefined();
+    expect(reader.reads).toBe(1);
+    const off = createUsageSource({ configDir: path.join(dir, 'none'), home: dir, now: () => NOW, rateLimits: reader, planReads: false, resolveRepo: async (cwd) => cwd });
+    expect((await off.view('week')).runRateChart).toBeUndefined();
+    const failing = createUsageSource({ configDir: path.join(dir, 'none'), home: dir, now: () => NOW, rateLimits: fakeReader({ status: 'unavailable', readAt: NOW, reason: 'timeout' }), resolveRepo: async (cwd) => cwd });
+    expect((await failing.view('week')).runRateChart).toBeUndefined();
+  });
+
   it('the run rate calls the reader at most once in 5 minutes, even while its reads fail', async () => {
     let now = NOW;
     const reader = fakeReader({ status: 'unavailable', readAt: NOW, reason: 'timeout' });

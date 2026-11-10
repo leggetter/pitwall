@@ -16,7 +16,8 @@
 // RUN_RATE_READ_MS whether the read worked or not, so `/usage` runs for it at most once in 5 minutes
 // while a page is open, and never with none. Each new reading of the week is kept
 // (readings.ts) for the pace's projection (runRate.ts). report() is the one call the supervisor's
-// get_usage (W160) makes: the run rate and the week's heaviest sessions, through the same floor. With `planReads: false`
+// get_usage (W160) makes: the run rate and the week's heaviest sessions, through the same floor. The
+// view's 'week' adds the run rate as a chart (W181, runRateChart), from the same read and readings. With `planReads: false`
 // (`--no-usage`), no `/usage` call runs, nothing is kept, the run rate is 'off', and the view's week
 // is the last 7 days.
 import os from 'node:os';
@@ -24,12 +25,12 @@ import path from 'node:path';
 import { createGroupResolver } from '../index/grouping.js';
 import { defaultConfigDir } from '../index/transcripts.js';
 import { pitwallHome as defaultPitwallHome } from '../server/launch.js';
-import type { RunRate, RunRateTarget, UsagePlan, UsageSessionRow, UsageTokens, UsageView, UsageWindowKey } from '../shared/protocol.js';
+import type { RunRate, RunRateChart, RunRateTarget, UsagePlan, UsageSessionRow, UsageTokens, UsageView, UsageWindowKey } from '../shared/protocol.js';
 import { DayStore } from './days.js';
 import { createUsageLedger, LEDGER_KEEP_MS, type LedgerStats, type UsageLedger } from './ledger.js';
 import { createRateLimitsReader, RATE_LIMITS_DIR_NAME, type RateLimits, type RateLimitsReader } from './rateLimits.js';
 import { ReadingStore } from './readings.js';
-import { DEFAULT_RUN_RATE_TARGET, levelOf, paceAt, project, type WeekReading } from './runRate.js';
+import { chartOf, DEFAULT_RUN_RATE_TARGET, levelOf, paceAt, project, type WeekReading } from './runRate.js';
 import { lexicalRepo } from './report.js';
 import { buildUsageView, readScans, usageWindow } from './view.js';
 
@@ -154,6 +155,16 @@ function weekOf(reading: WeekReading, history: readonly WeekReading[], target: R
   };
 }
 
+/**
+ * The run rate as a chart (W181), from the reading `rate` was worked out from, the latest or the kept
+ * one standing in for a failed read: undefined without the week's figures and its reset.
+ */
+export function chartFor(rate: RunRate, history: readonly WeekReading[], target: RunRateTarget): RunRateChart | undefined {
+  if (rate.status !== 'available' || rate.sevenDay === null || rate.sevenDay.resetsAt === null) return undefined;
+  const reading = { at: Date.parse(rate.readAt), used: rate.sevenDay.usedPercentage, resetsAt: Date.parse(rate.sevenDay.resetsAt) };
+  return chartOf(reading, history, target);
+}
+
 export function planOf(limits: RateLimits): UsagePlan {
   const readAt = new Date(limits.readAt).toISOString();
   if (limits.status === 'unavailable') return { status: 'unavailable', readAt, reason: limits.reason };
@@ -240,7 +251,9 @@ export function createUsageSource(options: UsageSourceOptions = {}): UsageSource
       keptDay: (day) => days.get(day),
       scan: { at: new Date(stats.at).toISOString(), files: stats.files, unreadable: stats.unreadable, malformed },
     });
-    return { ...built, runRate: runRate(limits) };
+    const rate = runRate(limits);
+    const chart = key === 'week' ? chartFor(rate, readings?.all() ?? [], target) : undefined;
+    return { ...built, runRate: rate, ...(chart === undefined ? {} : { runRateChart: chart }) };
   }
 
   return {

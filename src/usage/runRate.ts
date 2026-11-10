@@ -15,12 +15,19 @@
 //   from either alone would overstate or understate. Only once the readings this week span
 //   RUN_RATE_MIN_SPAN_HOURS: 'thin' before. With no span that long in the last day, the week's
 //   average alone.
+// - The chart (W181): the same reading's week as numbers, for the Usage view to draw. The readings,
+//   at most RUN_RATE_CHART_POINTS; the line's three points; the trend from the reading at the
+//   projection's two rates and their middle, each to where it reaches 100% or the reset; and where the
+//   middle first crosses the line.
 import {
   RUN_RATE_AHEAD_POINTS,
+  RUN_RATE_CHART_POINTS,
   RUN_RATE_MIN_SPAN_HOURS,
   USAGE_AMBER_PERCENT,
   USAGE_RED_PERCENT,
   WEEKDAYS,
+  type RunRateChart,
+  type RunRateChartPoint,
   type RunRatePace,
   type RunRateProjection,
   type RunRateTarget,
@@ -73,11 +80,19 @@ export function paceAt(at: number, used: number, resetsAt: number, target: RunRa
   const targetAt = targetTime(start, resetsAt, target);
   const now = Math.min(Math.max(at, start), resetsAt);
   const pastTarget = now > targetAt;
-  let line: number;
-  if (!pastTarget) line = targetAt > start ? (target.percent * (now - start)) / (targetAt - start) : target.percent;
-  else line = resetsAt > targetAt ? target.percent + ((100 - target.percent) * (now - targetAt)) / (resetsAt - targetAt) : 100;
+  const line = lineAt(now, start, targetAt, resetsAt, target.percent);
   const points = used - line;
   return { targetAt: new Date(targetAt).toISOString(), line: round1(line), points: round1(points), ahead: points >= RUN_RATE_AHEAD_POINTS, pastTarget };
+}
+
+/**
+ * The line at `at`, unrounded: from 0 at `start` to `percent` at `targetAt`, then on to 100 at
+ * `resetsAt`.
+ */
+function lineAt(at: number, start: number, targetAt: number, resetsAt: number, percent: number): number {
+  const now = Math.min(Math.max(at, start), resetsAt);
+  if (now <= targetAt) return targetAt > start ? (percent * (now - start)) / (targetAt - start) : percent;
+  return resetsAt > targetAt ? percent + ((100 - percent) * (now - targetAt)) / (resetsAt - targetAt) : 100;
 }
 
 /** One decimal, and never -0. */
@@ -89,11 +104,34 @@ const round3 = (n: number) => Math.round(n * 1000) / 1000;
  * this week's are used). Never throws.
  */
 export function project(reading: WeekReading, history: readonly WeekReading[]): RunRateProjection {
+  const rates = rangeRates(reading, history);
+  if (rates.status !== 'rates') return rates;
+  const { low, high } = rates;
+  const left = 100 - reading.used;
+  const earliest = reading.at + (left / high) * HOUR_MS;
+  if (earliest >= reading.resetsAt) return { status: 'lasts' };
+  const latest = low > 0 ? reading.at + (left / low) * HOUR_MS : Infinity;
+  return {
+    status: 'range',
+    earliest: new Date(earliest).toISOString(),
+    latest: latest >= reading.resetsAt ? null : new Date(latest).toISOString(),
+    perHour: { low: round3(low), high: round3(high) },
+  };
+}
+
+/** This week's readings in `history`, up to and without `reading`'s own time, oldest first. */
+function weekOf(reading: WeekReading, history: readonly WeekReading[]): WeekReading[] {
+  const start = reading.resetsAt - WEEK_MS;
+  return history.filter((r) => Math.abs(r.resetsAt - reading.resetsAt) <= SAME_RESET_MS && r.at >= start && r.at <= reading.at);
+}
+
+/** The projection's two rates, in percentage points an hour (PLAN.md's W159 item), or why there are none. */
+function rangeRates(reading: WeekReading, history: readonly WeekReading[]): { status: 'thin' } | { status: 'used-up' } | { status: 'rates'; low: number; high: number } {
   if (reading.used >= 100) return { status: 'used-up' };
   const start = reading.resetsAt - WEEK_MS;
   const elapsed = reading.at - start;
   // This week's readings up to this one, with the reading itself.
-  const week = history.filter((r) => Math.abs(r.resetsAt - reading.resetsAt) <= SAME_RESET_MS && r.at >= start && r.at <= reading.at);
+  const week = weekOf(reading, history);
   const earliestThisWeek = week.reduce((a, b) => Math.min(a, b.at), reading.at);
   if (elapsed < MIN_SPAN_MS || reading.at - earliestThisWeek < MIN_SPAN_MS) return { status: 'thin' };
   const base = [...week, reading].filter((r) => r.at >= reading.at - DAY_RATE_MS).reduce((a, b) => (b.at < a.at ? b : a), reading);
@@ -109,16 +147,77 @@ export function project(reading: WeekReading, history: readonly WeekReading[]): 
     low = Math.min(low, Math.max(0, rise - 2 * ROUNDING) / hours(span));
     high = Math.max(high, Math.max(0, rise + 2 * ROUNDING) / hours(span));
   }
-  const left = 100 - reading.used;
-  const earliest = reading.at + (left / high) * HOUR_MS;
-  if (earliest >= reading.resetsAt) return { status: 'lasts' };
-  const latest = low > 0 ? reading.at + (left / low) * HOUR_MS : Infinity;
-  return {
-    status: 'range',
-    earliest: new Date(earliest).toISOString(),
-    latest: latest >= reading.resetsAt ? null : new Date(latest).toISOString(),
-    perHour: { low: round3(low), high: round3(high) },
+  return { status: 'rates', low, high };
+}
+
+// --- The chart (W181) -----------------------------------------------------------------------------
+
+/**
+ * The run rate as a chart (W181): the week's readings, downsampled to at most RUN_RATE_CHART_POINTS,
+ * the line, the trend at the projection's rates and where its middle crosses the line. From the same
+ * reading as the pace and the projection, so the chart and the sentences agree. Never throws.
+ */
+export function chartOf(reading: WeekReading, history: readonly WeekReading[], target: RunRateTarget): RunRateChart {
+  const start = reading.resetsAt - WEEK_MS;
+  const end = reading.resetsAt;
+  const targetAt = targetTime(start, end, target);
+  const lineOf = (at: number) => lineAt(at, start, targetAt, end, target.percent);
+  const points: RunRateChartPoint[] = [{ at: start, percent: 0 }];
+  if (targetAt > start && targetAt < end) points.push({ at: targetAt, percent: target.percent });
+  points.push({ at: end, percent: 100 });
+
+  // The last reading of each slot of the week, the reading itself last.
+  const slot = WEEK_MS / RUN_RATE_CHART_POINTS;
+  const bySlot = new Map<number, WeekReading>();
+  for (const r of weekOf(reading, history)) {
+    if (r.at >= reading.at) continue;
+    const key = Math.floor((r.at - start) / slot);
+    const kept = bySlot.get(key);
+    if (kept === undefined || r.at >= kept.at) bySlot.set(key, r);
+  }
+  bySlot.delete(Math.floor((reading.at - start) / slot));
+  const readings = [...bySlot.values()]
+    .sort((a, b) => a.at - b.at)
+    .slice(-(RUN_RATE_CHART_POINTS - 1))
+    .map((r) => ({ at: r.at, percent: r.used }));
+  readings.push({ at: reading.at, percent: reading.used });
+
+  const rates = rangeRates(reading, history);
+  if (rates.status !== 'rates') return { start, end, at: reading.at, readings, line: points, trend: null, crossesLine: null };
+  const mid = (rates.low + rates.high) / 2;
+  /** Where the trend at `rate` reaches 100%, or the reset first. */
+  const endOf = (rate: number): RunRateChartPoint => {
+    const reaches = rate > 0 ? reading.at + ((100 - reading.used) / rate) * HOUR_MS : Infinity;
+    if (reaches < end) return { at: Math.round(reaches), percent: 100 };
+    return { at: end, percent: round1(reading.used + (rate * (end - reading.at)) / HOUR_MS) };
   };
+  const trend = { low: endOf(rates.low), mid: endOf(mid), high: endOf(rates.high) };
+  return { start, end, at: reading.at, readings, line: points, trend, crossesLine: crossing(reading, mid, trend.mid.at, targetAt, end, lineOf) };
+}
+
+/**
+ * When the trend at `rate` from `reading`, flat at 100 after `reaches`, first crosses the line after the
+ * reading and before `end`; null when it doesn't, or when the reading is on the line. Both are straight
+ * between the breaks, so each piece is solved exactly.
+ */
+function crossing(reading: WeekReading, rate: number, reaches: number, targetAt: number, end: number, lineOf: (at: number) => number): RunRateChart['crossesLine'] {
+  const trendOf = (at: number) => Math.min(100, reading.used + (rate * (at - reading.at)) / HOUR_MS);
+  const gap = (at: number) => trendOf(at) - lineOf(at);
+  const first = gap(reading.at);
+  if (first === 0) return null;
+  const breaks = [...new Set([reading.at, targetAt, reaches, end])].filter((at) => at >= reading.at && at <= end).sort((a, b) => a - b);
+  for (let i = 1; i < breaks.length; i++) {
+    const a = breaks[i - 1]!;
+    const b = breaks[i]!;
+    const ga = gap(a);
+    const gb = gap(b);
+    if (Math.sign(gb) === Math.sign(first) || Math.sign(ga) !== Math.sign(first)) continue;
+    const at = Math.round(a + ((b - a) * ga) / (ga - gb));
+    // Meeting the line at the reset, where it reaches 100, isn't a crossing: the week is over.
+    if (at >= end) return null;
+    return { at, to: first < 0 ? 'over' : 'under' };
+  }
+  return null;
 }
 
 // --- The config file's `runRate` ------------------------------------------------------------------

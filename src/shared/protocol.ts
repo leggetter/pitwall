@@ -2718,6 +2718,11 @@ export interface UsageView {
   history?: UsageTokens & { days: number };
   /** The pace beside the plan's week (W159), from the same read. Absent where no source sets it. */
   runRate?: RunRate;
+  /**
+   * The run rate as a chart (W181), for 'week' only, from the same read and the kept readings: set
+   * while `runRate` has the week's figures with a reset, absent otherwise.
+   */
+  runRateChart?: RunRateChart;
   scan: {
     at: string;
     files: number;
@@ -2834,3 +2839,44 @@ export type RunRate =
       sevenDay: RunRateWeek | null;
       fiveHour: RunRateWindow | null;
     };
+
+/** A point on the run rate's chart (W181): a time, Unix ms, and a percentage of the plan's week. */
+export interface RunRateChartPoint {
+  at: number;
+  percent: number;
+}
+
+/**
+ * The run rate as a chart (W181, PLAN.md): the plan's week from its start (the reset less 7 days) to
+ * its reset, numbers only. Worked out by pitwall's runRate.ts from the same reading as `runRate`, so
+ * the chart and the sentences beside it agree.
+ */
+export interface RunRateChart {
+  /** The week's start and its reset, Unix ms. */
+  start: number;
+  end: number;
+  /** The reading's time, Unix ms: "now" on the chart while the reading is fresh. */
+  at: number;
+  /**
+   * The week's kept readings up to and with this one, oldest first: at most RUN_RATE_CHART_POINTS, the
+   * last of each slot of the week. Readings more than RUN_RATE_CHART_GAP_MS apart aren't joined.
+   */
+  readings: RunRateChartPoint[];
+  /** The reserve's line, as the pace's: 0 at the start, the target's percent at its time, 100 at the reset. */
+  line: RunRateChartPoint[];
+  /**
+   * The trend from the reading, at the projection's two rates and their middle: each ends where it
+   * reaches 100%, or at the reset. Null with no projection's rates: too few readings, or used up.
+   */
+  trend: { low: RunRateChartPoint; mid: RunRateChartPoint; high: RunRateChartPoint } | null;
+  /**
+   * When the trend's middle crosses the line after the reading, before the reset, Unix ms, and which
+   * way it goes; null when it doesn't.
+   */
+  crossesLine: { at: number; to: 'over' | 'under' } | null;
+}
+
+/** The chart's readings: one a half hour of the week at most. */
+export const RUN_RATE_CHART_POINTS = 336;
+/** Readings further apart than this, as across a night with no page open, aren't joined by a line. */
+export const RUN_RATE_CHART_GAP_MS = 90 * 60_000;
