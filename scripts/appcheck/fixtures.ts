@@ -9,6 +9,7 @@
 // Parts refer to sessions by the names in NAMES, so a fixture can change without touching a part.
 
 import type {
+  ApprovalProfile,
   ConversationEntry,
   ConversationPage,
   DirectoryList,
@@ -331,6 +332,14 @@ export const SUPERVISOR_APPROVALS = {
   longer: 'pt136-approval-longer',
 } as const;
 
+/** The profiles a new session's and a resume's card offer (W156), resolved as pitwall's built-ins are, Review with a made-up skill. */
+export const APPROVAL_PROFILES: readonly ApprovalProfile[] = [
+  { name: 'Build', model: 'claude-opus-5-5', effort: 'high', subagentModel: 'sonnet' },
+  { name: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet', skill: 'agent-roles:role-reviewer' },
+  { name: 'Security review', model: 'claude-opus-5-5', effort: 'xhigh', subagentModel: 'opus' },
+  { name: 'Docs', model: 'sonnet', effort: 'medium', subagentModel: 'sonnet' },
+];
+
 /** The cursor of SUBAGENTS.drafting's newest page, for its Load earlier. */
 const SUBAGENT_CURSOR = 'pt77-older';
 
@@ -630,6 +639,9 @@ export class World {
         prompt: 'Review https://github.com/example/demo-app/pull/57. Say what blocks it, if anything.',
         at: this.#ago(2),
         expiresAt: this.#ago(-27),
+        // W156: the supervisor's pick, and every profile as pitwall resolves them, one with a skill.
+        profile: 'Review',
+        profiles: APPROVAL_PROFILES.map((each) => ({ ...each })),
       },
     ];
   }
@@ -650,6 +662,9 @@ export class World {
       ...(ended.lastActivityAt === undefined ? {} : { lastActivityAt: ended.lastActivityAt }),
       sameName: 2,
       permission: { kind: 'mode', mode: 'bypassPermissions' },
+      // W155, W156: the profile it started on, kept, and every profile to resume it on instead.
+      launch: { profile: 'Build', model: 'claude-opus-5-5', effort: 'high', subagentModel: 'sonnet' },
+      profiles: APPROVAL_PROFILES.map((each) => ({ ...each })),
     };
   }
 

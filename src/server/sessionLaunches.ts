@@ -9,8 +9,9 @@
 // in the dialog (Customized), and the model, effort and sub-agents' model actually used, WORK_DEFAULT for none. Never
 // the skill: it was the first prompt's prefix, and must not run again on a resume. Never a prompt,
 // name, directory, token or other session content. A session started with no profile (New session
-// before its profiles have loaded, the supervisor's spawn_session until W156) has no record, and resumes as before: the defaults
-// for sessions this pitwall started in this run, else no flags.
+// before its profiles have loaded) has no record, and resumes as before: the defaults for sessions
+// this pitwall started in this run, else no flags, until a resume you approve with a profile from the
+// supervisor's card (W156) records that profile for it.
 //
 // Kept in $PITWALL_HOME/session-launches.json, 0600, written whole by rename on each change, at most
 // SESSION_LAUNCHES_MAX records, the least recently used dropped first. Read back at start as
@@ -84,6 +85,27 @@ export function checkedLaunch(value: unknown): SessionLaunch | undefined {
   return launch.model === undefined && launch.effort === undefined && launch.subagentModel === undefined ? undefined : launch;
 }
 
+/** What a resume uses for `launch`, once checked (checkedLaunch()). */
+function workOf(launch: SessionLaunch): LaunchWork {
+  return {
+    launch,
+    session: { ...(launch.model === undefined ? {} : { model: launch.model }), ...(launch.effort === undefined ? {} : { effort: launch.effort }) },
+    subagents: launch.subagentModel === undefined ? {} : { model: launch.subagentModel },
+  };
+}
+
+/**
+ * A profile's launch you approved on the supervisor's resume card (W156), as a resume uses it: only
+ * when it names its profile and every one of the model, effort and sub-agents' model passes the
+ * checks, since the card showed all three. Undefined otherwise.
+ */
+export function launchWork(value: SessionLaunch): LaunchWork | undefined {
+  const launch = checkedLaunch(value);
+  if (launch?.profile === undefined || launch.model === undefined || launch.effort === undefined || launch.subagentModel === undefined) return undefined;
+  if (launch.profile !== value.profile || launch.model !== value.model || launch.effort !== value.effort || launch.subagentModel !== value.subagentModel) return undefined;
+  return workOf(launch);
+}
+
 const isTime = (value: unknown): value is string => typeof value === 'string' && value.length <= 40 && !Number.isNaN(Date.parse(value));
 
 /** The records, their file and the link from a short id to its session id. */
@@ -125,24 +147,23 @@ export class SessionLaunches {
   lookup(session: Pick<SessionSummary, 'sessionId' | 'shortId'>): LaunchWork | undefined {
     const record = this.#find(session);
     const launch = record === undefined ? undefined : checkedLaunch(record.launch);
-    if (launch === undefined) return undefined;
-    return {
-      launch,
-      session: { ...(launch.model === undefined ? {} : { model: launch.model }), ...(launch.effort === undefined ? {} : { effort: launch.effort }) },
-      subagents: launch.subagentModel === undefined ? {} : { model: launch.subagentModel },
-    };
+    return launch === undefined ? undefined : workOf(launch);
   }
 
   /**
    * After pitwall resumed `session` under `shortId`: its record linked to its session id, under the
-   * short id it now has, and the most recently used, so it's the last dropped.
+   * short id it now has, and the most recently used, so it's the last dropped. With `launch`, the
+   * profile you approved it on instead (W156), which its next resume uses too; a session with no
+   * record gets one. Without, nothing for a session with no record.
    */
-  resumed(session: Pick<SessionSummary, 'sessionId' | 'shortId'>, shortId: string): void {
+  resumed(session: Pick<SessionSummary, 'sessionId' | 'shortId'>, shortId: string, launch?: SessionLaunch): void {
     const record = this.#find(session);
-    if (record === undefined || !SHORT_ID.test(shortId) || !isSessionUuid(session.sessionId)) return;
-    this.#records.delete(record.shortId);
+    const checked = launch === undefined || launch.profile === undefined ? undefined : checkedLaunch(launch);
+    if ((record === undefined && checked === undefined) || !SHORT_ID.test(shortId) || !isSessionUuid(session.sessionId)) return;
+    if (record !== undefined) this.#records.delete(record.shortId);
     this.#records.delete(shortId);
-    this.#records.set(shortId, { ...record, shortId, sessionId: session.sessionId, at: this.#now().toISOString() });
+    this.#records.set(shortId, { shortId, sessionId: session.sessionId, at: this.#now().toISOString(), launch: checked ?? record!.launch });
+    this.#cap();
     this.#write();
   }
 

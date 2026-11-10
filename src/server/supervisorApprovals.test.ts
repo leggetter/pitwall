@@ -23,6 +23,7 @@ import { checkMessage, recipientNames, sameNameCount } from './supervisorActions
 import { hiddenTextProblem } from '../shared/hiddenText.js';
 import { validateSpawnRequest } from './actions.js';
 import { SUPERVISOR_APPROVAL_MAX_BODY_BYTES } from './supervisorRoutes.js';
+import { createWorkStore, type WorkStore } from './work.js';
 
 const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
 const MCP_TOKEN = 'made-up-mcp-token-0123456789abcdefghijklmnopq';
@@ -141,7 +142,14 @@ afterEach(async () => {
 });
 
 async function start(
-  options: { timeoutMs?: number; sessions?: SessionSummary[]; resumed?: CommandResult; savedPermission?: (shortId: string, sessionId: string) => Promise<SavedPermission>; launches?: SessionLaunches } = {},
+  options: {
+    timeoutMs?: number;
+    sessions?: SessionSummary[];
+    resumed?: CommandResult;
+    savedPermission?: (shortId: string, sessionId: string) => Promise<SavedPermission>;
+    launches?: SessionLaunches;
+    work?: WorkStore;
+  } = {},
 ): Promise<Setup> {
   const queue = createApprovalQueue({ ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }), now: () => NOW });
   const supervisor = fakeSupervisor(MCP_TOKEN, queue);
@@ -162,7 +170,7 @@ async function start(
   };
   // Never the user's jobs folder (W129): a stopped job's saved mode is the test's.
   const savedPermission = options.savedPermission ?? (async (): Promise<SavedPermission> => ({ kind: 'unset' }));
-  const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0, supervisor }, { actions: { run, agents, ...(options.launches === undefined ? {} : { launches: options.launches }) }, savedPermission });
+  const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0, supervisor, ...(options.work === undefined ? {} : { work: options.work }) }, { actions: { run, agents, ...(options.launches === undefined ? {} : { launches: options.launches }) }, savedPermission });
   running.push(server);
   return { server, supervisor, queue, indexer, state, runs };
 }
@@ -439,7 +447,8 @@ describe('a new session, behind your click', () => {
     expect(runs).toEqual([]);
     expect((await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send' })).status).toBe(200);
     const allowed = (await answer) as { behavior: string; updatedInput: Record<string, unknown> };
-    expect(allowed).toEqual({ behavior: 'allow', updatedInput: { directory: repo, prompt: 'Write the release notes for 1.2.', name: 'pitwall-test-new' } });
+    // With the profile the card showed: Build, New session's first, since the supervisor named none (W156).
+    expect(allowed).toEqual({ behavior: 'allow', updatedInput: { directory: repo, prompt: 'Write the release notes for 1.2.', name: 'pitwall-test-new', profile: 'Build' } });
     // Another call's tool_use_id, or other arguments: nothing, and the pass stays.
     expect((await callTool(server.port, 'spawn_session', allowed.updatedInput, { 'claudecode/toolUseId': 'toolu_other' })).isError).toBe(true);
     expect((await callTool(server.port, 'spawn_session', { ...allowed.updatedInput, prompt: 'Something else.' })).isError).toBe(true);
@@ -448,10 +457,11 @@ describe('a new session, behind your click', () => {
     expect(queue.handoffs()).toEqual([]);
     const started = await callTool(server.port, 'spawn_session', allowed.updatedInput, { 'claudecode/toolUseId': 'toolu_spawn' });
     expect(started.isError).toBeUndefined();
-    expect(JSON.parse(started.text)).toEqual({ started: true, name: 'pitwall-test-new', shortId: 'c0ffee12', directory: repo });
+    expect(JSON.parse(started.text)).toEqual({ started: true, name: 'pitwall-test-new', shortId: 'c0ffee12', directory: repo, profile: 'Build' });
     expect(queue.handoffs()).toEqual([{ id: expect.any(String), kind: 'spawn', name: 'pitwall-test-new', shortId: 'c0ffee12', at: new Date(NOW).toISOString() }]);
     expect(runs).toHaveLength(1);
-    expect(runs[0]!.args).toEqual(['--bg', '--name', 'pitwall-test-new', '--', 'Write the release notes for 1.2.']);
+    expect(runs[0]!.args).toEqual(['--bg', '--name', 'pitwall-test-new', '--model', 'claude-opus-5-5', '--effort', 'high', '--', 'Write the release notes for 1.2.']);
+    expect(runs[0]!.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('sonnet');
     expect(runs[0]!.options.cwd).toBe(repo);
     // Once, with its tool_use_id or without.
     expect((await callTool(server.port, 'spawn_session', allowed.updatedInput, { 'claudecode/toolUseId': 'toolu_spawn' })).isError).toBe(true);
@@ -470,9 +480,11 @@ describe('a new session, behind your click', () => {
       await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send' });
       await answer;
     }
-    // Two approvals of the same input: two passes, so two calls, and no third.
-    for (let call = 0; call < 2; call++) expect((await callTool(server.port, 'spawn_session', input)).isError).toBeUndefined();
+    // Two approvals of the same input: two passes, so two calls, and no third. Allowed with the card's profile (W156).
+    const allowed = { ...input, profile: 'Build' };
     expect((await callTool(server.port, 'spawn_session', input)).isError).toBe(true);
+    for (let call = 0; call < 2; call++) expect((await callTool(server.port, 'spawn_session', allowed)).isError).toBeUndefined();
+    expect((await callTool(server.port, 'spawn_session', allowed)).isError).toBe(true);
     expect(runs).toHaveLength(2);
     ws.close();
   });
@@ -499,7 +511,7 @@ describe('a new session, behind your click', () => {
     const id = queue.list()[0]!.id;
     expect((await decide(server.port, apiKey, id, { decision: 'edit', text: 'x'.repeat(16_385) })).status).toBe(400);
     expect((await decide(server.port, apiKey, id, { decision: 'edit', text: 'Your own prompt.' })).status).toBe(200);
-    expect(await first).toEqual({ behavior: 'allow', updatedInput: { directory: repo, prompt: 'Your own prompt.' } });
+    expect(await first).toEqual({ behavior: 'allow', updatedInput: { directory: repo, prompt: 'Your own prompt.', profile: 'Build' } });
     expect(queue.takeNotes()).toEqual([`the user edited the first prompt of your new session in ${JSON.stringify(repo)} before it started. What was sent: "Your own prompt."`]);
     const second = approve(server.port, 'mcp__pitwall__spawn_session', { directory: repo, prompt: 'Another.' }, 'toolu_decline');
     await until(() => queue.list().length === 1);
@@ -529,6 +541,110 @@ describe('a new session, behind your click', () => {
       expect(await approve(server.port, 'mcp__pitwall__spawn_session', input), what).toMatchObject({ behavior: 'deny' });
     }
     expect(queue.list()).toEqual([]);
+  });
+});
+
+// W156: the supervisor proposes sessions with a work profile, which the card shows and you can change.
+const BUILT_INS = [
+  { name: 'Build', model: 'claude-opus-5-5', effort: 'high', subagentModel: 'sonnet' },
+  { name: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet' },
+  { name: 'Security review', model: 'claude-opus-5-5', effort: 'xhigh', subagentModel: 'opus' },
+  { name: 'Docs', model: 'sonnet', effort: 'medium', subagentModel: 'sonnet' },
+];
+
+describe('a new session with a work profile (W156)', () => {
+  it('the card shows the profile the supervisor named and every profile, resolved, and the session starts on exactly that', async () => {
+    const launches = new SessionLaunches();
+    const { server, queue, runs } = await start({ launches });
+    const { ws, apiKey } = await authedClient(server.port);
+    const input = { directory: repo, prompt: 'Review the open PR.', profile: 'Review' };
+    const answer = approve(server.port, 'mcp__pitwall__spawn_session', input, 'toolu_review');
+    await until(() => queue.list().length === 1);
+    expect(queue.list()[0]).toMatchObject({ kind: 'spawn', profile: 'Review', profiles: BUILT_INS });
+    expect((await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send' })).status).toBe(200);
+    const allowed = (await answer) as { updatedInput: Record<string, unknown> };
+    expect(allowed.updatedInput).toEqual({ directory: repo, prompt: 'Review the open PR.', profile: 'Review' });
+    // pitwall's own `launch` on the pass is never something a call can bring.
+    expect((await callTool(server.port, 'spawn_session', { ...allowed.updatedInput, launch: BUILT_INS[0] }, { 'claudecode/toolUseId': 'toolu_review' })).isError).toBe(true);
+    expect(runs).toEqual([]);
+    const second = approve(server.port, 'mcp__pitwall__spawn_session', input, 'toolu_review2');
+    await until(() => queue.list().length === 1);
+    await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send' });
+    await second;
+    const started = await callTool(server.port, 'spawn_session', allowed.updatedInput, { 'claudecode/toolUseId': 'toolu_review2' });
+    expect(JSON.parse(started.text)).toMatchObject({ started: true, profile: 'Review' });
+    expect(runs[0]!.args).toEqual(['--bg', '--model', 'sonnet', '--effort', 'high', '--', 'Review the open PR.']);
+    expect(runs[0]!.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('sonnet');
+    // Kept for its resume, as New session's (W155): not customized.
+    expect(launches.lookup({ sessionId: 'not-yet-linked', shortId: 'c0ffee12' })?.launch).toEqual({ profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet' });
+    ws.close();
+  });
+
+  it('a profile that isn’t one of pitwall’s, ignoring case or not, is denied at once, naming the profiles, never replaced or quoted', async () => {
+    const { server, queue } = await start();
+    for (const profile of ['review', 'Nope <b>', 7, '']) {
+      const answer = await approve(server.port, 'mcp__pitwall__spawn_session', { directory: repo, prompt: 'Go.', profile });
+      expect(answer.behavior).toBe('deny');
+      expect(answer.message).toContain('"Build", "Review", "Security review", "Docs"');
+      expect(answer.message).not.toContain('Nope');
+      expect(answer.message).not.toContain('"review"');
+    }
+    expect(queue.list()).toEqual([]);
+  });
+
+  it('you can pick another of the card’s profiles before you approve; one it doesn’t offer is refused and the card stays', async () => {
+    const { server, queue, runs } = await start();
+    const { ws, apiKey } = await authedClient(server.port);
+    const input = { directory: repo, prompt: 'Update the docs.' };
+    const answer = approve(server.port, 'mcp__pitwall__spawn_session', input, 'toolu_pick');
+    await until(() => queue.list().length === 1);
+    const id = queue.list()[0]!.id;
+    expect(queue.list()[0]).toMatchObject({ profile: 'Build' });
+    for (const profile of ['docs', 'Nope', null, 7]) {
+      const res = await decide(server.port, apiKey, id, { decision: 'send', profile });
+      expect(res.status, String(profile)).toBe(400);
+    }
+    expect((await decide(server.port, apiKey, id, { decision: 'decline', profile: 'Docs' })).status).toBe(400);
+    expect(queue.list()).toHaveLength(1);
+    expect((await decide(server.port, apiKey, id, { decision: 'edit', text: 'Update the README.', profile: 'Docs' })).status).toBe(200);
+    expect(await answer).toEqual({ behavior: 'allow', updatedInput: { directory: repo, prompt: 'Update the README.', profile: 'Docs' } });
+    expect(queue.takeNotes()).toEqual([
+      `the user edited the first prompt of your new session in ${JSON.stringify(repo)} before it started. What was sent: "Update the README."`,
+      `the user changed the profile of your new session in ${JSON.stringify(repo)} from "Build" to "Docs" before it started.`,
+    ]);
+    await callTool(server.port, 'spawn_session', { directory: repo, prompt: 'Update the README.', profile: 'Docs' }, { 'claudecode/toolUseId': 'toolu_pick' });
+    expect(runs[0]!.args).toEqual(['--bg', '--model', 'sonnet', '--effort', 'medium', '--', 'Update the README.']);
+    ws.close();
+  });
+
+  it('launches what the card showed, even when the defaults change before you approve, and starts with the profile’s skill', async () => {
+    const work = createWorkStore({ profiles: [{ name: 'Quick', effort: 'low', skill: 'pitwall-test-skill', source: 'config' }] });
+    const { server, queue, runs } = await start({ work });
+    const { ws, apiKey } = await authedClient(server.port);
+    const answer = approve(server.port, 'mcp__pitwall__spawn_session', { directory: repo, prompt: 'Go.', profile: 'Quick' }, 'toolu_quick');
+    await until(() => queue.list().length === 1);
+    const card = queue.list()[0]!;
+    expect(card.kind === 'spawn' && card.profiles?.find((each) => each.name === 'Quick')).toEqual({ name: 'Quick', model: 'default', effort: 'low', subagentModel: 'default', skill: 'pitwall-test-skill' });
+    // Preferences change the defaults for sessions and sub-agents after the card was drawn.
+    expect(work.update({ overrides: { session: { model: 'haiku' }, subagents: { model: 'haiku' } } }).ok).toBe(true);
+    await decide(server.port, apiKey, card.id, { decision: 'send' });
+    await answer;
+    await callTool(server.port, 'spawn_session', { directory: repo, prompt: 'Go.', profile: 'Quick' }, { 'claudecode/toolUseId': 'toolu_quick' });
+    expect(runs[0]!.args).toEqual(['--bg', '--effort', 'low', '--', '/pitwall-test-skill Go.']);
+    expect(runs[0]!.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
+    ws.close();
+  });
+
+  it('lists the profiles, with what each sets, in spawn_session’s and resume_session’s schema', async () => {
+    const { server } = await start();
+    const message = { jsonrpc: '2.0', id: ++ids, method: 'tools/list', params: {} };
+    const res = await request(server.port, MCP_PATH, 'POST', { authorization: `Bearer ${MCP_TOKEN}`, 'content-type': 'application/json' }, JSON.stringify(message));
+    const tools = (JSON.parse(res.body) as { result: { tools: { name: string; inputSchema: { properties: Record<string, { enum?: string[]; description?: string }> } }[] } }).result.tools;
+    for (const name of ['spawn_session', 'resume_session']) {
+      const profile = tools.find((tool) => tool.name === name)!.inputSchema.properties.profile!;
+      expect(profile.enum).toEqual(['Build', 'Review', 'Security review', 'Docs']);
+      expect(profile.description).toContain('"Review": model sonnet, effort high, sub-agents sonnet');
+    }
   });
 });
 
@@ -633,6 +749,50 @@ describe('a finished session resumed with a message, behind your click (W127)', 
     expect(queue.list()[0]).not.toHaveProperty('launch');
     queue.settle(queue.list()[0]!.id, { behavior: 'deny', message: DECLINED_MESSAGE });
     await ended;
+    ws.close();
+  });
+
+  it('resumes on a profile the supervisor named, as the card showed it, in place of what it started with, and keeps it for the next (W156)', async () => {
+    const launches = new SessionLaunches();
+    launches.record('bbbbbbbb', { profile: 'Build', model: 'claude-opus-5-5', effort: 'high', subagentModel: 'sonnet' });
+    const { server, queue, runs } = await start({ sessions: [stopped(), finished()], launches });
+    const { ws, apiKey } = await authedClient(server.port);
+    const input = { id: STOPPED_ID, message: 'Review what you built.', profile: 'Review' };
+    const answer = approve(server.port, RESUME, input, 'toolu_resume_review');
+    await until(() => queue.list().length === 1);
+    expect(queue.list()[0]).toMatchObject({ profile: 'Review', profiles: BUILT_INS, launch: { profile: 'Build' } });
+    await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send' });
+    expect(await answer).toEqual({ behavior: 'allow', updatedInput: input });
+    expect(JSON.parse((await callTool(server.port, 'resume_session', input, { 'claudecode/toolUseId': 'toolu_resume_review' })).text)).toMatchObject({ resumed: true });
+    expect(resumeRuns(runs)[0]!.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'sonnet', '--effort', 'high', '--', 'Review what you built.']);
+    expect(launches.lookup({ sessionId: STOPPED_ID })?.launch).toEqual({ profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet' });
+    ws.close();
+  });
+
+  it('you can resume it as it started instead, with null, or on another profile; an unknown one is denied at once (W156)', async () => {
+    const launches = new SessionLaunches();
+    launches.record('bbbbbbbb', { profile: 'Build', model: 'claude-opus-5-5', effort: 'high', subagentModel: 'sonnet' });
+    const { server, queue, runs } = await start({ sessions: [stopped(), finished()], launches });
+    const { ws, apiKey } = await authedClient(server.port);
+    expect(await approve(server.port, RESUME, { id: STOPPED_ID, message: 'Go on.', profile: 'Reviews' })).toMatchObject({ behavior: 'deny' });
+    expect(queue.list()).toEqual([]);
+    const answer = approve(server.port, RESUME, { id: STOPPED_ID, message: 'Go on.', profile: 'Docs' }, 'toolu_resume_null');
+    await until(() => queue.list().length === 1);
+    await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send', profile: null });
+    expect(await answer).toEqual({ behavior: 'allow', updatedInput: { id: STOPPED_ID, message: 'Go on.' } });
+    expect(queue.takeNotes()).toEqual([`the user changed the profile the session ${STOPPED_ID} resumes on, from "Docs" to none, so it resumed as it started, before it was sent.`]);
+    await callTool(server.port, 'resume_session', { id: STOPPED_ID, message: 'Go on.' }, { 'claudecode/toolUseId': 'toolu_resume_null' });
+    expect(resumeRuns(runs)[0]!.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'claude-opus-5-5', '--effort', 'high', '--', 'Go on.']);
+    // A session with no record and no profile picked: picking one gives it a record.
+    const ended = approve(server.port, RESUME, { id: FINISHED_ID, message: 'Go on.' }, 'toolu_resume_pick');
+    await until(() => queue.list().length === 1);
+    expect(queue.list()[0]).not.toHaveProperty('profile');
+    await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send', profile: 'Security review' });
+    expect(await ended).toEqual({ behavior: 'allow', updatedInput: { id: FINISHED_ID, message: 'Go on.', profile: 'Security review' } });
+    await callTool(server.port, 'resume_session', { id: FINISHED_ID, message: 'Go on.', profile: 'Security review' }, { 'claudecode/toolUseId': 'toolu_resume_pick' });
+    expect(resumeRuns(runs)[1]!.args).toEqual(['--resume', FINISHED_ID, '--bg', '--model', 'claude-opus-5-5', '--effort', 'xhigh', '--', 'Go on.']);
+    expect(resumeRuns(runs)[1]!.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('opus');
+    expect(launches.lookup({ sessionId: FINISHED_ID })?.launch).toEqual({ profile: 'Security review', model: 'claude-opus-5-5', effort: 'xhigh', subagentModel: 'opus' });
     ws.close();
   });
 

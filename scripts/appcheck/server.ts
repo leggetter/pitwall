@@ -140,7 +140,7 @@ export interface Records {
   supervisorStops: number[];
   /** Each New conversation (W136), with the status it got. */
   supervisorNewConversations: number[];
-  decisions: Array<{ id: string; decision: string; length?: number; status: number }>;
+  decisions: Array<{ id: string; decision: string; length?: number; profile?: string | null; status: number }>;
   /** Every HTTP request and upgrade, as `METHOD /path status`. */
   requests: string[];
 }
@@ -660,7 +660,13 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       const body = await readJson(req);
       const decision = asDecision(body);
       const answer = (status: number, result: ActionResult) => {
-        records.decisions.push({ id, decision: decision?.decision ?? 'invalid', ...(decision?.decision === 'edit' ? { length: decision.text.length } : {}), status });
+        records.decisions.push({
+          id,
+          decision: decision?.decision ?? 'invalid',
+          ...(decision?.decision === 'edit' ? { length: decision.text.length } : {}),
+          ...(decision !== undefined && decision.decision !== 'decline' && decision.profile !== undefined ? { profile: decision.profile } : {}),
+          status,
+        });
         json(res, status, result);
       };
       if (!decision) return answer(400, { ok: false, error: 'The decision must be send, edit with its text, or decline.' });
@@ -1113,8 +1119,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** A SupervisorDecision, exactly: send or decline alone, or edit with its text and nothing else. */
 function asDecision(body: unknown): SupervisorDecision | undefined {
   if (!isRecord(body)) return undefined;
-  const keys = Object.keys(body).sort().join(',');
-  if ((body.decision === 'send' || body.decision === 'decline') && keys === 'decision') return { decision: body.decision };
-  if (body.decision === 'edit' && keys === 'decision,text' && typeof body.text === 'string' && body.text.trim() !== '' && body.text.length <= 20_000) return { decision: 'edit', text: body.text };
+  // W156: a profile's name, or null for a resume as it started, on Send and Send edit.
+  const hasProfile = Object.hasOwn(body, 'profile');
+  if (hasProfile && body.profile !== null && typeof body.profile !== 'string') return undefined;
+  const picked = hasProfile ? { profile: body.profile as string | null } : {};
+  const keys = Object.keys(body).filter((key) => key !== 'profile').sort().join(',');
+  if (body.decision === 'send' && keys === 'decision') return { decision: 'send', ...picked };
+  if (body.decision === 'decline' && keys === 'decision' && !hasProfile) return { decision: 'decline' };
+  if (body.decision === 'edit' && keys === 'decision,text' && typeof body.text === 'string' && body.text.trim() !== '' && body.text.length <= 20_000) return { decision: 'edit', text: body.text, ...picked };
   return undefined;
 }

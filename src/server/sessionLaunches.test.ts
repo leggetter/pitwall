@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { IndexSnapshot, SessionSummary } from '../shared/protocol.js';
-import { checkedLaunch, readSessionLaunchesFile, SESSION_LAUNCHES_FILE_NAME, SESSION_LAUNCHES_MAX, SessionLaunches } from './sessionLaunches.js';
+import { checkedLaunch, launchWork, readSessionLaunchesFile, SESSION_LAUNCHES_FILE_NAME, SESSION_LAUNCHES_MAX, SessionLaunches } from './sessionLaunches.js';
 
 const ID = '44444444-4444-4444-8444-444444444444';
 const OTHER = '55555555-5555-4555-8555-555555555555';
@@ -79,6 +79,29 @@ describe('SessionLaunches (W155)', () => {
     expect(again.size).toBe(1);
     expect(again.lookup({ sessionId: ID })?.launch).toEqual(REVIEW);
     expect(again.lookup({ sessionId: OTHER, shortId: 'a1b2c3d4' })).toBeUndefined();
+  });
+
+  it('after a resume on a profile you approved (W156), keeps that profile instead, and gives a session with no record one', () => {
+    const launches = store();
+    launches.record('a1b2c3d4', REVIEW);
+    const docs = { profile: 'Docs', model: 'sonnet', effort: 'medium' as const, subagentModel: 'sonnet' };
+    launches.resumed({ sessionId: ID, shortId: 'a1b2c3d4' }, 'e5f6a7b8', docs);
+    launches.resumed({ sessionId: OTHER }, 'c9d0e1f2', REVIEW);
+    // A launch with no profile, or a short id that isn't one, keeps nothing new.
+    launches.resumed({ sessionId: '66666666-6666-4666-8666-666666666666' }, 'a0a0a0a0', { model: 'sonnet' });
+    launches.resumed({ sessionId: '77777777-7777-4777-8777-777777777777' }, '-bad', REVIEW);
+    const again = store();
+    expect(again.size).toBe(2);
+    expect(again.lookup({ sessionId: ID })?.launch).toEqual(docs);
+    expect(again.lookup({ sessionId: OTHER })?.launch).toEqual(REVIEW);
+  });
+
+  it('launchWork() takes an approved launch only whole: its profile and all three settings, each passing the checks (W156)', () => {
+    expect(launchWork(REVIEW)).toEqual({ launch: REVIEW, session: { model: 'sonnet', effort: 'high' }, subagents: { model: 'sonnet' } });
+    expect(launchWork({ ...REVIEW, profile: undefined })).toBeUndefined();
+    expect(launchWork({ ...REVIEW, model: '--dangerously-skip-permissions' })).toBeUndefined();
+    expect(launchWork({ ...REVIEW, effort: 'huge' as never })).toBeUndefined();
+    expect(launchWork({ profile: 'Review', model: 'sonnet', effort: 'high' })).toBeUndefined();
   });
 
   it(`keeps at most ${SESSION_LAUNCHES_MAX}, dropping the least recently started or resumed first`, () => {

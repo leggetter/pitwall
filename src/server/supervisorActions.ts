@@ -38,7 +38,8 @@
 //   a new session   directory: an existing directory under a root, by its real path, as New session
 //                   requires (checkDirectory()); name: NAME_PATTERN, never one of pitwall's own
 //                   (OWN_NAMES); prompt: not blank, at most MAX_PROMPT_LENGTH, not just a claude
-//                   command; no other field
+//                   command; profile (W156): absent, or a profile's exact name (checkProfile()),
+//                   never matched loosely or replaced; no other field
 //   a resume        id: a listed session's, resolved from the index's snapshot, and only its own
 //                   UUID, directory and name used after, never the input (W66's rule); not one of
 //                   pitwall's own; not running, which takes a message instead; an interactive session
@@ -48,7 +49,12 @@
 //                   again just before it runs, and Claude Code refuses a workspace it doesn't trust.
 //                   message: as a message's, and not just a claude command, as a new session's
 //                   prompt (W129, the re-review's M1): `claude --resume <id> --bg -- purge` could run
-//                   `claude purge`; no other field
+//                   `claude purge`; profile, as a new session's; no other field
+//   a profile       (W156) the card carries every profile resolved when it was made, and starts on the
+//                   supervisor's pick (a new session's, else Build; a resume's, else as it started).
+//                   Send and Edit send yours, by name among the card's own (pickedProfile()); the allow
+//                   names it, and the pass carries its values as the card showed them, which the tool
+//                   uses, checked again, never resolved again (withApprovedProfile(), passRun())
 //   all text        no character that doesn't show as itself (hiddenTextProblem(), W120, W116's
 //                   F1): no C0 or C1 control but tab and newline, so no terminal escape; no bidi
 //                   control, zero-width or tag character, or other format or default-ignorable
@@ -70,7 +76,24 @@
 import type { AgentRow, AgentsSource } from '../index/agents.js';
 import { isRecord } from '../index/guards.js';
 import { hiddenTextProblem } from '../shared/hiddenText.js';
-import { MCP_TOOLS, SUPERVISOR_PROPOSAL_MAX, withSupervisorFooter, type IndexSnapshot, type SavedPermission, type SessionLaunch, type SessionSummary, type SupervisorDecision } from '../shared/protocol.js';
+import {
+  DEFAULT_PROFILE,
+  isEffortLevel,
+  isSkillName,
+  isWorkModel,
+  MCP_TOOLS,
+  SUPERVISOR_PROPOSAL_MAX,
+  WORK_DEFAULT,
+  withSupervisorFooter,
+  type ApprovalProfile,
+  type IndexSnapshot,
+  type SavedPermission,
+  type SessionLaunch,
+  type SessionSummary,
+  type SupervisorApproval,
+  type SupervisorDecision,
+  type WorkProfile,
+} from '../shared/protocol.js';
 import { DECLINED_MESSAGE, type ApprovalDraft, type ApprovalQueue, type PermissionAnswer } from '../supervisor/approvals.js';
 import { isPreviewOf, KNOWN_INPUT_FIELDS, OWN_NAMES } from '../supervisor/supervisorGateHook.mjs';
 import { mcpToolName } from '../supervisor/prompt.js';
@@ -81,6 +104,7 @@ import type { McpTool, McpToolResult } from './mcp.js';
 import { NAME_MAX, plainField, UNTRUSTED_NOTE } from './mcpTools.js';
 import { isAddressable, nameKey } from './relayPrompt.js';
 import { findSession } from './sessions.js';
+import type { WorkStore } from './work.js';
 import { isSafeSessionId } from '../index/index.js';
 
 /** The tools approve may allow, as Claude Code names them. */
@@ -123,6 +147,12 @@ export interface SupervisorActionSources {
   savedPermission?: (shortId: string, sessionId: string) => Promise<SavedPermission>;
   /** What a session started with a work profile used, which its resume reuses (W155), for the card. */
   launches?: Pick<SessionLaunches, 'lookup'>;
+  /**
+   * The work profiles and the defaults for sessions and sub-agents (W155, W156): spawn_session and
+   * resume_session take a profile's name, checked against these, and each card offers them, resolved.
+   * Without it, neither takes a profile, as before W156.
+   */
+  work?: Pick<WorkStore, 'choice' | 'profile' | 'settings'>;
 }
 
 type Checked<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -245,12 +275,65 @@ export async function checkLiveRecipient(to: string, snapshot: IndexSnapshot | u
   return { ok: true, value: true };
 }
 
-/** spawn_session's arguments, checked as New session checks a request: the directory by its real path under a root. */
-export async function checkSpawn(input: unknown, snapshot: IndexSnapshot | undefined): Promise<Checked<ValidSpawn>> {
+/**
+ * `profile` as a card shows it, and as an approval launches it (W156): the profile's model, effort and
+ * sub-agents' model, each else the defaults' for sessions or sub-agents now, Preferences' included,
+ * else WORK_DEFAULT, as New session's request and withSessionWork() resolve them; and its skill.
+ */
+export function approvalProfile(profile: WorkProfile, work: Pick<WorkStore, 'choice'>): ApprovalProfile {
+  const session = work.choice('session');
+  const subagents = work.choice('subagents');
+  return {
+    name: profile.name,
+    model: profile.model ?? session.model ?? WORK_DEFAULT,
+    effort: profile.effort ?? session.effort ?? WORK_DEFAULT,
+    subagentModel: profile.subagentModel ?? subagents.model ?? WORK_DEFAULT,
+    ...(profile.skill === undefined ? {} : { skill: profile.skill }),
+  };
+}
+
+/** Every profile, as a card offers them (W156), in New session's order. */
+export function approvalProfiles(work: Pick<WorkStore, 'choice' | 'settings'>): ApprovalProfile[] {
+  return (work.settings().profiles ?? []).map((profile) => approvalProfile(profile, work));
+}
+
+/** The profiles' names, quoted, for an error the supervisor reads. They're the config file's or pitwall's, never a session's. */
+function profileNames(work: SupervisorActionSources['work']): string {
+  return (work?.settings().profiles ?? []).map((profile) => JSON.stringify(profile.name)).join(', ');
+}
+
+/**
+ * A `profile` argument (W156), by its exact name among pitwall's profiles: absent is fine; any other
+ * name is refused, saying which there are, never matched loosely or replaced by another. Never
+ * quoted back: it's the model's text.
+ */
+export function checkProfile(value: unknown, work: SupervisorActionSources['work']): Checked<WorkProfile | undefined> {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (work === undefined) return { ok: false, error: 'pitwall has no work profiles here, so leave out profile.' };
+  const found = typeof value === 'string' && value.length <= 64 ? work.profile(value) : undefined;
+  if (found === undefined) {
+    return { ok: false, error: `pitwall has no profile by that name, and won't pick another for you. Name one of these exactly as it's written: ${profileNames(work)}.` };
+  }
+  return { ok: true, value: found };
+}
+
+/** A checked spawn_session call: the spawn as New session would start it without a profile, and the profile it named. */
+export interface CheckedSpawn {
+  spawn: ValidSpawn;
+  profile?: WorkProfile;
+}
+
+/**
+ * spawn_session's arguments, checked as New session checks a request: the directory by its real path
+ * under a root; and `profile`, a profile's exact name (checkProfile(), W156).
+ */
+export async function checkSpawn(input: unknown, snapshot: IndexSnapshot | undefined, work?: SupervisorActionSources['work']): Promise<Checked<CheckedSpawn>> {
   if (!isRecord(input)) return { ok: false, error: 'The call has no arguments.' };
   for (const key of Object.keys(input)) {
-    if (key !== 'directory' && key !== 'prompt' && key !== 'name') return { ok: false, error: `Unknown argument: ${key.slice(0, 40)}.` };
+    if (key !== 'directory' && key !== 'prompt' && key !== 'name' && key !== 'profile') return { ok: false, error: `Unknown argument: ${key.slice(0, 40)}.` };
   }
+  const profile = checkProfile(input.profile, work);
+  if (!profile.ok) return profile;
   const prompt = checkText(input.prompt, MAX_PROMPT_LENGTH, 'first prompt');
   if (!prompt.ok) return prompt;
   for (const [field, what] of [['directory', 'directory'], ['name', 'name']] as const) {
@@ -261,7 +344,41 @@ export async function checkSpawn(input: unknown, snapshot: IndexSnapshot | undef
   if (snapshot === undefined) return { ok: false, error: 'pitwall hasn’t listed the sessions yet, so it doesn’t know the roots.' };
   const validation = await validateSpawnRequest({ cwd: input.directory, prompt: prompt.value, ...(input.name === undefined ? {} : { name: input.name }) }, snapshot.roots);
   if (!validation.ok) return { ok: false, error: validation.error };
-  return { ok: true, value: validation.spawn };
+  return { ok: true, value: { spawn: validation.spawn, ...(profile.value === undefined ? {} : { profile: profile.value }) } };
+}
+
+/**
+ * `spawn` with the profile you approved, exactly as its card showed it (W156): its name, model, effort,
+ * sub-agents' model and skill, from pitwall's own pass, never the call. Each is checked again, as the
+ * profiles' are; undefined when any fails, or when it isn't the profile the call names.
+ */
+export function withApprovedProfile(spawn: ValidSpawn, launch: unknown, name: unknown): ValidSpawn | undefined {
+  const profile = checkedApprovalProfile(launch);
+  if (profile === undefined || profile.name !== name) return undefined;
+  return {
+    ...spawn,
+    profile: profile.name,
+    model: profile.model,
+    effort: profile.effort,
+    subagentModel: profile.subagentModel,
+    ...(profile.skill === undefined ? {} : { skill: profile.skill }),
+  };
+}
+
+/** `value` as an ApprovalProfile whose every field passes the profiles' checks, or undefined. */
+function checkedApprovalProfile(value: unknown): ApprovalProfile | undefined {
+  if (!isRecord(value) || typeof value.name !== 'string') return undefined;
+  const { model, effort, subagentModel, skill } = value;
+  if (model !== WORK_DEFAULT && !isWorkModel(model, 'session')) return undefined;
+  if (effort !== WORK_DEFAULT && !isEffortLevel(effort)) return undefined;
+  if (subagentModel !== WORK_DEFAULT && !isWorkModel(subagentModel, 'subagents')) return undefined;
+  if (skill !== undefined && !isSkillName(skill)) return undefined;
+  return { name: value.name, model: model as string, effort: effort as ApprovalProfile['effort'], subagentModel: subagentModel as string, ...(skill === undefined ? {} : { skill: skill as string }) };
+}
+
+/** What a resume on `profile` uses and keeps (W156): a launch record's fields, never the skill. */
+export function resumeLaunchOf(profile: ApprovalProfile): SessionLaunch {
+  return { profile: profile.name, model: profile.model, effort: profile.effort, subagentModel: profile.subagentModel };
 }
 
 /** A resume, checked: the listed session, by the index's own summary, and the message. */
@@ -270,6 +387,8 @@ export interface CheckedResume {
   /** The session's directory by its real path, as checkDirectory() found it now. */
   directory: string;
   text: string;
+  /** The profile it named (W156), by its exact name. */
+  profile?: WorkProfile;
 }
 
 /**
@@ -281,11 +400,18 @@ export interface CheckedResume {
  * message as a message's. The runner checks a fresh `claude agents` and the directory again just
  * before it runs.
  */
-export async function checkResume(input: unknown, snapshot: IndexSnapshot | undefined, own: ReadonlySet<string> = new Set()): Promise<Checked<CheckedResume>> {
+export async function checkResume(
+  input: unknown,
+  snapshot: IndexSnapshot | undefined,
+  own: ReadonlySet<string> = new Set(),
+  work?: SupervisorActionSources['work'],
+): Promise<Checked<CheckedResume>> {
   if (!isRecord(input)) return { ok: false, error: 'The call has no arguments.' };
   for (const key of Object.keys(input)) {
-    if (key !== 'id' && key !== 'message') return { ok: false, error: `Unknown argument: ${key.slice(0, 40)}.` };
+    if (key !== 'id' && key !== 'message' && key !== 'profile') return { ok: false, error: `Unknown argument: ${key.slice(0, 40)}.` };
   }
+  const profile = checkProfile(input.profile, work);
+  if (!profile.ok) return profile;
   const { id } = input;
   if (typeof id !== 'string' || id === '') return { ok: false, error: 'The call names no session: pass its id from list_sessions.' };
   const hidden = hiddenTextProblem(id, 'id');
@@ -306,7 +432,7 @@ export async function checkResume(input: unknown, snapshot: IndexSnapshot | unde
   if (problem !== undefined) return { ok: false, error: problem };
   const dir = await checkDirectory(session.cwd, snapshot.roots);
   if (!dir.ok) return { ok: false, error: dir.error };
-  return { ok: true, value: { session, directory: dir.path, text: text.value } };
+  return { ok: true, value: { session, directory: dir.path, text: text.value, ...(profile.value === undefined ? {} : { profile: profile.value }) } };
 }
 
 /** How many listed sessions have `session`'s name, ignoring case, itself included, each counted once (W129, M2). */
@@ -338,9 +464,12 @@ function launchFor(session: SessionSummary, launches: SupervisorActionSources['l
   }
 }
 
-/** The input resume_session runs with, once allowed: the listed session's own id, and the message as the card showed it or your edit. */
-function resumeInput(sessionId: string, text: string): Record<string, unknown> {
-  return { id: sessionId, message: text };
+/**
+ * The input resume_session runs with, once allowed: the listed session's own id, the message as the
+ * card showed it or your edit, and the profile you picked, if any (W156).
+ */
+function resumeInput(sessionId: string, text: string, profile?: string): Record<string, unknown> {
+  return { id: sessionId, message: text, ...(profile === undefined ? {} : { profile }) };
 }
 
 /**
@@ -361,9 +490,17 @@ export function sentMessageInput(to: string, text: string): Record<string, unkno
   return messageInput(to, withSupervisorFooter(text));
 }
 
-/** The input spawn_session runs with, once allowed: the real path, the prompt, the name if any. */
-function spawnInput(spawn: ValidSpawn): Record<string, unknown> {
-  return { directory: spawn.cwd, prompt: spawn.prompt, ...(spawn.name === undefined ? {} : { name: spawn.name }) };
+/** The input spawn_session runs with, once allowed: the real path, the prompt, the name if any, and the profile you picked (W156). */
+function spawnInput(spawn: ValidSpawn, profile?: string): Record<string, unknown> {
+  return { directory: spawn.cwd, prompt: spawn.prompt, ...(spawn.name === undefined ? {} : { name: spawn.name }), ...(profile === undefined ? {} : { profile }) };
+}
+
+/**
+ * What a pass hands the call that takes it (W156): the input, and the profile exactly as the card
+ * showed it, under `launch`, which the call itself never carries (grantPass()'s `run`).
+ */
+function passRun(input: Record<string, unknown>, profile: ApprovalProfile | undefined): Record<string, unknown> | undefined {
+  return profile === undefined ? undefined : { ...input, launch: profile };
 }
 
 function answerText(answer: PermissionAnswer): McpToolResult {
@@ -412,9 +549,9 @@ export function createApproveTool(sources: SupervisorActionSources): McpTool {
         runInput = messageInput(checked.value.to, checked.value.text);
       } else if (toolName === RESUME_TOOL) {
         if (sources.resumer === undefined) return deny('pitwall can’t resume sessions here. Nothing was shown to the user.');
-        const checked = await checkResume(input, sources.snapshots.latest(), own());
+        const checked = await checkResume(input, sources.snapshots.latest(), own(), sources.work);
         if (!checked.ok) return deny(`${checked.error} Nothing was shown to the user.`);
-        const { session, directory, text } = checked.value;
+        const { session, directory, text, profile } = checked.value;
         // What the card shows beside the name, which isn't unique (W129, M2, L1): its folder, its last activity, how many share its name, and its saved permission mode.
         const snapshot = sources.snapshots.latest();
         draft = {
@@ -427,13 +564,23 @@ export function createApproveTool(sources: SupervisorActionSources): McpTool {
           sameName: snapshot === undefined ? 1 : sameNameCount(snapshot, session),
           permission: await resumePermission(session, sources.savedPermission),
           ...launchFor(session, sources.launches),
+          // The profiles you can resume it on instead (W156), and the supervisor's pick, if any.
+          ...(sources.work === undefined ? {} : { profiles: approvalProfiles(sources.work) }),
+          ...(profile === undefined ? {} : { profile: profile.name }),
         };
         runInput = resumeInput(session.sessionId, text);
       } else {
-        const checked = await checkSpawn(input, sources.snapshots.latest());
+        const checked = await checkSpawn(input, sources.snapshots.latest(), sources.work);
         if (!checked.ok) return deny(`${checked.error} Nothing was shown to the user.`);
-        const spawn = checked.value;
-        draft = { kind: 'spawn', directory: spawn.cwd, prompt: spawn.prompt, ...(spawn.name === undefined ? {} : { name: spawn.name }) };
+        const { spawn, profile } = checked.value;
+        draft = {
+          kind: 'spawn',
+          directory: spawn.cwd,
+          prompt: spawn.prompt,
+          ...(spawn.name === undefined ? {} : { name: spawn.name }),
+          // The supervisor's profile, else New session's first (W156), shown and yours to change; never one it didn't name in its place.
+          ...(sources.work === undefined ? {} : { profile: profile?.name ?? DEFAULT_PROFILE, profiles: approvalProfiles(sources.work) }),
+        };
         runInput = spawnInput(spawn);
       }
       const added = sources.approvals.add({ draft, toolName, toolUseId, input: runInput }, context?.signal);
@@ -441,6 +588,22 @@ export function createApproveTool(sources: SupervisorActionSources): McpTool {
       return answerText(await added.answer);
     },
   };
+}
+
+/**
+ * A tool's `profile` property (W156): pitwall's profiles by name, each with what it sets, as the
+ * config file and pitwall have them, so the supervisor names one that exists. None without profiles.
+ */
+function profileProperty(work: SupervisorActionSources['work'], lead: string): Record<string, unknown> {
+  // As each profile sets them: the defaults for a field it leaves out can change while pitwall runs, and the card shows them then.
+  const profiles = work?.settings().profiles ?? [];
+  if (profiles.length === 0) return {};
+  const shown = (value: string | undefined) => (value === undefined ? "the user's default" : value === WORK_DEFAULT ? "Claude Code's default" : value);
+  const each = profiles.map(
+    (profile) =>
+      `${JSON.stringify(profile.name)}: model ${shown(profile.model)}, effort ${shown(profile.effort)}, sub-agents ${shown(profile.subagentModel)}${profile.skill === undefined ? '' : `, starts with /${profile.skill}`}`,
+  );
+  return { profile: { type: 'string', enum: profiles.map((profile) => profile.name), description: `${lead} The profiles: ${each.join('; ')}.` } };
 }
 
 /** spawn_session: starts a background session, only for a call approve just allowed. */
@@ -455,6 +618,7 @@ export function createSpawnSessionTool(sources: SupervisorActionSources): McpToo
         directory: { type: 'string', description: 'An absolute path to an existing directory under one of the user’s roots.' },
         prompt: { type: 'string', description: `The whole first prompt, at most ${MAX_PROMPT_LENGTH.toLocaleString('en-US')} characters.` },
         name: { type: 'string', description: 'Optional: a short name for the session (letters, digits, spaces, ".", "_" and "-", at most 64).' },
+        ...profileProperty(sources.work, `Optional: the work profile it starts with, by its exact name, which sets its model, effort and sub-agents' model, and may start it with a skill. Without one, the card shows ${DEFAULT_PROFILE}. The user can pick another on the card.`),
       },
       required: ['directory', 'prompt'],
       additionalProperties: false,
@@ -466,10 +630,14 @@ export function createSpawnSessionTool(sources: SupervisorActionSources): McpToo
       if (allowed === undefined) {
         return { text: 'pitwall: this new session wasn’t approved by the user, so nothing was started.', isError: true };
       }
-      // Checked once more, now: the directory may have gone since you approved it.
-      const checked = await checkSpawn(allowed, sources.snapshots.latest());
+      // Checked once more, now: the directory may have gone since you approved it. `launch` is the
+      // profile as its card showed it, from pitwall's own pass (W156).
+      const { launch, ...call } = allowed;
+      const checked = await checkSpawn(call, sources.snapshots.latest(), sources.work);
       if (!checked.ok) return { text: `pitwall: nothing was started: ${checked.error}`, isError: true };
-      const outcome = await sources.spawner.start(checked.value);
+      const spawn = call.profile === undefined ? checked.value.spawn : withApprovedProfile(checked.value.spawn, launch, call.profile);
+      if (spawn === undefined) return { text: "pitwall: nothing was started: the profile's settings didn't pass pitwall's checks.", isError: true };
+      const outcome = await sources.spawner.start(spawn);
       if (!outcome.result.ok) {
         const hint = outcome.result.hint === undefined ? '' : ` The user can run this to fix it: ${outcome.result.hint}`;
         return { text: `pitwall: the session didn't start: ${outcome.result.error}${hint}`, isError: true };
@@ -477,7 +645,9 @@ export function createSpawnSessionTool(sources: SupervisorActionSources): McpToo
       sources.onSpawned?.();
       // So the panel can open it, and list it with its state (W124).
       sources.approvals.handoff({ kind: 'spawn', name: outcome.result.name, shortId: outcome.result.shortId });
-      return { text: JSON.stringify({ started: true, name: outcome.result.name, shortId: outcome.result.shortId, directory: checked.value.cwd }) };
+      return {
+        text: JSON.stringify({ started: true, name: outcome.result.name, shortId: outcome.result.shortId, directory: spawn.cwd, ...(spawn.profile === undefined ? {} : { profile: spawn.profile }) }),
+      };
     },
   };
 }
@@ -502,6 +672,10 @@ export function createResumeSessionTool(sources: SupervisorActionSources): McpTo
       properties: {
         id: { type: 'string', description: 'The session’s id, as list_sessions gives it.' },
         message: { type: 'string', description: `The whole message, at most ${SUPERVISOR_PROPOSAL_MAX.toLocaleString('en-US')} characters.` },
+        ...profileProperty(
+          sources.work,
+          "Optional: a work profile to resume it on, by its exact name, which sets its model, effort and sub-agents' model in place of what it started with; never its skill. Without one, it resumes as it started. The user can pick another on the card.",
+        ),
       },
       required: ['id', 'message'],
       additionalProperties: false,
@@ -515,10 +689,18 @@ export function createResumeSessionTool(sources: SupervisorActionSources): McpTo
       }
       if (sources.resumer === undefined) return notResumed('pitwall can’t resume sessions here.');
       // Checked once more, now: it may have started again, or its directory gone, since you approved it.
-      const checked = await checkResume(allowed, sources.snapshots.latest(), own());
+      // `launch` is the profile as its card showed it, from pitwall's own pass (W156).
+      const { launch, ...call } = allowed;
+      const checked = await checkResume(call, sources.snapshots.latest(), own(), sources.work);
       if (!checked.ok) return notResumed(checked.error);
       const { session, text } = checked.value;
-      const outcome = await sources.resumer.resume(session, text);
+      let approved: SessionLaunch | undefined;
+      if (call.profile !== undefined) {
+        const profile = checkedApprovalProfile(launch);
+        if (profile === undefined || profile.name !== call.profile) return notResumed("the profile's settings didn't pass pitwall's checks.");
+        approved = resumeLaunchOf(profile);
+      }
+      const outcome = await sources.resumer.resume(session, text, approved);
       const { result } = outcome;
       if (result.ok) {
         sources.approvals.handoff({ kind: 'resume', name: session.name, sessionId: session.sessionId, shortId: result.shortId });
@@ -580,11 +762,47 @@ export function editNote(draft: ApprovalDraft, sent: string): string {
 /** The body of POST supervisorApprovalPath(id), checked: a SupervisorDecision and nothing else. */
 export function parseDecision(body: unknown): SupervisorDecision | undefined {
   if (!isRecord(body)) return undefined;
-  const keys = Object.keys(body).sort().join(',');
-  if (body.decision === 'send' && keys === 'decision') return { decision: 'send' };
-  if (body.decision === 'decline' && keys === 'decision') return { decision: 'decline' };
-  if (body.decision === 'edit' && keys === 'decision,text' && typeof body.text === 'string') return { decision: 'edit', text: body.text };
+  const hasProfile = Object.hasOwn(body, 'profile');
+  const keys = Object.keys(body)
+    .filter((key) => key !== 'profile')
+    .sort()
+    .join(',');
+  // A profile's name, or null for a resume as it started (W156); checked against the card in decide().
+  const { profile } = body;
+  if (hasProfile && profile !== null && (typeof profile !== 'string' || profile.length > 64)) return undefined;
+  const picked = hasProfile ? { profile: profile as string | null } : {};
+  if (body.decision === 'send' && keys === 'decision') return { decision: 'send', ...picked };
+  if (body.decision === 'decline' && keys === 'decision' && !hasProfile) return { decision: 'decline' };
+  if (body.decision === 'edit' && keys === 'decision,text' && typeof body.text === 'string') return { decision: 'edit', text: body.text, ...picked };
   return undefined;
+}
+
+/**
+ * The profile a decision picks on a new session's or a resume's card (W156): `decision.profile` when
+ * it has one, else the card's own; by its exact name among the card's `profiles`, as the card showed
+ * them, never resolved again. `null` resumes as it started, a resume's only. Undefined in `value` for
+ * no profile: a card without profiles, or a resume as it started.
+ */
+export function pickedProfile(approval: SupervisorApproval, decision: SupervisorDecision): Checked<ApprovalProfile | undefined> {
+  const sent = decision.decision === 'decline' || !Object.hasOwn(decision, 'profile') ? undefined : decision.profile;
+  if (approval.kind === 'message') return sent === undefined ? { ok: true, value: undefined } : { ok: false, error: 'A message to a session has no profile.' };
+  const name = sent === undefined ? approval.profile : sent;
+  if (name === undefined || name === null) {
+    if (approval.kind === 'spawn' && approval.profiles !== undefined) return { ok: false, error: 'Pick a profile for the new session.' };
+    return { ok: true, value: undefined };
+  }
+  const found = approval.profiles?.find((profile) => profile.name === name);
+  return found === undefined ? { ok: false, error: "That profile isn't one this draft offers. Pick one of its own." } : { ok: true, value: found };
+}
+
+/** The note the supervisor reads before your next message, after you picked another profile than it proposed (W156). */
+export function profileNote(approval: SupervisorApproval, picked: ApprovalProfile | undefined): string | undefined {
+  if (approval.kind === 'message' || picked?.name === approval.profile) return undefined;
+  const was = approval.profile === undefined ? 'none, as it started' : JSON.stringify(approval.profile);
+  const now = picked === undefined ? 'none, so it resumed as it started' : JSON.stringify(picked.name);
+  // By its id and directory, not a session's name, which is untrusted (W129, L3).
+  if (approval.kind === 'resume') return `the user changed the profile the session ${approval.sessionId} resumes on, from ${was} to ${now}, before it was sent.`;
+  return `the user changed the profile of your new session in ${JSON.stringify(approval.directory)} from ${was} to ${now} before it started.`;
 }
 
 /**
@@ -603,6 +821,11 @@ export async function decide(sources: SupervisorActionSources, id: string, decis
     if (decision.decision === 'decline') {
       return sources.approvals.settle(id, { behavior: 'deny', message: DECLINED_MESSAGE }) ? { status: 200 } : gone();
     }
+    // The profile you picked, among the card's own (W156): one it doesn't offer is refused, and the card stays.
+    const pick = pickedProfile(approval, decision);
+    if (!pick.ok) return { status: 400, error: pick.error };
+    const picked = pick.value;
+    const changedProfile = profileNote(approval, picked);
     const own = sources.ownSessionIds?.() ?? new Set<string>();
     if (approval.kind === 'message') {
       // Rebuilt from what the card showed, or your edit: never a field the card didn't show.
@@ -635,19 +858,20 @@ export async function decide(sources: SupervisorActionSources, id: string, decis
         if (!checkedText.ok) return { status: 400, error: checkedText.error };
       }
       // Rebuilt from the card's own session, never a field the card didn't show.
-      const checked = await checkResume(resumeInput(approval.sessionId, text), sources.snapshots.latest(), own);
+      const checked = await checkResume(resumeInput(approval.sessionId, text, picked?.name), sources.snapshots.latest(), own, sources.work);
       if (!checked.ok) {
         sources.approvals.settle(id, { behavior: 'deny', message: `pitwall checked this again when the user answered, and didn't resume it: ${checked.error}` });
         return { status: 409, error: `pitwall didn't resume it: ${checked.error}` };
       }
-      const updatedInput = resumeInput(checked.value.session.sessionId, checked.value.text);
-      // The pass first, so the call Claude Code makes once it reads the allow finds it.
-      const pass = sources.approvals.grantPass(pending.toolUseId, updatedInput);
+      const updatedInput = resumeInput(checked.value.session.sessionId, checked.value.text, picked?.name);
+      // The pass first, so the call Claude Code makes once it reads the allow finds it, with the profile as the card showed it.
+      const pass = sources.approvals.grantPass(pending.toolUseId, updatedInput, passRun(updatedInput, picked));
       if (!sources.approvals.settle(id, { behavior: 'allow', updatedInput })) {
         sources.approvals.revokePass(pass);
         return gone();
       }
       if (decision.decision === 'edit' && decision.text !== approval.text) sources.approvals.note(editNote(approval, decision.text));
+      if (changedProfile !== undefined) sources.approvals.note(changedProfile);
       return { status: 200 };
     }
     // A new session.
@@ -656,21 +880,22 @@ export async function decide(sources: SupervisorActionSources, id: string, decis
       const text = checkText(prompt, MAX_PROMPT_LENGTH, 'first prompt');
       if (!text.ok) return { status: 400, error: text.error };
     }
-    const checked = await checkSpawn({ ...input, prompt }, sources.snapshots.latest());
+    const checked = await checkSpawn({ ...input, prompt }, sources.snapshots.latest(), sources.work);
     if (!checked.ok) {
       // A prompt you can fix stays; a directory that has gone, or left the roots, can't be.
-      if (decision.decision === 'edit' && (await checkSpawn(input, sources.snapshots.latest())).ok) return { status: 400, error: checked.error };
+      if (decision.decision === 'edit' && (await checkSpawn(input, sources.snapshots.latest(), sources.work)).ok) return { status: 400, error: checked.error };
       sources.approvals.settle(id, { behavior: 'deny', message: `pitwall checked this again when the user answered, and didn't start it: ${checked.error}` });
       return { status: 409, error: `pitwall didn't start it: ${checked.error}` };
     }
-    const updatedInput = spawnInput(checked.value);
-    // The pass first, so the call Claude Code makes once it reads the allow finds it.
-    const pass = sources.approvals.grantPass(pending.toolUseId, updatedInput);
+    const updatedInput = spawnInput(checked.value.spawn, picked?.name);
+    // The pass first, so the call Claude Code makes once it reads the allow finds it, with the profile as the card showed it.
+    const pass = sources.approvals.grantPass(pending.toolUseId, updatedInput, passRun(updatedInput, picked));
     if (!sources.approvals.settle(id, { behavior: 'allow', updatedInput })) {
       sources.approvals.revokePass(pass);
       return gone();
     }
     if (decision.decision === 'edit' && decision.text !== approval.prompt) sources.approvals.note(editNote(approval, decision.text));
+    if (changedProfile !== undefined) sources.approvals.note(changedProfile);
     return { status: 200 };
   } finally {
     sources.approvals.end(id);
