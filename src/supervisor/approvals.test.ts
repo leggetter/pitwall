@@ -76,6 +76,18 @@ describe('the approval queue', () => {
     expect(queue.takePass('toolu_d', { directory: '/x', prompt: 'Go.' })).toBeUndefined();
   });
 
+  it('hands a call its pass’s run, pitwall’s own additions included, matched on the input alone (W156)', () => {
+    const queue = createApprovalQueue({ now: () => NOW });
+    const input = { directory: '/made-up/work/repo', prompt: 'Go.', profile: 'Review' };
+    const run = { ...input, launch: { name: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet' } };
+    queue.grantPass('toolu_r', input, run);
+    // The run's own fields never match: a call can't bring them.
+    expect(queue.takePass(undefined, run)).toBeUndefined();
+    expect(queue.takePass('toolu_r', input)).toEqual(run);
+    queue.grantPass('toolu_s', input, run);
+    expect(queue.takePass(undefined, input)).toEqual(run);
+  });
+
   it('keeps the newest notes for the next message, once', () => {
     const queue = createApprovalQueue();
     for (let i = 1; i <= 7; i++) queue.note(`note ${i}`);

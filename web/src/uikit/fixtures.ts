@@ -1063,4 +1063,12 @@ export const SUPERVISOR_SPAWN: SupervisorApproval = {
   prompt: 'Review https://github.com/example/demo-app/pull/57. Say what blocks it, if anything.',
   at: ago(1),
   expiresAt: ago(-28),
+  // W156: the supervisor's pick, and the profiles to change it to.
+  profile: 'Review',
+  profiles: [
+    { name: 'Build', model: 'claude-opus-5-5', effort: 'high', subagentModel: 'sonnet' },
+    { name: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet', skill: 'agent-roles:role-reviewer' },
+    { name: 'Security review', model: 'claude-opus-5-5', effort: 'xhigh', subagentModel: 'opus' },
+    { name: 'Docs', model: 'sonnet', effort: 'medium', subagentModel: 'sonnet' },
+  ],
 };

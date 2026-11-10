@@ -319,6 +319,8 @@ export async function startServerWithInternals(
           savedPermission: internals.savedPermission ?? ((shortId, sessionId) => readSavedPermission(shortId, sessionId)),
           // What a resume card says it resumes on, for a session started with a profile (W155): what the resumer reads.
           ...(actionOptions.launches === undefined ? {} : { launches: actionOptions.launches }),
+          // The work profiles spawn_session and resume_session take, and the defaults each card resolves them with (W156).
+          work,
         };
   // pitwall's MCP server, for the supervisor alone (W112, W115): read-only tools over what pitwall
   // already has, spawn_session, resume_session (W127), and approve, the permission prompt tool.

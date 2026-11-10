@@ -113,7 +113,7 @@ import { isClaudeCommand } from './claudeCommands.js';
 import { childEnvironment, runCommand, type CommandResult, type RunCommand } from './command.js';
 import type { RecentSpawns } from './recentSpawns.js';
 import { resolveSession } from './sessions.js';
-import type { SessionLaunches } from './sessionLaunches.js';
+import { launchWork, type SessionLaunches } from './sessionLaunches.js';
 import { withSkill } from './profiles.js';
 import { EFFORT_PROBLEM, mergeChoices, modelProblem, withEffort, workArgs, type WorkStore } from './work.js';
 
@@ -765,10 +765,13 @@ export interface ResumeOutcome {
  * makes (W66, W81, W107): the route's, and the supervisor's resume_session's after your approval
  * (W127), which share one runner, so one resume of a session runs at a time, under the same command
  * slots and spawn's per-minute limit. With `prompt`, it's the resumed session's next turn, as the
- * last argument after `--` (spike 011): on its command line, as spawn's first prompt is.
+ * last argument after `--` (spike 011): on its command line, as spawn's first prompt is. With
+ * `launch`, a work profile's model, effort and sub-agents' model, as the supervisor's resume card showed
+ * them and you approved (W156), in place of what it started with or the defaults, and kept for its
+ * next resume; never the profile's skill.
  */
 export interface ResumeRunner {
-  resume(session: SessionSummary, prompt?: string): Promise<ResumeOutcome>;
+  resume(session: SessionSummary, prompt?: string, launch?: SessionLaunch): Promise<ResumeOutcome>;
 }
 
 /**
@@ -810,7 +813,7 @@ export function createResumeRunner(
   // Session ids being resumed now: a second resume of one waits for the first's answer.
   const resuming = new Set<string>();
 
-  async function resume(session: SessionSummary, prompt?: string): Promise<ResumeOutcome> {
+  async function resume(session: SessionSummary, prompt?: string, launch?: SessionLaunch): Promise<ResumeOutcome> {
     const answer = (result: ResumeResult, status: ResumeOutcome['status'], extra: Partial<ResumeOutcome> = {}): ResumeOutcome => ({ status, result, ...extra });
     // From the resolved summary, never a route parameter or a tool's input. A UUID only: `claude --resume` takes a name too.
     const { sessionId, cwd } = session;
@@ -824,6 +827,10 @@ export function createResumeRunner(
     if (prompt !== undefined && (prompt.trim() === '' || isClaudeCommand(prompt))) {
       return answer({ ok: false, error: "The message can't be blank or just the name of a claude command, which claude --resume could run instead." }, 422);
     }
+    // A profile you approved on the supervisor's card (W156), with every field the card showed, checked
+    // again here as a launch record is.
+    const approved = launch === undefined ? undefined : launchWork(launch);
+    if (launch !== undefined && approved === undefined) return answer({ ok: false, error: "The profile's settings didn't pass pitwall's checks, so it didn't resume the session." }, 422);
     if (resuming.has(sessionId)) return answer({ ok: false, error: 'pitwall is already resuming this session.' }, 409);
     const release = slots.acquire();
     if (!release) return answer({ ok: false, error: slots.busyError }, 429, { retryAfterSeconds: 1 });
@@ -880,7 +887,8 @@ export function createResumeRunner(
       // A session pitwall started with a work profile resumes on what it used, kept on disk, checked
       // again as it's read: the profile's model, effort and sub-agents' model, never its skill (W155;
       // Phil, 2026-11-09). A field that didn't pass is the defaults'.
-      const kept = options.launches?.lookup(session);
+      // A profile you approved on the supervisor's card (W156) takes the place of both (approved, above).
+      const kept = approved ?? options.launches?.lookup(session);
       const ours = kept !== undefined || options.started?.has(sessionId) === true || (session.shortId !== undefined && options.started?.has(session.shortId) === true);
       const defaults = ours ? sessionWork() : { session: {}, subagents: {} };
       const work = kept === undefined ? defaults : { session: mergeChoices(kept.session, defaults.session), subagents: mergeChoices(kept.subagents, defaults.subagents) };
@@ -929,7 +937,7 @@ export function createResumeRunner(
       options.resumed?.add(sessionId);
       options.started?.add(sessionId);
       options.started?.add(resumed.shortId);
-      if (kept !== undefined) options.launches?.resumed(session, resumed.shortId);
+      if (kept !== undefined) options.launches?.resumed(session, resumed.shortId, approved?.launch);
       // You asked for it back, so it needs your prompt until you send one (NeedsYou's 'restarted', W69).
       // Polls soon. With a prompt it has one, its next turn, so it doesn't (W127).
       if (prompt === undefined) indexer.noteRestart(sessionId, now());
