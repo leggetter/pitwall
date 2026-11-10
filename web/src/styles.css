@@ -181,17 +181,24 @@ textarea {
 /*
  * The supervisor's panel open (W177): the pane widens by the panel's width, as far as the session list's
  * 360 px allows, so on a wide window the view keeps its width beside it, and on a narrower one the panel
- * covers the view's right. The view, or "Select a session", keeps its own width either way, so its
- * terminal never reflows as the panel opens or closes.
+ * covers the view's right. The view keeps its own width either way, so its terminal never reflows as
+ * the panel opens or closes.
  */
 .app[data-layout='three-columns'] .session-pane[data-panel-open] {
   width: calc(var(--pw-view-w) + var(--pw-supervisor-w));
 }
 
-.app[data-layout='three-columns'] .session-pane[data-panel-open] .session-view.in-column:not(.view-panel),
-.app[data-layout='three-columns'] .session-pane[data-panel-open] .session-view-empty {
+.app[data-layout='three-columns'] .session-pane[data-panel-open] .session-view.in-column:not(.view-panel) {
   flex: none;
   width: min(var(--pw-view-w), 100%);
+}
+
+/*
+ * "Select a session" fills the pane but keeps clear of the panel, by the panel's own width (below), so
+ * it's centred in what the panel leaves in sight: at least the repo list's 240 px.
+ */
+.app[data-layout='three-columns'] .session-pane[data-panel-open] .session-view-empty {
+  padding-right: max(var(--pw-list-min-w), min(var(--pw-supervisor-w), 100% - var(--pw-sidebar-w)));
 }
 
 /*

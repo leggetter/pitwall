@@ -718,6 +718,25 @@ const part: Part = {
       t.expectEqual([records.supervisorStarts.length, records.supervisorMessages.length], [0, 0], 'nothing started or sent');
     });
 
+    if (beside) {
+      await t.step('with no session open (W177): "Select a session" centred in what the panel leaves in sight', async () => {
+        allowNew();
+        await t.fresh({ search: '?view=all&supervisor', supervisor: 'idle' });
+        await page.waitFor('the panel and the empty state', `!!${SVIEW}?.querySelector('h2') && !!document.querySelector('.session-view-empty .empty-state, .session-view-empty h2, .session-view-empty p')`);
+        const fit = await page.evaluate<{ left: number; right: number; panel: number; inside: boolean; centre: number; middle: number }>(`(() => {
+          const empty = document.querySelector('.session-view-empty');
+          const panel = ${SVIEW}.getBoundingClientRect();
+          const parts = [...empty.querySelectorAll('h2, h3, p, svg')].map((el) => el.getBoundingClientRect()).filter((r) => r.width > 0);
+          const left = Math.min(...parts.map((r) => r.left)), right = Math.max(...parts.map((r) => r.right));
+          const box = empty.getBoundingClientRect();
+          return { left, right, panel: panel.left, inside: parts.length > 0 && right <= panel.left + 0.5 && left >= box.left - 0.5, centre: (left + right) / 2, middle: (box.left + panel.left) / 2 };
+        })()`);
+        t.expect(fit.inside, 'its title, sentence and icon all to the left of the panel', fit);
+        t.expect(Math.abs(fit.centre - fit.middle) <= 2, 'centred in the part in sight', fit);
+        await t.shot('panel-nothing-open');
+      });
+    }
+
     await t.step('beside a session view (W177): the session stays, ?supervisor is added, and Escape closes the panel first', async () => {
       allowNew();
       await t.fresh({ search: '?view=all', supervisor: 'idle' });
