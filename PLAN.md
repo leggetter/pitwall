@@ -258,7 +258,7 @@ Phil, 2026-11-02, as New session from here was taken out (W130, D27): a future f
 
 ## M5.2 work breakdown
 
-On `m5.2/integration`, branched from `main` once M5.1 has merged (Phil, 2026-11-07). The six items, in order, are those planned with Phil on 2026-11-06.
+On `m5.2/integration`, branched from `main` once M5.1 has merged (Phil, 2026-11-07). The six items, in order, are those planned with Phil on 2026-11-06. Phil, 2026-11-10: "Let's definitely start work on the profiles, plan percentage, usage view and, ideally, the supervisor over the page... We should also spike the pitwall plugin." So W156, W157, W177 (the supervisor opens over the page) and spike 015 run in parallel, under a coordinating session; the real dependencies stay: W158 uses W157's `resets_at`, W159 comes after W158, W160 after W159 and W156.
 
 - **W155, Work profiles** (`m5.2/work-profiles`, M). First of the six (Phil, 2026-11-06: profiles first).
   - Why: W131's usage, 14 days to 11-02: sub-agents were 58% of all tokens, nearly all on Opus. A smaller default model for a session's reviewers is the biggest lever there is. Extends W119's `work` block (src/config.ts, src/server/work.ts).
@@ -292,20 +292,20 @@ On `m5.2/integration`, branched from `main` once M5.1 has merged (Phil, 2026-11-
     - Two pitwalls on one `PITWALL_HOME` overwrite each other's launch records: each writes the set it loaded at start, as the snoozes and flags stores do.
     - The record's "customized" compares values, so a field changed to a value that equals the profile's isn't customized on the resume card.
     - A screen reader isn't told when the Profile picker switches to Customized.
-  - Status: Built on `m5.2/work-profiles`, with Customized and Sub-agents (Phil, 2026-11-09) and resume keeping the profile; reviewed twice, and the Profile field shows only once the profiles have loaded.
-- **W156, The supervisor proposes sessions with a profile** (`m5.2/supervisor-profiles`, S). After W155.
+  - Status: Merged into `m5.2/integration` ([#213](https://github.com/leggetter/pitwall/pull/213)), with Customized and Sub-agents (Phil, 2026-11-09) and resume keeping the profile; reviewed twice, and the Profile field shows only once the profiles have loaded.
+- **W156, The supervisor proposes sessions with a profile** (`m5.2/supervisor-profiles`, S). After W155 (merged).
   - `spawn_session` and the resume tool take a profile's name, checked against the profiles; the card shows the profile, and you can change it before you approve. The supervisor's prompt says which profile fits which work.
   - The prompt goes to version 7, so the supervisor's next start begins a new conversation.
   - Checks: `supervisorActions` tests, the app check's `supervisor` part.
   - Status: Planned.
-- **W157, Spike 013: reading the plan's percentages without changing your settings** (`spike/013-rate-limits`, S). After W156.
+- **W157, Spike 013: reading the plan's percentages without changing your settings** (`spike/013-rate-limits`, S). Planned after W156, but nothing in it needs W156: Phil asked on 2026-11-10 for W156, W157 and W177 and spike 015 to run in parallel.
   - Found (research agent, 2026-11-06, checked by the coordinator against [status line](https://code.claude.com/docs/en/statusline)): the status line's input has `rate_limits.five_hour` and `rate_limits.seven_day`, each with `used_percentage` (0 to 100) and `resets_at` (Unix seconds), for Pro, Max and Ultra subscribers, after a session's first API response; either window may be absent. It's the server's figure, so it counts other devices and claude.ai too. This reverses M5.1's first plan, which said Claude Code doesn't expose the plan's percentage.
   - Try, cheapest first, in a `pitwall-test-*` session: (a) the `rate_limit_event` (`status`, `resetsAt`, `utilization`) in the stream of the `claude -p` calls pitwall already makes for recaps and the supervisor: on every call, or only near a limit? (b) a status line pitwall passes with `--settings` only to the sessions it starts, writing `rate_limits` to a 0600 file under `$PITWALL_HOME`: does a background session run one? (c) `/usage` sent to `claude -p`, whose structured `usage_report` the Agent SDK documents: does it spend a model call?
   - Not: a status line in `~/.claude/settings.json`, which would reach every session.
   - If none works: the run rate uses the stand-in cost, set once against what `/usage` shows (Phil, 2026-11-06).
   - Whatever it reads goes behind the adapter and fails soft, to "unavailable".
   - Status: Planned.
-- **W158, The Usage view** (`m5.2/usage-view`, L). After W157.
+- **W158, The Usage view** (`m5.2/usage-view`, L). After W157, whose `resets_at` it uses (Phil, 2026-11-10: start it in the same batch).
   - Prior art (research agent, 2026-11-06; ccusage, Claude Code's `/usage`, Anthropic's and OpenAI's usage APIs, GitHub Copilot, Vercel, AWS Cost Explorer), what recurs: a window aligned to the reset, with the reset time shown; a 24-hour and 7-day toggle; grouping by model, project and sub-agent; cache reads and writes in their own columns, never summed into one total (97.7% of tokens are cache reads, W131); an attribution view, what's using the week; cost labelled as an estimate.
   - What: this week by default, from `seven_day.resets_at` (W157), or the last 7 days without it; also 14 and 30 days. Tokens by day, or by hour for 24 hours; by repo and by session, ranked by stand-in cost; by model; and main sessions against sub-agents. Reuses `src/usage/` (W131).
   - Cost: an incremental scan, each transcript read on from where the last read stopped, not every transcript on each request.
@@ -421,9 +421,10 @@ On `m5.2/integration`, branched from `main` once M5.1 has merged (Phil, 2026-11-
   - A plugin installed from a local folder can ship both a skill and a `SessionStart` hook, and the hook's output reaches the model's context (`hookSpecificOutput.additionalContext` or plain stdout, whichever is documented).
   - Which events run it: start, `/clear`, compact and resume each add the note once, never twice; `claude attach` and pitwall's terminal view add nothing; a background session (`claude --bg`) and a `claude -p` one both get it, and pitwall's own `claude -p` calls (recaps, the supervisor, the relay), which turn off settings and plugins, don't.
   - The cost: a fresh session's first call with and without the note.
-  - The write-up goes in `docs/spikes/015-plugin-session-note.md`; W176 is adjusted to what it finds.
+  - Phil, 2026-11-10: "I think I want to be able to spawn new sessions from within an existing session." Can a session spawn a new session from inside itself, and how? Three ways to compare: W163's `spin-off` block and its card in Needs you (it exists; the session ends its turn with the block); a `pitwall` skill in the plugin that does the same; or a tool the plugin provides (an MCP tool, say). Each must keep D4 (the supervisor acts only after Phil's click, `docs/decisions.md`) and the security rules: a session never gets pitwall's token, so whatever it calls can only propose, and the card, Start and the folder check stay pitwall's. The spike recommends one.
+  - The write-up goes in `docs/spikes/015-plugin-session-note.md`; W176 is adjusted to what it finds, including the way a session proposes a session.
 
-- **W177, The supervisor opens over the page, not in its place** (`m5.2/supervisor-overlay`, M). Independent of W155 to W160; before W178.
+- **W177, The supervisor opens over the page, not in its place** (`m5.2/supervisor-overlay`, M). Independent of W155 to W160; before W178. In the 2026-11-10 parallel batch.
   - Phil, 2026-11-09: "I'd like the supervisor view to pop over the main window in some way rather than taking up the full view. That way you can get an idea of a context it's working in and the UX of using it doesn't feel as all or nothing."
   - Today: its view (W114) takes the third column, in a session view's or a PR view's place, and opening it drops `?session=` and `?pr=`, so the session you asked about goes out of sight.
   - What: the supervisor opens as a panel over the page, beside or over the right of the open session or PR view, which stays where it was and stays open, with `?supervisor` added to the URL rather than replacing `?session=` or `?pr=`. The panel can be closed, and kept open while you change the selection. Its header, status, cost, context, New conversation, drafts and box stay as they are.
