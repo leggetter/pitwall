@@ -222,7 +222,7 @@ In the order they'll be built. Each starts when the one before it has merged int
 
 ### M5.3 - After M5.2 (next)
 
-On `m5.3/integration`, branched from `main` once M5.2 has merged. What was left of M5.2 at the split at W180: W176 (a pitwall plugin) first, from spike 015's design (Phil, 2026-11-10), then W165 (diagnostics log), W167 (session lineage), W168 (Clear and continue), W171 (a team's open request), W173 and W174 (to-dos), W175 (a pitwall link in a new tab) and W178 and W179 (the supervisor about a session, and a short conversation). Their text is in "M5.3 work breakdown".
+On `m5.3/integration`, branched from `main` once M5.2 has merged. What was left of M5.2 at the split at W180: W176 (a pitwall plugin) first, from spike 015's design (Phil, 2026-11-10), then W165 (diagnostics log), W167 (session lineage), W168 (Clear and continue), W171 (a team's open request), W173 and W174 (to-dos), W175 (a pitwall link in a new tab) and W178 and W179 (the supervisor about a session, and a short conversation). Their text is in "M5.3 work breakdown". Added 2026-11-10: W183 to W186, the supervisor's read-only connectors (D28).
 
 ### M6 - Triage
 
@@ -273,7 +273,7 @@ Phil, 2026-11-02, as New session from here was taken out (W130, D27): a future f
 
 ## M5.3 work breakdown
 
-On `m5.3/integration`. The ten items split off M5.2 at W180 (Phil, 2026-11-10); W176 goes first, then the rest as they come. M5.2's done items, spikes 014 and 015 included, are in the [archive](docs/plan-archive.md#m52-work-breakdown). Branch names below still start `m5.2/`, from when they were planned; use `m5.3/…` for new ones.
+On `m5.3/integration`. The ten items split off M5.2 at W180 (Phil, 2026-11-10), and W183 to W186 added after it (D28, the supervisor's read-only connectors); W176 goes first, then the rest as they come. M5.2's done items, spikes 014 and 015 included, are in the [archive](docs/plan-archive.md#m52-work-breakdown). Branch names below still start `m5.2/`, from when they were planned; use `m5.3/…` for new ones.
 
 - **W176, A pitwall plugin: every session knows it's watched, links sessions, and can propose one** (`m5.2/pitwall-plugin`, M). Independent of W155 to W160; spike 015 first. Its links open from a terminal once W175 (a pitwall link opens in a new tab) is built.
   - Phil, 2026-11-09: replies that mention a session should describe it and link it in pitwall, and that's a pitwall instruction, not one for his global `AGENTS.md`. "Should a pitwall skill be auto-loaded into every session to give each session some context about where it's running and potentially give it access to features such as spawn a new session which opens the dialog, and ensure links to sessions are in pitwall format?"
@@ -380,6 +380,13 @@ On `m5.3/integration`. The ten items split off M5.2 at W180 (Phil, 2026-11-10); 
   - What: a new conversation, saying so in the panel, when you send a message and its context is over a limit (100K to start, set in the config file), or when W178's button asks about a different session than the conversation is about and the context is over a lower one. Its drafts and Sent and started stay as they are. The supervisor's model stays Opus 5.5 (Phil, 2026-11-09), revisited with W158's (the Usage view) figures; `work.supervisor` (W119) can already change it.
   - Checks: the supervisor's tests for each limit, and that a held, working or drafting supervisor isn't reset, as New conversation's rules already say (W136).
   - Status: Planned (Phil, 2026-11-09).
+
+- **W183, Spike 016: read-only connectors under the strict command line** (`docs/supervisor-connectors`, S). **Done** (2026-11-10): [spike 016](docs/spikes/016-readonly-connectors.md). A throwaway MCP server loads under `--strict-mcp-config`; `--allowed-tools` plus `--disallowed-tools` leave the model only the tools pitwall names. Settles the command line of D28 (the supervisor reads through connectors you choose, read-only).
+- **W184, The supervisor's connectors: config, tool choice and launch** (`m5.3/supervisor-connectors`, M). After W183; Phil, 2026-11-10: "Slack and Notion are required. Probably GMail too. But ultimately it should be possible to configure any connector. I agree with readonly."
+  - What: `supervisor.connectors` in the config file (D28); adding one asks the server for its tools and records the ones you mark read-only; the supervisor's command line gains the server, `--allowed-tools` for those and `--disallowed-tools` for the rest; `--no-connectors`; the system prompt (a new version) says results are untrusted data; a result size cap; the Security lines that say the supervisor has none of your MCP servers, list what it sends, and say `--no-supervisor` turns it all off are updated to name connectors and `--no-connectors`; `SUPERVISOR_INIT_TOOLS` gains the chosen tools and an unknown connector tool stops the supervisor (D28); the security bullets in D28 are built. Tests use the throwaway server, never a real service.
+  - Out of scope: any write tool, and connectors for recaps or for the sessions pitwall watches.
+- **W185, Spike: Slack, Notion and Gmail with real accounts** (`m5.3/connector-credentials`, S). After W183; can run beside W184. Finds out how each gets its credentials (a server entry with a token in its environment, an HTTP URL with a header, or Claude Code's own OAuth connectors under the strict command line) and which of its tools read. **Needs Phil's OK for each service before it touches one.** Its result decides D28's "not decided yet".
+- **W186, Security review: the supervisor's connectors** (`m5.3/security-review-connectors`, S). After W184 and W185; a fresh reviewer at xhigh. Plants instructions in a fake connector result and checks nothing is sent or started without a click; checks no write tool is reachable, the config and the 0600 file hold no token it shouldn't, and the Security list is true.
 
 ## Open questions
 

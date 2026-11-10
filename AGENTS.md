@@ -93,7 +93,7 @@ skills/spin-off/         the spin-off skill (W163), for the sessions pitwall wat
                          past 400K, to finish safely and use the handoff skill (W133, spike 012); fails soft, leaves
                          sub-agents alone. Its test sits beside it; typechecked and in npm test, not built
 README.md                for newcomers: what pitwall is, how to run it, how it works, the roadmap
-docs/decisions.md        settled decisions, D1 to D27, with their reasoning
+docs/decisions.md        settled decisions, D1 to D28, with their reasoning
 docs/design-system.md    the web UI's design system: tokens, layout, components, content, accessibility
 docs/images/             screenshots for README.md
 docs/spikes/             spike write-ups, one file per spike, with a script beside some
