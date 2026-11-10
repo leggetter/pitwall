@@ -157,8 +157,6 @@ describe("from the supervisor's Sent and started (W144)", () => {
     // Its Open works again from there, with the panel still open beside the session (W177).
     await openFromHandoffs(started.name);
     expect(selected()).toBe('api');
-    fireEvent.click(repoList().querySelector<HTMLAnchorElement>('a[data-supervisor-item]')!);
-    await settle();
     expect(history.location.search).toBe(`?repo=${at(WORK, 'api')}&root=${WORK}&session=${started.sessionId}&supervisor`);
     expect(within(supervisorView()!).getByRole('textbox', { name: 'Message to the supervisor' })).toBeDefined();
   });

@@ -76,7 +76,8 @@ afterEach(() => {
 });
 
 const repoList = () => screen.getByRole('navigation', { name: 'Repos' });
-const item = () => repoList().querySelector<HTMLAnchorElement>('a[data-supervisor-item]')!;
+/** The header's Supervisor button (W182), which opens the panel. */
+const item = () => document.querySelector<HTMLButtonElement>('header button[data-supervisor-button]')!;
 const groupItem = (label: string) => [...repoList().querySelectorAll<HTMLAnchorElement>('a[data-repo-item]')].find((link) => link.querySelector('.repo-item-label')?.textContent === label)!;
 const panel = () => document.getElementById('supervisor-view') ?? undefined;
 const panelHeading = () => within(panel()!).getByRole('heading', { level: 2, name: 'Supervisor' });
@@ -159,7 +160,7 @@ describe('from 1,200 px: beside the open session, which stays', () => {
     expect(sessionView()).toBeUndefined();
   });
 
-  it('Close gives focus back to what opened it: the item, or Needs you’s Open the supervisor', async () => {
+  it('Close gives focus back to what opened it: the header’s button, or Needs you’s Open the supervisor', async () => {
     setWidth(1440);
     renderDashboard(snap({ status: 'idle', approvals: [{ id: 'a1', kind: 'message', to: beta.name, text: 'A made-up message.', at: minutesAgo(1), expiresAt: minutesAgo(-28) }] }), '?view=needs-you');
     await settle();
@@ -202,6 +203,22 @@ describe('below 1,200 px: over the view over the list', () => {
     await nextFrame();
     expect(paneViews().inert).toBe(false);
     expect(sessionName()).toBe(beta.name);
+    expect(document.activeElement).toBe(item());
+  });
+
+  it('opens beside a session from 900 to 999 px, where the repo list is inert under the view: the header isn’t (W182)', async () => {
+    setWidth(950);
+    const { history } = renderDashboard(snap());
+    await click(row(beta.name));
+    expect(repoList().closest('[inert]')).not.toBeNull();
+    expect(item().closest('[inert]')).toBeNull();
+    item().focus();
+    await click(item());
+    expect(history.location.search).toBe(`?view=all&session=${beta.sessionId}&supervisor`);
+    expect(sessionName()).toBe(beta.name);
+    expect(document.activeElement).toBe(panelHeading());
+    await click(within(panel()!).getByRole('button', { name: 'Close' }));
+    await nextFrame();
     expect(document.activeElement).toBe(item());
   });
 
