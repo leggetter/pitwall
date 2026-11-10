@@ -378,12 +378,13 @@ export interface ResetOptions {
   cloned?: boolean;
   /**
    * What GET USAGE_PATH answers (W158): 'ok', made-up figures with the plan's week; 'unavailable',
-   * the same figures without it, the last 7 days; 'failing', HTTP 500.
+   * the same figures without it, the last 7 days; 'empty', the plan's week with no calls in it;
+   * 'failing', HTTP 500.
    */
   usage?: UsageWorldState;
 }
 
-export type UsageWorldState = 'ok' | 'unavailable' | 'failing';
+export type UsageWorldState = 'ok' | 'unavailable' | 'empty' | 'failing';
 
 /** The made-up index: a snapshot, conversations, and what POSTs have changed since the last reset. */
 export class World {
@@ -1040,13 +1041,13 @@ export class World {
       d.setHours(0, 0, 0, 0);
       return d.getTime();
     };
-    const plan = this.#usage === 'ok';
+    const plan = this.#usage !== 'unavailable';
     // The plan's week reset 4 days ago at 14:00, so it resets in 3 days.
     const reset = midnight(this.#now - 4 * DAY) + 14 * HOUR;
     const since =
       key === '24h' ? Math.floor((this.#now - 23 * HOUR) / HOUR) * HOUR : key === 'week' && plan ? reset : midnight(this.#now) - ((key === '30d' ? 30 : key === '14d' ? 14 : 7) - 1) * DAY;
     const bucket = key === '24h' ? 'hour' : 'day';
-    const scale = key === '24h' ? 0.2 : key === '30d' ? 3.5 : key === '14d' ? 1.8 : 1;
+    const scale = this.#usage === 'empty' ? 0 : key === '24h' ? 0.2 : key === '30d' ? 3.5 : key === '14d' ? 1.8 : 1;
     const t = (cost: number, calls: number): UsageTokens => ({
       calls: Math.round(calls * scale),
       input: Math.round(calls * 37 * scale),
@@ -1062,7 +1063,7 @@ export class World {
     const weight = (i: number) => (bucket === 'hour' ? [0.1, 0.1, 0.05, 0, 0, 0, 0.2, 0.6, 1, 1.4, 1.2, 0.9][i % 12]! : [1, 1.6, 0.4, 2.1, 1.2, 0.2, 0.9][i % 7]!);
     const buckets = starts.map((start, i) => ({
       start: new Date(start).toISOString(),
-      ...t((42 * weight(i)) / scale / (bucket === 'hour' ? 6 : 1), 300 * weight(i)),
+      ...t(scale === 0 ? 0 : (42 * weight(i)) / scale / (bucket === 'hour' ? 6 : 1), 300 * weight(i)),
       ...(key === '30d' && i === 1 ? { history: true as const } : {}),
     }));
     const id = (name: string) => this.byName(name).sessionId;
@@ -1100,6 +1101,7 @@ export class World {
       ...(key === '30d' ? { history: { days: 1, ...t(12.4, 300) } } : {}),
       scan: { at: new Date(this.#now - 2_000).toISOString(), files: 865, unreadable: 0, malformed: 0 },
     };
+    if (this.#usage === 'empty') return { status: 200, body: { ...view, byRepo: { rows: [] }, bySession: { rows: [] }, byModel: [] } };
     return { status: 200, body: view };
   }
 

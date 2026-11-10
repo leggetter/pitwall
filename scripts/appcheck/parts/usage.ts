@@ -62,10 +62,18 @@ const part: Part = {
       t.expect(Math.max(...lefts) - Math.min(...lefts) < 1, 'every bar starts at the same edge', lefts);
       const sessions = await page.evaluate<string[]>(`${bodyRows('By session')}.map((r) => r.querySelector('.usage-session-name')?.textContent)`);
       t.expectEqual(sessions, ['pitwall-test-api', 'pitwall-test-nightly-export', 'Not listed', 'pitwall-test-docs', "pitwall's own"], 'listed sessions by name, ranked by cost');
-      // A table wider than its box scrolls inside it, and takes focus so the keyboard can scroll it.
+      // A table wider than its box scrolls inside it, and only then takes focus, so the keyboard can scroll it.
       const wrap = await page.evaluate<{ scroll: number; client: number; tabIndex: number }>(`(() => { const r = ${region('By session')}; return { scroll: r.scrollWidth, client: r.clientWidth, tabIndex: r.tabIndex }; })()`);
-      t.expectEqual(wrap.tabIndex, 0, 'the table’s box takes focus');
+      t.expectEqual(wrap.tabIndex, wrap.scroll > wrap.client + 1 ? 0 : -1, 'the table’s box takes focus only while it scrolls');
       if (t.viewport.width < 600) t.expect(wrap.scroll > wrap.client, 'in a narrow card, the session table scrolls sideways in its box', wrap);
+      // The cost cell stays a table cell: each row's cells share their top and bottom edges.
+      const ragged = await page.evaluate<number>(`${bodyRows('By day')}.filter((r) => { const edges = [...r.children].map((c) => { const b = c.getBoundingClientRect(); return Math.round(b.top) + ':' + Math.round(b.bottom); }); return new Set(edges).size !== 1; }).length`);
+      t.expectEqual(ragged, 0, "every by-day row's cells line up");
+      t.expectEqual(
+        await page.evaluate(`${bodyRows('By session')}.map((r) => r.querySelector('th').textContent)`),
+        ['pitwall-test-api', 'pitwall-test-nightly-export', 'Not listed', 'pitwall-test-docs', "pitwall's own"],
+        "a session row's header is its name alone",
+      );
       await page.evaluate(`${region('By session')}.scrollIntoView({ block: 'start' })`);
       await t.shot('sessions');
     });
@@ -93,6 +101,13 @@ const part: Part = {
       await page.waitFor('the dialog to close', `!${DIALOG}`);
       t.expectEqual(await page.evaluate(`location.search`), '?view=all', '?usage off the URL');
       t.expect(await page.evaluate(`document.activeElement === ${headerButton('Usage')}`), 'focus is back on Usage', await page.evaluate(focused));
+    });
+
+    await t.step('a window with no calls says so, with no tables', async () => {
+      await t.fresh({ search: '?view=all&usage', usage: 'empty' });
+      await page.waitFor('the empty window', `${text}.includes('No calls in this window.')`);
+      t.expectEqual(await page.evaluate(`${DIALOG}.querySelectorAll('table').length`), 0, 'no tables of zeros');
+      await t.shot('empty');
     });
 
     await t.step('from the URL, with the plan’s week unavailable: the last 7 days, and why', async () => {

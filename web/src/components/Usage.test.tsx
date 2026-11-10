@@ -83,7 +83,16 @@ describe('reading the answer, and its words', () => {
   });
 
   it('says tokens short and cost as an amount', () => {
-    expect([tokenText(512), tokenText(34_500), tokenText(1_250_000), tokenText(3_400_000_000), tokenText(12_000)]).toEqual(['512', '34.5K', '1.3M', '3.4B', '12K']);
+    expect([tokenText(512), tokenText(999.6), tokenText(34_500), tokenText(120_400), tokenText(999_960), tokenText(1_250_000), tokenText(3_400_000_000), tokenText(12_000)]).toEqual([
+      '512',
+      '1.0K',
+      '34.5K',
+      '120K',
+      '1.0M',
+      '1.3M',
+      '3.4B',
+      '12.0K',
+    ]);
     expect([costText(0), costText(0.001), costText(0.04), costText(12.345), costText(1234.5)]).toEqual(['$0', 'under $0.01', '$0.04', '$12.35', '$1,235']);
   });
 });
@@ -98,13 +107,16 @@ describe('the dialog', () => {
     expect(within(table('By day')).getAllByRole('columnheader').map((header) => header.textContent)).toEqual(['Day', 'Est. cost', 'Input', 'Cache writes', 'Cache reads', 'Output']);
     const [kept] = within(table('By day')).getAllByRole('row').slice(1);
     expect(kept?.textContent).toContain('(kept total)');
-    expect(cells(kept!)).toEqual(['$10.00', '1.2K', '34K', '2.5M', '5.6K']);
+    expect(cells(kept!)).toEqual(['$10.00', '1.2K', '34.0K', '2.5M', '5.6K']);
+    expect(table('By day').querySelector('caption')?.textContent).toBe('By day');
     // The repo table has the rows left out summed, and the kept days' note.
     const repoRows = within(table('By repo')).getAllByRole('row');
     expect(repoRows.at(-1)?.textContent).toContain('3 more repos');
     expect(screen.getAllByText(/on 1 day whose transcripts Claude Code has deleted/)).toHaveLength(2);
     // A session by its name when it's listed, pitwall's own call by what it is.
     const sessionRows = within(table('By session')).getAllByRole('row').slice(1);
+    // The row's header is the session's name alone; its details are a cell.
+    expect(within(sessionRows[0]!).getByRole('rowheader').textContent).toBe('pitwall-test-named');
     expect(sessionRows[0]?.textContent).toContain('pitwall-test-named');
     expect(sessionRows[0]?.textContent).toContain('Opus 5.5');
     expect(sessionRows[0]?.textContent).toContain('sub-agents $1.25');
@@ -140,6 +152,50 @@ describe('the dialog', () => {
     const failing = fakeFetch(() => new Response('{}', { status: 500 }));
     const second = renderDialog(failing);
     expect((await within(second.container.ownerDocument.body).findAllByRole('alert')).at(-1)?.textContent).toBe("Couldn't read your usage (HTTP 500).");
+  });
+});
+
+describe('loading, refusing and switching', () => {
+  it('says it’s loading, as a status, and a 429 as a wait', async () => {
+    let answer: (response: Response) => void = () => {};
+    const fetch = fakeFetch(() => new Promise<Response>((resolve) => (answer = resolve)));
+    renderDialog(fetch);
+    expect(screen.getByRole('status').textContent).toContain('Loading this week…');
+    await act(async () => answer(new Response('{}', { status: 429, headers: { 'Retry-After': '2' } })));
+    expect(screen.getByRole('alert').textContent).toBe('pitwall is still reading your transcripts. Try again in 2 seconds.');
+    expect(screen.queryByRole('table')).toBeNull();
+  });
+
+  it('never shows one window’s figures under another’s tab, loading or failed', async () => {
+    const answers: Array<(response: Response) => void> = [];
+    const fetch = fakeFetch(() => new Promise<Response>((resolve) => answers.push(resolve)));
+    renderDialog(fetch);
+    await act(async () => answers[0]!(new Response(JSON.stringify(view()), { status: 200 })));
+    expect(screen.getByText('42% used')).toBeTruthy();
+    fireEvent.click(screen.getAllByRole('tab')[1]!);
+    await waitFor(() => expect(answers).toHaveLength(2));
+    expect(screen.queryByText('42% used')).toBeNull();
+    expect(screen.getByRole('status').textContent).toContain('Loading 24 hours…');
+    await act(async () => answers[1]!(new Response('{}', { status: 500 })));
+    expect(screen.getByRole('alert').textContent).toBe("Couldn't read your usage (HTTP 500).");
+    expect(screen.queryByRole('table')).toBeNull();
+    // A refresh of the same window keeps its figures while it loads.
+    fireEvent.click(screen.getAllByRole('tab')[0]!);
+    await waitFor(() => expect(answers).toHaveLength(3));
+    await act(async () => answers[2]!(new Response(JSON.stringify(view()), { status: 200 })));
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/ }));
+    await waitFor(() => expect(answers).toHaveLength(4));
+    expect(screen.getByText('42% used')).toBeTruthy();
+  });
+
+  it('says a window with no calls has none, rather than tables of zeros', async () => {
+    const zero = { calls: 0, input: 0, cacheWrite: 0, cacheRead: 0, output: 0, cost: 0 };
+    const empty = view({ totals: zero, buckets: [], byRepo: { rows: [] }, bySession: { rows: [] }, byModel: [], split: { main: { sessions: 0, ...zero }, subagent: { runs: 0, ...zero } } });
+    delete empty.history;
+    renderDialog(fakeFetch(() => new Response(JSON.stringify(empty), { status: 200 })));
+    expect(await screen.findByText('No calls in this window.')).toBeTruthy();
+    expect(screen.queryByRole('table')).toBeNull();
+    expect(screen.getByText('42% used')).toBeTruthy();
   });
 });
 

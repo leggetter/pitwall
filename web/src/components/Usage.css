@@ -134,7 +134,7 @@
 }
 
 .usage-table-wrap:focus-visible {
-  outline: none;
+  /* The global rule's transparent outline stays, for forced colours. */
   box-shadow: var(--pw-ring-focus);
 }
 
@@ -185,8 +185,11 @@
   color: var(--pw-text-muted);
 }
 
-/* The bar sits before the figure, in a track of its own, so every bar starts at the same edge. */
-.usage-table.has-bars .cost {
+/*
+ * The bar sits before the figure, in a track of its own, so every bar starts at the same edge. The
+ * flex line is a span inside the cell, which stays a table cell, so the row's borders line up.
+ */
+.usage-cost {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -194,7 +197,7 @@
   min-width: 11rem;
 }
 
-.usage-table.has-bars .usage-figure {
+.usage-cost .usage-figure {
   flex: none;
   min-width: 4.5rem;
 }
@@ -214,6 +217,12 @@
   background: var(--pw-selected-border);
 }
 
+.usage-empty {
+  padding: var(--pw-space-6) 0;
+  color: var(--pw-text-muted);
+  text-align: center;
+}
+
 .usage-kept {
   color: var(--pw-text-muted);
 }
@@ -224,10 +233,8 @@
   overflow-wrap: anywhere;
 }
 
-.usage-session {
-  display: flex;
-  flex-direction: column;
-  min-width: 12rem;
+.usage-table .usage-detail {
+  min-width: 14rem;
 }
 
 .usage-session-name {

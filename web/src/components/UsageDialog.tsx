@@ -13,7 +13,7 @@
 // - What can't be read says so: the plan's week "unavailable" with why, a failed read as an alert
 //   with the figures already shown kept.
 
-import { useContext, useId, useRef, useState, type ReactNode } from 'react';
+import { useContext, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import type { SessionSummary, UsageBucket, UsageTokens, UsageView, UsageWindowKey } from '../../../src/shared/protocol.js';
 import { USAGE_WINDOWS } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
@@ -45,9 +45,10 @@ const COLUMNS = [
 
 export function UsageDialog({ onClose, sessions }: UsageDialogProps) {
   const api = useContext(ApiContext);
-  const [window, setWindow] = useState<UsageWindowKey>('week');
-  const { state, refresh } = useUsage(api, window);
-  const view = state.kind === 'ready' ? state.view : state.view;
+  const [windowKey, setWindowKey] = useState<UsageWindowKey>('week');
+  const { state, refresh } = useUsage(api, windowKey);
+  // Only ever the chosen window's figures (useUsage()).
+  const view = state.view;
   const ids = { panel: useId(), tab: useId() };
   const tabs = useRef<Array<HTMLButtonElement | null>>([]);
 
@@ -83,25 +84,25 @@ export function UsageDialog({ onClose, sessions }: UsageDialogProps) {
             role="tab"
             id={`${ids.tab}-${key}`}
             className="session-tab"
-            aria-selected={window === key}
+            aria-selected={windowKey === key}
             aria-controls={ids.panel}
-            tabIndex={window === key ? 0 : -1}
-            onClick={() => setWindow(key)}
+            tabIndex={windowKey === key ? 0 : -1}
+            onClick={() => setWindowKey(key)}
             onKeyDown={(event) => moveTabFocus(event, tabs.current)}
           >
             {WINDOW_LABELS[key]}
           </button>
         ))}
       </div>
-      <div className="usage-panel" role="tabpanel" id={ids.panel} aria-labelledby={`${ids.tab}-${window}`} aria-busy={state.kind === 'loading'}>
+      <div className="usage-panel" role="tabpanel" id={ids.panel} aria-labelledby={`${ids.tab}-${windowKey}`} aria-busy={state.kind === 'loading'}>
         {state.kind === 'failed' && (
           <Alert tone="danger" role="alert">
             {state.message}
           </Alert>
         )}
         {view === undefined && state.kind === 'loading' && (
-          <p className="usage-loading">
-            <Spinner /> Reading your transcripts. The first read can take a few seconds.
+          <p className="usage-loading" role="status">
+            <Spinner /> Loading {WINDOW_LABELS[windowKey].toLowerCase()}… The first read of your transcripts can take a few seconds.
           </p>
         )}
         {view && <UsageBody view={view} sessions={sessions} />}
@@ -120,6 +121,18 @@ function UsageBody({ view, sessions }: { view: UsageView; sessions: readonly Ses
       here.
     </p>
   );
+  // Nothing in the window, and no kept day for it: one line, not tables of zeros.
+  if (view.totals.calls === 0 && view.history === undefined) {
+    return (
+      <>
+        <p className="usage-window">{windowText(view)}</p>
+        <div className="usage-summary">
+          <PlanFigure view={view} />
+        </div>
+        <p className="usage-empty">No calls in this window.</p>
+      </>
+    );
+  }
   return (
     <>
       <p className="usage-window">{windowText(view)}</p>
@@ -158,8 +171,8 @@ function UsageBody({ view, sessions }: { view: UsageView; sessions: readonly Ses
       <UsageTable
         title="By repo"
         first="Repo"
-        extra={{ label: 'Sessions', value: (row) => String(row.sessions) }}
-        rows={view.byRepo.rows.map((row) => ({ key: row.repo, name: <span className="usage-path">{plainText(row.repo)}</span>, tokens: row, sessions: row.sessions }))}
+        extra={{ label: 'Sessions', numeric: true }}
+        rows={view.byRepo.rows.map((row) => ({ key: row.repo, name: <span className="usage-path">{plainText(row.repo)}</span>, tokens: row, extra: String(row.sessions) }))}
         rest={view.byRepo.rest && { label: `${view.byRepo.rest.count} more ${view.byRepo.rest.count === 1 ? 'repo' : 'repos'}`, tokens: view.byRepo.rest }}
         empty="No calls in this window."
         note={historyNote}
@@ -168,18 +181,18 @@ function UsageBody({ view, sessions }: { view: UsageView; sessions: readonly Ses
       <UsageTable
         title="By session"
         first="Session"
+        extra={{ label: 'Details', numeric: false }}
         rows={view.bySession.rows.map((row) => {
           const name = names.get(row.sessionId);
           return {
             key: row.sessionId,
-            name: (
-              <span className="usage-session">
-                <span className="usage-session-name">{name !== undefined ? plainText(name) : row.kind === 'pitwall' ? "pitwall's own" : 'Not listed'}</span>
-                <span className="usage-session-meta">
-                  <code>{row.sessionId.slice(0, 8)}</code> · <span className="usage-path">{plainText(row.repo)}</span>
-                  {row.model !== '' && ` · ${modelText(row.model)}`}
-                  {row.subagentRuns > 0 && ` · sub-agents ${costText(row.subagentCost)}`}
-                </span>
+            // The row's header is its name alone; its id, repo, model and sub-agents are a cell of their own.
+            name: <span className="usage-session-name">{name !== undefined ? plainText(name) : row.kind === 'pitwall' ? "pitwall's own" : 'Not listed'}</span>,
+            extra: (
+              <span className="usage-session-meta">
+                <code>{row.sessionId.slice(0, 8)}</code> · <span className="usage-path">{plainText(row.repo)}</span>
+                {row.model !== '' && ` · ${modelText(row.model)}`}
+                {row.subagentRuns > 0 && ` · sub-agents ${costText(row.subagentCost)}`}
               </span>
             ),
             tokens: row,
@@ -243,7 +256,29 @@ interface TableRow {
   tokens: UsageTokens;
   /** The cost bar's length, 0 to 1, for the by-day table. */
   bar?: number;
-  sessions?: number;
+  /** The extra column's cell, where the table has one. */
+  extra?: ReactNode;
+}
+
+/** Whether the element's content is wider than its box, kept up to date as either changes size. */
+function useScrolls(ref: RefObject<HTMLElement | null>, shown: boolean): boolean {
+  const [scrolls, setScrolls] = useState(false);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (element === null) return;
+    const measure = () => setScrolls(element.scrollWidth > element.clientWidth + 1);
+    measure();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure);
+      return () => window.removeEventListener('resize', measure);
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    const table = element.firstElementChild;
+    if (table !== null) observer.observe(table);
+    return () => observer.disconnect();
+  }, [ref, shown]);
+  return scrolls;
 }
 
 function UsageTable({
@@ -259,26 +294,32 @@ function UsageTable({
   first: string;
   rows: TableRow[];
   rest?: { label: string; tokens: UsageTokens } | undefined;
-  extra?: { label: string; value: (row: TableRow & { sessions: number }) => string };
+  /** A column after the row's name: Sessions, or a session's details. */
+  extra?: { label: string; numeric: boolean };
   empty?: string;
   note?: ReactNode;
 }) {
   const id = useId();
   const bars = rows.some((row) => row.bar !== undefined);
+  const wrap = useRef<HTMLDivElement>(null);
+  const scrolls = useScrolls(wrap, rows.length > 0 || empty === undefined);
+  const extraClass = extra?.numeric ? 'num' : 'usage-detail';
   return (
     <section className="usage-section">
       <h3 id={id}>{title}</h3>
       {rows.length === 0 && empty !== undefined ? (
         <p className="field-hint">{empty}</p>
       ) : (
-        // Scrolls sideways in a narrow dialog: a region with a name, so the keyboard can scroll it.
-        <div className="usage-table-wrap" role="region" aria-labelledby={id} tabIndex={0}>
+        // A region with a name, which takes focus only while the table is wider than its box, so the
+        // keyboard can scroll it sideways then, and Tab doesn't stop on it otherwise.
+        <div ref={wrap} className="usage-table-wrap" role="region" aria-labelledby={id} tabIndex={scrolls ? 0 : undefined}>
           <table className={bars ? 'usage-table has-bars' : 'usage-table'}>
+            <caption className="visually-hidden">{title}</caption>
             <thead>
               <tr>
                 <th scope="col">{first}</th>
                 {extra && (
-                  <th scope="col" className="num">
+                  <th scope="col" className={extraClass}>
                     {extra.label}
                   </th>
                 )}
@@ -296,14 +337,19 @@ function UsageTable({
               {rows.map((row) => (
                 <tr key={row.key}>
                   <th scope="row">{row.name}</th>
-                  {extra && <td className="num">{extra.value({ ...row, sessions: row.sessions ?? 0 })}</td>}
+                  {extra && <td className={extraClass}>{row.extra}</td>}
                   <td className="num cost">
-                    {row.bar !== undefined && (
-                      <span className="usage-bar" aria-hidden="true">
-                        <span style={{ width: `${Math.round(row.bar * 100)}%` }} />
+                    {row.bar === undefined ? (
+                      costText(row.tokens.cost)
+                    ) : (
+                      // The bar and the figure in a flex line of their own, so the cell stays a table cell.
+                      <span className="usage-cost">
+                        <span className="usage-bar" aria-hidden="true">
+                          <span style={{ width: `${Math.round(row.bar * 100)}%` }} />
+                        </span>
+                        <span className="usage-figure">{costText(row.tokens.cost)}</span>
                       </span>
                     )}
-                    <span className="usage-figure">{costText(row.tokens.cost)}</span>
                   </td>
                   {COLUMNS.map(([field]) => (
                     <td key={field} className="num">
@@ -315,7 +361,7 @@ function UsageTable({
               {rest && (
                 <tr className="usage-rest">
                   <th scope="row">{rest.label}</th>
-                  {extra && <td className="num" />}
+                  {extra && <td className={extraClass} />}
                   <td className="num cost">{costText(rest.tokens.cost)}</td>
                   {COLUMNS.map(([field]) => (
                     <td key={field} className="num">

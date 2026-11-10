@@ -121,21 +121,27 @@ export type UsageState =
   | { kind: 'ready'; view: UsageView }
   | { kind: 'failed'; message: string; view?: UsageView };
 
+/** The figures shown for `window`: only a view of that window, so a switch never shows another's under its tab. */
+function keptFor(state: UsageState, window: UsageWindowKey): { view?: UsageView } {
+  return state.view !== undefined && state.view.window.key === window ? { view: state.view } : {};
+}
+
 /**
- * The window's figures, fetched when the window changes and on refresh(). A view already shown stays
- * while the next loads, so the page doesn't jump. A request for a window no longer chosen is dropped.
+ * The window's figures, fetched when the window changes and on refresh(). On a refresh, the figures
+ * shown stay while the next load, so the page doesn't jump; on a window change, and when a read
+ * fails, only figures of the window chosen are kept, never another window's (W158's review).
  */
-export function useUsage(api: ApiClient | undefined, window: UsageWindowKey): { state: UsageState; refresh: () => void } {
+export function useUsage(api: ApiClient | undefined, windowKey: UsageWindowKey): { state: UsageState; refresh: () => void } {
   const [state, setState] = useState<UsageState>({ kind: 'loading' });
   const [asked, setAsked] = useState(0);
   useEffect(() => {
     if (api === undefined) return;
     const abort = new AbortController();
-    setState((current) => ({ kind: 'loading', ...('view' in current && current.view !== undefined ? { view: current.view } : {}) }));
-    void api.get(`${USAGE_PATH}?window=${window}`, { signal: abort.signal }).then((result) => {
+    setState((current) => ({ kind: 'loading', ...keptFor(current, windowKey) }));
+    void api.get(`${USAGE_PATH}?window=${windowKey}`, { signal: abort.signal }).then((result) => {
       if (abort.signal.aborted) return;
       setState((current) => {
-        const kept = 'view' in current && current.view !== undefined ? { view: current.view } : {};
+        const kept = keptFor(current, windowKey);
         if (result.kind !== 'ok') {
           const status = result.kind === 'failed' ? result.status : undefined;
           const message =
@@ -147,11 +153,12 @@ export function useUsage(api: ApiClient | undefined, window: UsageWindowKey): { 
           return { kind: 'failed', message, ...kept };
         }
         const view = asUsageView(result.body);
-        return view === undefined ? { kind: 'failed', message: "Couldn't read your usage: pitwall's answer wasn't as expected.", ...kept } : { kind: 'ready', view };
+        if (view === undefined) return { kind: 'failed', message: "Couldn't read your usage: pitwall's answer wasn't as expected.", ...kept };
+        return view.window.key === windowKey ? { kind: 'ready', view } : { kind: 'failed', message: "Couldn't read your usage: pitwall answered for another window.", ...kept };
       });
     });
     return () => abort.abort();
-  }, [api, window, asked]);
+  }, [api, windowKey, asked]);
   return { state, refresh: () => setAsked((n) => n + 1) };
 }
 
@@ -164,11 +171,20 @@ export const WINDOW_LABELS: Readonly<Record<UsageWindowKey, string>> = {
   '30d': '30 days',
 };
 
-/** A token count, short: 512, 34.5K, 1.2M, 3.4B. */
+/** A token count, short: 512, 34.5K, 120K, 1.2M, 3.4B; one decimal under 100 of a unit, and a count that rounds to 1,000 of one is 1.0 of the next. */
 export function tokenText(count: number): string {
-  if (count < 1000) return String(Math.round(count));
-  const [value, unit] = count < 1e6 ? [count / 1e3, 'K'] : count < 1e9 ? [count / 1e6, 'M'] : [count / 1e9, 'B'];
-  return `${value < 100 ? value.toFixed(1).replace(/\.0$/, '') : Math.round(value)}${unit}`;
+  if (Math.round(count) < 1000) return String(Math.round(count));
+  const units = [
+    [1e3, 'K'],
+    [1e6, 'M'],
+    [1e9, 'B'],
+  ] as const;
+  for (const [size, unit] of units) {
+    const value = count / size;
+    const text = value < 99.95 ? value.toFixed(1) : String(Math.round(value));
+    if (Number(text) < 1000 || unit === 'B') return `${text}${unit}`;
+  }
+  return String(count);
 }
 
 /** The stand-in cost: "$12.34", "$0.04", "under $0.01", "$0". */
