@@ -314,7 +314,7 @@ Apache-2.0: see [`LICENSE`](LICENSE). The bundled fonts and icons keep their own
 
 ## More
 
-- **[`docs/decisions.md`](docs/decisions.md):** the settled decisions, D1 to D27, with their reasoning.
+- **[`docs/decisions.md`](docs/decisions.md):** the settled decisions, D1 to D28, with their reasoning.
 - **[`NOW.md`](NOW.md):** where the work stands and what is next.
 - **[`PLAN.md`](PLAN.md):** the living design: architecture, security rules, open milestones and open questions.
 - **[`docs/plan-archive.md`](docs/plan-archive.md):** history: the finished milestones M0 to M5, their work breakdowns and findings.
