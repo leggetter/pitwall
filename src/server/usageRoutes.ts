@@ -7,11 +7,19 @@
 //     404  no usage source (a test's server, as with recaps off)
 //     429  USAGE_READS_MAX requests are being read already. Retry-After is set
 //
+//   GET RUN_RATE_PATH                                answers: RunRate (W159)
+//     200  the header's run rate: 'off' with --no-usage, 'unavailable', or the figures, uncached
+//     404  no usage source
+//
+// The run rate reads the plan's percentages through the same reader and its cache (RATE_LIMITS_TTL_MS),
+// which shares a call in flight, so however many pages or requests ask, `/usage` runs at most once in
+// that time. A page asks only while it's visible (web/src/runRate.ts).
+//
 // It reads the transcripts on from where the last read stopped, and the plan's week through the
 // rate-limits reader's cache (src/usage/service.ts), only when asked: nothing runs while no page
 // asks. At most USAGE_READS_MAX requests at once, so a script holding the token can't stack reads.
 import type { Hono } from 'hono';
-import { USAGE_PATH, USAGE_WINDOWS, type UsageWindowKey } from '../shared/protocol.js';
+import { RUN_RATE_PATH, USAGE_PATH, USAGE_WINDOWS, type UsageWindowKey } from '../shared/protocol.js';
 import type { UsageSource } from '../usage/service.js';
 
 /** Requests read at once: a window chosen while the first read runs, and no more. */
@@ -36,5 +44,10 @@ export function registerUsage(app: Hono, usage: UsageSource | undefined): void {
     } finally {
       running--;
     }
+  });
+  app.get(RUN_RATE_PATH, async (c) => {
+    c.header('Cache-Control', 'no-store');
+    if (usage === undefined) return c.body(null, 404);
+    return c.json(await usage.runRate());
   });
 }

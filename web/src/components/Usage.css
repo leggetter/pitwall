@@ -257,3 +257,51 @@
     background: CanvasText;
   }
 }
+
+/*
+ * The header's Usage button with the run rate on it (W159): a ghost button, the icon, then each
+ * window's figure as a subtle badge in its level's tone, "Ahead of pace" while the week is over the
+ * reserve's line, and the reading's age once it's over 10 minutes old.
+ */
+.usage-meter {
+  gap: var(--pw-space-1-5);
+  padding-inline: var(--pw-space-1-5);
+}
+
+.usage-meter .badge {
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-meter-age {
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  font-weight: var(--pw-weight-regular);
+  line-height: var(--pw-leading-s);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The pace beside the plan's week in the Usage view's summary (W159). */
+.usage-pace {
+  flex: 0 1 auto;
+  min-width: 10rem;
+  max-width: min(100%, 26rem);
+}
+
+.usage-pace-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pw-space-1-5);
+  font-size: var(--pw-text-m);
+  font-weight: var(--pw-weight-medium);
+  line-height: var(--pw-leading-m);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-pace .field-hint + .field-hint {
+  margin-top: var(--pw-space-0-5);
+}
+
+.usage-pace-value[data-ahead] {
+  color: var(--pw-warning-fg);
+}

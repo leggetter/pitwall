@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { AgentRow } from '../index/agents.js';
 import type { Indexer } from '../index/index.js';
-import { USAGE_PATH, type UsageView, type UsageWindowKey } from '../shared/protocol.js';
+import { RUN_RATE_PATH, SNAPSHOT_PATH, USAGE_PATH, type IndexSnapshot, type RunRate, type UsageView, type UsageWindowKey } from '../shared/protocol.js';
 import type { UsageSource } from '../usage/service.js';
 import type { RunningServer } from './index.js';
 import { isPitwallOwn } from './own.js';
@@ -36,8 +36,10 @@ afterEach(async () => {
   await Promise.all(running.splice(0).map((server) => server.close()));
 });
 
+const SNAPSHOT: IndexSnapshot = { generatedAt: '2026-11-10T12:00:00.000Z', roots: [], groups: [], source: { ok: true } } as unknown as IndexSnapshot;
+
 const indexer: Indexer = {
-  latest: () => undefined,
+  latest: () => SNAPSHOT,
   subscribe: () => () => {},
   conversation: async () => undefined,
   subagents: async () => undefined,
@@ -51,10 +53,21 @@ const indexer: Indexer = {
 
 const VIEW = { window: { key: 'week' } } as unknown as UsageView;
 
-function fakeSource(hold?: Promise<void>): UsageSource & { asked: UsageWindowKey[]; closed: number } {
+const RATE: RunRate = { status: 'unavailable', readAt: '2026-11-10T12:00:00.000Z', reason: 'timeout' };
+
+function fakeSource(hold?: Promise<void>, planReads = true): UsageSource & { asked: UsageWindowKey[]; closed: number; rates: number } {
   const source = {
+    planReads,
     asked: [] as UsageWindowKey[],
     closed: 0,
+    rates: 0,
+    async runRate() {
+      source.rates++;
+      return planReads ? RATE : ({ status: 'off' } as const);
+    },
+    async report() {
+      throw new Error('not asked here');
+    },
     async view(key: UsageWindowKey) {
       source.asked.push(key);
       await hold;
@@ -155,5 +168,29 @@ describe('pitwall’s own processes (the index’s exclude)', () => {
     for (const name of ['relay', 'recap', 'supervisor', 'pitwall-usage']) expect(own(row({ name }))).toBe(true);
     expect(own(row({}))).toBe(false);
     expect(isPitwallOwn({ relay: { isRelay: () => false } })(row({ name: 'pitwall-usage' }))).toBe(false);
+  });
+});
+
+describe('GET RUN_RATE_PATH (W159)', () => {
+  it('answers the run rate, uncached, behind the token and the Origin check; 404 without a usage source', async () => {
+    const usage = fakeSource();
+    const server = await start(usage);
+    const answer = await get(server, RUN_RATE_PATH);
+    expect(answer.status).toBe(200);
+    expect(answer.headers['cache-control']).toBe('no-store');
+    expect(answer.json).toEqual(RATE);
+    expect((await get(server, RUN_RATE_PATH, {})).status).toBe(401);
+    expect((await get(server, RUN_RATE_PATH, { authorization: `Bearer ${TOKEN}`, origin: 'http://evil.example' })).status).toBe(403);
+    expect(usage.rates).toBe(1);
+    expect((await get(await start(), RUN_RATE_PATH)).status).toBe(404);
+  });
+
+  it('the snapshot says the run rate is on only when the source reads the plan’s percentages', async () => {
+    expect((await get(await start(fakeSource()), SNAPSHOT_PATH)).json).toMatchObject({ planUsage: 'on' });
+    const off = fakeSource(undefined, false);
+    const server = await start(off);
+    expect((await get(server, SNAPSHOT_PATH)).json).not.toHaveProperty('planUsage');
+    expect((await get(server, RUN_RATE_PATH)).json).toEqual({ status: 'off' });
+    expect((await get(await start(), SNAPSHOT_PATH)).json).not.toHaveProperty('planUsage');
   });
 });

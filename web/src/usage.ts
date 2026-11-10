@@ -205,6 +205,8 @@ export function planReasonText(reason: string): string {
       return "Claude Code's `/usage` had no limits in its report";
     case 'timeout':
       return "Claude Code's `/usage` didn't answer in time";
+    case 'off':
+      return 'pitwall was started with `--no-usage`, so it reads no plan percentages';
     default:
       return "Claude Code's `/usage` failed";
   }

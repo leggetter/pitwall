@@ -56,7 +56,9 @@ export type RateLimitsUnavailable =
    */
   | 'no-report'
   /** The report came, but its `rate_limits` was null, or not as documented. */
-  | 'no-limits';
+  | 'no-limits'
+  /** `--no-usage` (W159): pitwall reads no percentages, so no call ran. */
+  | 'off';
 
 export type RateLimits =
   | {

@@ -1,12 +1,14 @@
 // The Usage view's figures (W158): the window, each response once, cache reads and writes apart,
 // rows by stand-in cost, main sessions against sub-agents, and kept days for deleted transcripts.
 // Then the source: the plan's week read only when asked, and its `/usage` call known as its own.
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { USAGE_ROWS_MAX, type UsagePlan } from '../shared/protocol.js';
 import { DayStore, emptyTokens, localDay, type DayTotals } from './days.js';
+import { READINGS_FILE_NAME, readReadingsFile } from './readings.js';
 import type { RateLimits, RateLimitsReader } from './rateLimits.js';
 import type { CallRecord, FileScan } from './scan.js';
 import { createUsageSource } from './service.js';
@@ -238,5 +240,40 @@ describe('the source', () => {
     expect(view.plan).toMatchObject({ status: 'unavailable', reason: 'not-found' });
     expect(view.buckets).toHaveLength(7);
     expect(view.totals.calls).toBe(0);
+  });
+
+  it('the run rate (W159): through the same reader, each new reading of the week kept, and the report for the supervisor', async () => {
+    const resetsAt = Math.round((NOW + 3 * DAY) / 1000);
+    const reader = fakeReader({ status: 'available', readAt: NOW - 1000, fiveHour: null, sevenDay: { usedPercentage: 75, resetsAt } });
+    const home = path.join(dir, 'pitwall');
+    await mkdir(home, { mode: 0o700 });
+    const source = createUsageSource({ pitwallHome: home, configDir: path.join(dir, 'none'), home: dir, now: () => NOW, rateLimits: reader, resolveRepo: async (cwd) => cwd, target: { percent: 60, day: 'friday', time: '18:00' } });
+    expect(source.planReads).toBe(true);
+    const rate = await source.runRate();
+    expect(reader.reads).toBe(1);
+    expect(rate).toMatchObject({ status: 'available', target: { percent: 60 }, sevenDay: { usedPercentage: 75, level: 'amber', projection: { status: 'thin' } } });
+    await source.runRate();
+    expect(readReadingsFile(path.join(home, READINGS_FILE_NAME), NOW)).toEqual([{ at: NOW - 1000, used: 75, resetsAt: resetsAt * 1000 }]);
+    const report = await source.report();
+    expect(report.runRate).toEqual(rate);
+    expect(report.week.from).toBe('reset');
+    expect(report.heaviest).toEqual([]);
+    expect((await source.view('24h')).runRate).toEqual(rate);
+  });
+
+  it('with --no-usage: never reads the plan’s percentages, keeps no readings, and the week is the last 7 days', async () => {
+    const reader = fakeReader({ status: 'available', readAt: NOW, fiveHour: null, sevenDay: { usedPercentage: 10, resetsAt: Math.round((NOW + DAY) / 1000) } });
+    const home = path.join(dir, 'pitwall');
+    await mkdir(home, { mode: 0o700 });
+    const source = createUsageSource({ pitwallHome: home, configDir: path.join(dir, 'none'), home: dir, now: () => NOW, rateLimits: reader, planReads: false, resolveRepo: async (cwd) => cwd });
+    expect(source.planReads).toBe(false);
+    expect(await source.runRate()).toEqual({ status: 'off' });
+    const view = await source.view('week');
+    expect(view.window.from).toBe('days');
+    expect(view.plan).toMatchObject({ status: 'unavailable', reason: 'off' });
+    expect(view.runRate).toEqual({ status: 'off' });
+    expect(reader.reads).toBe(0);
+    expect(existsSync(path.join(home, READINGS_FILE_NAME))).toBe(false);
+    expect(source.isOwn({ name: 'pitwall-usage', cwd: '/made-up/home/.pitwall/rate-limits' })).toBe(false);
   });
 });

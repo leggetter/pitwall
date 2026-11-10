@@ -36,8 +36,10 @@ import type {
   UsageTokens,
   UsageView,
   UsageWindowKey,
+  RunRate,
 } from '../../src/shared/protocol.js';
 import { withSupervisorFooter } from '../../src/shared/protocol.js';
+import { DEFAULT_RUN_RATE_TARGET, levelOf, paceAt, project, WEEK_MS, type WeekReading } from '../../src/usage/runRate.js';
 import { REFUSED_TO_SUPERVISOR_NOTICE } from '../../src/index/conversation.js';
 
 export const CODE = '/Users/example/code';
@@ -382,9 +384,16 @@ export interface ResetOptions {
    * 'failing', HTTP 500.
    */
   usage?: UsageWorldState;
+  /**
+   * The header's run rate (W159): 'off', the default, as with --no-usage, so the snapshot has no
+   * planUsage and the header no figures; 'normal', under the line; 'ahead', over it; 'amber' at 74%
+   * with the five hours at 35%; 'red' at 93%; 'old', a reading 25 minutes old; 'unavailable'.
+   */
+  runRate?: RunRateWorldState;
 }
 
 export type UsageWorldState = 'ok' | 'unavailable' | 'empty' | 'failing';
+export type RunRateWorldState = 'off' | 'normal' | 'ahead' | 'amber' | 'red' | 'old' | 'unavailable';
 
 /** The made-up index: a snapshot, conversations, and what POSTs have changed since the last reset. */
 export class World {
@@ -398,6 +407,8 @@ export class World {
   #manySubagents = false;
   /** What the Usage view's route answers (W158), and the windows asked for since the last reset. */
   #usage: UsageWorldState = 'ok';
+  /** What the run rate's route answers (W159). */
+  #runRate: RunRateWorldState = 'off';
   /** The sessions whose running turn `endTurn()` has ended, until the next reset (W102). */
   #turnsEnded = new Set<string>();
   /** What the PR source says, and whether a fetch is running (W95). */
@@ -454,6 +465,7 @@ export class World {
     this.#spawned = [];
     this.#manySubagents = false;
     this.#usage = options.usage ?? 'ok';
+    this.#runRate = options.runRate ?? 'off';
     this.#turnsEnded = new Set();
     this.#prs = options.prs ?? 'ok';
     this.#prsRefreshing = false;
@@ -767,6 +779,7 @@ export class World {
       source: { ok: true },
       ...(health ? { recaps: health } : {}),
       ...(this.#supervisor === 'none' ? {} : { supervisor: this.supervisorState() }),
+      ...(this.#runRate === 'off' ? {} : { planUsage: 'on' as const }),
     };
   }
 
@@ -1101,8 +1114,47 @@ export class World {
       ...(key === '30d' ? { history: { days: 1, ...t(12.4, 300) } } : {}),
       scan: { at: new Date(this.#now - 2_000).toISOString(), files: 865, unreadable: 0, malformed: 0 },
     };
+    if (this.#runRate !== 'off') {
+      const rate = this.runRate();
+      view.runRate = rate;
+      // The plan's week is the run rate's, so the view's two figures agree.
+      if (rate.status === 'available' && rate.sevenDay !== null && view.plan.status === 'available') {
+        view.plan = { ...view.plan, sevenDay: { usedPercentage: rate.sevenDay.usedPercentage, resetsAt: rate.sevenDay.resetsAt } };
+      }
+    }
     if (this.#usage === 'empty') return { status: 200, body: { ...view, byRepo: { rows: [] }, bySession: { rows: [] }, byModel: [] } };
     return { status: 200, body: view };
+  }
+
+  /**
+   * GET RUN_RATE_PATH's answer (W159), worked out by pitwall's own runRate.ts from made-up readings:
+   * a week that resets on the next Sunday at 12:00, as Phil's does (spike 013), so the reserve's Friday
+   * 18:00 falls late in it, with hourly readings at a steady rate up to the state's percentage. The
+   * Usage view's plan's week shows the same week then.
+   */
+  runRate(): RunRate {
+    if (this.#runRate === 'off') return { status: 'off' };
+    if (this.#runRate === 'unavailable') return { status: 'unavailable', readAt: new Date(this.#now).toISOString(), reason: 'timeout' };
+    const HOUR = 60 * MINUTE;
+    const reset = new Date(this.#now);
+    reset.setHours(12, 0, 0, 0);
+    while (reset.getDay() !== 0 || reset.getTime() <= this.#now) reset.setDate(reset.getDate() + 1);
+    const resetsAt = reset.getTime();
+    const start = new Date(resetsAt - WEEK_MS);
+    const readAt = this.#runRate === 'old' ? this.#now - 25 * MINUTE : this.#now - MINUTE;
+    const line = paceAt(readAt, 0, resetsAt, DEFAULT_RUN_RATE_TARGET).line;
+    const used = { normal: Math.max(1, Math.round(line - 6)), old: Math.max(1, Math.round(line - 6)), ahead: Math.min(99, Math.round(line + 12)), amber: 74, red: 93 }[this.#runRate];
+    const elapsed = readAt - start.getTime();
+    const history: WeekReading[] = [];
+    for (let at = readAt - 30 * HOUR; at <= readAt; at += HOUR) history.push({ at, used: Math.round((used * (at - start.getTime())) / elapsed), resetsAt });
+    const reading: WeekReading = { at: readAt, used, resetsAt };
+    return {
+      status: 'available',
+      readAt: new Date(readAt).toISOString(),
+      target: DEFAULT_RUN_RATE_TARGET,
+      sevenDay: { usedPercentage: used, resetsAt: new Date(resetsAt).toISOString(), level: levelOf(used), pace: paceAt(readAt, used, resetsAt, DEFAULT_RUN_RATE_TARGET), projection: project(reading, history) },
+      fiveHour: this.#runRate === 'amber' ? { usedPercentage: 35, resetsAt: new Date(this.#now + 2 * HOUR).toISOString(), level: levelOf(35) } : null,
+    };
   }
 
   byName(name: string): SessionSummary {

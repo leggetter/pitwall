@@ -51,6 +51,7 @@ export const INTERVAL_MAX_SECONDS = 300;
 export const TOKEN_MIN_DIFFERENT = 8;
 
 export const USAGE = `Usage: pitwall [root...] [--config <path>] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs] [--no-recaps] [--no-supervisor]
+              [--no-usage]
 
 Lists the Claude Code sessions running under each root, in a local web UI.
 The roots default to the config file's, then to the current directory.
@@ -86,6 +87,12 @@ Options:
                         sessions and PRs, and reads a session's latest turns
                         when you ask about it. It messages a session or starts
                         one only after you approve its draft in the page.
+  --no-usage            Don't read your plan's usage percentages, and never run
+                        claude's /usage. Without it, while a pitwall page is
+                        open and visible, pitwall runs /usage with claude -p at
+                        most every 5 minutes, which answers with no model call,
+                        for the header's run rate. The Usage view's token
+                        totals from your transcripts work either way.
   -h, --help            Show this help.
   -v, --version         Show the version.
 
@@ -209,6 +216,8 @@ export type CliCommand =
       recaps: boolean;
       /** False with `--no-supervisor`: pitwall never runs the supervisor. */
       supervisor: boolean;
+      /** False with `--no-usage`: pitwall never runs `/usage` (W159). */
+      usage: boolean;
     };
 
 export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): CliCommand {
@@ -226,6 +235,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
         'no-prs': { type: 'boolean' },
         'no-recaps': { type: 'boolean' },
         'no-supervisor': { type: 'boolean' },
+        'no-usage': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'v' },
       },
@@ -248,6 +258,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     prs: !values['no-prs'],
     recaps: !values['no-recaps'],
     supervisor: !values['no-supervisor'],
+    usage: !values['no-usage'],
   };
 }
 
@@ -604,8 +615,10 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   // With --no-supervisor, there's none, and pitwall never runs it.
   const supervisor = command.supervisor ? createSupervisor({ work: () => work.choice('supervisor') }) : undefined;
   // The Usage view's source (W158): reads the transcripts and the plan's week from `/usage` (W157) only
-  // when the view asks. The index leaves its `/usage` call out, as it does a recap call.
-  const usage = createUsageSource({ pitwallHome: pitwallHome() });
+  // when the view asks, and the header's run rate (W159) when a visible page asks, against the config
+  // file's weekend reserve. The index leaves its `/usage` call out, as it does a recap call. With
+  // --no-usage, no `/usage` call: the view's transcript totals still work.
+  const usage = createUsageSource({ pitwallHome: pitwallHome(), planReads: command.usage, ...(config.runRate === undefined ? {} : { target: config.runRate }) });
   const indexer = startIndexer({
     roots,
     intervalMs,

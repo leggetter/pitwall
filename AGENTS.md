@@ -67,7 +67,8 @@ npm start -- [root...]   run the built CLI, node dist/cli.js. `--interval <secon
                          `--no-open` leaves the browser alone, `--no-prs` turns off your open
                          pull requests, so pitwall never runs gh, `--no-recaps` turns off recaps, so
                          pitwall never sends transcript excerpts to the model, `--no-supervisor` turns
-                         off the supervisor, so pitwall never runs it, and `--config <path>`
+                         off the supervisor, so pitwall never runs it, `--no-usage` turns off the plan's
+                         percentages, so pitwall never runs `/usage`, and `--config <path>`
                          reads that config file instead of ~/.pitwall/config.json (README's Configuration)
 npm run appcheck -- --out <dir>   the headless app check of the production build, after npm run build
                          (scripts/appcheck/README.md); --list, --only <part>, --widths, --themes, --ports
@@ -127,7 +128,9 @@ src/usage/               the usage report's reads and totals (M5.1, W131): scan.
                          call (W157, spike 013), fail-soft to "unavailable". The Usage view's (W158): ledger.ts
                          reads each transcript on from where it stopped, days.ts keeps each day's totals in
                          $PITWALL_HOME/usage-days.json, view.ts builds a window's figures, service.ts puts them
-                         together for src/server/usageRoutes.ts' GET /api/usage
+                         together for src/server/usageRoutes.ts' GET /api/usage. The run rate's (W159):
+                         runRate.ts the pace against the weekend reserve and the projection, readings.ts
+                         the week's readings in $PITWALL_HOME/usage-readings.json, GET /api/run-rate
 src/cli.ts               the `pitwall` command (bin, built to dist/cli.js)
 src/config.ts            the config file (W103, D24): ~/.pitwall/config.json or --config, JSON with comments,
                          the roots and each root's GitHub owners, ownersByRoot() for the PR side, and `work`,

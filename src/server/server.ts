@@ -59,6 +59,8 @@
 //
 //   GET /api/usage                      then usageRoutes.ts: the Usage view's figures (W158), read only when
 //                                      asked; 404 without a usage source
+//   GET /api/run-rate                   usageRoutes.ts too: the header's run rate (W159), asked by a visible
+//                                      page; 'off' with --no-usage, 404 without a usage source
 //   GET /api/work, POST /api/work       then work.ts: WorkSettings; POST replaces the overrides, JSON,
 //                                      at most 4 KiB, each value checked, else 400 and nothing changes
 //   /mcp                                outside /api/*, so neither the token nor the apiKey is taken
@@ -280,7 +282,8 @@ export async function startServerWithInternals(
       } catch {
         // Fails soft: a record not linked yet is still found by its short id.
       }
-      return snapshot;
+      // The header's run rate (W159): the page asks for it only when the snapshot says it's on.
+      return options.usage?.planReads === true ? { ...snapshot, planUsage: 'on' } : snapshot;
     },
     version: () => 0,
     subscribe: () => () => {},
