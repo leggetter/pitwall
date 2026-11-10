@@ -48,9 +48,10 @@ export function Divider({ store }: DividerProps) {
   useLayoutEffect(() => {
     const element = paneOf(self.current);
     if (!element) return;
-    element.style.width = `${requested}px`;
+    // As --pw-view-w, which the pane's width is made of, with the supervisor's panel's beside it while that's open (W177).
+    element.style.setProperty('--pw-view-w', `${requested}px`);
     return () => {
-      element.style.width = '';
+      element.style.removeProperty('--pw-view-w');
     };
   }, [requested]);
 

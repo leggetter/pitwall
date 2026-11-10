@@ -59,7 +59,8 @@ export function withSelection(search: string, selection: Selection): string {
   const kept = [...new URLSearchParams(search)].filter(([name]) => !(PARAMS as readonly string[]).includes(name));
   const root: [string, string][] = selection.root ? [['root', selection.root]] : [];
   const own: [string, string][] = 'view' in selection ? [['view', selection.view], ...root] : [['repo', selection.repo], ...root];
-  return `?${[...own, ...kept].map(([name, value]) => `${encode(name)}=${encode(value)}`).join('&')}`;
+  // A parameter with no value, as ?supervisor is, stays one without `=` (W177).
+  return `?${[...own, ...kept].map(([name, value]) => (value === '' ? encode(name) : `${encode(name)}=${encode(value)}`)).join('&')}`;
 }
 
 /** The link for a selection, as a repo list item's href. */

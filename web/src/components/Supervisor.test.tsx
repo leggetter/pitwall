@@ -1,6 +1,7 @@
 // The supervisor's panel (M5, W114; docs/design-system.md, 4: Supervisor): the repo list's item in
 // every root tab, its status and its drafts' count, which Needs you and the page title count too; its
-// view in the third column, as ?supervisor, one pushed history entry, in a session's or a PR's place;
+// panel over the page, as ?supervisor, one pushed history entry, beside a session's or a PR's view (W177,
+// and SupervisorPanel.test.tsx);
 // its states, off, starting, idle, working, held and failed, and none with --no-supervisor; the empty
 // state's questions; the message box and Stop; and the draft cards and their decisions, with focus.
 // Nothing starts it but Start and a message. Made-up sessions, ids and text only.
@@ -190,26 +191,19 @@ describe('the supervisor’s view', () => {
     expect(history!.entries).toHaveLength(2);
   });
 
-  it('takes a session’s place, and a session takes its place, each one entry, and the back button goes between them', async () => {
+  it('opens over the page beside the open session, which stays, as one entry; the back button closes it alone (W177)', async () => {
     const { history } = renderDashboard(snap({ status: 'idle', approvals: [] }));
     fireEvent.click(screen.getByRole('button', { name: 'pitwall-test-beta' }));
     await settle();
-    expect(document.getElementById('session-view')).not.toBeNull();
     await openFromItem();
-    expect(document.getElementById('session-view')).toBeNull();
+    expect(document.getElementById('session-view')).not.toBeNull();
     expect(view()).toBeDefined();
-    expect(history!.location.search).toBe('?view=all&supervisor');
-    fireEvent.click(screen.getByRole('button', { name: 'pitwall-test-alpha' }));
-    await settle();
-    expect(view()).toBeUndefined();
-    expect(history!.location.search).toBe(`?view=all&session=${alpha.sessionId}`);
-    history!.back();
-    await settle();
-    expect(view()).toBeDefined();
+    expect(history!.location.search).toBe(`?view=all&session=${beta.sessionId}&supervisor`);
     history!.back();
     await settle();
     expect(view()).toBeUndefined();
     expect(document.getElementById('session-view')).not.toBeNull();
+    expect(history!.location.search).toBe(`?view=all&session=${beta.sessionId}`);
   });
 
   it('closes with Close, giving focus back to the item', async () => {

@@ -687,11 +687,11 @@ describe('the divider', () => {
     expect(divider().getAttribute('aria-orientation')).toBe('vertical');
     expect(divider().tabIndex).toBe(0);
     expect([divider().getAttribute('aria-valuenow'), divider().getAttribute('aria-valuemin'), divider().getAttribute('aria-valuemax')]).toEqual(['760', '560', '840']);
-    expect(pane().style.width).toBe('760px');
+    expect(pane().style.getPropertyValue('--pw-view-w')).toBe('760px');
 
     setWidth(1100);
     expect(screen.queryByRole('separator', { name: 'Resize the session view' })).toBeNull();
-    expect(pane().style.width).toBe('');
+    expect(pane().style.getPropertyValue('--pw-view-w')).toBe('');
   });
 
   it('moves 16 px with ← and →, jumps to the limits with Home and End, and stores each width', () => {
@@ -714,7 +714,7 @@ describe('the divider', () => {
     press('ArrowLeft');
     expect(divider().getAttribute('aria-valuenow')).toBe('840');
     expect(storage.values.get(PANEL_WIDTH_KEY)).toBe('840');
-    expect(pane().style.width).toBe('840px');
+    expect(pane().style.getPropertyValue('--pw-view-w')).toBe('840px');
   });
 
   it('resets to 760 px on a double-click, or the maximum when that is less', () => {
@@ -752,7 +752,7 @@ describe('the divider', () => {
     renderDashboard(snap(), { storage: memory({ [PANEL_WIDTH_KEY]: '900' }) });
     expect(divider().getAttribute('aria-valuenow')).toBe('700');
     // The stylesheet clamps it: the pane asks for the stored width.
-    expect(pane().style.width).toBe('900px');
+    expect(pane().style.getPropertyValue('--pw-view-w')).toBe('900px');
 
     for (const raw of ['abc', '100', '559', '99999999', '-700', '7e2', '']) {
       expect(readPanelWidth(memory({ [PANEL_WIDTH_KEY]: raw })), raw).toBe(760);

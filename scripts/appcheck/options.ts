@@ -25,6 +25,9 @@ export const VIEWPORTS: readonly Viewport[] = [
   { name: '375x540', width: 375, height: 540 },
 ];
 
+/** Windows run only when --widths names them: 1,920 × 1,080, for a wide window, as the supervisor's panel beside a session (W177). */
+export const EXTRA_VIEWPORTS: readonly Viewport[] = [{ name: '1920', width: 1920, height: 1080 }];
+
 export type Theme = 'light' | 'dark';
 export const THEMES: readonly Theme[] = ['light', 'dark'];
 
@@ -74,7 +77,7 @@ Runs pitwall's headless app check against the production build. Run npm run buil
   --out <dir>           where the JSON summary and screenshots go (required)
   --only <parts>        run these parts alone, comma-separated (see --list)
   --skip <parts>        run every part but these
-  --widths <list>       windows to run at: 375, 900, 1200, 1440 and 375x540 (default: all five)
+  --widths <list>       windows to run at: 375, 900, 1200, 1440 and 375x540 (default: all five), or 1920
   --themes <list>       light, dark or both (default: both)
   --ports <from>-<to>   the only ports the harness may use (default: ${DEFAULT_PORTS.from}-${DEFAULT_PORTS.to}); it needs 2
   --web-root <dir>      the web build to serve (default: dist/web)
@@ -118,7 +121,7 @@ export function parseOptions(argv: readonly string[], repo: string): Options {
   if (out === undefined && !flags.has('--list')) throw new UsageError('--out <dir> is required');
 
   const widths = list('--widths');
-  const viewports = widths === undefined ? [...VIEWPORTS] : widths.map((name) => VIEWPORTS.find((each) => each.name === name) ?? fail(`--widths: no window called ${name}`));
+  const viewports = widths === undefined ? [...VIEWPORTS] : widths.map((name) => [...VIEWPORTS, ...EXTRA_VIEWPORTS].find((each) => each.name === name) ?? fail(`--widths: no window called ${name}`));
 
   const themes = (list('--themes') ?? [...THEMES]).map((name) => (THEMES as readonly string[]).includes(name) ? (name as Theme) : fail(`--themes: ${name} isn't light or dark`));
 

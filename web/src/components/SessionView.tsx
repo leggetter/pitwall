@@ -251,15 +251,26 @@ export interface FrameProps {
   titleId: string;
   /** Escape that nothing nearer handled: a menu, a dialog, the drawer, the filter or the terminal. The view decides the rest. */
   onEscape: () => void;
+  /**
+   * The supervisor's panel (W177): over the page, beside the session's or PR's view, which stays. A
+   * non-modal dialog in every layout, it slides in as it opens, and Escape is its first, wherever
+   * focus is, since it's the top layer: the view beside it has Escape again once it's closed.
+   */
+  panel?: boolean;
   children: ReactNode;
 }
 
+/** The attribute that marks the supervisor's panel, whose Escape comes before a view's (W177). */
+export const PANEL_ATTRIBUTE = 'data-view-panel';
+
 /**
  * The view's region: a <section> named by its heading, which is a non-modal dialog when it overlays
- * the list. It slides in when it opens over the list, but not when the window then crosses 1,200 px.
+ * the list, or as the supervisor's panel. It slides in when it opens over the list, or as the panel,
+ * but not when the window then crosses 1,200 px.
  */
-export function Frame({ layout, id = SESSION_VIEW_ID, className, hidden = false, animate, titleId, onEscape, children }: FrameProps) {
-  const [opening, setOpening] = useState(animate && layout === 'overlay');
+export function Frame({ layout, id = SESSION_VIEW_ID, className, hidden = false, animate, titleId, onEscape, panel = false, children }: FrameProps) {
+  const [opening, setOpening] = useState(animate && (layout === 'overlay' || panel));
+  const own = useRef<HTMLElement>(null);
   const onEscapeRef = useRef(onEscape);
   const hiddenRef = useRef(hidden);
   useEffect(() => {
@@ -267,10 +278,17 @@ export function Frame({ layout, id = SESSION_VIEW_ID, className, hidden = false,
     hiddenRef.current = hidden;
   }, [onEscape, hidden]);
 
-  // Escape, last in the layered order (6.2): whatever nearer handled it called preventDefault.
+  // Escape, last in the layered order (6.2): whatever nearer handled it called preventDefault. While
+  // the supervisor's panel is open, a view's Escape is the panel's, wherever focus is (W177).
   useEffect(() => {
     const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.defaultPrevented && !hiddenRef.current) onEscapeRef.current();
+      if (event.key !== 'Escape' || event.defaultPrevented || hiddenRef.current) return;
+      const top = document.querySelector(`[${PANEL_ATTRIBUTE}]`);
+      if (top !== null && top !== own.current) return;
+      // The panel's Escape goes no further, even once it has gone: the browser runs the page's
+      // updates between listeners, so a view's listener after this one would find no panel.
+      if (top !== null) event.preventDefault();
+      onEscapeRef.current();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -278,10 +296,12 @@ export function Frame({ layout, id = SESSION_VIEW_ID, className, hidden = false,
 
   return (
     <section
+      ref={own}
       id={hidden ? undefined : id}
       hidden={hidden}
-      className={['session-view', className, layout === 'column' ? 'in-column' : 'overlay', opening && 'opening'].filter(Boolean).join(' ')}
-      {...(layout === 'overlay' ? { role: 'dialog', 'aria-modal': false } : {})}
+      className={['session-view', className, layout === 'column' ? 'in-column' : 'overlay', panel && 'view-panel', opening && 'opening'].filter(Boolean).join(' ')}
+      {...(layout === 'overlay' || panel ? { role: 'dialog', 'aria-modal': false } : {})}
+      {...(panel ? { [PANEL_ATTRIBUTE]: '' } : {})}
       aria-labelledby={titleId}
       onAnimationEnd={(event) => {
         if (event.target === event.currentTarget) setOpening(false);
@@ -1313,6 +1333,10 @@ export interface WaitingSessionViewProps {
   title?: string;
   /** Its status line, visually hidden: "Loading the session" by default. */
   label?: string;
+  /** As the supervisor's panel (W177): its region's id, its class, and the panel's place and Escape (Frame). */
+  frame?: { id: string; className: string; panel: true };
+  /** At 600 px and narrower, Back's words in Close's place. */
+  backLabel?: string | undefined;
 }
 
 /**
@@ -1321,12 +1345,12 @@ export interface WaitingSessionViewProps {
  * snapshot replaces it with the session, or with the unlisted state. It takes no focus, and never
  * attaches, sends or changes anything.
  */
-export function WaitingSessionView({ waiting, slow, onClose, layout = 'overlay', compact = false, headingRef, animate = true, title = 'Session', label = 'Loading the session' }: WaitingSessionViewProps) {
+export function WaitingSessionView({ waiting, slow, onClose, layout = 'overlay', compact = false, headingRef, animate = true, title = 'Session', label = 'Loading the session', frame, backLabel }: WaitingSessionViewProps) {
   const titleId = useId();
   return (
-    <Frame layout={layout} animate={animate} titleId={titleId} onEscape={onClose}>
+    <Frame layout={layout} animate={animate} titleId={titleId} onEscape={onClose} {...frame}>
       <header className="session-view-head">
-        <Top compact={compact} onClose={onClose}>
+        <Top compact={compact} onClose={onClose} backLabel={backLabel}>
           <h2 className="session-view-title" id={titleId} ref={headingRef} tabIndex={-1}>
             <span className="visually-hidden">{title}</span>
             {waiting.shown && <SkeletonHeading />}

@@ -32,7 +32,7 @@ npm run appcheck -- --out <dir> --bail                       stop at the first f
 | --- | --- |
 | `--out <dir>` | Where the summary and screenshots go. Required |
 | `--only`, `--skip` | Parts by name, comma-separated |
-| `--widths` | Any of `375` (375 × 812), `900`, `1200`, `1440` (each × 900) and `375x540`. All five by default |
+| `--widths` | Any of `375` (375 × 812), `900`, `1200`, `1440` (each × 900) and `375x540`. All five by default. `1920` (1920 × 1080) runs only when named, for a wide window (W177) |
 | `--themes` | `light`, `dark`, or both, the default |
 | `--ports <from>-<to>` | The only ports it may use, 5690-5699 by default. It needs two: the fake server's, then Chrome's debugging port |
 | `--web-root <dir>` | Another web build to serve, such as a scratch copy's, to see a part fail. `dist/web` by default |

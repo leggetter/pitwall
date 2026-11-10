@@ -56,6 +56,8 @@ describe('parseSelection and withSelection', () => {
 
   it('writes the selection, keeping every other parameter, with paths left readable', () => {
     expect(withSelection('', NEEDS_YOU)).toBe('?view=needs-you');
+    // The supervisor's panel, open beside the session, stays as it was written, with no `=` (W177).
+    expect(withSelection('?view=all&session=abc&supervisor', { repo: `${ROOT}/pitwall` })).toBe('?repo=/Users/example/code/pitwall&session=abc&supervisor');
     expect(withSelection('?session=abc&view=all', { repo: `${ROOT}/pitwall` })).toBe('?repo=/Users/example/code/pitwall&session=abc');
     expect(withSelection('?repo=/a&root=/b', ALL_SESSIONS)).toBe('?view=all');
     expect(withSelection('', { repo: `${WORK}/a b&c`, root: WORK })).toBe('?repo=/Users/example/work/a%20b%26c&root=/Users/example/work');

@@ -7,7 +7,7 @@ import { SUPERVISOR_MESSAGE_PATH, SUPERVISOR_NEW_CONVERSATION_PATH, supervisorAp
 import { createApiClient, type FetchLike } from './api.js';
 import { supervisorStripText } from './components/AppStrip.js';
 import { withPr } from './openPr.js';
-import { withSession } from './openSession.js';
+import { supervisorLast, withSession } from './openSession.js';
 import {
   APPROVAL_GONE,
   approvalTitle,
@@ -60,18 +60,28 @@ describe('its place in the URL', () => {
     expect(withSupervisor('?view=all&supervisor', false)).toBe('?view=all');
   });
 
-  it('takes the place of an open session or PR, and either takes its place', () => {
-    expect(withSupervisor('?repo=/Users/example/code&session=abc', true)).toBe('?repo=/Users/example/code&supervisor');
-    expect(withSupervisor('?view=prs&pr=example/demo-app/57', true)).toBe('?view=prs&supervisor');
-    expect(withSession('?view=all&supervisor', 'abc')).toBe('?view=all&session=abc');
-    expect(withPr('?view=all&supervisor', 'example/demo-app/57')).toBe('?view=all&pr=example/demo-app/57');
-    // Closing a session or a PR leaves it alone.
-    expect(withSession('?view=all&supervisor', undefined)).toBe('?view=all&supervisor');
+  it('opens beside an open session or PR, which stay, and either opened keeps it, last (W177)', () => {
+    expect(withSupervisor('?repo=/Users/example/code&session=abc', true)).toBe('?repo=/Users/example/code&session=abc&supervisor');
+    expect(withSupervisor('?view=prs&pr=example/demo-app/57', true)).toBe('?view=prs&pr=example/demo-app/57&supervisor');
+    expect(withSession('?view=all&supervisor', 'abc')).toBe('?view=all&session=abc&supervisor');
+    expect(withSession('?view=all&session=abc&supervisor', 'def')).toBe('?view=all&session=def&supervisor');
+    expect(withPr('?view=all&supervisor', 'example/demo-app/57')).toBe('?view=all&pr=example/demo-app/57&supervisor');
+    // A PR opened still takes a session's place, and a session a PR's, the panel kept.
+    expect(withPr('?view=all&session=abc&supervisor', 'example/demo-app/57')).toBe('?view=all&pr=example/demo-app/57&supervisor');
+    expect(withSession('?view=all&pr=example/demo-app/57&supervisor', 'abc')).toBe('?view=all&session=abc&supervisor');
+    // Closing a session or a PR leaves it alone; closing it leaves them.
+    expect(withSession('?view=all&session=abc&supervisor', undefined)).toBe('?view=all&supervisor');
+    expect(withPr('?view=all&pr=example/demo-app/57&supervisor', undefined)).toBe('?view=all&supervisor');
+    expect(withSupervisor('?view=all&session=abc&supervisor', false)).toBe('?view=all&session=abc');
+    // Without it, nothing is added.
+    expect(supervisorLast('?view=all&session=abc')).toBe('?view=all&session=abc');
+    expect(supervisorLast('?supervisor&view=all')).toBe('?view=all&supervisor');
   });
 
-  it("isn't open when a session or a PR is in the URL too, as only one typed by hand can be", () => {
-    expect(parseSupervisor('?supervisor&session=abc')).toBe(false);
-    expect(parseSupervisor('?supervisor&pr=example/demo-app/57')).toBe(false);
+  it('is open whatever else the URL opens beside it', () => {
+    expect(parseSupervisor('?supervisor&session=abc')).toBe(true);
+    expect(parseSupervisor('?view=all&pr=example/demo-app/57&supervisor')).toBe(true);
+    expect(parseSupervisor('?view=all&supervisor=')).toBe(true);
     expect(parseSupervisor('?view=all')).toBe(false);
   });
 });

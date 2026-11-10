@@ -1,6 +1,8 @@
 // The supervisor (M5, W114; docs/design-system.md, 4: Supervisor): the repo list's item, first, above
 // Needs you, with its status and its drafts' count, which Needs you and the page title count too; its
-// view in the third column as ?supervisor, one history entry, in a session's place and back; a new
+// panel over the page as ?supervisor, one history entry, beside a session's view, which stays (W177):
+// from 1,200 px covering the right of the widened third column, below over the view, which is inert
+// under it; Escape closes it first, and a session opened from it keeps it from 1,200 px; a new
 // conversation's questions, which fill the box; a message that starts it, the working line, and its
 // reply as markdown; its limit, 100,000 characters (W134); Load earlier; the draft cards, Edit and Send edit, Don't send, and where focus
 // goes; what it sent and started, with each session's state, Needs you's notice and Open (W124); a
@@ -96,6 +98,9 @@ const part: Part = {
     const counts = { needs: 0, title: 0 };
     /** A new conversation has no transcript yet: its GET is a 404, which the view shows as its empty state. */
     const allowNew = () => t.allow(/\/api\/supervisor\/conversation$/, 'a new conversation, with no transcript yet: the empty state');
+    // From 1,200 px the panel stays open beside a session opened from it; below, it closes so the session is in sight (W177).
+    const beside = t.layout === 'three-columns';
+    const PANEL_AS_LAYOUT = beside ? `!!${SVIEW}` : `!${SVIEW}`;
     const closeIt = async () => {
       await page.click('Close', viewClose);
       await page.waitFor('the view to close', `!${SVIEW}`);
@@ -338,7 +343,7 @@ const part: Part = {
       t.expect(box.right <= t.viewport.width + 0.5, 'Open inside the window', box);
       await t.shot('handoffs');
       await page.click('Open pr-57', `${HANDOFFS}[0].querySelector('[data-handoff-open]')`);
-      await page.waitFor('its session view, in the supervisor’s place', `!${SVIEW} && !!document.querySelector('#session-view')`);
+      await page.waitFor('its session view, beside the panel or in sight', `${PANEL_AS_LAYOUT} && !!document.querySelector('#session-view')`);
       t.expect((await page.evaluate<string>('location.search')).includes('session='), 'the session in the URL', await page.evaluate('location.search'));
       t.expectEqual(await page.evaluate(`document.querySelector('#session-view h2 .session-view-name')?.textContent ?? null`), 'pr-57', 'the session it started');
     });
@@ -357,7 +362,7 @@ const part: Part = {
       t.expectEqual(records.decisions.at(-1), { id: SUPERVISOR_APPROVALS.spawn, decision: 'send', profile: 'Review', status: 200 }, 'the new session sent with its card’s profile');
       t.expectEqual(await page.evaluate(OPEN_TAB), '~/oss', 'in ~/oss’s tab');
       await page.click('Open pr-57', `${HANDOFFS}[0].querySelector('[data-handoff-open]')`);
-      await page.waitFor('its session view, in the supervisor’s place', `!${SVIEW} && ${viewName} === 'pr-57'`);
+      await page.waitFor('its session view, beside the panel or in sight', `${PANEL_AS_LAYOUT} && ${viewName} === 'pr-57'`);
       const search = await page.evaluate<string>('location.search');
       t.expect(search.startsWith(`?repo=${DEMO_APP}&root=${CODE}&session=`), 'its group and root in the URL, with the session', search);
       t.expectEqual(await page.evaluate(OPEN_TAB), '~/code', 'its root’s tab open');
@@ -412,7 +417,7 @@ const part: Part = {
         page.evaluate<{ height: number; content: number; eight: number; half: number; room: number | null }>(
           `(() => { const card = ${which}; const box = card.querySelector(${q(box)}); const s = getComputedStyle(box); const eight = 8 * parseFloat(s.lineHeight) + parseFloat(s.paddingTop) + parseFloat(s.paddingBottom); const room = parseFloat(box.style.maxHeight) || null; return { height: box.getBoundingClientRect().height, content: box.scrollHeight, eight, half: innerHeight / 2, room }; })()`,
         );
-      // 14 lines: taller than the 8 lines a box had before W136. Where they fit, as at 1,440 px, no length
+      // 14 lines: taller than the 8 lines a box had before W136. Where they fit, as at 1,920 × 1,080, no length
       // note; where they wrap past half the window, as at 375 px, or the band leaves them less room, as at
       // 1,200 px, whose narrower column wraps pitwall's line (W138) to three lines, the note: exactly when
       // it scrolls.
@@ -420,7 +425,8 @@ const part: Part = {
       const scrolls = first.content > first.height + 1;
       t.expect(first.height > first.eight + 1 || first.height >= (first.room ?? Infinity) - 1, 'the box taller than 8 lines, or as tall as the band leaves it room for', first);
       if (!t.compact) t.expect(Math.abs(first.height - Math.min(first.content, first.half, first.room ?? Infinity)) <= 2, 'the box as tall as its 14 lines, or as half the window or the band’s room where those are less', first);
-      if (t.viewport.width >= 1440) t.expect(!scrolls, '14 lines shown whole on a wide, tall window', first);
+      // In a panel 760 px wide; the panel's own 560 px (W177) is the 1,200 px column's case, except on a taller window.
+      if ((await page.evaluate<number>(`${SVIEW}.getBoundingClientRect().width`)) >= 759.5 || t.viewport.height >= 1080) t.expect(!scrolls, '14 lines shown whole on a wide, tall window', first);
       const codeNote = "Drawn as their codes, since they don't show as themselves: U+00A0 NO-BREAK SPACE.";
       t.expectEqual(
         await page.evaluate(`${card}.querySelector('.approval-length')?.textContent ?? null`),
@@ -491,6 +497,9 @@ const part: Part = {
             fitsAtTwo,
           };
         })()`);
+      // A panel as wide as the session view's 760 px always has room for the whole card; the panel's own
+      // 560 px (W177), from 1,440 px, is as narrow as the column at 1,200 px, whose rule below covers it.
+      const wide = (await page.evaluate<number>(`${SVIEW}.getBoundingClientRect().width`)) >= 759.5;
       for (const height of [600, 680, 760, 800, 900, 1000]) {
         await page.send('Emulation.setDeviceMetricsOverride', { width: t.viewport.width, height, deviceScaleFactor: 1, mobile: false });
         await page.settle(50);
@@ -498,12 +507,12 @@ const part: Part = {
           const shown = await reach(index, 'Send');
           t.expect(shown.inBand && shown.aboveBox && shown.readable && shown.twoLines, `at ${height} px, card ${index + 1}'s Send inside the band, above the box, and its text readable`, shown);
           // Where the card fits at two lines, the whole card is in the band, its notes and pitwall's line
-          // too, the text giving way; at 1,440 px the whole card is always in the band. Where it doesn't, as at 375 px, or 1,200 px
+          // too, the text giving way; in a panel 760 px wide the whole card is always in the band. Where it doesn't, as at 375 px, or 1,200 px
           // and 600 px tall, whose narrower column wraps pitwall's line (W138) to three lines, its buttons
           // stick to the band's bottom edge over the rest (data-cramped), which the check above covers.
           if (!t.compact) t.expect(shown.whole || !shown.fitsAtTwo, `at ${height} px, card ${index + 1} whole in the band, where it fits at two lines`, shown);
           t.expectEqual(shown.cramped, !shown.fitsAtTwo, `at ${height} px, card ${index + 1}'s buttons stick to the band's bottom only where it can't fit at two lines`);
-          if (t.viewport.width >= 1440) t.expect(shown.whole, `at ${height} px on a wide window, card ${index + 1} whole in the band`, shown);
+          if (wide) t.expect(shown.whole, `at ${height} px in a wide panel, card ${index + 1} whole in the band`, shown);
           if (index === 1 && (height === 600 || height === 1000)) await t.shot(`draft-in-reach-${height}`);
           await page.click('Edit', cardButton(index, 'Edit'));
           await page.waitFor('the editor', `!!${CARDS}[${index}].querySelector('.approval-editor')`);
@@ -511,7 +520,7 @@ const part: Part = {
           const editing = await reach(index, 'Send edit');
           t.expect(editing.inBand && editing.aboveBox && editing.twoLines, `at ${height} px, card ${index + 1}'s Send edit inside the band and above the box`, editing);
           if (!t.compact) t.expect(editing.whole || !editing.fitsAtTwo, `at ${height} px, card ${index + 1} whole in the band while editing, where it fits at two lines`, editing);
-          if (t.viewport.width >= 1440) t.expect(editing.whole, `at ${height} px on a wide window, card ${index + 1} whole in the band while editing`, editing);
+          if (wide) t.expect(editing.whole, `at ${height} px in a wide panel, card ${index + 1} whole in the band while editing`, editing);
           await page.click('Cancel', cardButton(index, 'Cancel'));
           await page.waitFor('the text again', `!!${CARDS}[${index}].querySelector('.approval-text')`);
         }
@@ -618,7 +627,7 @@ const part: Part = {
       t.expectEqual(row, { kind: 'resume', what: `Resumed ${NAMES.ended}`, open: `Open ${NAMES.ended} →` }, '“Resumed <name>” with Open');
       await t.shot('resume-handoff');
       await page.click(`Open ${NAMES.ended}`, `${HANDOFFS}[0].querySelector('[data-handoff-open]')`);
-      await page.waitFor('its session view, in the supervisor’s place', `!${SVIEW} && !!document.querySelector('#session-view')`);
+      await page.waitFor('its session view, beside the panel or in sight', `${PANEL_AS_LAYOUT} && !!document.querySelector('#session-view')`);
       t.expectEqual(await page.evaluate(`document.querySelector('#session-view h2 .session-view-name')?.textContent ?? null`), NAMES.ended, 'the session it resumed');
     });
 
@@ -652,13 +661,13 @@ const part: Part = {
       t.expectEqual([look.color, look.underline, look.weight, look.background, look.border], [look.link, 'underline', look.strong, 'rgba(0, 0, 0, 0)', '0px'], 'a link’s look, not a button chip');
       await t.shot('mentions');
       await page.click('pitwall-test-review', `${reply}.querySelector('button.md-mention')`);
-      await page.waitFor('its session view, in the supervisor’s place', `!${SVIEW} && !!document.querySelector('#session-view')`);
+      await page.waitFor('its session view, beside the panel or in sight', `${PANEL_AS_LAYOUT} && !!document.querySelector('#session-view')`);
       t.expectEqual(await page.evaluate(`document.querySelector('#session-view h2 .session-view-name')?.textContent ?? null`), NAMES.asked, 'the session it named');
       t.expect((await page.evaluate<string>('location.search')).includes('session='), 'the session in the URL', await page.evaluate('location.search'));
       await page.evaluate('history.back()');
       await page.waitFor('back to the supervisor', `!!${reply}?.querySelector('[data-mention="pr"]')`);
       await page.click('example/demo-app#57', `${reply}.querySelector('[data-mention="pr"]')`);
-      await page.waitFor('its PR view', `!${SVIEW} && new URLSearchParams(location.search).get('pr') === 'example/demo-app/57'`);
+      await page.waitFor('its PR view', `${PANEL_AS_LAYOUT} && new URLSearchParams(location.search).get('pr') === 'example/demo-app/57'`);
     });
 
     await t.step('Stop: while it works, Stop stops its turn, and focus goes to the box', async () => {
@@ -709,17 +718,68 @@ const part: Part = {
       t.expectEqual([records.supervisorStarts.length, records.supervisorMessages.length], [0, 0], 'nothing started or sent');
     });
 
-    if (t.layout === 'three-columns') {
-      await t.step('a session opened takes its place, and the back button brings it back', async () => {
+    if (beside) {
+      await t.step('with no session open (W177): "Select a session" centred in what the panel leaves in sight', async () => {
         allowNew();
-        await openFromRow(t, NAMES.conversation);
-        t.expect(await page.evaluate<boolean>(`!${SVIEW}`), 'the session view in its place');
-        t.expect((await page.evaluate<string>('location.search')).includes('session='), 'the session in the URL', await page.evaluate('location.search'));
-        await page.evaluate('history.back()');
-        await page.waitFor('the supervisor view again', `!!${SVIEW}?.querySelector('h2')`);
-        t.expect(await page.evaluate<boolean>(`!document.querySelector('#session-view')`), 'and the session view gone');
+        await t.fresh({ search: '?view=all&supervisor', supervisor: 'idle' });
+        await page.waitFor('the panel and the empty state', `!!${SVIEW}?.querySelector('h2') && !!document.querySelector('.session-view-empty .empty-state, .session-view-empty h2, .session-view-empty p')`);
+        const fit = await page.evaluate<{ left: number; right: number; panel: number; inside: boolean; centre: number; middle: number }>(`(() => {
+          const empty = document.querySelector('.session-view-empty');
+          const panel = ${SVIEW}.getBoundingClientRect();
+          const parts = [...empty.querySelectorAll('h2, h3, p, svg')].map((el) => el.getBoundingClientRect()).filter((r) => r.width > 0);
+          const left = Math.min(...parts.map((r) => r.left)), right = Math.max(...parts.map((r) => r.right));
+          const box = empty.getBoundingClientRect();
+          return { left, right, panel: panel.left, inside: parts.length > 0 && right <= panel.left + 0.5 && left >= box.left - 0.5, centre: (left + right) / 2, middle: (box.left + panel.left) / 2 };
+        })()`);
+        t.expect(fit.inside, 'its title, sentence and icon all to the left of the panel', fit);
+        t.expect(Math.abs(fit.centre - fit.middle) <= 2, 'centred in the part in sight', fit);
+        await t.shot('panel-nothing-open');
       });
     }
+
+    await t.step('beside a session view (W177): the session stays, ?supervisor is added, and Escape closes the panel first', async () => {
+      allowNew();
+      await t.fresh({ search: '?view=all', supervisor: 'idle' });
+      await openFromRow(t, NAMES.conversation);
+      await openRepoList(t);
+      await page.click('the Supervisor item', ITEM);
+      await page.waitFor('the panel', `!!${SVIEW}?.querySelector('h2') && document.activeElement === ${SVIEW}.querySelector('h2')`);
+      const search = await page.evaluate<string>('location.search');
+      t.expect(search.includes('session=') && search.endsWith('&supervisor'), 'the session kept in the URL, the panel added', search);
+      t.expectEqual(
+        await page.evaluate(`[${SVIEW}.getAttribute('role'), ${SVIEW}.getAttribute('aria-modal'), getComputedStyle(${SVIEW}).zIndex]`),
+        ['dialog', 'false', '25'],
+        'a non-modal dialog at --pw-z-supervisor',
+      );
+      const geometry = await page.evaluate<{ panel: { left: number; right: number; width: number; top: number }; view: { left: number; right: number; top: number }; inert: boolean; name: string | null }>(`(() => {
+        const box = (el) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width, top: r.top }; };
+        const view = document.querySelector('#session-view');
+        return { panel: box(${SVIEW}), view: box(view), inert: document.querySelector('.pane-views').inert, name: view.querySelector('.session-view-name')?.textContent ?? null };
+      })()`);
+      t.expectEqual(geometry.name, NAMES.conversation, 'the session view still open, under its name');
+      t.expect(Math.abs(geometry.panel.right - t.viewport.width) < 1, 'at the right edge of the window', geometry.panel);
+      if (beside) {
+        t.expect(!geometry.inert, 'the session view usable beside it');
+        t.expect(geometry.panel.left - geometry.view.left >= 239.5, 'at least 240 px of the session view in sight to its left', geometry);
+        if (t.viewport.width >= 1920) t.expect(geometry.panel.left >= geometry.view.right - 0.5, 'on a wide window, beside it, covering none of it', geometry);
+      } else {
+        t.expect(geometry.inert, 'the session view inert under it');
+        t.expect(Math.abs(geometry.panel.left - geometry.view.left) < 1, 'over the view, as wide', geometry);
+        if (t.compact) t.expect(await page.evaluate<boolean>(`${SVIEW}.querySelector('.session-view-back')?.textContent.trim() === 'Back to the session'`), 'Back to the session');
+      }
+      await t.shot('beside-session');
+      if (beside) {
+        // Another row: the session changes beside it, and the panel stays.
+        await openFromRow(t, NAMES.asked);
+        t.expect(await page.evaluate<boolean>(`!!${SVIEW}`), 'the panel still open as the session changes');
+      }
+      // Off the row, whose tooltip Escape would close first (6.2): onto the panel's heading.
+      await page.click('the panel’s heading', `${SVIEW}.querySelector('h2')`);
+      await page.key('Escape');
+      await page.waitFor('the panel closed, the session view kept', `!${SVIEW} && !!document.querySelector('#session-view')`);
+      t.expect(!(await page.evaluate<string>('location.search')).includes('supervisor'), 'and gone from the URL');
+      if (t.layout !== 'drawer') await page.waitFor('focus back on the item', `document.activeElement === ${ITEM}`);
+    });
 
     await t.step('with --no-supervisor: no item, and ?supervisor says it’s off', async () => {
       await t.fresh({ search: '?view=all&supervisor' });
