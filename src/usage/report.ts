@@ -265,7 +265,8 @@ export async function aggregate(
     files: { main: 0, subagent: 0, olderThanWindow: found.olderThanWindow, unreadable: found.unreadable, withCalls: 0 },
     lines: { read: 0, parsed: 0, malformed: 0, noTimestamp: 0, outsideWindow: 0, noUsage: 0, synthetic: 0 },
     duplicates: { sameFileLines: 0, crossFileCalls: 0, usageDiffered: 0, crossFileToolResults: 0 },
-    caveats: { cacheWritesWithoutTtlSplit: 0, unpricedModels: {}, subagentsWithoutCwd: 0 },
+    // No prototype: its keys are model ids from transcripts (W158's review).
+    caveats: { cacheWritesWithoutTtlSplit: 0, unpricedModels: Object.create(null) as Record<string, number>, subagentsWithoutCwd: 0 },
     totals: empty(),
     byDay: [],
   };

@@ -60,6 +60,29 @@ describe('the kept days', () => {
     expect(Object.values(kept?.models ?? {}).reduce((sum, each) => sum + each.calls, 0)).toBe(DAY_MODELS_MAX + 4);
   });
 
+  it('keeps model ids such as constructor and toString as data, and reads them back', () => {
+    const store = new DayStore({ home, now: () => NOW });
+    store.update([day('2026-11-09', 2, { constructor: tokens(1), toString: tokens(1), __proto__: tokens(1) } as Record<string, ReturnType<typeof emptyTokens>>)]);
+    expect(Object.prototype).not.toHaveProperty('calls');
+    const back = new DayStore({ home, now: () => NOW }).get('2026-11-09');
+    expect(Object.keys(back?.models ?? {}).sort()).toEqual(['constructor', 'toString']);
+    expect(back?.models['toString']?.calls).toBe(1);
+  });
+
+  it('merges with another pitwall’s writes on the same home, day by day, before its own', () => {
+    const one = new DayStore({ home, now: () => NOW });
+    const two = new DayStore({ home, now: () => NOW });
+    one.update([day('2026-11-08', 4), day('2026-11-09', 1)]);
+    two.update([day('2026-11-09', 3), day('2026-11-10', 2)]);
+    const both = readDaysFile(path.join(home, DAYS_FILE_NAME), NOW);
+    expect(both.map((each) => [each.day, each.main.calls])).toEqual([
+      ['2026-11-08', 4],
+      ['2026-11-09', 3],
+      ['2026-11-10', 2],
+    ]);
+    expect(two.get('2026-11-08')?.main.calls).toBe(4);
+  });
+
   it('reads the file as untrusted: a link, a file others can write, a bad figure or day is skipped', () => {
     const file = path.join(home, DAYS_FILE_NAME);
     const good = day('2026-11-08', 2);

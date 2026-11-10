@@ -145,6 +145,24 @@ describe('the view', () => {
     expect(less.totals.calls).toBe(2);
   });
 
+  it('keeps a model id from a transcript as data: __proto__, constructor and toString pollute nothing', async () => {
+    const t = NOW - HOUR;
+    const odd = ['__proto__', 'constructor', 'toString', 'hasOwnProperty'];
+    const read = readScans([scan('aaaaaaaa-0000-4000-8000-000000000001', odd.map((model, i) => rec(`o${i}`, t, { model, output: 10 + i })))]);
+    const view = await buildUsageView(read, options());
+    expect(Object.prototype).not.toHaveProperty('calls');
+    expect(Object.prototype).not.toHaveProperty('output');
+    expect(typeof Object.prototype.toString).toBe('function');
+    expect(typeof ({} as { constructor: unknown }).constructor).toBe('function');
+    // `__proto__` fails MODEL_ID, so it's (other models); the rest are ids of their own, as plain keys.
+    const day = [...read.days.values()][0];
+    expect(Object.keys(day?.models ?? {}).sort()).toEqual(['(other models)', 'constructor', 'hasOwnProperty', 'toString']);
+    expect(day?.models['constructor']).toMatchObject({ calls: 1, output: 11 });
+    expect(view.byModel.map((row) => row.model).sort()).toEqual(['(other models)', 'constructor', 'hasOwnProperty', 'toString']);
+    expect(view.totals).toMatchObject({ calls: 4, output: 46 });
+    expect(JSON.parse(JSON.stringify(view)).totals.calls).toBe(4);
+  });
+
   it('sums the rows past USAGE_ROWS_MAX', async () => {
     const scans = Array.from({ length: USAGE_ROWS_MAX + 3 }, (_, i) =>
       scan(`aaaaaaaa-0000-4000-8000-${String(i).padStart(12, '0')}`, [rec(`c${i}`, NOW - HOUR, { output: 1000 + i })], { cwd: `/made-up/work/r${i}` }),

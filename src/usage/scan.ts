@@ -9,8 +9,8 @@
 //
 // Files are streamed line by line, since some are tens of MB, and a line is parsed only when it
 // could be one of the entries read here, which skips the large request blobs.
-import { createReadStream } from 'node:fs';
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { lstat, open, readdir, stat, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { isRecord } from '../index/guards.js';
@@ -136,7 +136,8 @@ export async function findTranscripts(projectsDir: string, since: number): Promi
       } else if (entry.isDirectory()) {
         const subagents = path.join(full, 'subagents');
         try {
-          if ((await stat(subagents)).isDirectory()) await walkSubagents(subagents, entry.name);
+          // lstat: a link named subagents isn't followed (W158's review).
+          if ((await lstat(subagents)).isDirectory()) await walkSubagents(subagents, entry.name);
         } catch {
           // No sub-agents for this session.
         }
@@ -170,12 +171,41 @@ function resultSize(content: unknown): { chars: number; images: number } {
   return { chars, images };
 }
 
-export async function agentTypeOf(file: string): Promise<string | undefined> {
+/** A sub-agent's `.meta.json` is a few hundred bytes. */
+const META_MAX_BYTES = 64 * 1024;
+
+/**
+ * Opens `file` for reading only when it's a regular file: never through a link, and never waiting on
+ * a FIFO, which a plain open or readFile would block on forever, holding a thread (W158's review).
+ * Undefined when it isn't, or is over `maxBytes`. The caller closes the handle.
+ */
+export async function openRegular(file: string, maxBytes = Number.POSITIVE_INFINITY): Promise<FileHandle | undefined> {
+  let handle: FileHandle;
   try {
-    const meta: unknown = JSON.parse(await readFile(file.replace(/\.jsonl$/, '.meta.json'), 'utf8'));
+    handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+  } catch {
+    return undefined;
+  }
+  try {
+    const info = await handle.stat();
+    if (info.isFile() && info.size <= maxBytes) return handle;
+  } catch {
+    // Closed below.
+  }
+  await handle.close().catch(() => undefined);
+  return undefined;
+}
+
+export async function agentTypeOf(file: string): Promise<string | undefined> {
+  const handle = await openRegular(file.replace(/\.jsonl$/, '.meta.json'), META_MAX_BYTES);
+  if (handle === undefined) return undefined;
+  try {
+    const meta: unknown = JSON.parse(await handle.readFile('utf8'));
     return isRecord(meta) ? plainName(meta.agentType) : undefined;
   } catch {
     return undefined;
+  } finally {
+    await handle.close().catch(() => undefined);
   }
 }
 
@@ -347,11 +377,18 @@ export function createTranscriptState(found: FoundFile, since: number, until: nu
 /** Reads one transcript, keeping only the entries at or after `since` and before `until`. */
 export async function scanTranscript(found: FoundFile, since: number, until: number = Number.POSITIVE_INFINITY): Promise<FileScan> {
   const state = createTranscriptState(found, since, until, found.subagent ? await agentTypeOf(found.file) : undefined);
+  const handle = await openRegular(found.file);
+  if (handle === undefined) {
+    state.scan.unreadable = true;
+    return state.scan;
+  }
   try {
-    const lines = createInterface({ input: createReadStream(found.file, { encoding: 'utf8' }), crlfDelay: Infinity });
+    const lines = createInterface({ input: handle.createReadStream({ encoding: 'utf8', autoClose: false }), crlfDelay: Infinity });
     for await (const line of lines) state.feed(line);
   } catch {
     state.scan.unreadable = true;
+  } finally {
+    await handle.close().catch(() => undefined);
   }
   return state.scan;
 }

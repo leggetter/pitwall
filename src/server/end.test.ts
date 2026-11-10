@@ -561,7 +561,7 @@ describe('end session: the fresh listing’s guards', () => {
     const started = await start({ usage });
     const res = await end(started);
     expect(res.status).toBe(409);
-    expect(res.json).toMatchObject({ error: expect.stringMatching(/pitwall's own relay/) });
+    expect(res.json).toMatchObject({ error: "That's pitwall's own process, which pitwall never ends." });
     expectNothingSignalled(started);
   });
 

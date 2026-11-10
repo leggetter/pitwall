@@ -369,8 +369,9 @@ export async function startServerWithInternals(
     registerActions(app, indexer, { ...actionOptions, spawner, resumer });
     registerEditors(app, indexer, { token, ...internals.editors, slots: commandSlots });
     registerEndSession(app, indexer, {
-      isRelay: (row) => relay.isRelay(row) || recaps?.isOwn(row) === true || options.usage?.isOwn(row) === true,
+      isRelay: (row) => relay.isRelay(row) || recaps?.isOwn(row) === true,
       isSupervisor: (row) => supervisor?.isOwn(row) === true,
+      isOwnProcess: (row) => options.usage?.isOwn(row) === true,
       ...internals.end,
       slots: commandSlots,
     });

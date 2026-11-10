@@ -19,7 +19,7 @@ import {
   type UsageView,
   type UsageWindowKey,
 } from '../shared/protocol.js';
-import { addTokens, dayTotal, emptyTokens, localDay, showsMore, tokensOf, type DayTotals } from './days.js';
+import { addModel, addTokens, dayTotal, emptyTokens, localDay, modelKey, modelRecord, showsMore, tokensOf, type DayTotals } from './days.js';
 import { COST_LABEL, costOf } from './prices.js';
 import { pitwallKindOf } from './report.js';
 import type { CallRecord, FileScan } from './scan.js';
@@ -130,10 +130,10 @@ export function readScans(scans: FileScan[]): ReadScans {
       calls.push({ call, cost, subagent, scan, parent });
       const key = localDay(call.at);
       let day = days.get(key);
-      if (day === undefined) days.set(key, (day = { day: key, main: emptyTokens(), subagent: emptyTokens(), models: {} }));
+      if (day === undefined) days.set(key, (day = { day: key, main: emptyTokens(), subagent: emptyTokens(), models: modelRecord() }));
       const tokens = tokensFor(call, cost);
       addTokens(subagent ? day.subagent : day.main, tokens);
-      addTokens((day.models[call.model] ??= emptyTokens()), tokens);
+      addModel(day.models, call.model, tokens);
     }
   }
   return { days, calls };
@@ -196,12 +196,14 @@ export async function buildUsageView(read: ReadScans, options: BuildViewOptions)
     if (bucket !== undefined) addTokens(bucket, tokens);
     const dayKey = localDay(call.at);
     let day = windowDays.get(dayKey);
-    if (day === undefined) windowDays.set(dayKey, (day = { day: dayKey, main: emptyTokens(), subagent: emptyTokens(), models: {} }));
+    if (day === undefined) windowDays.set(dayKey, (day = { day: dayKey, main: emptyTokens(), subagent: emptyTokens(), models: modelRecord() }));
     addTokens(isSub ? day.subagent : day.main, tokens);
-    addTokens((day.models[call.model] ??= emptyTokens()), tokens);
+    addModel(day.models, call.model, tokens);
 
-    let model = models.get(call.model);
-    if (model === undefined) models.set(call.model, (model = { model: call.model, ...emptyTokens() }));
+    // By model id, as the kept days key it, so a kept day's figures replace the same row.
+    const id = modelKey(call.model);
+    let model = models.get(id);
+    if (model === undefined) models.set(id, (model = { model: id, ...emptyTokens() }));
     addTokens(model, tokens);
     if (isSub) {
       addTokens(subagent, tokens);
@@ -230,9 +232,9 @@ export async function buildUsageView(read: ReadScans, options: BuildViewOptions)
     } else {
       session.hasMain = true;
       session.repo = repo;
-      session.models.set(call.model, (session.models.get(call.model) ?? 0) + tokensOf(tokens));
+      session.models.set(id, (session.models.get(id) ?? 0) + tokensOf(tokens));
     }
-    if (!session.hasMain) session.models.set(call.model, (session.models.get(call.model) ?? 0) + tokensOf(tokens));
+    if (!session.hasMain) session.models.set(id, (session.models.get(id) ?? 0) + tokensOf(tokens));
   }
   main.sessions = mainSessions.size;
   subagent.runs = runs.size;
@@ -246,7 +248,7 @@ export async function buildUsageView(read: ReadScans, options: BuildViewOptions)
       if (start < window.since || end > window.until + 1) continue;
       const key = localDay(start);
       const kept = options.keptDay(key);
-      const live = windowDays.get(key) ?? { day: key, main: emptyTokens(), subagent: emptyTokens(), models: {} };
+      const live = windowDays.get(key) ?? { day: key, main: emptyTokens(), subagent: emptyTokens(), models: modelRecord() };
       if (kept === undefined || !showsMore(kept, live)) continue;
       const keptTotal = dayTotal(kept);
       const liveTotal = dayTotal(live);

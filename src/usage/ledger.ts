@@ -10,8 +10,8 @@
 //
 // Lines are split as bytes, and a line is decoded and parsed only when it holds one of scan.ts's
 // markers, so a transcript's large request lines are skipped without being decoded.
-import { open } from 'node:fs/promises';
-import { agentTypeOf, createTranscriptState, findTranscripts, MARKERS, type FileScan, type FoundFile, type TranscriptState } from './scan.js';
+import { createHash } from 'node:crypto';
+import { agentTypeOf, createTranscriptState, findTranscripts, MARKERS, openRegular, type FileScan, type FoundFile, type TranscriptState } from './scan.js';
 
 /** The longest window the view asks for, 30 days, and a day's slack for the time zone. */
 export const LEDGER_KEEP_MS = 31 * 86_400_000;
@@ -21,13 +21,22 @@ const CHUNK = 1024 * 1024;
 
 const MARKER_BYTES = MARKERS.map((marker) => Buffer.from(marker, 'utf8'));
 
+/** The bytes at the file's start that are hashed, to tell a file cut short and grown again in place. */
+const HEAD_BYTES = 512;
+
 interface Followed {
   found: FoundFile;
   ino: number | undefined;
   /** Where the next read starts: just after the last newline read. */
   offset: number;
+  /** Its mtime at the last read: one that moves back means the file was rewritten. */
+  mtimeMs: number;
+  /** A hash of its first `headLength` bytes as last read. */
+  head?: { length: number; hash: string };
   state: TranscriptState;
 }
+
+const hashOf = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 
 export interface LedgerStats {
   /** Files followed now. */
@@ -66,19 +75,25 @@ export function createUsageLedger(options: LedgerOptions): UsageLedger {
 
   async function start(found: FoundFile, cutoff: number): Promise<Followed> {
     const agentType = found.subagent ? await agentTypeOf(found.file) : undefined;
-    return { found, ino: found.ino, offset: 0, state: createTranscriptState(found, cutoff, Number.POSITIVE_INFINITY, agentType) };
+    return { found, ino: found.ino, offset: 0, mtimeMs: found.mtimeMs, state: createTranscriptState(found, cutoff, Number.POSITIVE_INFINITY, agentType) };
   }
 
-  /** Reads `entry` from its offset to `size`, feeding each complete line. Returns the bytes read, or -1 when it couldn't. */
-  async function readOn(entry: Followed, size: number): Promise<number> {
-    let handle;
-    try {
-      handle = await open(entry.found.file, 'r');
-    } catch {
-      return -1;
-    }
+  /**
+   * Reads `entry` from its offset to `size`, feeding each complete line. Returns the bytes read, -1
+   * when it couldn't, or 'changed' when the file's first bytes aren't those read before: it was cut
+   * short and written again in place, so it's to be read from the start.
+   */
+  async function readOn(entry: Followed, size: number): Promise<number | 'changed'> {
+    // Only a regular file: never through a link, never waiting on a FIFO (W158's review).
+    const handle = await openRegular(entry.found.file);
+    if (handle === undefined) return -1;
     let read = 0;
     try {
+      if (entry.head !== undefined) {
+        const head = Buffer.alloc(entry.head.length);
+        const { bytesRead } = await handle.read(head, 0, head.length, 0);
+        if (bytesRead !== head.length || hashOf(head) !== entry.head.hash) return 'changed';
+      }
       const buffer = Buffer.alloc(CHUNK);
       let position = entry.offset;
       // The current line's parts, before its newline.
@@ -99,14 +114,29 @@ export function createUsageLedger(options: LedgerOptions): UsageLedger {
         if (from < bytesRead) parts.push(Buffer.from(buffer.subarray(from, bytesRead)));
         position += bytesRead;
       }
+      if ((entry.head?.length ?? 0) < HEAD_BYTES && entry.offset > (entry.head?.length ?? 0)) {
+        const head = Buffer.alloc(Math.min(entry.offset, HEAD_BYTES));
+        const { bytesRead } = await handle.read(head, 0, head.length, 0);
+        entry.head = { length: bytesRead, hash: hashOf(head.subarray(0, bytesRead)) };
+      }
     } catch {
       entry.state.scan.unreadable = true;
       return -1;
     } finally {
       await handle.close().catch(() => undefined);
     }
+    entry.mtimeMs = entry.found.mtimeMs;
     entry.state.scan.unreadable = false;
     return read;
+  }
+
+  /** Reads `file` from the start, as a file followed afresh. */
+  async function readFresh(file: FoundFile, size: number, cutoff: number, stats: LedgerStats): Promise<void> {
+    const fresh = await start(file, cutoff);
+    followed.set(file.file, fresh);
+    const bytes = await readOn(fresh, size);
+    if (typeof bytes !== 'number' || bytes < 0) stats.unreadable++;
+    else stats.bytesRead += bytes;
   }
 
   async function run(since: number): Promise<LedgerStats> {
@@ -121,26 +151,22 @@ export function createUsageLedger(options: LedgerOptions): UsageLedger {
       present.add(file.file);
       let entry = followed.get(file.file);
       const size = file.size ?? 0;
-      if (entry !== undefined && (entry.ino !== file.ino || size < entry.offset)) {
-        // Replaced or cut short: read again from the start.
+      if (entry !== undefined && (entry.ino !== file.ino || size < entry.offset || file.mtimeMs < entry.mtimeMs)) {
+        // Replaced, cut short, or written with an older time: read again from the start.
         followed.delete(file.file);
         entry = undefined;
       }
       if (entry === undefined) {
         if (file.mtimeMs < Math.max(since, cutoff)) continue;
-        work.push(async () => {
-          const fresh = await start(file, cutoff);
-          followed.set(file.file, fresh);
-          const bytes = await readOn(fresh, size);
-          if (bytes < 0) stats.unreadable++;
-          else stats.bytesRead += bytes;
-        });
-      } else if (size > entry.offset) {
+        work.push(() => readFresh(file, size, cutoff, stats));
+      } else if (size > entry.offset || file.mtimeMs !== entry.mtimeMs) {
+        // Grown, or written to at the same size: its first bytes say whether it's still the file read before.
         const known = entry;
         known.found = file;
         work.push(async () => {
           const bytes = await readOn(known, size);
-          if (bytes < 0) stats.unreadable++;
+          if (bytes === 'changed') await readFresh(file, size, cutoff, stats);
+          else if (bytes < 0) stats.unreadable++;
           else stats.bytesRead += bytes;
         });
       }

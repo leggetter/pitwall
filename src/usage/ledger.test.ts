@@ -1,6 +1,7 @@
 // The Usage view's incremental reads (W158): each transcript read on from where the last read
 // stopped. Made-up transcripts shaped like Claude Code's; no real session's content.
-import { appendFile, mkdir, mkdtemp, rm, unlink, utimes, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { appendFile, mkdir, mkdtemp, rm, symlink, unlink, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -54,7 +55,7 @@ describe('the ledger', () => {
   it('reads each transcript on from where the last read stopped', async () => {
     const a = file('aaaaaaaa-0000-4000-8000-000000000001.jsonl');
     await writeFile(a, `${call('m1', at(3))}\n${'x'.repeat(5000)}\n`);
-    await touch(a);
+    await touch(a, 2);
     const ledger = createUsageLedger({ projectsDir: projects, now: () => NOW });
     const first = await ledger.refresh(NOW - 86_400_000);
     expect(first.files).toBe(1);
@@ -68,10 +69,12 @@ describe('the ledger', () => {
     const next = call('m2', at(2), { output: 7 });
     const half = call('m3', at(1));
     await appendFile(a, `${next}\n${half.slice(0, 40)}`);
+    await touch(a, 1.5);
     const second = await ledger.refresh(NOW - 86_400_000);
     expect(second.bytesRead).toBe(next.length + 1 + 40);
     expect(ledger.scans()[0]?.calls.map((each) => each.id)).toEqual(['m1', 'm2']);
     await appendFile(a, `${half.slice(40)}\n${call('m1', at(3))}\n`);
+    await touch(a, 1);
     await ledger.refresh(NOW - 86_400_000);
     // m1 again is a repeat of a response already counted.
     expect(ledger.scans()[0]?.calls.map((each) => each.id)).toEqual(['m1', 'm2', 'm3']);
@@ -103,6 +106,46 @@ describe('the ledger', () => {
     await ledger.refresh(NOW - 86_400_000);
     expect(ledger.scans().map((scan) => scan.file)).toEqual([a]);
   });
+
+  it('reads a file cut short and written again in place, or with an older time, from the start', async () => {
+    const a = file('aaaaaaaa-0000-4000-8000-000000000001.jsonl');
+    await writeFile(a, `${call('m1', at(3))}\n`);
+    await touch(a, 1);
+    const ledger = createUsageLedger({ projectsDir: projects, now: () => NOW });
+    await ledger.refresh(NOW - 86_400_000);
+    // Same inode, longer, but its first line is another one now.
+    await writeFile(a, `${call('n1', at(2))}\n${call('n2', at(1))}\n`);
+    await touch(a, 0.5);
+    await ledger.refresh(NOW - 86_400_000);
+    expect(ledger.scans()[0]?.calls.map((each) => each.id)).toEqual(['n1', 'n2']);
+    // The same bytes again with an older time: read again, and still counted once.
+    await touch(a, 0.9);
+    await ledger.refresh(NOW - 86_400_000);
+    expect(ledger.scans()[0]?.calls.map((each) => each.id)).toEqual(['n1', 'n2']);
+  });
+
+  it('never waits on a FIFO or follows a link, for a transcript, a sub-agent’s meta file or its folder', async () => {
+    const session = 'aaaaaaaa-0000-4000-8000-000000000001';
+    const sub = path.join(projects, 'p', session, 'subagents');
+    await mkdir(sub, { recursive: true });
+    await writeFile(path.join(sub, 'agent-1.jsonl'), `${call('s1', at(1))}\n`);
+    execFileSync('mkfifo', [path.join(sub, 'agent-1.meta.json')]);
+    await writeFile(path.join(sub, 'agent-2.jsonl'), `${call('s2', at(1))}\n`);
+    await writeFile(path.join(dir, 'meta.json'), JSON.stringify({ agentType: 'linked' }));
+    await symlink(path.join(dir, 'meta.json'), path.join(sub, 'agent-2.meta.json'));
+    // A second session whose subagents folder is a link elsewhere: not followed.
+    const elsewhere = path.join(dir, 'elsewhere');
+    await mkdir(elsewhere);
+    await writeFile(path.join(elsewhere, 'agent-9.jsonl'), `${call('x9', at(1))}\n`);
+    await mkdir(path.join(projects, 'p', 'aaaaaaaa-0000-4000-8000-000000000002'));
+    await symlink(elsewhere, path.join(projects, 'p', 'aaaaaaaa-0000-4000-8000-000000000002', 'subagents'));
+    const ledger = createUsageLedger({ projectsDir: projects, now: () => NOW });
+    const stats = await ledger.refresh(NOW - 86_400_000);
+    expect(stats.files).toBe(2);
+    const scans = ledger.scans();
+    expect(scans.flatMap((scan) => scan.calls.map((each) => each.id)).sort()).toEqual(['s1', 's2']);
+    expect(scans.map((scan) => scan.agentType)).toEqual([undefined, undefined]);
+  }, 5000);
 
   it('copes with no projects folder', async () => {
     const ledger = createUsageLedger({ projectsDir: path.join(dir, 'missing'), now: () => NOW });

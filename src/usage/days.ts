@@ -44,6 +44,22 @@ export interface DayTotals {
   models: Record<string, UsageTokens>;
 }
 
+/**
+ * A record of figures by model id with no prototype, so an id from a transcript such as `__proto__`,
+ * `constructor` or `toString` is only ever a key of its own (W158's review).
+ */
+export const modelRecord = (): Record<string, UsageTokens> => Object.create(null) as Record<string, UsageTokens>;
+
+/** A model id as the kept days and the view key it: itself when MODEL_ID allows it, else OTHER_MODEL. */
+export const modelKey = (model: string): string => (MODEL_ID.test(model) ? model : OTHER_MODEL);
+
+/** Adds `tokens` to `models`' figures for `model`, under modelKey(). */
+export function addModel(models: Record<string, UsageTokens>, model: string, tokens: UsageTokens): void {
+  const key = modelKey(model);
+  const into = Object.prototype.hasOwnProperty.call(models, key) ? (models[key] as UsageTokens) : (models[key] = emptyTokens());
+  addTokens(into, tokens);
+}
+
 export const emptyTokens = (): UsageTokens => ({ calls: 0, input: 0, cacheWrite: 0, cacheRead: 0, output: 0, cost: 0 });
 
 export function addTokens(into: UsageTokens, from: UsageTokens): void {
@@ -76,11 +92,11 @@ export function showsMore(live: DayTotals, kept: DayTotals | undefined): boolean
 /** At most DAY_MODELS_MAX models, the rest summed as OTHER_MODEL, so a day's record stays small. */
 export function capModels(models: Record<string, UsageTokens>): Record<string, UsageTokens> {
   const entries = Object.entries(models).sort(([, a], [, b]) => b.cost - a.cost || tokensOf(b) - tokensOf(a));
-  if (entries.length <= DAY_MODELS_MAX) return Object.fromEntries(entries);
-  const kept = entries.slice(0, DAY_MODELS_MAX - 1);
-  const other = emptyTokens();
-  for (const [, tokens] of entries.slice(DAY_MODELS_MAX - 1)) addTokens(other, tokens);
-  return Object.fromEntries([...kept, [OTHER_MODEL, other]]);
+  const capped = modelRecord();
+  const kept = entries.length <= DAY_MODELS_MAX ? entries : entries.slice(0, DAY_MODELS_MAX - 1);
+  for (const [model, tokens] of kept) addModel(capped, model, tokens);
+  for (const [, tokens] of entries.slice(kept.length)) addModel(capped, OTHER_MODEL, tokens);
+  return capped;
 }
 
 function readTokens(value: unknown): UsageTokens | undefined {
@@ -101,7 +117,7 @@ function readDay(value: unknown, today: string): DayTotals | undefined {
   const main = readTokens(value.main);
   const subagent = readTokens(value.subagent);
   if (main === undefined || subagent === undefined || !isRecord(value.models)) return undefined;
-  const models: Record<string, UsageTokens> = {};
+  const models = modelRecord();
   const entries = Object.entries(value.models);
   if (entries.length > DAY_MODELS_MAX) return undefined;
   for (const [model, figures] of entries) {
@@ -185,8 +201,8 @@ export class DayStore {
     let changed = false;
     for (const day of live) {
       if (!DAY.test(day.day) || !showsMore(day, this.#days.get(day.day))) continue;
-      const models: Record<string, UsageTokens> = {};
-      for (const [model, tokens] of Object.entries(day.models)) addTokens((models[MODEL_ID.test(model) ? model : OTHER_MODEL] ??= emptyTokens()), tokens);
+      const models = modelRecord();
+      for (const [model, tokens] of Object.entries(day.models)) addModel(models, model, tokens);
       this.#days.set(day.day, { day: day.day, main: { ...day.main }, subagent: { ...day.subagent }, models: capModels(models) });
       changed = true;
     }
@@ -196,9 +212,16 @@ export class DayStore {
     this.#write();
   }
 
-  /** The file, written whole by rename. Fails soft. */
+  /**
+   * The file, written whole by rename. Fails soft. Another pitwall on the same home may have written
+   * since this one read it, so the file is read again first and, day by day, whichever shows more is
+   * kept, here and in the file: the last writer never drops the other's days.
+   */
   #write(): void {
     if (this.#file === undefined || this.#home === undefined) return;
+    for (const day of readDaysFile(this.#file)) if (showsMore(day, this.#days.get(day.day))) this.#days.set(day.day, day);
+    const all = this.all();
+    for (const old of all.slice(0, Math.max(0, all.length - DAYS_KEPT_MAX))) this.#days.delete(old.day);
     const temporary = `${this.#file}.${randomBytes(6).toString('hex')}.tmp`;
     try {
       ensureLaunchDir(this.#home);
