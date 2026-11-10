@@ -29,7 +29,7 @@ import {
   supervisorApprovalPath,
   WORK_DEFAULT,
   WORK_PROFILE_NAME_PATTERN,
-  WORK_PROFILES_MAX,
+  WORK_PROFILES_TOTAL_MAX,
   type ApprovalProfile,
   type ConversationEntry,
   type SavedPermission,
@@ -214,12 +214,12 @@ function asApproval(value: unknown): SupervisorApproval | undefined {
 
 /**
  * A card's `profiles` and `profile` (W156), read whole: every profile well formed, as the server
- * resolves them, each name once, at most WORK_PROFILES_MAX, and `profile` one of them. False when any
+ * resolves them, each name once, at most WORK_PROFILES_TOTAL_MAX (the built-ins and the config file's), and `profile` one of them. False when any
  * of it isn't, so the card isn't shown, since what it shows must be what goes; nothing when it has none.
  */
 function asCardProfiles(value: Record<string, unknown>): { profiles?: ApprovalProfile[]; profile?: string } | false {
   if (value.profiles === undefined) return value.profile === undefined ? {} : false;
-  if (!Array.isArray(value.profiles) || value.profiles.length === 0 || value.profiles.length > WORK_PROFILES_MAX) return false;
+  if (!Array.isArray(value.profiles) || value.profiles.length === 0 || value.profiles.length > WORK_PROFILES_TOTAL_MAX) return false;
   const profiles: ApprovalProfile[] = [];
   for (const entry of value.profiles) {
     const profile = asApprovalProfile(entry);

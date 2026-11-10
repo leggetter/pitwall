@@ -288,7 +288,13 @@ describe('the source', () => {
     now += 1;
     await source.report();
     expect(reader.reads).toBe(2);
-    // The Usage view, which reads only when it's opened, still goes to the reader's own cache.
+    // The Usage view reads through the same floor (W180, U-F7): a failing read isn't retried each minute.
+    await source.view('week');
+    expect(reader.reads).toBe(2);
+    now += 61_000;
+    await source.view('week');
+    expect(reader.reads).toBe(2);
+    now += RUN_RATE_READ_MS;
     await source.view('week');
     expect(reader.reads).toBe(3);
   });

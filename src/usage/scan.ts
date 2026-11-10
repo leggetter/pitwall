@@ -94,11 +94,17 @@ export interface FindResult {
 }
 
 const SESSION_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.jsonl$/;
+/**
+ * A session's id, as Claude Code names its transcript and its sub-agents' folder: a UUID. Anything else
+ * isn't read, so a planted file's name never becomes a session id that get_usage passes on (W180, U-F4).
+ */
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9 _.:/-]{0,79}$/;
 
 /**
  * Every transcript under `projectsDir` written to since `since`: each project's `<id>.jsonl`, and
- * each `.jsonl` under a session's `subagents/` folder, at any depth. Symlinks aren't followed.
+ * each `.jsonl` under a session's `<id>/subagents/` folder, at any depth, `<id>` a UUID (SESSION_ID).
+ * Symlinks aren't followed.
  */
 export async function findTranscripts(projectsDir: string, since: number): Promise<FindResult> {
   const result: FindResult = { files: [], olderThanWindow: 0, unreadable: 0 };
@@ -132,8 +138,9 @@ export async function findTranscripts(projectsDir: string, since: number): Promi
     for (const entry of await list(projectDir)) {
       const full = path.join(projectDir, entry.name);
       if (entry.isFile() && SESSION_FILE.test(entry.name)) {
-        await consider(full, entry.name.slice(0, -'.jsonl'.length), false);
-      } else if (entry.isDirectory()) {
+        const sessionId = entry.name.slice(0, -'.jsonl'.length);
+        if (SESSION_ID.test(sessionId)) await consider(full, sessionId, false);
+      } else if (entry.isDirectory() && SESSION_ID.test(entry.name)) {
         const subagents = path.join(full, 'subagents');
         try {
           // lstat: a link named subagents isn't followed (W158's review).
@@ -148,8 +155,12 @@ export async function findTranscripts(projectsDir: string, since: number): Promi
   return result;
 }
 
+/** More tokens than any one call has: a figure past it is a planted or broken line, and counts as none. */
+export const CALL_FIGURE_MAX = 1e12;
+
+/** A call's token figure: a whole number from 0 to CALL_FIGURE_MAX, else 0, so no sum can reach Infinity (W180, U-F2). */
 function count(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= CALL_FIGURE_MAX ? value : 0;
 }
 
 function plainName(value: unknown): string | undefined {

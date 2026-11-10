@@ -2,6 +2,8 @@
 // the web UI exchange. The index, server and UI are built in parallel against
 // this file, so change it deliberately and in its own commit.
 
+import { isBuiltInCommand } from './builtInCommands.js';
+
 /** Where a session runs. Matches `kind` in `claude agents --json`. */
 export type SessionKind = 'interactive' | 'background';
 
@@ -2574,6 +2576,15 @@ export const WORK_PROFILE_NAME_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9 ._-]{0,38}[A
 /** The most profiles the config file may name. */
 export const WORK_PROFILES_MAX = 30;
 
+/** pitwall's own profiles, Build, Review, Security review and Docs (src/server/profiles.ts' BUILT_IN_PROFILES). */
+export const WORK_PROFILES_BUILT_IN = 4;
+
+/**
+ * The most profiles the server resolves, and so sends, the built-ins and the config file's together:
+ * what the page takes, in WorkSettings and on a supervisor's card alike (W180's F2).
+ */
+export const WORK_PROFILES_TOTAL_MAX = WORK_PROFILES_MAX + WORK_PROFILES_BUILT_IN;
+
 /**
  * A skill's name, as a profile gives it: letters, digits and hyphens, starting with a letter or
  * digit, with one optional `plugin:` part of the same characters; at most 64 a part. Never free text on
@@ -2581,8 +2592,9 @@ export const WORK_PROFILES_MAX = 30;
  */
 export const SKILL_NAME_PATTERN = /^(?:[A-Za-z0-9][A-Za-z0-9-]{0,63}:)?[A-Za-z0-9][A-Za-z0-9-]{0,63}$/;
 
+/** A skill's name as SKILL_NAME_PATTERN allows, and never one of Claude Code's built-in commands, which `/<name>` would run instead (W180's I3). */
 export function isSkillName(value: unknown): value is string {
-  return typeof value === 'string' && SKILL_NAME_PATTERN.test(value);
+  return typeof value === 'string' && SKILL_NAME_PATTERN.test(value) && !isBuiltInCommand(value);
 }
 
 /**

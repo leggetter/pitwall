@@ -497,11 +497,23 @@ function spawnInput(spawn: ValidSpawn, profile?: string): Record<string, unknown
 
 /**
  * What a pass hands the call that takes it (W156): the input, and the profile exactly as the card
- * showed it, under `launch`, which the call itself never carries (grantPass()'s `run`).
+ * showed it, under `launch`, which the call itself never carries (grantPass()'s `run`). A resume's
+ * also carries, under `asStarted`, the launch settings its card showed for As it started, or null for
+ * none, so a record rewritten since can't change what goes (W180's F3).
  */
-function passRun(input: Record<string, unknown>, profile: ApprovalProfile | undefined): Record<string, unknown> | undefined {
+function passRun(input: Record<string, unknown>, profile: ApprovalProfile | undefined, asStarted?: SessionLaunch | null): Record<string, unknown> | undefined {
+  if (asStarted !== undefined) return { ...input, ...(profile === undefined ? {} : { launch: profile }), asStarted };
   return profile === undefined ? undefined : { ...input, launch: profile };
 }
+
+/** Whether two launch records say the same, field by field; undefined and null are none. */
+export function sameLaunch(a: SessionLaunch | null | undefined, b: SessionLaunch | null | undefined): boolean {
+  if (a === undefined || a === null || b === undefined || b === null) return (a ?? undefined) === (b ?? undefined);
+  return a.profile === b.profile && a.custom === b.custom && a.model === b.model && a.effort === b.effort && a.subagentModel === b.subagentModel;
+}
+
+/** What a resume says when the settings it started with changed after its card showed them (W180's F3). */
+const LAUNCH_CHANGED = 'the settings pitwall kept for how it started changed after its card showed them, so it would no longer resume as the card said. Propose it again.';
 
 function answerText(answer: PermissionAnswer): McpToolResult {
   return { text: JSON.stringify(answer) };
@@ -690,12 +702,16 @@ export function createResumeSessionTool(sources: SupervisorActionSources): McpTo
       if (sources.resumer === undefined) return notResumed('pitwall can’t resume sessions here.');
       // Checked once more, now: it may have started again, or its directory gone, since you approved it.
       // `launch` is the profile as its card showed it, from pitwall's own pass (W156).
-      const { launch, ...call } = allowed;
+      // `asStarted` is what its card showed for As it started (W180's F3).
+      const { launch, asStarted, ...call } = allowed;
       const checked = await checkResume(call, sources.snapshots.latest(), own(), sources.work);
       if (!checked.ok) return notResumed(checked.error);
       const { session, text } = checked.value;
       let approved: SessionLaunch | undefined;
-      if (call.profile !== undefined) {
+      if (call.profile === undefined) {
+        // As it started: only on what the card showed, never on a record rewritten since, as by another resume.
+        if (asStarted === undefined || !sameLaunch(launchFor(session, sources.launches).launch, asStarted as SessionLaunch | null)) return notResumed(LAUNCH_CHANGED);
+      } else {
         const profile = checkedApprovalProfile(launch);
         if (profile === undefined || profile.name !== call.profile) return notResumed("the profile's settings didn't pass pitwall's checks.");
         approved = resumeLaunchOf(profile);
@@ -863,9 +879,14 @@ export async function decide(sources: SupervisorActionSources, id: string, decis
         sources.approvals.settle(id, { behavior: 'deny', message: `pitwall checked this again when the user answered, and didn't resume it: ${checked.error}` });
         return { status: 409, error: `pitwall didn't resume it: ${checked.error}` };
       }
+      // As it started, on settings that changed after the card showed them, as by another resume: denied, never resumed on others (W180's F3).
+      if (picked === undefined && !sameLaunch(launchFor(checked.value.session, sources.launches).launch, approval.launch)) {
+        sources.approvals.settle(id, { behavior: 'deny', message: `pitwall checked this again when the user answered, and didn't resume it: ${LAUNCH_CHANGED}` });
+        return { status: 409, error: `pitwall didn't resume it: ${LAUNCH_CHANGED}` };
+      }
       const updatedInput = resumeInput(checked.value.session.sessionId, checked.value.text, picked?.name);
       // The pass first, so the call Claude Code makes once it reads the allow finds it, with the profile as the card showed it.
-      const pass = sources.approvals.grantPass(pending.toolUseId, updatedInput, passRun(updatedInput, picked));
+      const pass = sources.approvals.grantPass(pending.toolUseId, updatedInput, passRun(updatedInput, picked, approval.launch ?? null));
       if (!sources.approvals.settle(id, { behavior: 'allow', updatedInput })) {
         sources.approvals.revokePass(pass);
         return gone();

@@ -144,7 +144,7 @@ afterAll(() => {
 });
 
 describe('the tools', () => {
-  it('are the four read-only ones, each with a schema that takes no other argument', () => {
+  it('are the five read-only ones, each with a schema that takes no other argument', () => {
     const made = Object.values(tools());
     expect(made.map((tool) => tool.name)).toEqual(['list_sessions', 'read_session', 'list_prs', 'get_recap', 'get_usage']);
     for (const tool of made) {
@@ -201,9 +201,9 @@ describe('list_sessions', () => {
     expect(outside).not.toContain('pitwall-test-');
   });
 
-  it('never lists pitwall’s own sessions: the supervisor’s by id, and the relay, recap and supervisor names', async () => {
+  it('never lists pitwall’s own sessions: the supervisor’s by id, and the relay, recap, supervisor and /usage reader’s names (W180, U-F5)', async () => {
     const made = tools({
-      sessions: [session(OWN), session('r', { name: 'pitwall-relay' }), session('c', { name: 'Pitwall-Recap' }), session('s', { name: 'pitwall-supervisor' }), session('mine')],
+      sessions: [session(OWN), session('r', { name: 'pitwall-relay' }), session('c', { name: 'Pitwall-Recap' }), session('s', { name: 'pitwall-supervisor' }), session('u', { name: 'pitwall-usage' }), session('mine')],
     });
     const { json } = await call(made.list_sessions!);
     expect((json.sessions as { id: string }[]).map((each) => each.id)).toEqual(['mine']);
@@ -580,7 +580,9 @@ describe('get_usage (W160)', () => {
     const heaviest = json.heaviest as Record<string, unknown>[];
     expect(heaviest[0]).toMatchObject({ id: 'a', kind: 'main', cost: 1.23, state: 'idle', sessionKind: 'interactive', contextTokens: 120_000, untrusted: { name: INJECTION, repo: 'repo', model: 'claude-opus-5-5' } });
     // A session pitwall no longer lists: its id and the transcript's directory, untrusted.
-    expect(heaviest[1]).toMatchObject({ id: 'gone', listed: false, untrusted: { repo: '~/made-up/repo' } });
+    // Unlisted: its id is only a transcript's file name, so it's under untrusted (W180, U-F4).
+    expect(heaviest[1]).toMatchObject({ listed: false, untrusted: { id: 'gone', repo: '~/made-up/repo' } });
+    expect(heaviest[1]).not.toHaveProperty('id');
     // pitwall's own: by what it is, never its id.
     expect(heaviest[2]).toEqual(expect.objectContaining({ kind: 'pitwall', pitwall: 'supervisor' }));
     expect(heaviest[2]).not.toHaveProperty('id');

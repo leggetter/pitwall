@@ -1472,7 +1472,8 @@ describe('npm run dev: a fixed token (W40)', () => {
 
   it('without PITWALL_TOKEN, mints a random token for the run, and says nothing about it', async () => {
     const run = await devRun(await layout());
-    expect(run.started).toBe(true);
+    // Its stderr, should it exit early again, as it once did in CI (#227's run 42740820699; PLAN.md's "Nice to have, later").
+    expect(run.started, `exited ${run.code}: ${run.stderr}`).toBe(true);
     expect(run.length).toBe(43);
     expect(run.stderr + run.stdout).not.toContain('fixed');
   }, 60_000);

@@ -110,8 +110,8 @@ export const USAGE_WAIT_MS = 60_000;
 /** The most sessions with a large context get_usage gives, largest first. */
 export const USAGE_LARGE_MAX = 10;
 
-/** pitwall's own sessions' names: never listed, whatever the index does (D8, D26, W113). */
-const OWN_NAMES = new Set(['pitwall-relay', 'pitwall-recap', 'pitwall-supervisor'].map(nameKey));
+/** pitwall's own sessions' names: never listed, whatever the index does (D8, D26, W113), the `/usage` reader's included (W157; W180's U-F5). */
+const OWN_NAMES = new Set(['pitwall-relay', 'pitwall-recap', 'pitwall-supervisor', 'pitwall-usage'].map(nameKey));
 
 /** A PR a session owns, as list_sessions gives it. */
 type OwnedPr = { number: number; untrusted: { repo: string } };
@@ -652,11 +652,13 @@ export function createSupervisorTools(sources: SupervisorToolSources): McpTool[]
       return { kind: 'pitwall', ...(what === undefined ? {} : { pitwall: what }), ...figures };
     }
     const found = sessions?.find((each) => each.session.sessionId === row.sessionId);
-    const item: Record<string, unknown> = { id: row.sessionId, kind: row.kind, ...figures };
+    // A listed session's id is the index's; an unlisted one's only a transcript's file name, so it's untrusted (W180, U-F4).
+    const item: Record<string, unknown> = found === undefined ? { kind: row.kind, ...figures } : { id: row.sessionId, kind: row.kind, ...figures };
     // The model's id is the transcript's, so it's untrusted with the names.
     const untrusted: Record<string, unknown> = { model: plainField(row.model, 80) };
     if (found === undefined) {
       item.listed = false;
+      untrusted.id = plainField(row.sessionId, 36);
       untrusted.repo = plainField(row.repo, PATH_MAX);
     } else {
       item.state = stateOf(found.session);

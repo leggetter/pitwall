@@ -158,18 +158,22 @@ export function setsEffort(choice: WorkChoice): boolean {
 
 /**
  * `env` for a process given `choice`: without CLAUDE_CODE_EFFORT_LEVEL when it sets an effort, since
- * that variable takes precedence over `--effort` (env-vars, "Precedence"); with
- * CLAUDE_CODE_SUBAGENT_MODEL when `subagents` sets a model, and as inherited otherwise. A new object;
- * `env` is left alone.
+ * that variable takes precedence over `--effort` (env-vars, "Precedence"), or when its effort is
+ * WORK_DEFAULT, Claude Code's own default, which an inherited variable would quietly replace (W180's
+ * I2); with CLAUDE_CODE_SUBAGENT_MODEL when `subagents` sets a model, and without it when that's
+ * WORK_DEFAULT, in either case without an inherited CLAUDE_CODE_SUBAGENT_MODEL_FORCE, so what runs is
+ * what pitwall showed. With neither set, as inherited. A new object; `env` is left alone.
  */
 export function withEffort<T extends NodeJS.ProcessEnv | Record<string, string>>(env: T, choice: WorkChoice, subagents: WorkChoice = {}): T {
   const result = { ...env };
-  if (setsEffort(choice)) {
-    for (const name of Object.keys(result)) if (name.toUpperCase() === 'CLAUDE_CODE_EFFORT_LEVEL') delete result[name];
-  }
-  if (subagents.model !== undefined && subagents.model !== WORK_DEFAULT) {
-    for (const name of Object.keys(result)) if (name.toUpperCase() === 'CLAUDE_CODE_SUBAGENT_MODEL') delete result[name];
-    (result as Record<string, string>).CLAUDE_CODE_SUBAGENT_MODEL = subagents.model;
+  const drop = (variable: string) => {
+    for (const name of Object.keys(result)) if (name.toUpperCase() === variable) delete result[name];
+  };
+  if (choice.effort !== undefined) drop('CLAUDE_CODE_EFFORT_LEVEL');
+  if (subagents.model !== undefined) {
+    drop('CLAUDE_CODE_SUBAGENT_MODEL');
+    drop('CLAUDE_CODE_SUBAGENT_MODEL_FORCE');
+    if (subagents.model !== WORK_DEFAULT) (result as Record<string, string>).CLAUDE_CODE_SUBAGENT_MODEL = subagents.model;
   }
   return result;
 }

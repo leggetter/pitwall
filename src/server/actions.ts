@@ -9,7 +9,7 @@
 //   POST SPAWN_PATH               body: SpawnRequest as JSON           answers: SpawnResult
 //     201  started: { ok: true, shortId, name }
 //     400  the body isn't a valid SpawnRequest, `cwd` isn't a directory at or under a root, the
-//          name is one of pitwall's own, `pitwall-supervisor`, `pitwall-relay` or `pitwall-recap`,
+//          name is one of pitwall's own, `pitwall-supervisor`, `pitwall-relay`, `pitwall-recap` or `pitwall-usage`,
 //          ignoring case (W120), the
 //          prompt is just the name of a claude subcommand, which `claude --bg` could run instead,
 //          or `attachments` has more than ATTACHMENTS_MAX_PER_SESSION, the same id twice, or an id

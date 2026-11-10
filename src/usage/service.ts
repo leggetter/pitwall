@@ -3,8 +3,9 @@
 // each day's totals kept in pitwall's home (days.ts).
 //
 // Nothing here runs on a timer. The plan's percentages are read only when the view asks, through
-// the reader's cache (RATE_LIMITS_TTL_MS, a failure RATE_LIMITS_FAILURE_TTL_MS), since the usage
-// endpoint behind `/usage` is rate limited and shared with your own `/usage`. The transcripts are
+// the reader's cache (RATE_LIMITS_TTL_MS, a failure RATE_LIMITS_FAILURE_TTL_MS) and the run rate's
+// floor below (RUN_RATE_READ_MS, W180's U-F7), since the usage endpoint behind `/usage` is rate
+// limited and shared with your own `/usage`. The floor is this process's: two pitwalls each read. The transcripts are
 // read only when the view asks too, and at most once every REFRESH_MIN_MS.
 //
 // The reader's `claude -p` call may show in `claude agents --json` while it runs, so isOwn() is the
@@ -202,12 +203,13 @@ export function createUsageSource(options: UsageSourceOptions = {}): UsageSource
     return limits;
   }
   const runRate = (limits: RateLimits) => runRateOf(limits, readings?.all() ?? [], target, now());
-  // The run rate's last call to the reader, so a failing read isn't retried every minute (RUN_RATE_READ_MS).
+  // The last call to the reader, so a failing read isn't retried every minute (RUN_RATE_READ_MS).
   let lastRunRateRead: { at: number; limits: RateLimits } | undefined;
 
   /**
-   * The plan's percentages for the run rate and the supervisor's report (W160): the reader at most
-   * once every RUN_RATE_READ_MS between them, whether the last call worked or not.
+   * The plan's percentages for the Usage view, the run rate and the supervisor's report (W160): the
+   * reader at most once every RUN_RATE_READ_MS between them, whether the last call worked or not, so a
+   * failing read isn't retried every minute by an open Usage view either (W180, U-F7).
    */
   async function flooredPlan(): Promise<RateLimits> {
     if (lastRunRateRead !== undefined && now() - lastRunRateRead.at < RUN_RATE_READ_MS) return lastRunRateRead.limits;
@@ -218,12 +220,12 @@ export function createUsageSource(options: UsageSourceOptions = {}): UsageSource
     return limits;
   }
 
-  /** The view for `key`, its plan's percentages from `plan`: the reader's cache for the Usage view, flooredPlan() for the report. */
-  async function view(key: UsageWindowKey, plan: () => Promise<RateLimits> = readPlan): Promise<UsageView> {
+  /** The view for `key`, its plan's percentages through flooredPlan(). */
+  async function view(key: UsageWindowKey): Promise<UsageView> {
     // Both at once: the reader's call takes about 3.5 s, and the first read of the transcripts longer.
     // The week's start needs the reset, so the transcripts are read from the earliest it could be.
     const earliest = Math.min(usageWindow(key, now(), null).since, now() - 7 * 86_400_000);
-    const [limits, stats] = await Promise.all([plan(), refresh(Math.max(earliest, now() - LEDGER_KEEP_MS))]);
+    const [limits, stats] = await Promise.all([flooredPlan(), refresh(Math.max(earliest, now() - LEDGER_KEEP_MS))]);
     const read = readScans(ledger.scans());
     days.update(read.days.values());
     const resetsAt = limits.status === 'available' && limits.sevenDay?.resetsAt != null ? limits.sevenDay.resetsAt * 1000 : null;
@@ -253,7 +255,7 @@ export function createUsageSource(options: UsageSourceOptions = {}): UsageSource
     },
     async report() {
       // Through the run rate's floor, so a supervisor asking often adds no `/usage` call to the header's.
-      const week = await view('week', flooredPlan);
+      const week = await view('week');
       return {
         runRate: week.runRate ?? { status: 'off' },
         week: { since: week.window.since, from: week.window.from, totals: week.totals },

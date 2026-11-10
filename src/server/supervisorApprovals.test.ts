@@ -796,6 +796,35 @@ describe('a finished session resumed with a message, behind your click (W127)', 
     ws.close();
   });
 
+  it('As it started resumes only on what the card showed: a record rewritten since, as by another resume, is denied (W180, F3)', async () => {
+    const launches = new SessionLaunches();
+    launches.record('bbbbbbbb', { profile: 'Build', model: 'claude-opus-5-5', effort: 'high', subagentModel: 'sonnet' });
+    const { server, queue, runs } = await start({ sessions: [stopped(), finished()], launches });
+    const { ws, apiKey } = await authedClient(server.port);
+    const input = { id: STOPPED_ID, message: 'Go on.' };
+    // Approved on As it started (Build), then the record changes before the call runs.
+    const answer = approve(server.port, RESUME, input, 'toolu_as_started');
+    await until(() => queue.list().length === 1);
+    expect(queue.list()[0]).toMatchObject({ launch: { profile: 'Build' } });
+    await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send' });
+    expect(await answer).toMatchObject({ behavior: 'allow' });
+    launches.record('bbbbbbbb', { profile: 'Docs', model: 'sonnet', effort: 'medium', subagentModel: 'sonnet' });
+    const result = await callTool(server.port, 'resume_session', input, { 'claudecode/toolUseId': 'toolu_as_started' });
+    expect(result).toMatchObject({ isError: true });
+    expect(result.text).toContain('changed after its card showed them');
+    expect(resumeRuns(runs)).toEqual([]);
+    // Changed after the card showed, before you answered: denied as you answer, and the card goes.
+    const second = approve(server.port, RESUME, input, 'toolu_as_started_2');
+    await until(() => queue.list().length === 1);
+    expect(queue.list()[0]).toMatchObject({ launch: { profile: 'Docs' } });
+    launches.record('bbbbbbbb', { profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet' });
+    expect(await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send' })).toMatchObject({ status: 409 });
+    expect(await second).toMatchObject({ behavior: 'deny', message: expect.stringContaining('changed after its card showed them') });
+    expect(queue.list()).toEqual([]);
+    expect(resumeRuns(runs)).toEqual([]);
+    ws.close();
+  });
+
   it('a card counts the listed sessions that share its name, ignoring case, each once, since the id is exact and the name isn’t (W129, M2)', async () => {
     const twin = session('abababab-0000-4000-8000-000000000127', { name: 'PITWALL-TEST-FINISHED', alive: false, ended: true, finished: true, pid: undefined });
     const { server, queue, indexer } = await start({ sessions: [finished(), twin] });
@@ -1118,9 +1147,9 @@ describe('a recipient, by the unfiltered list (W120, W116’s F2)', () => {
 });
 
 describe('pitwall’s own names (W120, W116’s F3)', () => {
-  it('a new session can’t take one, ignoring case, from spawn_session or New session', async () => {
+  it('a new session can’t take one, ignoring case, from spawn_session or New session, the /usage reader’s included (W180, U-F5)', async () => {
     const { server, queue } = await start();
-    for (const name of ['pitwall-supervisor', 'Pitwall-Relay', 'PITWALL-RECAP']) {
+    for (const name of ['pitwall-supervisor', 'Pitwall-Relay', 'PITWALL-RECAP', 'pitwall-usage', 'Pitwall-Usage']) {
       expect(await approve(server.port, 'mcp__pitwall__spawn_session', { directory: repo, prompt: 'Go.', name }), name).toMatchObject({ behavior: 'deny' });
       expect(await validateSpawnRequest({ cwd: repo, prompt: 'Go.', name }, [root]), name).toEqual({ ok: false, error: `The name ${name} is pitwall's own. Choose another.` });
     }

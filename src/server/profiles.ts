@@ -27,12 +27,14 @@ import {
   isEffortLevel,
   isSkillName,
   isWorkModel,
+  SKILL_NAME_PATTERN,
   SUPERVISOR_MODEL,
   WORK_DEFAULT,
   WORK_PROFILE_NAME_PATTERN,
   WORK_PROFILES_MAX,
   type WorkProfile,
 } from '../shared/protocol.js';
+import { isBuiltInCommand } from '../shared/builtInCommands.js';
 import { EFFORT_PROBLEM, modelProblem } from './work.js';
 
 /** Opus 5.5, by its full name, as the supervisor's: an alias would follow the next Opus. */
@@ -49,6 +51,9 @@ export const BUILT_IN_PROFILES: readonly Readonly<WorkProfile>[] = Object.freeze
 /** The words for a bad skill name, after its key. Never the value itself (D24). */
 export const SKILL_PROBLEM =
   'must be a skill\'s name without its "/": letters, digits and hyphens, with one optional "plugin:" part, such as "agent-roles:role-reviewer"';
+
+/** The words for a skill that names one of Claude Code's built-in commands (W180's I3). Never the value itself (D24). */
+export const SKILL_BUILT_IN_PROBLEM = "names one of Claude Code's built-in commands, which would run in place of a skill. Name a skill, or a plugin's as \"plugin:skill\"";
 
 const PROFILE_NAME_PROBLEM = `must be 1 to 40 letters, digits, spaces, ".", "_" and "-", starting with a letter or digit`;
 
@@ -114,6 +119,7 @@ function parseProfile(
     profile.subagentModel = entry.subagentModel;
   }
   if (Object.hasOwn(entry, 'skill')) {
+    if (typeof entry.skill === 'string' && SKILL_NAME_PATTERN.test(entry.skill) && isBuiltInCommand(entry.skill)) return fail(`${key}.skill`, SKILL_BUILT_IN_PROBLEM);
     if (!isSkillName(entry.skill)) return fail(`${key}.skill`, SKILL_PROBLEM);
     profile.skill = entry.skill;
   }

@@ -42,8 +42,11 @@ const MAX_RECIPIENTS_BYTES = 1024 * 1024;
 /** Starts every reason the gate gives, so a denial says where it came from. */
 export const DENIAL_PREFIX = "pitwall's supervisor gate";
 
-/** pitwall's own sessions, which the supervisor never messages, compared without case. */
-export const OWN_NAMES = new Set(['pitwall-relay', 'pitwall-recap', 'pitwall-supervisor']);
+/**
+ * pitwall's own sessions, which the supervisor never messages, compared without case: every name
+ * pitwall hides a session by (W116's F3), the `/usage` reader's `pitwall-usage` included (W157; W180's U-F5).
+ */
+export const OWN_NAMES = new Set(['pitwall-relay', 'pitwall-recap', 'pitwall-supervisor', 'pitwall-usage']);
 
 /**
  * The fields of SendMessage's input the gate knows, as Claude Code 2.1.312 passes it to hooks and

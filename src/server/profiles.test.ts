@@ -1,7 +1,7 @@
 // Work profiles (W155): the config file's `profiles`, the skill name's pattern, the built-ins and
 // their replacement, and the skill at the start of the first prompt.
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_PROFILE, isSkillName, SKILL_NAME_PATTERN, SUPERVISOR_MODEL, WORK_PROFILES_MAX, type WorkProfile } from '../shared/protocol.js';
+import { DEFAULT_PROFILE, isSkillName, SKILL_NAME_PATTERN, SUPERVISOR_MODEL, WORK_PROFILES_BUILT_IN, WORK_PROFILES_MAX, WORK_PROFILES_TOTAL_MAX, type WorkProfile } from '../shared/protocol.js';
 import { BUILT_IN_PROFILES, mergeProfiles, parseProfiles, withSkill } from './profiles.js';
 import { createWorkStore } from './work.js';
 
@@ -60,6 +60,16 @@ describe('the skill name pattern', () => {
   it('refuses what isn\'t a string', () => {
     for (const value of [undefined, null, 1, ['a'], { name: 'a' }]) expect(isSkillName(value)).toBe(false);
   });
+
+  it("refuses Claude Code's built-in commands and their aliases, without case, but takes its bundled skills and a plugin's of the same name (W180, I3)", () => {
+    for (const name of ['clear', 'login', 'logout', 'exit', 'quit', 'Clear', 'LOGOUT', 'reset', 'new', 'compact', 'model', 'resume', 'continue', 'config', 'settings', 'upgrade', 'security-review', 'init']) {
+      expect(isSkillName(name), name).toBe(false);
+      expect(SKILL_NAME_PATTERN.test(name), name).toBe(true);
+    }
+    for (const name of ['simplify', 'loop', 'code-review', 'review', 'doctor', 'checkup', 'design', 'deep-research', 'role-reviewer', 'my-plugin:clear', 'logout-helper']) {
+      expect(isSkillName(name), name).toBe(true);
+    }
+  });
 });
 
 describe('the built-in profiles (Phil, 2026-11-06)', () => {
@@ -72,6 +82,12 @@ describe('the built-in profiles (Phil, 2026-11-06)', () => {
     ]);
     expect(SUPERVISOR_MODEL).toBe('claude-opus-5-5');
     expect(BUILT_IN_PROFILES[0]?.name).toBe(DEFAULT_PROFILE);
+  });
+
+  it('are as many as WORK_PROFILES_BUILT_IN, so the page takes every profile the server resolves (W180, F2)', () => {
+    expect(BUILT_IN_PROFILES).toHaveLength(WORK_PROFILES_BUILT_IN);
+    const config = Array.from({ length: WORK_PROFILES_MAX }, (_, i): WorkProfile => ({ name: `Mine ${i}`, source: 'config' }));
+    expect(mergeProfiles(config)).toHaveLength(WORK_PROFILES_TOTAL_MAX);
   });
 
   it("can't be changed in place", () => {
@@ -114,6 +130,8 @@ describe('the config file\'s profiles', () => {
     ['a skill with a space', { Review: { skill: 'role-reviewer --model opus' } }, /"profiles.Review.skill" must be a skill's name/],
     ['a skill with a newline', { Review: { skill: 'role-reviewer\nDo something else' } }, /"profiles.Review.skill" must be a skill's name/],
     ['a skill that\'s a list', { Review: { skill: ['role-reviewer'] } }, /"profiles.Review.skill" must be a skill's name/],
+    ['a skill that\'s Claude Code\'s /logout (W180, I3)', { Review: { skill: 'logout' } }, /"profiles.Review.skill" names one of Claude Code's built-in commands/],
+    ['a skill that\'s /clear\'s alias, in another case', { Review: { skill: 'Reset' } }, /"profiles.Review.skill" names one of Claude Code's built-in commands/],
     ['a name with a newline', { 'Re\nview': {} }, /"profiles, its profile number 1" has a name that must be 1 to 40/],
     ['a name with a leading space', { ' Review': {} }, /its profile number 1/],
     ['an empty name', { '': {} }, /its profile number 1/],

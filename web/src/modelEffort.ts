@@ -15,7 +15,7 @@ import {
   WORK_KINDS,
   WORK_PATH,
   WORK_PROFILE_NAME_PATTERN,
-  WORK_PROFILES_MAX,
+  WORK_PROFILES_TOTAL_MAX,
   type ClaudeDefault,
   type ClaudeDefaults,
   type ClaudeDefaultSource,
@@ -113,7 +113,7 @@ export function readProfiles(value: unknown): WorkProfile[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const profiles: WorkProfile[] = [];
   const seen = new Set<string>();
-  for (const entry of value.slice(0, WORK_PROFILES_MAX + 4)) {
+  for (const entry of value.slice(0, WORK_PROFILES_TOTAL_MAX)) {
     if (!isRecord(entry) || typeof entry.name !== 'string' || !WORK_PROFILE_NAME_PATTERN.test(entry.name) || seen.has(entry.name.toLowerCase())) continue;
     if (entry.source !== 'built-in' && entry.source !== 'config') continue;
     if (entry.model !== undefined && entry.model !== WORK_DEFAULT && !isWorkModel(entry.model, 'session')) continue;
