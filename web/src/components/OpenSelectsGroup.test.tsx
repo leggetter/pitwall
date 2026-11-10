@@ -135,11 +135,12 @@ describe("from the supervisor's Sent and started (W144)", () => {
     await settle();
     expect(activeTab()).toContain('personal');
     await openFromHandoffs(started.name);
-    expect(history.entries).toEqual([`?repo=${at(PERSONAL, 'blog')}&root=${PERSONAL}&supervisor`, `?repo=${at(WORK, 'api')}&root=${WORK}&session=${started.sessionId}`]);
+    expect(history.entries).toEqual([`?repo=${at(PERSONAL, 'blog')}&root=${PERSONAL}&supervisor`, `?repo=${at(WORK, 'api')}&root=${WORK}&session=${started.sessionId}&supervisor`]);
     expect(activeTab()).toContain('work');
     expect(selected()).toBe('api');
     expect(viewName()).toBe(started.name);
-    expect(supervisorView()).toBeUndefined();
+    // From 1,200 px the supervisor's panel stays open beside it (W177).
+    expect(supervisorView()).toBeDefined();
     expect(headingFocused()).toBe(true);
   });
 
@@ -153,12 +154,12 @@ describe("from the supervisor's Sent and started (W144)", () => {
     expect(activeTab()).toContain('personal');
     expect(selected()).toBe('blog');
     expect(sessionView()).toBeUndefined();
-    // Its Open works again from there, and the supervisor's item opens it in the session's tab.
+    // Its Open works again from there, with the panel still open beside the session (W177).
     await openFromHandoffs(started.name);
     expect(selected()).toBe('api');
     fireEvent.click(repoList().querySelector<HTMLAnchorElement>('a[data-supervisor-item]')!);
     await settle();
-    expect(history.location.search).toBe(`?repo=${at(WORK, 'api')}&root=${WORK}&supervisor`);
+    expect(history.location.search).toBe(`?repo=${at(WORK, 'api')}&root=${WORK}&session=${started.sessionId}&supervisor`);
     expect(within(supervisorView()!).getByRole('textbox', { name: 'Message to the supervisor' })).toBeDefined();
   });
 
@@ -166,7 +167,7 @@ describe("from the supervisor's Sent and started (W144)", () => {
     const { history } = renderDashboard(oneRoot(handoffs({ name: started.name, sessionId: started.sessionId })), { search: `?repo=${at(WORK, 'web')}&supervisor` });
     await settle();
     await openFromHandoffs(started.name);
-    expect(history.entries).toEqual([`?repo=${at(WORK, 'web')}&supervisor`, `?repo=${at(WORK, 'api')}&session=${started.sessionId}`]);
+    expect(history.entries).toEqual([`?repo=${at(WORK, 'web')}&supervisor`, `?repo=${at(WORK, 'api')}&session=${started.sessionId}&supervisor`]);
     expect(selected()).toBe('api');
     expect(viewName()).toBe(started.name);
     expect(headingFocused()).toBe(true);
@@ -180,13 +181,13 @@ describe("from the supervisor's Sent and started (W144)", () => {
     const first = renderDashboard(oneRoot(handoffs({ name: started.name, sessionId: started.sessionId })), { search: `?repo=${at(WORK, 'api')}&supervisor` });
     await settle();
     await openFromHandoffs(started.name);
-    expect(first.history.entries).toEqual([`?repo=${at(WORK, 'api')}&supervisor`, `?repo=${at(WORK, 'api')}&session=${started.sessionId}`]);
+    expect(first.history.entries).toEqual([`?repo=${at(WORK, 'api')}&supervisor`, `?repo=${at(WORK, 'api')}&session=${started.sessionId}&supervisor`]);
     first.unmount();
 
     const { history } = renderDashboard(twoRoots(handoffs({ name: started.name, sessionId: started.sessionId })), { search: `?view=all&root=${WORK}&supervisor` });
     await settle();
     await openFromHandoffs(started.name);
-    expect(history.entries).toEqual([`?view=all&root=${WORK}&supervisor`, `?view=all&root=${WORK}&session=${started.sessionId}`]);
+    expect(history.entries).toEqual([`?view=all&root=${WORK}&supervisor`, `?view=all&root=${WORK}&session=${started.sessionId}&supervisor`]);
     expect(selected()).toBe('All sessions');
     expect(viewName()).toBe(started.name);
   });
@@ -195,7 +196,7 @@ describe("from the supervisor's Sent and started (W144)", () => {
     const { history } = renderDashboard(oneRoot(handoffs({ name: started.name, sessionId: started.sessionId })), { search: '?view=starred&supervisor' });
     await settle();
     await openFromHandoffs(started.name);
-    expect(history.entries).toEqual(['?view=starred&supervisor', `?repo=${at(WORK, 'api')}&session=${started.sessionId}`]);
+    expect(history.entries).toEqual(['?view=starred&supervisor', `?repo=${at(WORK, 'api')}&session=${started.sessionId}&supervisor`]);
     expect(selected()).toBe('api');
     expect(viewName()).toBe(started.name);
   });
@@ -204,7 +205,7 @@ describe("from the supervisor's Sent and started (W144)", () => {
     const { history } = renderDashboard(twoRoots(handoffs({ name: inWeb.name, sessionId: inWeb.sessionId })), { search: `?view=all&root=${PERSONAL}&supervisor` });
     await settle();
     await openFromHandoffs(inWeb.name);
-    expect(history.location.search).toBe(`?repo=${at(WORK, 'web')}&root=${WORK}&session=${inWeb.sessionId}`);
+    expect(history.location.search).toBe(`?repo=${at(WORK, 'web')}&root=${WORK}&session=${inWeb.sessionId}&supervisor`);
     expect(activeTab()).toContain('work');
     expect(selected()).toBe('web');
   });

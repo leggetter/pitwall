@@ -8,9 +8,10 @@
 // Only the session's id goes in the query string, never the token. The token is in the fragment,
 // and token.ts has taken it out of the address bar before the dashboard, and so this, first reads it.
 //
-// The third column shows one thing (M4, W95): a session, or a pull request, ?pr= (openPr.ts), or the
-// supervisor, ?supervisor (M5, W114, supervisor.ts). So a session opened drops ?pr= and ?supervisor,
-// in the same history entry, and a PR or the supervisor opened drops ?session=.
+// The third column shows one thing (M4, W95): a session, or a pull request, ?pr= (openPr.ts). So a
+// session opened drops ?pr=, in the same history entry, and a PR opened drops ?session=. The
+// supervisor's panel, ?supervisor (W177, the supervisor opens over the page, supervisor.ts), sits
+// over the page beside either, so neither drops it: it stays last in the query string.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { browserNavigation, type NavigationEnv } from './selection.js';
@@ -21,8 +22,8 @@ export const SESSION_PARAM = 'session';
 export const PR_PARAM = 'pr';
 
 /**
- * The supervisor's view's parameter (M5, W114, supervisor.ts): `?supervisor`, with no value. A
- * session or a PR opened takes its place, as each takes the other's.
+ * The supervisor's panel's parameter (M5, W114, W177, supervisor.ts): `?supervisor`, with no value.
+ * It's beside a session's or a PR's, never in its place: opening either keeps it, last.
  */
 export const SUPERVISOR_PARAM = 'supervisor';
 
@@ -47,14 +48,24 @@ export function withoutParams(search: string, names: readonly string[]): string 
 
 /**
  * `search` with ?session= set to `sessionId`, or removed when it's undefined, and every other
- * parameter kept, in order, with the session last, except that a session set takes the place of an
- * open pull request's ?pr= (W95) and the supervisor's ?supervisor (W114). Starts with "?", or is
- * empty when no parameter is left.
+ * parameter kept, in order, with the session last but for ?supervisor, except that a session set
+ * takes the place of an open pull request's ?pr= (W95). The supervisor's panel stays open beside it
+ * (W177). Starts with "?", or is empty when no parameter is left.
  */
 export function withSession(search: string, sessionId: string | undefined): string {
-  const kept = withoutParams(search, sessionId === undefined ? [SESSION_PARAM] : [SESSION_PARAM, PR_PARAM, SUPERVISOR_PARAM]);
+  const kept = withoutParams(search, sessionId === undefined ? [SESSION_PARAM] : [SESSION_PARAM, PR_PARAM]);
   if (sessionId === undefined) return kept;
-  return `${kept === '' ? '?' : `${kept}&`}${SESSION_PARAM}=${encodeURIComponent(sessionId)}`;
+  return supervisorLast(`${kept === '' ? '?' : `${kept}&`}${SESSION_PARAM}=${encodeURIComponent(sessionId)}`);
+}
+
+/**
+ * `search` with ?supervisor, if it has it, moved to the end, as withSupervisor() puts it, so a session
+ * or a PR opened beside the panel reads the same as the panel opened beside it (W177).
+ */
+export function supervisorLast(search: string): string {
+  const without = withoutParams(search, [SUPERVISOR_PARAM]);
+  if (without === search) return search;
+  return `${without === '' ? '?' : `${without}&`}${SUPERVISOR_PARAM}`;
 }
 
 function decodeName(part: string): string {

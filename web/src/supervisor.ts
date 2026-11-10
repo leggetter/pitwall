@@ -4,10 +4,10 @@
 // never the token. The server is the authority on every check, and on what the supervisor does: the
 // page never starts it by itself, only when you press Start or send it a message.
 //
-// - The view's place: `?supervisor`, with no value, beside the selection, as ?session= and ?pr= are
-//   (openSession.ts, openPr.ts). The third column shows one thing, so opening the supervisor drops
-//   ?session= and ?pr=, and opening either drops ?supervisor, each in one pushed history entry. With
-//   more than one in a URL, as only one typed by hand can have, the session shows, then the PR.
+// - The panel's place: `?supervisor`, with no value, last, after the selection and any ?session= or
+//   ?pr= (openSession.ts, openPr.ts). It opens over the page, beside the open session's or PR's view,
+//   which stays (W177): opening it keeps ?session= and ?pr=, and opening either keeps ?supervisor,
+//   each in one pushed history entry.
 // - The state is read defensively, as the 'prs' message is: an approval that isn't well formed is
 //   left out, and a state that isn't one at all is no supervisor, so the page shows no item for it.
 // - Approvals' text is the model's: shown as plain text, never markdown, and sent as you leave it.
@@ -42,7 +42,7 @@ import type { ApiClient, ApiResult } from './api.js';
 import { formatTokens } from './context.js';
 import { couldNot, plainText, shortenHome } from './format.js';
 import { visibleString } from '../../src/shared/hiddenText.js';
-import { PR_PARAM, SESSION_PARAM, SUPERVISOR_PARAM, withoutParams, type HistoryMode } from './openSession.js';
+import { SUPERVISOR_PARAM, withoutParams, type HistoryMode } from './openSession.js';
 import { outgoingText } from './relay.js';
 import { browserNavigation, type NavigationEnv } from './selection.js';
 import { needsAttention, needsText, recapNeedsText, statusBadge, type BadgeLook, type StatusBadge } from './sessions.js';
@@ -80,26 +80,25 @@ export const SUPERVISOR_DRAFT_ID = 'supervisor';
 
 // --- Its place in the URL -------------------------------------------------------------------------
 
-/** Whether a query string opens the supervisor's view: `?supervisor`, unless a session or a PR shows instead. */
+/** Whether a query string opens the supervisor's panel: `?supervisor`, whatever else is open beside it (W177). */
 export function parseSupervisor(search: string): boolean {
-  const params = new URLSearchParams(search);
-  return params.has(SUPERVISOR_PARAM) && !params.has(SESSION_PARAM) && !params.has(PR_PARAM);
+  return new URLSearchParams(search).has(SUPERVISOR_PARAM);
 }
 
 /**
- * `search` with `?supervisor` added, in place of any ?session= or ?pr=, or removed, every other
- * parameter kept, in order, with it last.
+ * `search` with `?supervisor` added, beside any ?session= or ?pr=, which stay (W177), or removed,
+ * every other parameter kept, in order, with it last.
  */
 export function withSupervisor(search: string, open: boolean): string {
-  const kept = withoutParams(search, open ? [SUPERVISOR_PARAM, SESSION_PARAM, PR_PARAM] : [SUPERVISOR_PARAM]);
+  const kept = withoutParams(search, [SUPERVISOR_PARAM]);
   if (!open) return kept;
   return `${kept === '' ? '?' : `${kept}&`}${SUPERVISOR_PARAM}`;
 }
 
 export interface OpenSupervisor {
-  /** Whether the URL opens the supervisor's view. */
+  /** Whether the URL opens the supervisor's panel. */
   open: boolean;
-  /** Opens it, in place of a session's or a PR's view: one pushed entry, or none when it's open already. */
+  /** Opens it, beside a session's or a PR's view: one pushed entry, or none when it's open already. */
   show: (mode?: HistoryMode) => void;
   /** Closes it, pushing an entry without ?supervisor. */
   close: () => void;
@@ -107,7 +106,7 @@ export interface OpenSupervisor {
   follow: () => void;
 }
 
-/** The supervisor's view, from the URL, as useOpenPr() has the open PR. Reading it starts nothing. */
+/** The supervisor's panel, from the URL, as useOpenPr() has the open PR. Reading it starts nothing. */
 export function useOpenSupervisor(navigation: NavigationEnv = browserNavigation): OpenSupervisor {
   const [open, setOpen] = useState(() => parseSupervisor(navigation.location.search));
   const current = useRef(open);
@@ -136,7 +135,7 @@ export function useOpenSupervisor(navigation: NavigationEnv = browserNavigation)
 
   const show = useCallback(
     (mode: HistoryMode = 'push') => {
-      // Open already adds no entry, unless a session or a PR is in the URL too, which it takes the place of.
+      // Open already adds no entry.
       if (!current.current || !parseSupervisor(navigation.location.search)) write(true, mode);
       current.current = true;
       setOpen(true);
