@@ -51,6 +51,7 @@ import type {
   SpawnResult,
   SubagentList,
   SupervisorDecision,
+  UsageWindowKey,
 } from '../../src/shared/protocol.js';
 import { COPY_SHORT_ID, NAMES, RECAP_CALL_MS, SUPERVISOR_HELD_ERROR, SUPERVISOR_STEP_MS, terminalScreen, World, type ResetOptions, type TerminalSize } from './fixtures.js';
 
@@ -364,6 +365,13 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (method === 'POST' && url.pathname === protocol.PRS_REFRESH_PATH) return refreshPrs(req, res);
     if (method === 'POST' && url.pathname === protocol.CLONE_PATH) return clone(req, res);
     if (method === 'GET' && url.pathname === protocol.WORK_PATH) return json(res, 200, await work.describe(url.searchParams.get('dir') || undefined));
+    if (method === 'GET' && url.pathname === protocol.USAGE_PATH) {
+      // The Usage view (W158): made-up figures for the window, or the failure the world is set to.
+      const key = url.searchParams.get('window') ?? 'week';
+      if (!(protocol.USAGE_WINDOWS as readonly string[]).includes(key)) return end(res, 400);
+      const answer = world.usage(key as UsageWindowKey);
+      return answer.body === undefined ? end(res, answer.status) : json(res, answer.status, answer.body);
+    }
     if (method === 'POST' && url.pathname === protocol.WORK_PATH) {
       const body = await readJson(req);
       const result = work.update(body);

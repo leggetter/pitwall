@@ -605,6 +605,7 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 | `keyboard` | keyboard | The header's keyboard shortcuts button, which opens the shortcuts dialog |
 | `hide` / `show` | visibility_off / visibility | The session list header's Hide from repo list and Show in repo list, and each hidden group's Unhide (W35). Each draws what the button does |
 | `preferences` | tune | The header's [Preferences](#preferences) button (W42, W59) |
+| `usage` | bar_chart | The header's [Usage](#usage) button (W158) |
 | `checked` | check | The chosen option in a menu's radio group (W42). The same glyph as `copied`, for another meaning |
 | `star` / `starred` | star / star at fill 1 | A session's [star toggle](#starred-sessions), off and on (W53): outlined while it isn't starred, filled while it is |
 | `snooze` / `snooze-on` | snooze / snooze at fill 1 | A session's [Snooze](#snooze) menu button, outlined, and its toggle while it's snoozed, filled (W154; W88's `not-needed` and `not-needed-on`, renamed), as the star's two states are, and the actions menu's first Snooze item. Snooze is "not now"; it comes back by itself |
@@ -696,7 +697,7 @@ Three columns, left to right: where to look (the repo list), what's there (the s
   - The wordmark "pitwall" (l 16/24, 600).
   - With one root, the root: path type, `--pw-text-subtle`, home shortened to `~`, middle ellipsis, the full path in a tooltip, exactly as before there were tabs.
   - With two or more, a tab per root in its place: see [Root tabs](#root-tabs).
-- **Right, 12 px apart:** New session (outline, md, `add` icon; not primary, whose blue was too much for an always-there button, Phil, 2026-11-02; with `n` in its tooltip); the connection badge; "updated 7s ago" (meta, `--pw-text-subtle`, tabular, a [timestamp](#timestamps) with the absolute time in its tooltip); the theme switch; [Preferences](#preferences) (ghost md `preferences` [icon button](#icon-buttons), "Preferences", with `aria-haspopup="dialog"`), which opens the Preferences dialog (W59); the keyboard shortcuts button (ghost md `keyboard` icon button, "Keyboard shortcuts", with `?` in its tooltip), which opens the [keyboard shortcuts dialog](#keyboard-shortcuts-dialog).
+- **Right, 12 px apart:** New session (outline, md, `add` icon; not primary, whose blue was too much for an always-there button, Phil, 2026-11-02; with `n` in its tooltip); the connection badge; "updated 7s ago" (meta, `--pw-text-subtle`, tabular, a [timestamp](#timestamps) with the absolute time in its tooltip); [Usage](#usage) (ghost md `usage` icon button, "Usage", with `aria-haspopup="dialog"`, W158); the theme switch; [Preferences](#preferences) (ghost md `preferences` [icon button](#icon-buttons), "Preferences", with `aria-haspopup="dialog"`), which opens the Preferences dialog (W59); the keyboard shortcuts button (ghost md `keyboard` icon button, "Keyboard shortcuts", with `?` in its tooltip), which opens the [keyboard shortcuts dialog](#keyboard-shortcuts-dialog).
   - The shortcuts button is there from the first render, before the first snapshot, and stays while the single-key shortcuts are off, so they can be turned back on. Preferences is there from the first render too.
   - New session says its key in `aria-keyshortcuts="n"` while the single-key shortcuts are on. The shortcuts button has none: ARIA 1.2 wants the keys as pressed, modifiers and all, and `?` is Shift and a key that differs by keyboard layout (`/` on a US one), so no value is right everywhere. Its tooltip's key cap and the dialog's map say it.
 - **Compact (≤ 600 px):** the right side wraps under the wordmark, and the header grows to fit.
@@ -2177,6 +2178,28 @@ For a destructive or surprising action in the session view, without a dialog.
   - Focus returns to the button on close, without opening its tooltip, which would only be one more thing for the next Escape. An item runs after that, so one that opens something, such as a confirmation, can move focus on from there. Choosing a radio option closes the menu the same way, then calls its change, only when the choice changed. Tab goes on from the button to the next control.
   - A press outside closes it, leaving focus where the press puts it. Escape is handled in the menu, so nothing behind it closes too, and it closes a disabled item's tooltip with the menu.
   - A [single-key shortcut](#62-keyboard-map) that moves focus elsewhere closes it first (`closeMenus()`), putting focus back on its button as Escape would, so a dialog the shortcut opens gives focus back there. One with nowhere to go, such as `j` on the last session, leaves it open.
+
+### Usage
+
+What's using the plan's week (W158): tokens and their stand-in cost, from the sessions' transcripts, by day or hour, repo, session and model, and main sessions against sub-agents.
+
+- **Where:** the [header](#header)'s Usage button, a ghost md `usage` (bar_chart) [icon button](#icon-buttons), named "Usage" by its tooltip and `aria-label`, with `aria-haspopup="dialog"`, after "updated 7s ago" and before the theme switch, from the first render. No key of its own.
+- **The dialog:** `UsageDialog` (`web/src/components/UsageDialog.tsx`), a [dialog](#dialogs) with `size="lg"`, titled "Usage", with the subtitle "Tokens from your sessions' transcripts. Costs are estimates at API list prices." It's modal and may cover the repo list: there's nothing to compare it with behind it.
+  - **In the URL** as `?usage`, added last to whatever is there and taken off on close, each in a pushed entry, so a reload keeps it open and Back closes it. No other parameter's rule knows of it, and it knows of none (`web/src/usage.ts`).
+  - **Fetches only while open:** GET `/api/usage` for the window on open, on a window change, and on Refresh, never on a timer. While the next answer loads, the figures shown stay.
+- **The window:** a row of [tabs](#tabs) in the session view's look, named "Window": This week (first, and open on open), 24 hours, 14 days, 30 days. One panel, which the open tab names. The row scrolls sideways rather than wrap, its tabs' focus ring inset, as the session view's narrow row does.
+  - Under it, a meta line says what the window is: "Since the plan's week started, Thu 6 Nov at 14:00.", or, when the plan's week can't be read, "The last 7 days, from …: the plan's week is unavailable, so it starts at midnight."
+- **The summary:** a bordered box, the plan's week first, then the totals, side by side where there's room, else wrapping.
+  - **The plan's week** (W157): "Plan's week" in label type, "42% used" in l 16/24 bold, and "Resets Thu 13 Nov, 14:00" as help text; or "Unavailable" in `--pw-text-muted`, with why, a command in code style. W159's pace goes beside it.
+  - **The totals:** a `<dl>` of Est. cost (l, bold), Input, Cache writes, Cache reads, Output and Calls, tabular. Cache reads and writes are never summed with input and output into one total: 97.7% of tokens are cache reads (W131).
+  - Then the cost's caveat as help text: "Est. cost: API list price, a stand-in: …".
+- **The tables:** By day (or By hour), Main sessions and sub-agents, By repo, By session, By model, each under an h3 (m, bold), in a bordered box that scrolls sideways on its own, a named `region` that takes focus, so the keyboard can scroll it.
+  - Columns: the row's name, then Est. cost, Input, Cache writes, Cache reads, Output, right-aligned and tabular; By repo adds Sessions. Rows are ranked by stand-in cost.
+  - **By day's bar:** the cost cell carries a bar, one series, in `--pw-selected-border`, the indicator blue that keeps 3:1 on the card in both themes (`--pw-accent` stays deep blue in dark), 8 px tall, its end rounded, scaled to the window's most costly day, before the figure, so every bar starts at the same edge; `aria-hidden`, since the figure beside it says the same. `CanvasText` in forced colours. A kept day, whose transcripts Claude Code has deleted, says "(kept total)" after its date.
+  - **A session's row:** its name when it's listed, else "Not listed", or "pitwall's own" for pitwall's own calls; under it, in meta type, its short id in mono, its repo, its main model and what its sub-agents cost.
+  - The rows past 25 are summed in a last muted row, "3 more repos". When kept days add what no transcript shows, By repo and By session say so in help text under the table.
+- **Footer:** "Read 2m ago from 865 transcripts." at the left, and Refresh (outline, `retry` icon, "Refreshing…" while busy) at the right.
+- **Failures:** a danger alert at the top of the panel, `role="alert"`, with pitwall's sentence ("Couldn't read your usage (HTTP 500)."), the figures already shown kept under it. While the first read runs: a spinner and "Reading your transcripts. The first read can take a few seconds."
 
 ### Preferences
 
