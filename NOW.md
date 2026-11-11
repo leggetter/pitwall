@@ -36,7 +36,7 @@ Merged into `m5.3/integration` on 2026-11-11, each after a fresh review and its 
 | Left from M5.1's items | Each item's "Left" is in its archive entry: for example W153's (flag) no retry of a failed ask, W154's (snooze) unseen scheduled wake-ups, W163's (spin-off proposals) overlap check, "Ask the supervisor" and the profile's model, with M6 |
 | [#143](https://github.com/leggetter/pitwall/issues/143) (Session view: expand the conversation or terminal to the full page) | Later (Phil, 2026-11-03) |
 | W89, the first paste into New session's prompt is lost | Parked (Phil, 2026-11-02): he'll say if it happens again; Grammarly is suspected, not confirmed |
-| Flaky tests: `src/cli.test.ts` clean-up (`ENOTEMPTY`), and `src/index/exec.test.ts` "after an abort…" (timing-based; failed once in each of two full runs, passes alone) | The first is in "Nice to have, later"; add the second beside it (not done: this hand-off edited only `NOW.md`) |
+| A flaky test: `src/cli.test.ts` clean-up (`ENOTEMPTY`) | In "Nice to have, later". `src/index/exec.test.ts` "after an abort…" was widened from 2.6 s to 4 s in W188's follow-ups |
 | M6, triage | After M5.3; not started |
 
 ## Next, in order

@@ -114,6 +114,14 @@ describe('Not for me on a PR row', () => {
     expect(toastMessages()).toEqual([]);
   });
 
+  it('sends the red hash the page shows, for your own PR whose CI fails (W188’s review)', async () => {
+    const red = { ...mine, redHash: 'abababababababab' };
+    const { fetch } = renderDashboard(prList([red]));
+    fireEvent.click(within(row(12)).getByRole('button', { name: notForMeLabel(red) }));
+    await settle();
+    expect(posted(fetch)).toEqual([[PR_DISMISS_PATH, { repo: 'example/demo-app', number: 12, seen: 'fedcba9876543210', seenRed: 'abababababababab' }]]);
+  });
+
   it('says what went wrong when the server refuses, as when something new happened since', async () => {
     renderDashboard(prList([asked]), '?view=prs', { ok: false, error: 'Something new happened on it since the page showed it. Look again before you dismiss it.' });
     fireEvent.click(within(row(11)).getByRole('button', { name: notForMeLabel(asked) }));

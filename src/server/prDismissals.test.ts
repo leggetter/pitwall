@@ -116,12 +116,32 @@ describe('PrDismissalStore', () => {
     expect(store.decorate(listOf([pr()])).prs[0]!.dismissalEnded).toBeUndefined();
   });
 
-  it('ends a dismissal whose PR has no stateHash now: it can’t tell what’s new', () => {
+  it('keeps a dismissal whose PR has no stateHash this time, unapplied and saying nothing, and applies it again once it has (W188’s review)', () => {
     const store = new PrDismissalStore({ home, now: clock().now });
     store.dismiss(KEY, HASH_A);
     const { stateHash: _gone, ...unhashed } = pr();
-    expect(store.decorate(listOf([unhashed])).prs[0]!.dismissed).toBeUndefined();
-    expect(store.get(KEY)).toBeUndefined();
+    const blind = store.decorate(listOf([unhashed])).prs[0]!;
+    expect(blind.dismissed).toBeUndefined();
+    expect(blind.dismissalEnded).toBeUndefined();
+    expect(store.get(KEY)).toBeDefined();
+    expect(dismissedOf(store.decorate(listOf([pr()])))).toBeDefined();
+  });
+
+  it('holds through CI pending, on a re-run or a push, and red again on the same head; ends when a new head goes red (W188’s review)', () => {
+    const RED_X = '1111111111111111';
+    const RED_Y = '2222222222222222';
+    const store = new PrDismissalStore({ home, now: clock().now });
+    const own = (red?: string) => pr(7, { relation: 'authored', checks: red === undefined ? 'pending' : 'failing', ...(red === undefined ? {} : { redHash: red }) });
+    store.dismiss(KEY, HASH_A, RED_X);
+    expect(dismissedOf(store.decorate(listOf([own()])))).toBeDefined();
+    expect(dismissedOf(store.decorate(listOf([own(RED_X)])))).toBeDefined();
+    const back = store.decorate(listOf([own(RED_Y)])).prs[0]!;
+    expect(back.dismissed).toBeUndefined();
+    expect(back.dismissalEnded).toBeDefined();
+    // Dismissed while it wasn't red: CI going red at all brings it back.
+    store.dismiss(KEY, HASH_A);
+    expect(dismissedOf(store.decorate(listOf([own()])))).toBeDefined();
+    expect(store.decorate(listOf([own(RED_X)])).prs[0]!.dismissalEnded).toBeDefined();
   });
 
   it('keeps a dismissal whose PR a list that isn’t complete leaves out, and drops it once a complete one does', () => {
@@ -145,7 +165,7 @@ describe('PrDismissalStore', () => {
     time.advance(1);
     expect(dismissedOf(store.decorate(listOf([pr()])))).toBeUndefined();
     // And at start, from the file.
-    const again = new PrDismissalStore({ home, now: clock(START - PR_DISMISSAL_MAX_AGE_MS).now });
+    const again = new PrDismissalStore({ home, now: clock(START - PR_DISMISSAL_MAX_AGE_MS - 1000).now });
     again.dismiss(KEY, HASH_A);
     expect(new PrDismissalStore({ home, now: clock().now }).get(KEY)).toBeUndefined();
   });
@@ -185,7 +205,7 @@ describe('its file', () => {
     store.dismiss(KEY, HASH_A);
     expect(statSync(file()).mode & 0o777).toBe(0o600);
     const text = readFileSync(file(), 'utf8');
-    expect(JSON.parse(text)).toEqual({ v: 1, dismissals: [{ key: KEY, at: '2026-11-11T10:00:00.000Z', hash: HASH_A }], ended: [] });
+    expect(JSON.parse(text)).toEqual({ v: 1, dismissals: [{ key: KEY, at: '2026-11-11T10:00:00.000Z', hash: HASH_A }], ended: [], removed: [] });
     expect(text).not.toContain('demo feature');
     const again = new PrDismissalStore({ home, now: clock().now });
     expect(dismissedOf(again.decorate(listOf([pr()])))).toEqual({ at: '2026-11-11T10:00:00.000Z' });
@@ -228,23 +248,26 @@ describe('its file', () => {
       {"key":"example/demo-app#10","at":"soon","hash":"${HASH_A}"},
       {"key":"example/demo-app#11","at":"${at}","hash":"ABCDEF0123456789"},
       {"key":"example/demo-app#12","at":"${at}"},
-      {"key":"example/demo-app#13","at":"2027-01-01T00:00:00.000Z","hash":"${HASH_B}"},
+      {"key":"example/demo-app#13","at":"2027-01-01T00:00:00.000Z","hash":"${HASH_B}","red":"${HASH_A}"},
+      {"key":"example/demo-app#15","at":"${at}","hash":"${HASH_B}","red":"NOT-A-HASH"},
       "not a record",
       {"key":"${KEY}","at":"2026-11-11T08:00:00.000Z","hash":"${HASH_B}"}
-    ],"ended":[{"key":"example/demo-app#14","at":"${at}","why":"x"},{"key":"../etc#1","at":"${at}"}]}`;
+    ],"ended":[{"key":"example/demo-app#14","at":"${at}","why":"x"},{"key":"../etc#1","at":"${at}"}],
+    "removed":[{"key":"example/demo-app#16","at":"${at}"},{"key":"../etc#2","at":"${at}"},{"key":"example/demo-app#17","at":"soon"}]}`;
     writeFileSync(file(), body, { mode: 0o600 });
     const read = readPrDismissalFile(file(), new Date(START));
     expect(read.dismissals).toEqual([
       { key: KEY, at, hash: HASH_A },
-      { key: 'example/demo-app#13', at: '2026-11-11T10:00:00.000Z', hash: HASH_B },
+      { key: 'example/demo-app#13', at: '2026-11-11T10:00:00.000Z', hash: HASH_B, red: HASH_A },
     ]);
     expect(Object.keys(read.dismissals[0]!)).toEqual(['key', 'at', 'hash']);
     expect(Object.getPrototypeOf(read.dismissals[0]!)).toBe(Object.prototype);
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     expect(read.ended).toEqual([{ key: 'example/demo-app#14', at }]);
+    expect(read.removed).toEqual([{ key: 'example/demo-app#16', at }]);
     // A file whose `v` comes from a prototype isn't read.
     writeFileSync(file(), '{"__proto__":{"v":1},"dismissals":[]}', { mode: 0o600 });
-    expect(readPrDismissalFile(file(), new Date(START))).toEqual({ dismissals: [], ended: [] });
+    expect(readPrDismissalFile(file(), new Date(START))).toEqual({ dismissals: [], ended: [], removed: [] });
   });
 
   it('is read again and merged before each write, so a second pitwall on the same home keeps the first’s', () => {
@@ -277,6 +300,43 @@ describe('its file', () => {
     one.dismiss('example/demo-app#3', HASH_A);
     expect(stored().sort()).toEqual(['example/demo-app#1', 'example/demo-app#2', 'example/demo-app#3']);
     expect(one.get('example/demo-app#1')?.hash).toBe(HASH_B);
+  });
+
+  it('writes each removal as a tombstone, so an Undo in one pitwall isn’t reversed by another’s copy (W188’s review)', () => {
+    const time = clock();
+    const one = new PrDismissalStore({ home, now: time.now });
+    one.dismiss(KEY, HASH_A);
+    const two = new PrDismissalStore({ home, now: time.now });
+    expect(two.get(KEY)).toBeDefined();
+    time.advance(1000);
+    one.undismiss(KEY);
+    const stored = () => JSON.parse(readFileSync(file(), 'utf8')) as { dismissals: { key: string }[]; removed: { key: string; at: string }[] };
+    expect(stored().removed).toEqual([{ key: KEY, at: '2026-11-11T10:00:01.000Z' }]);
+    // `two` still holds its copy, and writes: the tombstone takes it away there too, and it isn't written back.
+    time.advance(1000);
+    two.dismiss('example/demo-app#8', HASH_B);
+    expect(stored().dismissals.map((each) => each.key)).toEqual(['example/demo-app#8']);
+    expect(two.get(KEY)).toBeUndefined();
+    expect(dismissedOf(two.decorate(listOf([pr(), pr(8, { stateHash: HASH_B })])))).toBeUndefined();
+    // A dismissal after the tombstone, in either, holds.
+    time.advance(1000);
+    two.dismiss(KEY, HASH_A);
+    one.dismiss('example/demo-app#9', HASH_A);
+    expect(stored().dismissals.map((each) => each.key).sort()).toEqual([KEY, 'example/demo-app#8', 'example/demo-app#9'].sort());
+  });
+
+  it('keeps at most PR_DISMISSALS_HELD_MAX tombstones, the oldest going first', () => {
+    const time = clock();
+    const store = new PrDismissalStore({ home, now: time.now });
+    for (let n = 1; n <= PR_DISMISSALS_HELD_MAX + 3; n++) {
+      store.dismiss(`example/demo-app#${n}`, HASH_A);
+      store.undismiss(`example/demo-app#${n}`);
+      time.advance(1000);
+    }
+    const removed = (JSON.parse(readFileSync(file(), 'utf8')) as { removed: { key: string }[] }).removed;
+    expect(removed).toHaveLength(PR_DISMISSALS_HELD_MAX);
+    expect(removed[0]!.key).toBe('example/demo-app#4');
+    expect(statSync(file()).size).toBeLessThan(PR_DISMISSAL_FILE_MAX_BYTES);
   });
 
   it('fails soft when it can’t write: the dismissal holds for this run', () => {
@@ -381,6 +441,15 @@ describe('the routes', () => {
     expect(dismissedOf(wrapped.latest())).toBeUndefined();
     // Undo of one that isn't dismissed is fine too.
     expect((await post(PR_UNDISMISS_PATH, { repo: 'example/demo-app', number: 99 })).status).toBe(200);
+  });
+
+  it('dismisses your own red PR with the red hash the page saw, and refuses one that went red since (W188’s review)', async () => {
+    const RED = '3333333333333333';
+    const { post, store } = setup([pr(9, { relation: 'authored', checks: 'failing', redHash: RED })]);
+    expect((await post(PR_DISMISS_PATH, { repo: 'example/demo-app', number: 9, seen: HASH_A })).status).toBe(409);
+    expect((await post(PR_DISMISS_PATH, { repo: 'example/demo-app', number: 9, seen: HASH_A, seenRed: 'nope' })).status).toBe(400);
+    expect((await post(PR_DISMISS_PATH, { repo: 'example/demo-app', number: 9, seen: HASH_A, seenRed: RED })).status).toBe(200);
+    expect(store.get('example/demo-app#9')).toEqual({ at: '2026-11-11T10:00:00.000Z', hash: HASH_A, red: RED });
   });
 
   it('refuses a PR that isn’t listed, one with no hash, and a state the page saw that has changed since', async () => {

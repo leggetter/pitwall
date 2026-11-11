@@ -380,7 +380,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       if (key === undefined || (on && typeof body.seen !== 'string')) return answer(400, { ok: false, error: 'Made up: not a PrDismissRequest.' });
       const pr = world.prByKey(key);
       if (on && pr === undefined) return answer(404, { ok: false, error: "That pull request isn't among your open pull requests." });
-      if (on && pr?.stateHash !== body.seen) return answer(409, { ok: false, error: 'Something new happened on it since the page showed it. Look again before you dismiss it.' });
+      if (on && (pr?.stateHash !== body.seen || pr?.redHash !== body.seenRed)) return answer(409, { ok: false, error: 'Something new happened on it since the page showed it. Look again before you dismiss it.' });
       world.dismissPr(key, on);
       broadcastPrs();
       return answer(200, on ? { ok: true, dismissed: world.prByKey(key)?.dismissed } : { ok: true });

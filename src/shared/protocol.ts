@@ -1568,6 +1568,13 @@ export interface PullRequestSummary {
    */
   stateHash?: string;
   /**
+   * For your own PR while its CI fails (W188), PR_STATE_HASH_PATTERN: a hash of the failing head
+   * commit's oid (src/prs/parse.ts, redHashOf()). A dismissal ends when this is set and isn't the one
+   * it was dismissed with, so CI going red on a new head brings it back, and CI pending, on a re-run
+   * or a push, doesn't. Opaque to the page, which sends it back with Not for me as `seenRed`.
+   */
+  redHash?: string;
+  /**
    * You said Not for me (W188): it doesn't need you, in any count, until something new happens, when
    * its stateHash changes. Kept on the server (src/server/prDismissals.ts), so every page and the
    * supervisor see it.
@@ -1779,19 +1786,21 @@ export const PR_DISMISSAL_ENDED_SHOWN_MS = 12 * 60 * 60 * 1000;
  *
  * - 400 when the body isn't a PrDismissRequest.
  * - 404 when the PR isn't in the list.
- * - 409 when it has no stateHash, or `seen` isn't its stateHash now: something changed since the page showed it.
+ * - 409 when it has no stateHash, or `seen` and `seenRed` aren't its stateHash and redHash now: something changed since the page showed it.
  */
 export const PR_DISMISS_PATH = '/api/prs/dismiss';
 
 /** POST, body PrUndismissRequest: Undo a Not for me (W188). 200 whether or not it was dismissed. */
 export const PR_UNDISMISS_PATH = '/api/prs/undismiss';
 
-/** Body of a POST to PR_DISMISS_PATH: the PR, and the stateHash the page showed. */
+/** Body of a POST to PR_DISMISS_PATH: the PR, and the stateHash and redHash the page showed. */
 export interface PrDismissRequest {
   /** Lowercase `owner/name`, as PullRequestSummary.repo. */
   repo: string;
   number: number;
   seen: string;
+  /** The redHash the page showed; absent when it showed none. */
+  seenRed?: string;
 }
 
 /** Body of a POST to PR_UNDISMISS_PATH. */

@@ -4,11 +4,13 @@
 // it feeds (prNeedsAttention()), and the web UI lists it in a muted Dismissed section, not hidden.
 //
 // It comes back when something new happens: its stateHash (src/prs/parse.ts, stateHashOf()) is no
-// longer the one it was dismissed with. That's a new review request of you, a re-request included, a
+// longer the one it was dismissed with, or its redHash (redHashOf()) says a head that wasn't red at it
+// has gone red. That's a new review request of you, a re-request included, a
 // new mention of you, or on your own PR a new review, a changes request or CI going red. A refresh
 // with nothing new gives the same hash. Then the dismissal is dropped, and the PR carries
 // `dismissalEnded` for PR_DISMISSAL_ENDED_SHOWN_MS, so its row can say why it's back. A PR with no
-// stateHash, one whose inputs couldn't be read, can't be dismissed, and a dismissal of it ends.
+// stateHash, one whose inputs couldn't be read, can't be dismissed; a dismissal of it is kept but not
+// applied while it has none, since nothing new is known.
 //
 // Sessions have snooze (W154) and flag (W153) instead; this is for PRs alone, and never acts on
 // GitHub: declining the review there is a later item.
@@ -17,7 +19,8 @@
 //     200  { ok: true, dismissed }
 //     400  the body isn't a PrDismissRequest
 //     404  the PR isn't in the list
-//     409  it has no stateHash, or `seen` isn't its stateHash now: something new since the page showed it
+//     409  it has no stateHash, or `seen` and `seenRed` aren't its stateHash and redHash now: something
+//          new since the page showed it
 //     413  the body is over PR_DISMISS_BODY_MAX_BYTES
 //     415  the body isn't `Content-Type: application/json`
 //
@@ -31,8 +34,9 @@
 //
 // Kept in $PITWALL_HOME/pr-dismissals.json, 0600, written whole by rename, after reading the file
 // again and merging it, so a second pitwall on the same home doesn't lose this one's: each PR's key,
-// `owner/name#number`, when it was dismissed and the hash; the ends still shown, key and time. Never a
-// title, body or login. Read back as untrusted: opened without following a link or blocking on a
+// `owner/name#number`, when it was dismissed, the hash and, while CI failed, the red hash; the ends
+// still shown, key and time; and tombstones, key and time, for each dismissal taken away, so another
+// pitwall's merge doesn't bring it back after an Undo here. Never a title, body or login. Read back as untrusted: opened without following a link or blocking on a
 // FIFO, a regular file of this user's, not writable by group or others, at most
 // PR_DISMISSAL_FILE_MAX_BYTES; each record checked field by field, read by own property only, and
 // made again from its checked fields. At most PR_DISMISSALS_HELD_MAX of each; one older than
@@ -66,8 +70,8 @@ import { ensureLaunchDir } from './launch.js';
 export const PR_DISMISSAL_FILE_NAME = 'pr-dismissals.json';
 /** The most dismissals held, and ends shown: as many as the list can hold, so any PR listed can be. Past it the oldest goes. */
 export const PR_DISMISSALS_HELD_MAX = PRS_LIST_MAX;
-/** A record is at most about 300 bytes, with a 201-character key; 1,200 of them fit. */
-export const PR_DISMISSAL_FILE_MAX_BYTES = 512 * 1024;
+/** A record is at most about 330 bytes, with a 212-character key; 1,800 of them, the three lists full, fit. */
+export const PR_DISMISSAL_FILE_MAX_BYTES = 1024 * 1024;
 /** A request is a few hundred bytes. */
 export const PR_DISMISS_BODY_MAX_BYTES = 4 * 1024;
 /** A dismissal older than this goes, whatever its PR: as long as the web UI lists a PR no session owns. */
@@ -94,6 +98,14 @@ interface StoredDismissal {
   key: string;
   at: string;
   hash: string;
+  /** The PR's redHash when it was dismissed, if CI was failing then. */
+  red?: string;
+}
+
+/** A dismissal taken away, by Undo, by something new, or by pruning: a tombstone, so another pitwall's copy isn't merged back. */
+interface StoredRemoval {
+  key: string;
+  at: string;
 }
 
 interface StoredEnd {
@@ -118,10 +130,14 @@ export class PrDismissalStore {
   readonly #home: string | undefined;
   readonly #now: () => Date;
   /** By key, oldest first. */
-  #dismissals = new Map<string, { at: string; hash: string }>();
+  #dismissals = new Map<string, { at: string; hash: string; red?: string }>();
   #ended = new Map<string, { at: string }>();
-  /** What this run took away, and when, so a merge with the file doesn't bring it back. */
-  readonly #removed = new Map<string, number>();
+  /**
+   * What was taken away, and when, by key, oldest first: this run's and, from the file, another
+   * pitwall's on the same home. Written to the file as tombstones, so neither merges back a dismissal
+   * the other took away (W188's review).
+   */
+  #removed = new Map<string, number>();
   readonly #listeners = new Set<() => void>();
   #version = 0;
 
@@ -129,19 +145,20 @@ export class PrDismissalStore {
     this.#home = options.home === undefined ? undefined : path.resolve(options.home);
     this.#file = this.#home === undefined ? undefined : path.join(this.#home, PR_DISMISSAL_FILE_NAME);
     this.#now = options.now ?? (() => new Date());
-    const stored = this.#file === undefined ? { dismissals: [], ended: [] } : readPrDismissalFile(this.#file, this.#now());
-    for (const { key, at, hash } of stored.dismissals) this.#dismissals.set(key, { at, hash });
+    const stored = this.#file === undefined ? { dismissals: [], ended: [], removed: [] } : readPrDismissalFile(this.#file, this.#now());
+    for (const { key, at, hash, red } of stored.dismissals) this.#dismissals.set(key, { at, hash, ...(red === undefined ? {} : { red }) });
     for (const { key, at } of stored.ended) if (!this.#dismissals.has(key)) this.#ended.set(key, { at });
+    for (const { key, at } of stored.removed) this.#removed.set(key, ms(at));
     this.#prune(this.#now().getTime());
   }
 
-  /** Dismisses the PR `key` in the state `hash`. Replaces a dismissal it had. */
-  dismiss(key: string, hash: string): PrDismissal {
-    const at = this.#now().toISOString();
+  /** Dismisses the PR `key` in the state `hash`, with CI red on the head `red` when it's failing. Replaces a dismissal it had. */
+  dismiss(key: string, hash: string, red?: string): PrDismissal {
+    // Always after a tombstone for it, so the merge never takes a new dismissal for the old one's Undo.
+    const at = new Date(Math.max(this.#now().getTime(), (this.#removed.get(key) ?? -Infinity) + 1)).toISOString();
     this.#dismissals.delete(key);
-    this.#dismissals.set(key, { at, hash });
+    this.#dismissals.set(key, { at, hash, ...(red === undefined ? {} : { red }) });
     this.#ended.delete(key);
-    this.#removed.delete(key);
     this.#prune(this.#now().getTime());
     this.#saved();
     return { at };
@@ -149,16 +166,16 @@ export class PrDismissalStore {
 
   /** Takes `key`'s dismissal off, and any end still shown. False when it had neither. */
   undismiss(key: string): boolean {
-    const had = this.#dismissals.delete(key);
+    const had = this.#dismissals.has(key);
     const shown = this.#ended.delete(key);
     if (!had && !shown) return false;
-    this.#forget(key);
+    this.#drop(key);
     this.#saved();
     return true;
   }
 
   /** The dismissal of `key`, for tests and the routes. */
-  get(key: string): { at: string; hash: string } | undefined {
+  get(key: string): { at: string; hash: string; red?: string } | undefined {
     const held = this.#dismissals.get(key);
     return held === undefined ? undefined : { ...held };
   }
@@ -171,7 +188,9 @@ export class PrDismissalStore {
   /**
    * `list` with `dismissed` on each PR dismissed in the state it's in now, and `dismissalEnded` on each
    * whose dismissal ended in the last PR_DISMISSAL_ENDED_SHOWN_MS. A dismissal whose PR is listed with
-   * another stateHash, or none, ends here. One whose PR isn't listed stays, unless the list is
+   * another stateHash, or with a redHash it wasn't dismissed with (a head that wasn't red then has
+   * gone red), ends here, and says so. One whose PR has no stateHash this time, an input that couldn't
+   * be read, is kept but not applied: nothing new is known, so nothing is said either. One whose PR isn't listed stays, unless the list is
    * complete (every search worked and none was cut at PRS_MAX): then the PR has closed or isn't yours
    * any more, and it goes. A copy when any PR changed.
    */
@@ -189,14 +208,14 @@ export class PrDismissalStore {
       listed.add(key);
       const held = this.#dismissals.get(key);
       if (held !== undefined) {
-        if (pr.stateHash !== undefined && pr.stateHash === held.hash) {
+        // Can't tell this time: kept for the next list, not applied to this one, and not ended.
+        if (pr.stateHash === undefined) return pr;
+        if (pr.stateHash === held.hash && (pr.redHash === undefined || pr.redHash === held.red)) {
           changed = true;
           return { ...pr, dismissed: { at: held.at } };
         }
         // Something new: it's back, and says so.
-        this.#dismissals.delete(key);
-        this.#forget(key);
-        this.#ended.set(key, { at: new Date(now).toISOString() });
+        this.#ended.set(key, { at: new Date(this.#drop(key)).toISOString() });
         dirty = true;
       }
       const end = this.#ended.get(key);
@@ -207,9 +226,8 @@ export class PrDismissalStore {
     if (isComplete(list)) {
       for (const key of [...this.#dismissals.keys(), ...this.#ended.keys()]) {
         if (listed.has(key)) continue;
-        this.#dismissals.delete(key);
+        this.#drop(key);
         this.#ended.delete(key);
-        this.#forget(key);
         dirty = true;
       }
     }
@@ -235,14 +253,20 @@ export class PrDismissalStore {
     let dropped = false;
     for (const [key, held] of this.#dismissals) {
       if (ms(held.at) + PR_DISMISSAL_MAX_AGE_MS <= now) {
-        this.#dismissals.delete(key);
-        this.#forget(key);
+        this.#drop(key);
         dropped = true;
       }
     }
     for (const [key, end] of this.#ended) {
       if (ms(end.at) + PR_DISMISSAL_ENDED_SHOWN_MS <= now) {
         this.#ended.delete(key);
+        dropped = true;
+      }
+    }
+    // A tombstone older than any dismissal can be has nothing left to hold back.
+    for (const [key, at] of this.#removed) {
+      if (at + PR_DISMISSAL_MAX_AGE_MS <= now) {
+        this.#removed.delete(key);
         dropped = true;
       }
     }
@@ -253,9 +277,7 @@ export class PrDismissalStore {
   #cap(): boolean {
     let dropped = false;
     while (this.#dismissals.size > PR_DISMISSALS_HELD_MAX) {
-      const key = this.#dismissals.keys().next().value!;
-      this.#dismissals.delete(key);
-      this.#forget(key);
+      this.#drop(this.#dismissals.keys().next().value!);
       dropped = true;
     }
     while (this.#ended.size > PR_DISMISSALS_HELD_MAX) {
@@ -266,10 +288,18 @@ export class PrDismissalStore {
     return dropped;
   }
 
-  /** Remembers that this run took `key`'s dismissal away now, so the file's copy of it, as old or older, isn't merged back. */
-  #forget(key: string): void {
+  /**
+   * Takes `key`'s dismissal away, if it has one, and leaves a tombstone, so neither this run's merge
+   * nor another pitwall's brings back a copy as old or older: now, or just after the dismissal and any
+   * tombstone before, so it's always the newer of the two. Returns its time.
+   */
+  #drop(key: string): number {
+    const held = this.#dismissals.get(key);
+    const at = Math.max(this.#now().getTime(), held === undefined ? -Infinity : ms(held.at) + 1, (this.#removed.get(key) ?? -Infinity) + 1);
+    this.#dismissals.delete(key);
     this.#removed.delete(key);
-    this.#removed.set(key, this.#now().getTime());
+    this.#removed.set(key, at);
+    return at;
   }
 
   /** After a change of yours: written, and every view told. */
@@ -284,9 +314,11 @@ export class PrDismissalStore {
   }
 
   /**
-   * The file, read again and merged, then written whole by rename. The merge keeps, for each key, the
-   * newer of the file's record and this run's, and leaves out what this run took away since the
-   * file's was made. What the merge brought in shows from the next decorate(). Fails soft.
+   * The file, read again and merged, then written whole by rename. The merge takes the file's
+   * tombstones, the later of each key's; leaves out every dismissal and end, the file's or this run's,
+   * that a tombstone is as new as or newer than, so an Undo in another pitwall on the same home isn't
+   * reversed by this one's copy; and keeps, for each key, the newer of the file's record and this
+   * run's. What the merge changed shows from the next decorate(). Fails soft.
    */
   #write(): void {
     if (this.#file === undefined || this.#home === undefined) return;
@@ -296,18 +328,39 @@ export class PrDismissalStore {
       const removed = this.#removed.get(key);
       return removed !== undefined && removed >= ms(at);
     };
+    // An end is written with a tombstone of the same time, for the dismissal it ended: only a later one, an Undo, takes the end away.
+    const removedAfter = (key: string, at: string) => {
+      const removed = this.#removed.get(key);
+      return removed !== undefined && removed > ms(at);
+    };
     let merged = false;
-    for (const { key, at, hash } of disk.dismissals) {
+    for (const { key, at } of disk.removed) {
+      const mine = this.#removed.get(key);
+      if (mine !== undefined && mine >= ms(at)) continue;
+      this.#removed.delete(key);
+      this.#removed.set(key, ms(at));
+    }
+    for (const [key, held] of this.#dismissals) {
+      if (!removedSince(key, held.at)) continue;
+      this.#dismissals.delete(key);
+      merged = true;
+    }
+    for (const [key, end] of this.#ended) {
+      if (!removedAfter(key, end.at)) continue;
+      this.#ended.delete(key);
+      merged = true;
+    }
+    for (const { key, at, hash, red } of disk.dismissals) {
       if (removedSince(key, at)) continue;
       const mine = this.#dismissals.get(key);
       if (mine !== undefined && ms(mine.at) >= ms(at)) continue;
       if (mine === undefined && (this.#ended.get(key)?.at ?? '') >= at) continue;
-      this.#dismissals.set(key, { at, hash });
+      this.#dismissals.set(key, { at, hash, ...(red === undefined ? {} : { red }) });
       this.#ended.delete(key);
       merged = true;
     }
     for (const { key, at } of disk.ended) {
-      if (this.#dismissals.has(key) || removedSince(key, at)) continue;
+      if (this.#dismissals.has(key) || removedAfter(key, at)) continue;
       const mine = this.#ended.get(key);
       if (mine !== undefined && ms(mine.at) >= ms(at)) continue;
       this.#ended.set(key, { at });
@@ -317,14 +370,18 @@ export class PrDismissalStore {
       // Oldest first again, so the cap still drops the oldest.
       this.#dismissals = new Map([...this.#dismissals].sort((a, b) => ms(a[1].at) - ms(b[1].at)));
       this.#ended = new Map([...this.#ended].sort((a, b) => ms(a[1].at) - ms(b[1].at)));
+      this.#removed = new Map([...this.#removed].sort((a, b) => a[1] - b[1]));
       this.#prune(now.getTime());
       // The next decorate() shows them; not told from here, which can be inside one.
       this.#version += 1;
     }
+    // A tombstone added since the last cap, or merged in, can take the list past its bound.
+    this.#cap();
     const body = {
       v: 1,
-      dismissals: [...this.#dismissals].map(([key, held]) => ({ key, at: held.at, hash: held.hash })),
+      dismissals: [...this.#dismissals].map(([key, held]) => ({ key, at: held.at, hash: held.hash, ...(held.red === undefined ? {} : { red: held.red }) })),
       ended: [...this.#ended].map(([key, end]) => ({ key, at: end.at })),
+      removed: [...this.#removed].map(([key, at]) => ({ key, at: new Date(at).toISOString() })),
     };
     const temporary = `${this.#file}.${randomBytes(6).toString('hex')}.tmp`;
     try {
@@ -351,14 +408,15 @@ function isComplete(list: PullRequestList): boolean {
 }
 
 /**
- * The dismissals and ends in the file at `file` that check out; none when there's no file or it can't
- * be trusted: not a regular file of this user's, a link, a FIFO, writable by group or others, or over
- * PR_DISMISSAL_FILE_MAX_BYTES. Each record is read by own property only and made again from its
- * checked fields: a key by pattern, a time as ISO 8601 no later than `now`, a hash of 16 hex digits.
- * A key twice keeps the later. Oldest first.
+ * The dismissals, ends and tombstones in the file at `file` that check out; none when there's no file
+ * or it can't be trusted: not a regular file of this user's, a link, a FIFO, writable by group or
+ * others, or over PR_DISMISSAL_FILE_MAX_BYTES. Each record is read by own property only and made
+ * again from its checked fields: a key by pattern, a time as ISO 8601 no later than `now`, a hash and
+ * an optional red hash of 16 hex digits. A key twice keeps the later. Oldest first, at most
+ * PR_DISMISSALS_HELD_MAX of each.
  */
-export function readPrDismissalFile(file: string, now: Date = new Date()): { dismissals: StoredDismissal[]; ended: StoredEnd[] } {
-  const none = { dismissals: [], ended: [] };
+export function readPrDismissalFile(file: string, now: Date = new Date()): { dismissals: StoredDismissal[]; ended: StoredEnd[]; removed: StoredRemoval[] } {
+  const none = { dismissals: [], ended: [], removed: [] };
   const nowMs = now.getTime();
   let fd: number | undefined;
   let value: unknown;
@@ -392,27 +450,33 @@ export function readPrDismissalFile(file: string, now: Date = new Date()): { dis
     if (!isRecord(entry)) continue;
     const key = own(entry, 'key');
     const hash = own(entry, 'hash');
+    const red = own(entry, 'red');
     const at = timeOf(own(entry, 'at'));
     if (!isPrDismissalKey(key) || typeof hash !== 'string' || !HASH.test(hash) || at === undefined) continue;
+    if (red !== undefined && (typeof red !== 'string' || !HASH.test(red))) continue;
     const before = dismissals.get(key);
     if (before !== undefined && ms(before.at) >= ms(at)) continue;
     dismissals.delete(key);
-    dismissals.set(key, { key, at, hash });
+    dismissals.set(key, { key, at, hash, ...(red === undefined ? {} : { red }) });
   }
-  const ended = new Map<string, StoredEnd>();
-  const rawEnded = own(value, 'ended');
-  for (const entry of Array.isArray(rawEnded) ? (rawEnded as unknown[]).slice(0, PR_DISMISSALS_HELD_MAX * 2) : []) {
-    if (!isRecord(entry)) continue;
-    const key = own(entry, 'key');
-    const at = timeOf(own(entry, 'at'));
-    if (!isPrDismissalKey(key) || at === undefined) continue;
-    const before = ended.get(key);
-    if (before !== undefined && ms(before.at) >= ms(at)) continue;
-    ended.delete(key);
-    ended.set(key, { key, at });
-  }
+  /** A list of `{ key, at }` records: the ends shown, or the tombstones. */
+  const keyTimes = (name: string): StoredEnd[] => {
+    const kept = new Map<string, StoredEnd>();
+    const raw = own(value as Record<string, unknown>, name);
+    for (const entry of Array.isArray(raw) ? (raw as unknown[]).slice(0, PR_DISMISSALS_HELD_MAX * 2) : []) {
+      if (!isRecord(entry)) continue;
+      const key = own(entry, 'key');
+      const at = timeOf(own(entry, 'at'));
+      if (!isPrDismissalKey(key) || at === undefined) continue;
+      const before = kept.get(key);
+      if (before !== undefined && ms(before.at) >= ms(at)) continue;
+      kept.delete(key);
+      kept.set(key, { key, at });
+    }
+    return [...kept.values()];
+  };
   const oldestFirst = <T extends { at: string }>(records: Iterable<T>) => [...records].sort((a, b) => ms(a.at) - ms(b.at)).slice(-PR_DISMISSALS_HELD_MAX);
-  return { dismissals: oldestFirst(dismissals.values()), ended: oldestFirst(ended.values()) };
+  return { dismissals: oldestFirst(dismissals.values()), ended: oldestFirst(keyTimes('ended')), removed: oldestFirst(keyTimes('removed')) };
 }
 
 /**
@@ -468,9 +532,9 @@ export function withDismissals(source: PrSource, store: PrDismissalStore): PrSou
 }
 
 /** The PR a request names, or why it isn't one. `withSeen` for a dismissal, which says the hash it saw. */
-export function validatePrDismissRequest(body: unknown, withSeen: boolean): { ok: true; repo: string; number: number; seen?: string } | { ok: false; error: string } {
+export function validatePrDismissRequest(body: unknown, withSeen: boolean): { ok: true; repo: string; number: number; seen?: string; seenRed?: string } | { ok: false; error: string } {
   if (!isRecord(body)) return { ok: false, error: 'The body must be a JSON object.' };
-  const allowed = withSeen ? ['repo', 'number', 'seen'] : ['repo', 'number'];
+  const allowed = withSeen ? ['repo', 'number', 'seen', 'seenRed'] : ['repo', 'number'];
   for (const key of Object.keys(body)) if (!allowed.includes(key)) return { ok: false, error: 'The body has a field pitwall doesn’t know.' };
   const repo = own(body, 'repo');
   const number = own(body, 'number');
@@ -481,7 +545,9 @@ export function validatePrDismissRequest(body: unknown, withSeen: boolean): { ok
   if (!withSeen) return { ok: true, repo, number };
   const seen = own(body, 'seen');
   if (typeof seen !== 'string' || !HASH.test(seen)) return { ok: false, error: 'Say which state of the pull request you saw.' };
-  return { ok: true, repo, number, seen };
+  const seenRed = own(body, 'seenRed');
+  if (seenRed !== undefined && (typeof seenRed !== 'string' || !HASH.test(seenRed))) return { ok: false, error: 'Say which state of the pull request you saw.' };
+  return { ok: true, repo, number, seen, ...(seenRed === undefined ? {} : { seenRed }) };
 }
 
 export interface PrDismissalRouteSources {
@@ -516,8 +582,8 @@ export function registerPrDismissals(app: Hono, sources: PrDismissalRouteSources
     const pr = sources.prs.latest().prs.find((each) => each.repo === request.repo && each.number === request.number);
     if (pr === undefined) return answer(c, { ok: false, error: "That pull request isn't among your open pull requests." }, 404);
     if (pr.stateHash === undefined) return answer(c, { ok: false, error: "pitwall can't tell when something new happens on it, so it can't be dismissed." }, 409);
-    if (pr.stateHash !== request.seen) return answer(c, { ok: false, error: 'Something new happened on it since the page showed it. Look again before you dismiss it.' }, 409);
-    const dismissed = sources.store.dismiss(prDismissalKey(pr), pr.stateHash);
+    if (pr.stateHash !== request.seen || pr.redHash !== request.seenRed) return answer(c, { ok: false, error: 'Something new happened on it since the page showed it. Look again before you dismiss it.' }, 409);
+    const dismissed = sources.store.dismiss(prDismissalKey(pr), pr.stateHash, pr.redHash);
     return answer(c, { ok: true, dismissed }, 200);
   });
 

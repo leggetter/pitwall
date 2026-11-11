@@ -22,7 +22,8 @@
 //                 reviewed already: GitHub's search index lags, so a PR you've just reviewed can
 //                 still come back from `review-requested:@me` while its own requests have moved on
 //                 (W101's review). The page counts it (`skipped`), so it isn't taken as malformed
-//   state hash    W188's stateHash, what a dismissal (Not for me) is compared with: see stateHashOf()
+//   state hash    W188's stateHash and redHash, what a dismissal (Not for me) is compared with: see
+//                 stateHashOf() and redHashOf()
 //
 // Nothing here logs: a title from a private repo is as sensitive as session data.
 import { createHash } from 'node:crypto';
@@ -197,7 +198,11 @@ function readPullRequest(node: unknown, relation: PullRequestRelation, viewer: s
     if (request !== undefined) pr.reviewRequest = request;
   }
   const stateHash = stateHashOf(node, pr, viewer);
-  if (stateHash !== undefined) pr.stateHash = stateHash;
+  if (stateHash !== undefined) {
+    pr.stateHash = stateHash;
+    const redHash = redHashOf(node, pr);
+    if (redHash !== undefined) pr.redHash = redHash;
+  }
   return pr;
 }
 
@@ -217,9 +222,8 @@ const NODE_ID = /^[A-Za-z0-9_=-]{1,100}$/;
  *     review, a changes request included, changes it. Your own replies in a review's thread are
  *     reviews too, which is why they're left out: answering one doesn't bring it back.
  *   - `changes`: GitHub's decision is changes requested, for one asked with no review it can read.
- *   - `red`: while CI fails, the head commit's oid, so CI going red, on a new push or again after
- *     going green, changes it, and a push alone, with CI pending, doesn't. Undefined while it fails
- *     and the oid can't be read.
+ *   - Not its CI, which redHashOf() hashes on its own, so CI pending or passing, as on a re-run or a
+ *     push, leaves this hash as it was.
  * - For one that isn't yours, from its timeline:
  *   - `request`: when your review was last requested, of you by name or of a team, so a new request
  *     or a re-request changes it. A request of someone else doesn't.
@@ -236,17 +240,13 @@ export function stateInputsOf(node: Record<string, unknown>, pr: Pick<PullReques
   if (pr.relation === 'authored') {
     const review = newestReviewOf(node.reviews, me);
     if (review === undefined) return undefined;
-    let red: string | null = null;
-    if (pr.checks === 'failing') {
-      const oid = headOidOf(node.commits);
-      if (oid === undefined) return undefined;
-      red = oid;
-    }
-    return { v: 1, relation: pr.relation, review, changes: pr.review === 'changes-requested', red };
+    // A failing head whose oid can't be read leaves no way to tell a new red from an old one.
+    if (pr.checks === 'failing' && headOidOf(node.commits) === undefined) return undefined;
+    return { v: 2, relation: pr.relation, review, changes: pr.review === 'changes-requested' };
   }
   const timeline = newestOfYou(node.timelineItems, me);
   if (timeline === undefined) return undefined;
-  return { v: 1, relation: pr.relation, ...timeline };
+  return { v: 2, relation: pr.relation, ...timeline };
 }
 
 /** W188's stateHash: 64 bits of the SHA-256 of stateInputsOf(), as 16 hex digits, or undefined with no inputs. */
@@ -254,6 +254,19 @@ export function stateHashOf(node: Record<string, unknown>, pr: Pick<PullRequestS
   const inputs = stateInputsOf(node, pr, viewer);
   if (inputs === undefined) return undefined;
   return createHash('sha256').update(JSON.stringify(inputs)).digest('hex').slice(0, 16);
+}
+
+/**
+ * W188's redHash, for your own PR while its CI fails: 64 bits of the SHA-256 of the head commit's
+ * oid, so a dismissal ends when a head that wasn't red at it goes red, on a new push or after it was
+ * green when you dismissed it. Undefined while CI is pending, passing or has no checks, as on a
+ * re-run or just after a push, when nothing new has happened yet; a dismissal holds through that.
+ * Undefined for a PR that isn't yours, whose CI is its author's.
+ */
+export function redHashOf(node: Record<string, unknown>, pr: Pick<PullRequestSummary, 'relation' | 'checks'>): string | undefined {
+  if (pr.relation !== 'authored' || pr.checks !== 'failing') return undefined;
+  const oid = headOidOf(node.commits);
+  return oid === undefined ? undefined : createHash('sha256').update(`red:${oid}`).digest('hex').slice(0, 16);
 }
 
 /** The id of the newest review not by `me`, null when there's none, or undefined when one can't be read. */
