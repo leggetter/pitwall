@@ -135,10 +135,23 @@ textarea {
   grid-template-areas: 'repos list';
 }
 
-/* The session view's column takes the width its pane has: see .session-pane below. */
+/*
+ * The session view's column takes the width its pane has: see .session-pane below.
+ *
+ * While the supervisor's panel is a column of its own (W187), below 1,520 px the repo list folds into
+ * the header's Repos drawer (data-repos="folded", from Dashboard.tsx and layout.ts), so it takes no
+ * column, and the panel is --pw-supervisor-col-folded wide rather than --pw-supervisor-col: 560 px,
+ * giving way to 360 px before the session view goes under its 560 px. panelWidth.ts's
+ * supervisorColumn() works out the same, for the divider.
+ */
 .app[data-layout='three-columns'] .columns {
   grid-template-columns: var(--pw-sidebar-w) minmax(var(--pw-list-min-w), 1fr) auto;
   grid-template-areas: 'repos list view';
+}
+
+.app[data-layout='three-columns'][data-repos='folded'] .columns {
+  grid-template-columns: minmax(var(--pw-list-min-w), 1fr) auto;
+  grid-template-areas: 'list view';
 }
 
 .columns > .repo-list {
@@ -173,32 +186,27 @@ textarea {
   min-height: 0;
 }
 
+.app[data-layout='three-columns'][data-repos='folded'] .session-pane {
+  max-width: calc(100cqw - var(--pw-list-min-w));
+}
+
 /* The views in the pane, inert under the supervisor's panel below 1,200 px (W177): no box of their own. */
 .pane-views {
   display: contents;
 }
 
 /*
- * The supervisor's panel open (W177): the pane widens by the panel's width, as far as the session list's
- * 360 px allows, so on a wide window the view keeps its width beside it, and on a narrower one the panel
- * covers the view's right. The view keeps its own width either way, so its terminal never reflows as
- * the panel opens or closes.
+ * The supervisor's panel open (W187): the pane widens by the panel's column, as far as the session
+ * list's 360 px allows, and the panel takes its right, so the session list gives way first, then the
+ * view, which is never covered. The view, or "Select a session", takes the rest beside it, so it
+ * changes width once as the panel opens and once as it closes, with no animation of its width.
  */
 .app[data-layout='three-columns'] .session-pane[data-panel-open] {
-  width: calc(var(--pw-view-w) + var(--pw-supervisor-w));
+  width: calc(var(--pw-view-w) + var(--pw-supervisor-col));
 }
 
-.app[data-layout='three-columns'] .session-pane[data-panel-open] .session-view.in-column:not(.view-panel) {
-  flex: none;
-  width: min(var(--pw-view-w), 100%);
-}
-
-/*
- * "Select a session" fills the pane but keeps clear of the panel, by the panel's own width (below), so
- * it's centred in what the panel leaves in sight: at least the repo list's 240 px.
- */
-.app[data-layout='three-columns'] .session-pane[data-panel-open] .session-view-empty {
-  padding-right: max(var(--pw-list-min-w), min(var(--pw-supervisor-w), 100% - var(--pw-sidebar-w)));
+.app[data-layout='three-columns'][data-repos='folded'] .session-pane[data-panel-open] {
+  width: calc(var(--pw-view-w) + var(--pw-supervisor-col-folded));
 }
 
 /*
@@ -2249,22 +2257,23 @@ mark.match {
 }
 
 /*
- * The supervisor's panel (W177; docs/design-system.md, 4: Supervisor): over the page, at
- * --pw-z-supervisor, above the view it's beside. From 1,200 px, at the right of the third column, full
- * height, --pw-supervisor-w wide, but leaving at least the repo list's width of the view in sight, and
- * never narrower than the session list may be. Below, it's the view over the list, as wide, over it.
+ * The supervisor's panel (W177, W187; docs/design-system.md, 4: Supervisor). From 1,200 px, a column of
+ * its own at the pane's right, full height, --pw-supervisor-col wide, with a 1 px edge on its left as
+ * the divider draws between the list and the view: beside the view, over nothing, so no z-index. Below,
+ * it's the view over the list, as wide, over it, at --pw-z-supervisor, above the view it covers.
  */
-.session-view.view-panel {
+.session-view.overlay.view-panel {
   z-index: var(--pw-z-supervisor);
 }
 
 .app[data-layout='three-columns'] .session-pane > .session-view.view-panel {
-  position: absolute;
-  inset-block: 0;
-  right: 0;
-  width: max(var(--pw-list-min-w), min(var(--pw-supervisor-w), 100% - var(--pw-sidebar-w)));
-  min-width: 0;
-  box-shadow: var(--pw-shadow-overlay);
+  flex: none;
+  width: var(--pw-supervisor-col);
+  border-left: 1px solid var(--pw-border);
+}
+
+.app[data-layout='three-columns'][data-repos='folded'] .session-pane > .session-view.view-panel {
+  width: var(--pw-supervisor-col-folded);
 }
 
 /* Sliding in from the right as it opens over the list, or as the supervisor's panel; not when the window crosses 1,200 px. */
@@ -4482,7 +4491,7 @@ ol.md-list {
     }
   }
 
-  /* What sits over the page: the session view over the list, the drawer, dialogs, menus, toasts and tooltips. */
+  /* What sits over the page: the session view over the list, the drawer, dialogs, menus, toasts and tooltips; and the supervisor's column's edge (W187). */
   .session-view.overlay,
   .session-view.view-panel {
     border-left: 1px solid CanvasText;
