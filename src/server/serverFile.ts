@@ -11,8 +11,11 @@
 //
 // - At start, a CLI run writes its own, replacing whatever is there. A run under `npm run dev` doesn't
 //   replace a live CLI run's, so Phil's everyday pitwall keeps the note while he develops.
-// - Every RECLAIM_MS it looks again, and writes its own only when the file is gone, can't be read, or
-//   names a pid that no longer runs. It never replaces a live pitwall's then, so two never take turns.
+// - Every RECLAIM_MS it looks again. Its own file it writes again, so the file's mtime says it's alive:
+//   the hook ignores a file older than three of these (W176's review, F1), so a pitwall killed without
+//   its exit hook (SIGKILL, out of memory) stops being named within about 90 s, even if its pid is
+//   reused and something else takes its port. Another's it replaces only when the file is gone, can't
+//   be read, or names a pid that no longer runs, never a live pitwall's, so two never take turns.
 // - On close it deletes the file only while it still names this run's URL and pid, so the one still
 //   running keeps its file, or gets it back within RECLAIM_MS of the other's close.
 //
@@ -33,8 +36,15 @@ export const SERVER_FILE_NAME = 'server.json';
 /** The most the file may hold. pitwall's own is under 100 bytes. */
 export const SERVER_FILE_MAX_BYTES = 1024;
 
-/** How often a running pitwall looks at the file again, to take it back once its holder has gone. */
+/**
+ * How often a running pitwall writes its own file again, so its mtime stays fresh, and looks at
+ * another's, to take it back once its holder has gone. The hook trusts a file at most
+ * SERVER_FILE_FRESH_MS old (plugin/hooks/sessionNote.mjs, FRESH_MS).
+ */
 export const RECLAIM_MS = 30_000;
+
+/** How old a server file the hook still trusts: three of RECLAIM_MS. */
+export const SERVER_FILE_FRESH_MS = 3 * RECLAIM_MS;
 
 /** The only URL the file may hold: pitwall's own address, as startServer() gives it. */
 const SERVER_URL = /^http:\/\/127\.0\.0\.1:([1-9][0-9]{0,4})$/;
@@ -154,13 +164,15 @@ export function claimServerFile(options: ServerFileOptions): ServerFileHandle {
   const existing = readServerFile(file);
   if (!(options.dev && existing !== undefined && existing.dev !== true && existing.pid !== pid && alive(existing.pid))) write();
 
-  // Then: take it back only from nobody, never from a live pitwall.
+  // Then: write its own again, so its mtime stays fresh, and take the file back only from nobody,
+  // never from a live pitwall. Between this read and the rename another run can write its own, which
+  // this replaces; that run takes it back at its next look once this one has gone, so it heals itself.
   const reclaimMs = options.reclaimMs ?? RECLAIM_MS;
   const timer =
     reclaimMs > 0
       ? setInterval(() => {
           const now = readServerFile(file);
-          if (now === undefined || (!ours(now) && !alive(now.pid))) write();
+          if (now === undefined || ours(now) || !alive(now.pid)) write();
         }, reclaimMs)
       : undefined;
   timer?.unref();
@@ -172,6 +184,8 @@ export function claimServerFile(options: ServerFileOptions): ServerFileHandle {
       if (closed) return;
       closed = true;
       if (timer !== undefined) clearInterval(timer);
+      // Between this read and the unlink another run can write its own, which this deletes; that run
+      // writes it again at its next look, within RECLAIM_MS.
       try {
         if (ours(readServerFile(file))) unlinkSync(file);
       } catch {

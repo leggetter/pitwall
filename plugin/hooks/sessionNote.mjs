@@ -16,6 +16,9 @@
 // - opened with O_NOFOLLOW and O_NONBLOCK, so a planted link can't redirect it and a FIFO can't hang it;
 // - fstat: a regular file of this user's, not writable by group or others, at most MAX_BYTES;
 // - read only up to the size fstat gave, whatever the file grows to meanwhile;
+// - its mtime at most FRESH_MS old, and not more than FUTURE_SKEW_MS ahead: pitwall writes it again every
+//   30 s, so a pitwall killed without its exit hook stops being named within about 90 s, even when its
+//   pid is reused and another listener takes its port (W176's review, F1);
 // - its URL exactly `http://127.0.0.1:<port>`, its pid a positive integer above 1;
 // - then trusted only while kill(pid, 0) finds that process and the port accepts a connection within
 //   CONNECT_TIMEOUT_MS, so a crashed pitwall's file, whose port something else may have taken, adds nothing.
@@ -30,6 +33,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const MAX_BYTES = 1024;
+/** How old a file is still trusted: three of pitwall's 30 s rewrites (src/server/serverFile.ts, SERVER_FILE_FRESH_MS). */
+export const FRESH_MS = 90_000;
+/** How far ahead of now an mtime may be, for clock skew between the write and this read. */
+export const FUTURE_SKEW_MS = 10_000;
 export const CONNECT_TIMEOUT_MS = 300;
 /** The most of the hook's input read from stdin, and how long to wait for its end. */
 const INPUT_MAX_BYTES = 64 * 1024;
@@ -50,11 +57,12 @@ export function homeOf(env, home) {
 }
 
 /**
- * The server file's URL, port and pid, or undefined when it's missing or can't be trusted.
+ * The server file's URL, port and pid, or undefined when it's missing, stale or can't be trusted.
  * @param {string} file
+ * @param {number} [now] the time, in ms since the epoch
  * @returns {{ url: string, port: number, pid: number } | undefined}
  */
-export function readServer(file) {
+export function readServer(file, now = Date.now()) {
   /** @type {number | undefined} */
   let fd;
   /** @type {unknown} */
@@ -64,6 +72,7 @@ export function readServer(file) {
     const stat = fstatSync(fd);
     const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
     if (!stat.isFile() || (uid !== undefined && stat.uid !== uid) || (stat.mode & 0o022) !== 0 || stat.size > MAX_BYTES) return undefined;
+    if (!(stat.mtimeMs >= now - FRESH_MS && stat.mtimeMs <= now + FUTURE_SKEW_MS)) return undefined;
     const buffer = Buffer.alloc(stat.size);
     let read = 0;
     while (read < buffer.length) {

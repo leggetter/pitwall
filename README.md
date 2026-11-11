@@ -198,24 +198,19 @@ pitwall ships a Claude Code plugin, in [`plugin/`](plugin/), for the sessions it
 - **A short note at its start, while pitwall runs:** pitwall watches this session, at its link; a session it mentions gets a few words on what it is and its short ID linked in pitwall; and the `pitwall` skill proposes a new session. A `SessionStart` hook adds it, at a session's start and at `/clear`, compact, resume and fork. With no pitwall running it adds nothing. It's four lines, about 200 tokens, plus about 160 for the skill's listing, measured on a fresh session's first call (W176).
 - **The `pitwall` skill (`pitwall:pitwall`)**, which teaches a session to propose a new one: it ends its turn with a fenced `spin-off` block naming a folder, a name and the first prompt. Ask a session to spin off a piece of work, or let it propose one when it finds separate work. The block is the session's text, so pitwall treats it as untrusted: it shows nothing that doesn't show as itself, checks the folder is under a root, and starts nothing until you click Start session.
 
-**Install it** from the clone, one of two ways. Either works for every repo, since both install at user scope.
+**Install it from a folder that only changes when you update it.** A local marketplace's plugin runs in place, read straight from its folder: a change to its files, the hook included, takes effect at the next session start, or at `/reload-plugins` in a session, with no `claude plugin update` ([Claude Code's docs](https://code.claude.com/docs/en/plugin-marketplaces#test-an-edit-to-a-plugin), and spike 015, finding 1). The hook runs at the start of every session on the machine, so install from a dedicated clone you keep on `main`, or from a copy, never from the clone you work in: there, checking out a branch or someone else's pull request (`gh pr checkout`) would run that branch's hook in every new session.
 
-- As a local marketplace, the folder itself; after a `git pull`, `claude plugin update pitwall@pitwall-local` picks up a change, for sessions started after it:
+A dedicated clone, kept on `main` (or `cp -R plugin ~/pitwall-plugin` from a clone on `main`, and install that folder instead). Either way installs at user scope, for every repo:
 
-  ```
-  claude plugin marketplace add "$PWD/plugin"
-  claude plugin install pitwall@pitwall-local
-  ```
+```
+git clone https://github.com/leggetter/pitwall.git ~/pitwall-plugin-source
+claude plugin marketplace add ~/pitwall-plugin-source/plugin
+claude plugin install pitwall@pitwall-local
+```
 
-- Or in one step, which adds the same marketplace first:
+`claude plugin install pitwall --marketplace ~/pitwall-plugin-source/plugin` does the last two in one step. To update, `git -C ~/pitwall-plugin-source pull` (or copy the folder again), and sessions started after it get the change. To try it in one session without installing it, start that session with `claude --plugin-dir <folder>`. `claude plugin uninstall pitwall@pitwall-local` removes it.
 
-  ```
-  claude plugin install pitwall --marketplace "$PWD/plugin"
-  ```
-
-Spike 015 (the plugin's spike) found a local marketplace's plugin runs from the clone in place, so every session can follow whatever the clone has checked out, a branch or someone's pull request included. If you check out others' work there, install from a separate clone you keep on `main`. To try it in one session without installing it, start that session with `claude --plugin-dir "$PWD/plugin"`. `claude plugin uninstall pitwall@pitwall-local` removes it.
-
-**How pitwall is found:** pitwall writes its address and process id, never its token, to `~/.pitwall/server.json` while it runs, and deletes it on close. The hook adds the note only while that process runs and its port answers. A background session's hooks get Claude Code's background service's environment, not your shell's, so they read only `~/.pitwall/server.json`; a pitwall started with another `PITWALL_HOME` reaches only foreground sessions started with the same `PITWALL_HOME`. A session that was already running gets the note at its next `/clear`, compact or resume; attaching to it, from a terminal or pitwall's Terminal tab, adds nothing.
+**How pitwall is found:** pitwall writes its address and process id, never its token, to `~/.pitwall/server.json` while it runs, and deletes it on close. pitwall writes it again every 30 s, and the hook adds the note only while the file is under 90 s old, that process runs and its port answers. A background session's hooks get Claude Code's background service's environment, not your shell's, so they read only `~/.pitwall/server.json`; a pitwall started with another `PITWALL_HOME` reaches only foreground sessions started with the same `PITWALL_HOME`. A session that was already running gets the note at its next `/clear`, compact or resume; attaching to it, from a terminal or pitwall's Terminal tab, adds nothing.
 
 **The `spin-off` skill it replaces:** before the plugin, the same skill was `skills/spin-off/`, to install as a personal skill. It's now the plugin's `pitwall` skill, with the same block, so pitwall reads proposals from either. If you linked or copied it into `~/.claude/skills/spin-off`, remove that once the plugin is installed, so a session doesn't see the skill twice: `rm -r ~/.claude/skills/spin-off`.
 

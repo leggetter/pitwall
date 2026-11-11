@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -96,6 +96,18 @@ describe('claimServerFile', () => {
     expect(body(dir)).toEqual({ v: 1, url: URL_A, pid: 101 });
     first.close();
     expect(existsSync(fileOf(dir))).toBe(false);
+  });
+
+  it('writes its own file again at each look, so its mtime stays fresh for the hook (F1)', () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const dir = home();
+    const handle = claimServerFile({ home: dir, url: URL_A, dev: false, pid: 101, alive, reclaimMs: 1000 });
+    const old = new Date(Date.now() - 600_000);
+    utimesSync(fileOf(dir), old, old);
+    vi.advanceTimersByTime(1000);
+    expect(statSync(fileOf(dir)).mtimeMs).toBeGreaterThan(Date.now() - 60_000);
+    expect(body(dir)).toEqual({ v: 1, url: URL_A, pid: 101 });
+    handle.close();
   });
 
   it('takes the file back from a crashed pitwall, and from a file it can’t read', () => {

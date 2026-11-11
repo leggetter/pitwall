@@ -3,14 +3,14 @@
 // homes under the temp directory, never ~/.pitwall, and a listener of the test's own for "pitwall".
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { createServer, type AddressInfo, type Server } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { homeOf, isAlive, listening, noteFor, readServer, runHook } from '../../plugin/hooks/sessionNote.mjs';
-import { claimServerFile, readServerFile } from '../server/serverFile.js';
+import { FRESH_MS, FUTURE_SKEW_MS, homeOf, isAlive, listening, noteFor, readServer, runHook } from '../../plugin/hooks/sessionNote.mjs';
+import { claimServerFile, readServerFile, SERVER_FILE_FRESH_MS } from '../server/serverFile.js';
 
 const SCRIPT = fileURLToPath(new URL('../../plugin/hooks/sessionNote.mjs', import.meta.url));
 const SESSION = '0f8e2c1a-3b4d-4e5f-8a9b-0c1d2e3f4a5b';
@@ -205,6 +205,23 @@ describe('runHook', () => {
     expect(await runHook(input, {}, { home, alive: () => false, listening: async () => true })).toBe('');
     expect(await runHook(input, {}, { home, alive: () => true, listening: async () => false })).toBe('');
     expect(await runHook(input, {}, { home, alive: () => true, listening: async () => true })).not.toBe('');
+  });
+
+  it('nothing from a file pitwall hasn’t written for over 90 s, or one dated ahead: a killed pitwall whose pid and port others took (F1)', async () => {
+    const { home, pitwall } = userHome();
+    // A live pid (this test's) and a port something listens on, as after a SIGKILL, a reused pid and a taken port.
+    writeServer(pitwall, good());
+    const at = (ms: number) => utimesSync(fileIn(pitwall), new Date(ms), new Date(ms));
+    at(Date.now() - FRESH_MS - 30_000);
+    expect(await hook(home)).toBe('');
+    expect((await runScript({ HOME: home })).stdout).toBe('');
+    at(Date.now() + FUTURE_SKEW_MS + 60_000);
+    expect(await hook(home)).toBe('');
+    at(Date.now() - FRESH_MS + 30_000);
+    expect(await hook(home)).not.toBe('');
+    at(Date.now() + 1000);
+    expect(await hook(home)).not.toBe('');
+    expect(FRESH_MS).toBe(SERVER_FILE_FRESH_MS);
   });
 
   it('reads the file as serverFile.ts does', () => {
