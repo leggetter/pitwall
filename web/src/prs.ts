@@ -141,7 +141,7 @@ export function parseRootOwners(value: unknown): RootOwners[] | undefined {
 /** One PR from the 'prs' message, or undefined when it isn't the contract's shape. */
 export function parsePullRequest(value: unknown): PullRequestSummary | undefined {
   if (!isRecord(value)) return undefined;
-  const { url, repo, repoLabel, number, title, draft, createdAt, updatedAt, head, checks, failingChecks, failingCount, review, mergeable, relation, reviewRequest, place, stateHash, dismissed, dismissalEnded } = value;
+  const { url, repo, repoLabel, number, title, draft, createdAt, updatedAt, head, checks, failingChecks, failingCount, review, mergeable, relation, reviewRequest, place, stateHash, redHash, dismissed, dismissalEnded } = value;
   if (typeof repo !== 'string' || !isRepoKey(repo)) return undefined;
   if (typeof repoLabel !== 'string' || repoLabel.toLowerCase() !== repo) return undefined;
   if (typeof number !== 'number' || !Number.isSafeInteger(number) || number < 1) return undefined;
@@ -186,6 +186,7 @@ export function parsePullRequest(value: unknown): PullRequestSummary | undefined
   if (placed) pr.place = placed;
   // Not for me (W188): the state hash the page sends back, and when it was dismissed or came back.
   if (typeof stateHash === 'string' && STATE_HASH.test(stateHash)) pr.stateHash = stateHash;
+  if (typeof redHash === 'string' && STATE_HASH.test(redHash)) pr.redHash = redHash;
   if (isRecord(dismissed) && isTime(dismissed.at)) pr.dismissed = { at: dismissed.at };
   else if (isRecord(dismissalEnded) && isTime(dismissalEnded.at)) pr.dismissalEnded = { at: dismissalEnded.at };
   return pr;

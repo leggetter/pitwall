@@ -339,7 +339,10 @@ describe('runFile', () => {
         // Not at the child's exit, a moment after the SIGTERM, but once the SIGKILL had removed the grandchild.
         expect(isRunning(grandchild)).toBe(false);
         expect(Date.now() - started).toBeGreaterThanOrEqual(1_900);
-        expect(Date.now() - started).toBeLessThan(2_600);
+        // The code gives up 2.5 s after the SIGTERM (exec.ts, `signal`), so this only checks it didn't
+        // wait for the 60 s timeout. Not 2.6 s: a loaded machine's timers and the test's own awaits
+        // took it past that in full runs (W188's review), so the margin is about 1.5 s.
+        expect(Date.now() - started).toBeLessThan(4_000);
       } finally {
         kill(grandchild);
         await rm(dir, { recursive: true, force: true });

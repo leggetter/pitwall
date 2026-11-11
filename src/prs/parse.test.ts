@@ -422,13 +422,22 @@ describe('stateHashOf: when a dismissed PR comes back (W188)', () => {
       expect(hash(own({}, [review('R1'), review('R2', null)]))).not.toBe(hash(own()));
     });
 
-    it('comes back when CI goes red, and when it goes red again on a new push; a push alone, with CI pending, doesn’t', () => {
-      const green = hash(own({}, undefined, OID_A, rollup('SUCCESS')));
-      const red = hash(own({}, undefined, OID_A, rollup('FAILURE')));
-      expect(red).not.toBe(green);
-      expect(hash(own({}, undefined, OID_B, rollup('PENDING')))).toBe(green);
-      expect(hash(own({}, undefined, OID_B, rollup('FAILURE')))).not.toBe(red);
-      expect(hash(own({}, undefined, OID_A, rollup('ERROR')))).toBe(red);
+    it('hashes red CI on its own: set only while a head fails, by its oid, so pending on a re-run or a push leaves both hashes as they were', () => {
+      const parsed = (oid: string, state: string) => parsePullRequest(own({}, undefined, oid, rollup(state)), 'authored', VIEWER)!;
+      const green = parsed(OID_A, 'SUCCESS');
+      const red = parsed(OID_A, 'FAILURE');
+      expect(green.redHash).toBeUndefined();
+      expect(red.redHash).toMatch(/^[0-9a-f]{16}$/);
+      // CI is no part of the state hash: red, pending or green, on any head, it's the same.
+      for (const [oid, state] of [[OID_A, 'PENDING'], [OID_B, 'PENDING'], [OID_B, 'FAILURE'], [OID_B, 'SUCCESS']] as const) expect(parsed(oid, state).stateHash).toBe(green.stateHash);
+      // A re-run, or a push, with CI pending: no red hash, so a dismissal made while it was red holds.
+      expect(parsed(OID_A, 'PENDING').redHash).toBeUndefined();
+      expect(parsed(OID_B, 'PENDING').redHash).toBeUndefined();
+      // Red again on the same head: the same red hash. A new head gone red: another.
+      expect(parsed(OID_A, 'ERROR').redHash).toBe(red.redHash);
+      expect(parsed(OID_B, 'FAILURE').redHash).not.toBe(red.redHash);
+      // Never on a PR that isn't yours: its CI is its author's.
+      expect(parsePullRequest(theirs([requested('2026-10-01T09:00:00Z')], { commits: { nodes: [{ commit: { oid: OID_A, statusCheckRollup: rollup('FAILURE') } }] } }), 'review-requested', VIEWER)?.redHash).toBeUndefined();
     });
 
     it('has none when its reviews, the oid of a red head, or your login can’t be read', () => {

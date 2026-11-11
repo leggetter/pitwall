@@ -66,7 +66,7 @@ const UNAUTHORIZED = "pitwall didn't accept the page's key. Reload the page.";
 /** Dismisses `pr` in the state the page shows. Never rejects. */
 export async function dismissPr(api: ApiClient, pr: PullRequestSummary): Promise<DismissOutcome> {
   if (pr.stateHash === undefined) return { kind: 'failed', error: "pitwall can't tell when something new happens on it, so it can't be dismissed." };
-  const result = await api.post(PR_DISMISS_PATH, { repo: pr.repo, number: pr.number, seen: pr.stateHash });
+  const result = await api.post(PR_DISMISS_PATH, { repo: pr.repo, number: pr.number, seen: pr.stateHash, ...(pr.redHash === undefined ? {} : { seenRed: pr.redHash }) });
   const body = result.kind === 'unauthorized' ? undefined : asPrDismissResult(result.body);
   if (body === undefined) return { kind: 'failed', error: result.kind === 'unauthorized' ? UNAUTHORIZED : "pitwall didn't dismiss it: it didn't answer as expected." };
   if (!body.ok) return { kind: 'failed', error: body.error };
