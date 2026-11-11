@@ -10,8 +10,9 @@
 //
 // The third column shows one thing (M4, W95): a session, or a pull request, ?pr= (openPr.ts). So a
 // session opened drops ?pr=, in the same history entry, and a PR opened drops ?session=. The
-// supervisor's panel, ?supervisor (W177, the supervisor opens over the page, supervisor.ts), sits
-// over the page beside either, so neither drops it: it stays last in the query string.
+// supervisor's panel, ?supervisor (W177, W187, supervisor.ts), sits beside either, as a column of its
+// own that pushes the other columns from 1,200 px and over the page below that, so neither drops it:
+// it stays last in the query string.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { browserNavigation, type NavigationEnv } from './selection.js';

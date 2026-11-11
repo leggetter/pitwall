@@ -104,11 +104,12 @@
 // and PRs' alike, and show each in the view while one is open.
 //
 // The supervisor (M5, W114, supervisor.ts): while pitwall runs one, the header's Supervisor button,
-// last on its right (W182), opens its panel over the page (SupervisorView.tsx, W177), as ?supervisor,
-// beside the open session's or PR's view, which stays, in one pushed history entry. It stays open as
-// the selection, the open session or the root tab changes, until it's closed. From 1,200 px it covers
-// the right of the third column, which widens for it while the session list keeps its 360 px; below,
-// it lies over the view over the list, which is inert under it.
+// last on its right (W182), opens its panel (SupervisorView.tsx, W177), as ?supervisor, beside the
+// open session's or PR's view, which stays, in one pushed history entry. It stays open as the
+// selection, the open session or the root tab changes, until it's closed. From 1,200 px it's a column
+// of its own that pushes the other columns left, covering none of them, and below 1,520 px folds the
+// repo list into the header's Repos drawer while it's open (W187); below 1,200 px it's over the page,
+// over the view over the list, which is inert under it.
 // Nothing starts it but its Start and a message you send it: not opening the view, the URL or a
 // reload. Its drafts that wait on you count in Needs you's badge, in every root tab, and in the page
 // title; Needs you says they're there, with a way to open the view. While it's held or has failed, the

@@ -36,7 +36,7 @@ export function Divider({ store, beside = false }: DividerProps) {
     store.setBeside(beside);
   }, [store, beside]);
   const [dragging, setDragging] = useState(false);
-  const drag = useRef<{ x: number; width: number } | undefined>(undefined);
+  const drag = useRef<{ x: number; width: number; moved: boolean } | undefined>(undefined);
 
   // The app's width, for the maximum, kept up to date as the window or the frame is resized.
   useLayoutEffect(() => {
@@ -96,7 +96,7 @@ export function Divider({ store, beside = false }: DividerProps) {
     // No text selection while dragging; focus still moves here, as for any control.
     event.preventDefault();
     event.currentTarget.focus();
-    drag.current = { x: event.clientX, width: shown };
+    drag.current = { x: event.clientX, width: shown, moved: false };
     try {
       // So the drag follows the pointer off the divider. A pointer the browser no longer tracks throws.
       event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -108,15 +108,19 @@ export function Divider({ store, beside = false }: DividerProps) {
 
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
     const start = drag.current;
-    if (!start) return;
+    if (!start || (!start.moved && event.clientX === start.x)) return;
+    start.moved = true;
     set(start.width + (start.x - event.clientX), false);
   };
 
+  // Saved only once the pointer has moved: a plain click asks for nothing, so it doesn't save the width
+  // shown, clamped as it may be while the supervisor's column is open (W187), over the one asked for.
   const endDrag = () => {
-    if (!drag.current) return;
+    const ended = drag.current;
+    if (!ended) return;
     drag.current = undefined;
     setDragging(false);
-    store.set(store.get().requested, true);
+    if (ended.moved) store.set(store.get().requested, true);
   };
 
   return (

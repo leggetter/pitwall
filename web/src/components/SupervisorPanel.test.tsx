@@ -270,6 +270,39 @@ describe('from 1,200 px, a column of its own (W187): the others give way, the re
     await click(item());
     expect([divider().getAttribute('aria-valuemax'), divider().getAttribute('aria-valuenow')]).toEqual(['1320', '744']);
   });
+
+  it('a plain click on the divider, with no move, saves nothing: a wider width asked for stays once the panel closes', async () => {
+    setWidth(1920);
+    const writes: [string, string][] = [];
+    const history = fakeHistory(`?view=all&session=${beta.sessionId}`);
+    const api = createApiClient({ apiKey: 'k'.repeat(43), fetch: withoutSubagents(fakeServer()) });
+    const values = new Map([[BACKGROUND_TAB_KEY, 'conversation'], ['pitwall.panel-width.v1', '1000']]);
+    const storage: StorageSource = () => ({ getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { writes.push([key, value]); values.set(key, value); } });
+    render(
+      <ApiContext.Provider value={api}>
+        <Dashboard view={{ state: 'live', snapshot: snap() }} navigation={history.navigation} storage={storage} />
+      </ApiContext.Provider>,
+    );
+    await settle();
+    const divider = () => screen.getByRole('separator', { name: 'Resize the session view' });
+    expect(divider().getAttribute('aria-valuenow')).toBe('1000');
+    await click(item());
+    expect(divider().getAttribute('aria-valuenow')).toBe('760');
+    fireEvent.pointerDown(divider(), { button: 0, clientX: 900, pointerId: 1 });
+    fireEvent.pointerMove(divider(), { clientX: 900, pointerId: 1 });
+    fireEvent.pointerUp(divider(), { clientX: 900, pointerId: 1 });
+    await settle();
+    expect(writes.filter(([key]) => key === 'pitwall.panel-width.v1')).toEqual([]);
+    await click(item());
+    expect(divider().getAttribute('aria-valuenow')).toBe('1000');
+    // A drag that moves does save, the width shown then.
+    await click(item());
+    fireEvent.pointerDown(divider(), { button: 0, clientX: 900, pointerId: 1 });
+    fireEvent.pointerMove(divider(), { clientX: 932, pointerId: 1 });
+    fireEvent.pointerUp(divider(), { clientX: 932, pointerId: 1 });
+    await settle();
+    expect(writes.filter(([key]) => key === 'pitwall.panel-width.v1')).toEqual([['pitwall.panel-width.v1', '728']]);
+  });
 });
 
 describe('below 1,200 px: over the view over the list', () => {
