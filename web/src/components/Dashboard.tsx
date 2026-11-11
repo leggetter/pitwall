@@ -104,11 +104,12 @@
 // and PRs' alike, and show each in the view while one is open.
 //
 // The supervisor (M5, W114, supervisor.ts): while pitwall runs one, the header's Supervisor button,
-// last on its right (W182), opens its panel over the page (SupervisorView.tsx, W177), as ?supervisor,
-// beside the open session's or PR's view, which stays, in one pushed history entry. It stays open as
-// the selection, the open session or the root tab changes, until it's closed. From 1,200 px it covers
-// the right of the third column, which widens for it while the session list keeps its 360 px; below,
-// it lies over the view over the list, which is inert under it.
+// last on its right (W182), opens its panel (SupervisorView.tsx, W177), as ?supervisor, beside the
+// open session's or PR's view, which stays, in one pushed history entry. It stays open as the
+// selection, the open session or the root tab changes, until it's closed. From 1,200 px it's a column
+// of its own that pushes the other columns left, covering none of them, and below 1,520 px folds the
+// repo list into the header's Repos drawer while it's open (W187); below 1,200 px it's over the page,
+// over the view over the list, which is inert under it.
 // Nothing starts it but its Start and a message you send it: not opening the view, the URL or a
 // reload. Its drafts that wait on you count in Needs you's badge, in every root tab, and in the page
 // title; Needs you says they're there, with a way to open the view. While it's held or has failed, the
@@ -117,6 +118,7 @@
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ApiContext } from '../api.js';
 import { flaggedText, flagSession, UNDO_FLAG, unflaggedText, unflagSession } from '../flags.js';
+import { dismissedToast, dismissPr, UNDO_DISMISS, undismissedToast, undismissPr } from '../prDismiss.js';
 import { dropOldMarks, snoozedToast, snoozeSession, UNDO_SNOOZE, unsnoozeSession, wokenText } from '../snooze.js';
 import type { PullRequestRelation, PullRequestSummary, SessionSummary } from '../../../src/shared/protocol.js';
 import {
@@ -344,7 +346,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const source = view.lastPoll?.source ?? snapshot?.source;
   const toasts = useToastStack();
   const app = useRef<HTMLDivElement>(null);
-  const { layout, compact, overlayCoversRepos } = useLayout(app);
+  const { layout, compact, overlayCoversRepos, panelFoldsRepos } = useLayout(app);
   // The session view's width as the third column: the divider and the actions menu's width items change it.
   const [panelWidth] = useState(() => createPanelWidthStore(storage));
   // Group sessions by, from Preferences (W42, W59): the snapshot's groups, grouped again for the mode.
@@ -517,9 +519,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // The root tab's older PR rows (W106): only the Pull requests view lists them, with Show older on, and nothing counts them.
   const olderPrs = useMemo(() => olderPrRows(shownGroups, work, tab), [shownGroups, work, tab]);
   const listed = useMemo(() => {
-    const base = scope ? listWork(shownGroups, scope, sort, grouped.home, work) : { current: [], finished: [] };
+    const base = scope ? listWork(shownGroups, scope, sort, grouped.home, work) : { current: [], finished: [], dismissed: [] };
     if (scope?.kind !== 'prs' || !showOlderPrs || olderPrs.length === 0) return base;
-    return { current: [...base.current, ...olderPrs].sort(rowOrder('urgency', work)), finished: [] };
+    return { current: [...base.current, ...olderPrs].sort(rowOrder('urgency', work)), finished: [], dismissed: base.dismissed };
   }, [shownGroups, scope?.kind, selectedGroup, sort, grouped.home, starred.set, work, showOlderPrs, olderPrs]);
   const [prFilter, setPrFilter] = useState('');
   // The Pull requests view's chips (W101): the page's, none on at each load, never stored, as the filter's text.
@@ -531,6 +533,13 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     [listed, filters, prsSelected, prFilters, prRelations, work],
   );
   const finished = useMemo(() => filterRows(listed.finished, filters, work), [listed, filters, work]);
+  // The PR rows you dismissed, Not for me (W188), as the filters show them: the Dismissed section's.
+  const dismissedRows = useMemo(
+    () => (prsSelected ? filterRows(listed.dismissed, prFilters, work).filter((row) => matchesRelations(row, prRelations, work)) : filterRows(listed.dismissed, filters, work)),
+    [listed, filters, prsSelected, prFilters, prRelations, work],
+  );
+  // The Dismissed section is collapsed at each load, as nothing in it needs you.
+  const [dismissedOpen, setDismissedOpen] = useState(false);
   // The selection's ended sessions older than ENDED_SHOWN_DAYS (W67), as the filters show them, with
   // Show older on or off: how many its button says, and whether the selection has one at all. Never
   // one that owns an open PR, which isn't finished work (W106).
@@ -621,6 +630,12 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // Below 1,200 px the supervisor's panel lies over the session's or PR's view over the list, as wide
   // as it, which is inert under it while it's open (W177). From 1,200 px the view beside it stays usable.
   const viewCovered = layout !== 'three-columns' && supervisorOpen;
+  // From 1,200 px the supervisor's panel is a column of its own, which pushes the others left rather
+  // than covering them (W187). Below 1,520 px that would leave the session view under its 560 px, so
+  // the repo list folds into the header's Repos drawer, its form below 900 px, while the panel is open.
+  const panelColumn = layout === 'three-columns' && supervisorOpen;
+  const reposFolded = panelColumn && panelFoldsRepos;
+  const reposInDrawer = layout === 'drawer' || reposFolded;
   /** Whether closing what lies over the list would lose a draft: the open session's, or the supervisor panel's. */
   const overlayHolds = () => overlaid && (hasDraft() || (supervisorOpen && hasDraft(SUPERVISOR_DRAFT_ID)));
   // The New session dialog, and the session it started, selected once it's listed (W63). Opened in
@@ -1080,7 +1095,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     // and Show older show: so every session, as olderCount reads them.
     const every = tabGroups(groupedAll.groups, tab);
     const everyScope = scopeOf(every);
-    const inView = everyScope ? listWork(every, everyScope, sort, groupedAll.home, work) : { current: [], finished: [] };
+    const inView = everyScope ? listWork(every, everyScope, sort, groupedAll.home, work) : { current: [], finished: [], dismissed: [] };
     const viewLists = [...inView.current, ...inView.finished].some((row) => !isPrRow(row) && row.session.sessionId === sessionId);
     const next = snapshot ? selectionShowing({ roots, groups: groupedAll.groups }, selection, tab, sessionId, groupedAll.home, viewLists) : undefined;
     if (next === undefined && !closePanel) {
@@ -1166,10 +1181,28 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     if (lost) focusQuietly(app.current?.querySelector<HTMLElement>('.root-tab[aria-selected="true"]'));
   }, [tab]);
 
-  // The drawer only exists below the sidebar breakpoint: widening the window closes it.
+  // The drawer only exists below the sidebar breakpoint, or while the supervisor's column folds the
+  // repo list into it (W187): widening the window, or closing the panel, closes it.
   useEffect(() => {
-    if (layout !== 'drawer') setDrawerOpen(false);
-  }, [layout]);
+    if (!reposInDrawer) setDrawerOpen(false);
+  }, [reposInDrawer]);
+  // Focus in the repo list as the supervisor's column folds it away, as when the back button opens the
+  // panel, would be lost with it: it moves to the panel's heading, as focus in what the panel covers
+  // does below 1,200 px. Tracked as it moves, since the list has gone by the time this runs.
+  const focusInRepos = useRef(false);
+  useEffect(() => {
+    const onFocusIn = (event: FocusEvent) => {
+      focusInRepos.current = event.target instanceof Element && event.target.closest('.columns > .repo-list') !== null;
+    };
+    document.addEventListener('focusin', onFocusIn);
+    return () => document.removeEventListener('focusin', onFocusIn);
+  }, []);
+  useLayoutEffect(() => {
+    if (!reposFolded || !focusInRepos.current) return;
+    focusInRepos.current = false;
+    const active = document.activeElement;
+    if (active === null || active === document.body || !active.isConnected) supervisorHeading.current?.focus();
+  }, [reposFolded]);
 
   const closeDrawer = () => {
     setDrawerOpen(false);
@@ -1302,6 +1335,41 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       snoozeToasts.current.set(sessionId, outcome.snoozed.at);
       const message = snoozedToast(session.name, outcome.snoozed, new Date(), prNeeding(session, work)?.number);
       toasts.show({ tone: 'success', key, message, action: { label: UNDO_SNOOZE, onAction: () => setSnooze(session, false, 'toast') } });
+    });
+  };
+  // Not for me (W188): from a PR row or the PR view. The server keeps it, so the list says it's
+  // dismissed as soon as it is; the toast says it's under Dismissed and what brings it back, with Undo.
+  // Undo from a dismissed row needs no toast, as the row moves back; from the view, it's a toast.
+  // A dismissal's toast goes once it ends by itself, something new on the PR, since Undo would have nothing to do.
+  const dismissKey = (pr: Pick<PullRequestSummary, 'repo' | 'number'>) => `pr-dismiss:${prKey(pr)}`;
+  const dismissToasts = useRef(new Set<string>());
+  useEffect(() => {
+    for (const key of dismissToasts.current) {
+      const pr = allPrs.find((each) => prKey(each) === key);
+      if (pr?.dismissed !== undefined || pr?.dismissalEnded === undefined) continue;
+      dismissToasts.current.delete(key);
+      dismissToast(dismissKey(pr));
+    }
+  }, [allPrs, dismissToast]);
+  const setDismissal = (pr: PullRequestSummary, on: boolean, from: 'row' | 'view' | 'toast') => {
+    if (!api) return;
+    const key = dismissKey(pr);
+    if (!on) {
+      dismissToasts.current.delete(prKey(pr));
+      void undismissPr(api, pr).then((error) => {
+        if (error !== undefined) toasts.show({ tone: 'error', key, message: error });
+        else if (from === 'view') toasts.show({ tone: 'success', key, message: undismissedToast(pr) });
+        else toasts.dismiss(key);
+      });
+      return;
+    }
+    void dismissPr(api, pr).then((outcome) => {
+      if (outcome.kind === 'failed') {
+        toasts.show({ tone: 'error', key, message: outcome.error });
+        return;
+      }
+      dismissToasts.current.add(prKey(pr));
+      toasts.show({ tone: 'success', key, message: dismissedToast(pr), action: { label: UNDO_DISMISS, onAction: () => setDismissal(pr, false, 'toast') } });
     });
   };
   useEffect(() => {
@@ -1573,8 +1641,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       />
     );
   }
-  const total = listed.current.length + listed.finished.length;
-  const shown = current.length + finished.length;
+  const total = listed.current.length + listed.finished.length + listed.dismissed.length;
+  const shown = current.length + finished.length + dismissedRows.length;
   // No summary where it would only repeat the empty state below it: "0 sessions · Nothing needs you"
   // over no sessions at all, or "Nothing needs you" over Needs you's own "Nothing needs you right now",
   // or over Starred's "No starred sessions", or Pull requests' "No open pull requests", or its states
@@ -1888,6 +1956,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         sessions={sessionsFor(shownPr, everyListed)}
         ownerId={work.ownerOf.get(prOpen)?.sessionId}
         onStart={snapshot && prMissing === undefined && work.ownerOf.get(prOpen) === undefined ? startPr : undefined}
+        onDismiss={api && prMissing === undefined ? (pr) => setDismissal(pr, true, 'view') : undefined}
+        onUndismiss={api && prMissing === undefined ? (pr) => setDismissal(pr, false, 'view') : undefined}
         onOpenSession={(sessionId) => openSessionFromPr(sessionId)}
         onClose={closePr}
         layout={viewLayout}
@@ -2020,21 +2090,21 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     <ToastContext.Provider value={toasts.show}>
     {/* The run rate for the supervisor's cards too (W160), so they show the header's figures and ask for none. */}
     <RunRateContext.Provider value={runRate}>
-    <div className="app" ref={app} data-layout={layout}>
+    <div className="app" ref={app} data-layout={layout} data-repos={reposFolded ? 'folded' : undefined}>
       <AppStrips relayOff={relayOff} onRelayDetails={relayAlert ? showRelayAlert : undefined} recaps={snapshot?.recaps} supervisor={supervisor} onSupervisor={openSupervisor} />
       <Header
         state={state}
         roots={snapshot?.roots}
         updatedAt={snapshot ? updatedAt : undefined}
         onNewSession={snapshot ? openNewSessionDialog : undefined}
-        onRepos={layout === 'drawer' ? () => setDrawerOpen(true) : undefined}
+        onRepos={reposInDrawer ? () => setDrawerOpen(true) : undefined}
         reposOpen={drawerOpen}
         reposRef={reposButton}
         onShortcuts={() => setShortcutsOpen(true)}
         onPreferences={() => setPreferencesOpen(true)}
         onUsage={() => usageUrl.show()}
         runRate={runRate}
-        supervisor={supervisor && { status: supervisor.status, approvals, open: supervisorOpen, onToggle: toggleSupervisor, ref: supervisorButton }}
+        supervisor={supervisor && { status: supervisor.status, approvals, open: supervisorOpen, dialog: layout !== 'three-columns', onToggle: toggleSupervisor, ref: supervisorButton }}
         narrow={layout === 'drawer' || overlayCoversRepos}
         tabs={
           tab === undefined
@@ -2045,7 +2115,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
 
       {/* With root tabs, the columns are the open tab's panel, named by it. */}
       <div className="columns" {...(tab === undefined ? {} : { role: 'tabpanel', id: panelId, 'aria-labelledby': tabId(tab) })}>
-        {layout !== 'drawer' && repoList('list')}
+        {!reposInDrawer && repoList('list')}
         {/* The Pull requests view is the session list too, with its own filters, notices and foot (W106). */}
         <HighlightContext.Provider value={filterNeedle(prsSelected ? prFilter : filters.text)}>
           <SessionList
@@ -2101,12 +2171,16 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             openPrKey={prOpen}
             onStartPr={snapshot ? startPr : undefined}
             offerResume
+            dismissed={dismissedRows}
+            dismissedCollapsed={!dismissedOpen}
+            onToggleDismissed={() => setDismissedOpen((open) => !open)}
+            onDismissPr={api ? (pr, on) => setDismissal(pr, on, 'row') : undefined}
           />
         </HighlightContext.Provider>
         {/* The third column from 1,200 px; below that, display: contents, and the view overlays the list.
             The supervisor's panel is last, over the views, which are inert under it below 1,200 px (W177). */}
         <div className="session-pane" {...(supervisorPanel === undefined ? {} : { 'data-panel-open': '' })}>
-          {layout === 'three-columns' && <Divider store={panelWidth} />}
+          {layout === 'three-columns' && <Divider store={panelWidth} beside={supervisorPanel !== undefined} />}
           <div className="pane-views" inert={viewCovered || undefined}>
             {paneViews}
           </div>
@@ -2114,7 +2188,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         </div>
       </div>
 
-      {layout === 'drawer' && drawerOpen && <RepoDrawer onClose={closeDrawer}>{repoList('drawer')}</RepoDrawer>}
+      {reposInDrawer && drawerOpen && <RepoDrawer onClose={closeDrawer}>{repoList('drawer')}</RepoDrawer>}
 
       {prStart?.step === 'clone' && (
         <CloneDialog

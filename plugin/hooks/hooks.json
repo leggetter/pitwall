@@ -1,5 +1,5 @@
 {
-  "description": "Spike 015 prototype: while pitwall runs, tell the session it's watched, how to link sessions, and how to propose one.",
+  "description": "While pitwall runs, tell the session it's watched, how to link sessions in pitwall, and how to propose one.",
   "hooks": {
     "SessionStart": [
       {

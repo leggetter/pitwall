@@ -122,9 +122,15 @@ describe('fetchPullRequests: the command', () => {
       ]) {
         expect(PRS_QUERIES[relation], `${relation}: ${field}`).toContain(field);
       }
+      // Every search asks for your login and the head commit's oid (W101, W188).
+      for (const field of ['viewer { login }', 'oid']) expect(PRS_QUERIES[relation], `${relation}: ${field}`).toContain(field);
       const reviews = relation === 'review-requested';
-      for (const field of ['viewer { login }', 'reviewRequests(first: 100)', '... on User { login }', '... on Team { combinedSlug }']) {
-        expect(PRS_QUERIES[relation].includes(field), `${relation}: ${field}`).toBe(reviews);
+      expect(PRS_QUERIES[relation].includes('reviewRequests(first: 100)'), relation).toBe(reviews);
+      // W188's state hash: your own PRs' reviews by others; the others' review requests and mentions.
+      expect(PRS_QUERIES[relation].includes('reviews(last: 50, states: [APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED])'), relation).toBe(relation === 'authored');
+      expect(PRS_QUERIES[relation].includes('timelineItems(last: 50, itemTypes: [REVIEW_REQUESTED_EVENT, MENTIONED_EVENT])'), relation).toBe(relation !== 'authored');
+      for (const field of ['... on User { login }', '... on Team { combinedSlug }']) {
+        expect(PRS_QUERIES[relation].includes(field), `${relation}: ${field}`).toBe(relation !== 'authored');
       }
     }
   });

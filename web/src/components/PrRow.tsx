@@ -15,11 +15,18 @@
 //
 // It needs you when its PR needs attention (prNeedsAttention()), and then it has a session row's bar;
 // never one older than PRS_SHOWN_DAYS, which only the Pull requests view's Show older lists.
+//
+// Not for me (W188): line 2 ends with a toggle, under the start action, as a session row's snooze menu
+// is under its star (W154), shown on hover and focus while it's off. Pressing it dismisses the PR; a
+// dismissed PR's row is in the Dismissed section, muted, its toggle pressed and always shown, and
+// pressing it again is Undo. One whose dismissal ended because something new happened says so first
+// on line 2, for a while.
 // A click anywhere on the row that isn't a control opens it, as on a session row.
 
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import { prNeedsAttention, type PullRequestSummary } from '../../../src/shared/protocol.js';
 import { plainText } from '../format.js';
+import { BACK_TEXT, canDismiss, notForMeLabel } from '../prDismiss.js';
 import { prKey, prReason, RELATION_PHRASES } from '../prs.js';
 import { groupLabel } from '../sessions.js';
 import type { ListGroup } from '../work.js';
@@ -56,6 +63,30 @@ export function PrStartButton({ pr, onStart }: { pr: PullRequestSummary; onStart
   );
 }
 
+/**
+ * Not for me's toggle on a PR row (W188): a ghost sm icon button with aria-pressed, named by its
+ * tooltip, "Not for me: #57", whatever its state, as a session's flag toggle is (FlagButton.tsx).
+ * Pressing it dismisses the PR; pressed, it's Undo. None for a PR the server can't compare
+ * (canDismiss()), unless it's dismissed already.
+ */
+export function PrDismissButton({ pr, onChange, className }: { pr: PullRequestSummary; onChange: (pr: PullRequestSummary, on: boolean) => void; className?: string }) {
+  const dismissed = pr.dismissed !== undefined;
+  if (!dismissed && !canDismiss(pr)) return null;
+  return (
+    <Tooltip content={notForMeLabel(pr)} relation="label">
+      <button
+        type="button"
+        className={['icon-button', 'ghost', 'sm', 'pr-dismiss-toggle', className].filter(Boolean).join(' ')}
+        aria-pressed={dismissed}
+        data-dismiss-pr={prKey(pr)}
+        onClick={() => onChange(pr, !dismissed)}
+      >
+        <Icon name="hide" />
+      </button>
+    </Tooltip>
+  );
+}
+
 /** Clicks on these inside a row do their own thing, rather than opening the PR. */
 const OWN_CLICK = 'a, button, input, select, textarea, label, summary, [role="button"]';
 
@@ -74,9 +105,11 @@ export interface PrRowProps {
   actions?: ReactNode;
   /** Older than PRS_SHOWN_DAYS, listed by the Pull requests view's Show older: it never needs you. */
   older?: boolean;
+  /** Not for me, and Undo (W188): line 2's toggle. Rows have none without it. */
+  onDismiss?: ((pr: PullRequestSummary, on: boolean) => void) | undefined;
 }
 
-export function PrRow({ pr, group, showGroup = false, isOpen = false, onOpen, onStep, actions, older = false }: PrRowProps) {
+export function PrRow({ pr, group, showGroup = false, isOpen = false, onOpen, onStep, actions, older = false, onDismiss }: PrRowProps) {
   const key = prKey(pr);
   const title = plainText(pr.title);
   const attention = !older && prNeedsAttention(pr);
@@ -97,7 +130,8 @@ export function PrRow({ pr, group, showGroup = false, isOpen = false, onOpen, on
     event.preventDefault();
     onStep(key, event.key === 'ArrowDown' ? 1 : -1);
   };
-  const className = ['session', 'pr-row', attention && 'attention', onOpen && 'openable', isOpen && 'open', pr.draft && 'pr-draft'].filter(Boolean).join(' ');
+  const dismissed = pr.dismissed !== undefined;
+  const className = ['session', 'pr-row', attention && 'attention', onOpen && 'openable', isOpen && 'open', pr.draft && 'pr-draft', dismissed && 'pr-dismissed'].filter(Boolean).join(' ');
   const number = (
     <span className="pr-row-number">
       <Highlight text={`#${pr.number}`} />
@@ -111,7 +145,7 @@ export function PrRow({ pr, group, showGroup = false, isOpen = false, onOpen, on
     </>
   );
   return (
-    <li className={className} data-pr={key} data-attention={attention || undefined} onClick={openFromRow}>
+    <li className={className} data-pr={key} data-attention={attention || undefined} data-dismissed={dismissed || undefined} onClick={openFromRow}>
       <div className="session-line">
         <div className="session-ident">
           {/* The whole title, when it's cut short: on hover, as a session row's name has its tooltip. */}
@@ -142,28 +176,50 @@ export function PrRow({ pr, group, showGroup = false, isOpen = false, onOpen, on
         <Timestamp className="activity" at={pr.updatedAt} />
         <span className="pr-row-actions">{actions}</span>
       </div>
-      <p className="session-what pr-what">
-        <span className="session-what-text">
-          {label !== undefined && (
-            <>
-              <span className="session-group">
-                <Highlight text={label} />
-              </span>
+      {(() => {
+        const toggle = onDismiss && <PrDismissButton pr={pr} onChange={onDismiss} className="session-set-aside-toggle" />;
+        const line2 = (
+          <p className="session-what pr-what">
+            <span className="session-what-text">
+              {label !== undefined && (
+                <>
+                  <span className="session-group">
+                    <Highlight text={label} />
+                  </span>
+                  <span className="session-what-sep" aria-hidden="true">
+                    {' · '}
+                  </span>
+                </>
+              )}
+              {pr.dismissalEnded !== undefined && !dismissed && (
+                <>
+                  <span className="pr-back">{BACK_TEXT}</span>
+                  <span className="session-what-sep" aria-hidden="true">
+                    {' · '}
+                  </span>
+                </>
+              )}
+              <span className={reason === undefined ? 'pr-relation' : 'asked pr-reason'}>{what}</span>
+            </span>
+            {/* Quiet, and never cut, as a session row's sub-agents count is. */}
+            <span className="pr-row-end">
               <span className="session-what-sep" aria-hidden="true">
                 {' · '}
               </span>
-            </>
-          )}
-          <span className={reason === undefined ? 'pr-relation' : 'asked pr-reason'}>{what}</span>
-        </span>
-        {/* Quiet, and never cut, as a session row's sub-agents count is. */}
-        <span className="pr-row-end">
-          <span className="session-what-sep" aria-hidden="true">
-            {' · '}
-          </span>
-          {end}
-        </span>
-      </p>
+              {end}
+            </span>
+          </p>
+        );
+        // With its toggle, line 2 ends with it, under the start action, as a session row's does under its star.
+        return toggle ? (
+          <div className="session-line-2">
+            {line2}
+            {toggle}
+          </div>
+        ) : (
+          line2
+        );
+      })()}
     </li>
   );
 }

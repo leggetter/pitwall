@@ -1144,12 +1144,30 @@ describe('pitwall (the process)', () => {
       expect(await openerCalls(log)).toEqual([]);
     }, 30_000);
 
-    it('leaves PITWALL_HOME alone with --no-open', async () => {
+    it('writes no launch file with --no-open: the home holds only the server file (W176), gone on close', async () => {
       const home = fresh('home');
-      const { child, result } = await start(['--no-open'], { PITWALL_NO_OPEN: '0', PITWALL_HOME: home });
-      expect(existsSync(home)).toBe(false);
+      const { child, result, url } = await start(['--no-open'], { PITWALL_NO_OPEN: '0', PITWALL_HOME: home });
+      expect(await readdir(home)).toEqual(['server.json']);
+      const body = JSON.parse(await readFile(join(home, 'server.json'), 'utf8')) as unknown;
+      expect(body).toEqual({ v: 1, url, pid: child.pid });
+      if (process.platform !== 'win32') expect(statSync(join(home, 'server.json')).mode & 0o777).toBe(0o600);
       child.kill('SIGTERM');
       expect((await result).code).toBe(0);
+      expect(await readdir(home)).toEqual([]);
+    }, 30_000);
+
+    it('a run under npm run dev (the marker) marks its server file, and leaves a live CLI run\'s alone (W176)', async () => {
+      const home = fresh('home');
+      const cli = await start(['--no-open'], { PITWALL_HOME: home });
+      const dev = await start(['--no-open'], { PITWALL_HOME: home, PITWALL_OPEN_MARKER: fresh('marker') });
+      expect(JSON.parse(await readFile(join(home, 'server.json'), 'utf8'))).toEqual({ v: 1, url: cli.url, pid: cli.child.pid });
+      dev.child.kill('SIGTERM');
+      expect((await dev.result).code).toBe(0);
+      // Not the dev run's to delete.
+      expect(JSON.parse(await readFile(join(home, 'server.json'), 'utf8'))).toEqual({ v: 1, url: cli.url, pid: cli.child.pid });
+      cli.child.kill('SIGTERM');
+      expect((await cli.result).code).toBe(0);
+      expect(existsSync(join(home, 'server.json'))).toBe(false);
     }, 30_000);
   });
 

@@ -4,7 +4,9 @@
 // the page title count too; its panel over the page as ?supervisor, one history entry, toggled by the
 // button, beside a session's view, which stays (W177; from the button at every width, 900 to 999 px
 // too, where the repo list is inert under the view, W182):
-// from 1,200 px covering the right of the widened third column, below over the view, which is inert
+// from 1,200 px a column of its own, a complementary landmark, which pushes the others left and covers
+// none of the view, whose width changes at most once as it opens and once as it closes, the repo list
+// folding into the header's Repos drawer below 1,520 px (W187); below, over the view, which is inert
 // under it; Escape closes it first, and a session opened from it keeps it from 1,200 px; a new
 // conversation's questions, which fill the box; a message that starts it, the working line, and its
 // reply as markdown; its limit, 100,000 characters (W134); Load earlier; the draft cards, Edit and Send edit, Don't send, and where focus
@@ -25,7 +27,7 @@ import { REFUSED_TO_SUPERVISOR_NOTICE } from '../../../src/index/conversation.js
 import { SUPERVISOR_MESSAGE_FOOTER } from '../../../src/shared/protocol.js';
 import { CODE, DEMO_APP, NAMES, OSS, SUPERVISOR_APPROVALS, SUPERVISOR_RACE_REFUSAL } from '../fixtures.js';
 import type { Case, Part } from '../runner.js';
-import { focused, openFromRow, openRepoList, repoLabels, selectedRepo, VIEW, viewClose, viewName } from './_dom.js';
+import { focused, listHeading, openFromRow, openRepoList, repoLabels, selectedRepo, VIEW, viewClose, viewName } from './_dom.js';
 
 const q = JSON.stringify;
 /** The header's Supervisor button (W182). */
@@ -344,8 +346,8 @@ const part: Part = {
       await page.waitFor('focus in the message box', `document.activeElement === ${BOX}`);
       await page.waitFor('what the supervisor was told', `[...${SVIEW}.querySelectorAll('li.entry-notice')].some((li) => li.textContent.includes("You didn't send it."))`);
       t.expectEqual(await page.evaluate<number>(TITLE_COUNT), counts.title - 2, 'the title counts two fewer');
-      // Below 900 px the repo list is a drawer, shut now.
-      if (t.layout !== 'drawer') t.expectEqual(await page.evaluate<number>(NEEDS_YOU), counts.needs - 2, 'and so does Needs you');
+      // Below 900 px the repo list is a drawer, shut now; so it is from 1,200 to 1,519 px while the panel is open (W187).
+      if (await page.evaluate<boolean>(`!!document.querySelector('.columns > .repo-list')`)) t.expectEqual(await page.evaluate<number>(NEEDS_YOU), counts.needs - 2, 'and so does Needs you');
     });
 
     await t.step('Needs you’s notice: its button under the text when the session list column is 600 px or narrower, however wide the app', async () => {
@@ -418,7 +420,9 @@ const part: Part = {
       t.expect(search.startsWith(`?repo=${DEMO_APP}&root=${CODE}&session=`), 'its group and root in the URL, with the session', search);
       t.expectEqual(await page.evaluate(OPEN_TAB), '~/code', 'its root’s tab open');
       t.expectEqual(await page.evaluate(focused), 'the view heading', 'focus on its heading');
-      if (t.layout !== 'drawer') t.expectEqual(await page.evaluate(selectedRepo), 'demo-app', 'demo-app selected in the repo list');
+      // Where the repo list is a column; in the drawer, below 900 px or folded by the panel from 1,200 to 1,519 px (W187), the list's heading says it.
+      if (await page.evaluate<boolean>(`!!document.querySelector('.columns > .repo-list')`)) t.expectEqual(await page.evaluate(selectedRepo), 'demo-app', 'demo-app selected in the repo list');
+      else t.expectEqual(await page.evaluate(listHeading), 'demo-app', 'demo-app as the session list’s heading');
       t.expect(await page.evaluate<boolean>(`[...document.querySelectorAll('.session-list [data-open-session]')].some((el) => el.textContent.trim() === 'pr-57')`), 'its row in the session list');
       await t.shot('handoff-other-root');
       await page.evaluate('history.back()');
@@ -835,21 +839,42 @@ const part: Part = {
       const search = await page.evaluate<string>('location.search');
       t.expect(search.includes('session=') && search.endsWith('&supervisor'), 'the session kept in the URL, the panel added', search);
       t.expectEqual(
-        await page.evaluate(`[${SVIEW}.getAttribute('role'), ${SVIEW}.getAttribute('aria-modal'), getComputedStyle(${SVIEW}).zIndex]`),
-        ['dialog', 'false', '25'],
-        'a non-modal dialog at --pw-z-supervisor',
+        await page.evaluate(`[${SVIEW}.getAttribute('role'), ${SVIEW}.getAttribute('aria-modal'), getComputedStyle(${SVIEW}).zIndex, ${ITEM}.getAttribute('aria-haspopup')]`),
+        beside ? ['complementary', null, 'auto', null] : ['dialog', 'false', '25', 'dialog'],
+        beside ? 'a complementary landmark beside the view, over nothing (W187)' : 'a non-modal dialog at --pw-z-supervisor',
       );
-      const geometry = await page.evaluate<{ panel: { left: number; right: number; width: number; top: number }; view: { left: number; right: number; top: number }; inert: boolean; name: string | null }>(`(() => {
+      const geometry = await page.evaluate<{
+        panel: { left: number; right: number; width: number; top: number };
+        view: { left: number; right: number; width: number; top: number };
+        list: { left: number; right: number; width: number; top: number };
+        inert: boolean;
+        name: string | null;
+        reposColumn: boolean;
+        reposButton: boolean;
+      }>(`(() => {
         const box = (el) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width, top: r.top }; };
         const view = document.querySelector('#session-view');
-        return { panel: box(${SVIEW}), view: box(view), inert: document.querySelector('.pane-views').inert, name: view.querySelector('.session-view-name')?.textContent ?? null };
+        return {
+          panel: box(${SVIEW}),
+          view: box(view),
+          list: box(document.querySelector('.session-list')),
+          inert: document.querySelector('.pane-views').inert,
+          name: view.querySelector('.session-view-name')?.textContent ?? null,
+          reposColumn: !!document.querySelector('.columns > .repo-list'),
+          reposButton: !!document.querySelector('header button[aria-label="Repos"]'),
+        };
       })()`);
       t.expectEqual(geometry.name, NAMES.conversation, 'the session view still open, under its name');
       t.expect(Math.abs(geometry.panel.right - t.viewport.width) < 1, 'at the right edge of the window', geometry.panel);
       if (beside) {
         t.expect(!geometry.inert, 'the session view usable beside it');
-        t.expect(geometry.panel.left - geometry.view.left >= 239.5, 'at least 240 px of the session view in sight to its left', geometry);
-        if (t.viewport.width >= 1920) t.expect(geometry.panel.left >= geometry.view.right - 0.5, 'on a wide window, beside it, covering none of it', geometry);
+        t.expect(geometry.panel.left >= geometry.view.right - 0.5, 'beside the session view, covering none of it (W187)', geometry);
+        t.expect(geometry.view.right <= geometry.panel.left + 0.5 && geometry.list.right <= geometry.view.left + 0.5, 'the list, the view and the panel side by side', geometry);
+        t.expect(geometry.panel.width >= 359.5 && geometry.panel.width <= 560.5, 'the panel 360 to 560 px wide', geometry.panel);
+        t.expect(geometry.view.width >= (t.viewport.width >= 1280 ? 559.5 : 479.5), 'the view at least 560 px wide, 480 px from 1,200 to 1,279 px', geometry.view);
+        t.expect(geometry.list.width >= 359.5, 'the session list at least 360 px wide', geometry.list);
+        const folds = t.viewport.width < 1520;
+        t.expectEqual([geometry.reposColumn, geometry.reposButton], folds ? [false, true] : [true, false], folds ? 'the repo list folded into the header’s Repos drawer below 1,520 px' : 'the repo list kept from 1,520 px');
       } else {
         t.expect(geometry.inert, 'the session view inert under it');
         t.expect(Math.abs(geometry.panel.left - geometry.view.left) < 1, 'over the view, as wide', geometry);
@@ -868,6 +893,53 @@ const part: Part = {
       t.expect(!(await page.evaluate<string>('location.search')).includes('supervisor'), 'and gone from the URL');
       await page.waitFor('focus back on the button', `document.activeElement === ${ITEM}`);
     });
+
+    if (beside) {
+      await t.step('a column of its own (W187): opening and closing it changes the session view’s width at most once each, never over an animation, and covers none of it', async () => {
+        allowNew();
+        await t.fresh({ search: '?view=all', supervisor: 'idle' });
+        await openFromRow(t, NAMES.conversation);
+        await page.settle(400);
+        // Every size the view takes, as its terminal's own observer would see them, from here on.
+        await page.evaluate(`(() => {
+          window.__pwViewSizes = [];
+          const view = document.querySelector('#session-view');
+          window.__pwViewObserver?.disconnect();
+          window.__pwViewObserver = new ResizeObserver((entries) => { for (const e of entries) window.__pwViewSizes.push([Math.round(e.contentRect.width), Math.round(e.contentRect.height)]); });
+          window.__pwViewObserver.observe(view);
+        })()`);
+        await page.settle(100);
+        const sizes = () => page.evaluate<[number, number][]>('window.__pwViewSizes');
+        const before = await sizes();
+        t.expect(before.length === 1, 'one size as the observer starts', before);
+        const widths = (list: [number, number][]) => list.map(([width]) => width).filter((width, index, all) => index === 0 || width !== all[index - 1]);
+        await page.click('the Supervisor button', ITEM);
+        await page.waitFor('the panel', `!!${SVIEW}?.querySelector('h2')`);
+        // Past its slide-in, 220 ms, and then some, so a width that followed the animation would show as several.
+        await page.settle(600);
+        const opened = await sizes();
+        const cover = await page.evaluate<{ view: { left: number; right: number }; panel: { left: number; right: number }; atPoint: boolean }>(`(() => {
+          const v = document.querySelector('#session-view').getBoundingClientRect(), p = ${SVIEW}.getBoundingClientRect();
+          // What's on top at the view's right edge, halfway down: the view itself, not the panel.
+          const hit = document.elementFromPoint(v.right - 4, (v.top + v.bottom) / 2);
+          return { view: { left: v.left, right: v.right }, panel: { left: p.left, right: p.right }, atPoint: !!hit && document.querySelector('#session-view').contains(hit) };
+        })()`);
+        t.expect(cover.panel.left >= cover.view.right - 0.5 && cover.atPoint, 'the session view isn’t covered: the panel starts where it ends, and its right edge is its own', cover);
+        const openWidths = widths(opened);
+        t.expect(openWidths.length <= 2, 'at most one width change as it opens, not a stream', opened);
+        if (t.viewport.width === 1440) t.expect(openWidths.length === 2 && openWidths[1]! < openWidths[0]!, 'at 1,440 px exactly one: the view narrows once', opened);
+        t.expect(opened.every(([, height]) => height === opened[0]![1]), 'its height unchanged', opened);
+        await t.shot('column-open');
+        await page.click('the Supervisor button, again', ITEM);
+        await page.waitFor('the panel to close', `!${SVIEW}`);
+        await page.settle(400);
+        const closed = (await sizes()).slice(opened.length);
+        const closeWidths = widths([opened.at(-1)!, ...closed]);
+        t.expect(closeWidths.length <= 2, 'at most one width change as it closes', closed);
+        t.expect(closeWidths.at(-1) === openWidths[0], 'back to the width it had', { opened, closed });
+        if (t.viewport.width === 1440) t.expect(closeWidths.length === 2, 'at 1,440 px exactly one as it closes', closed);
+      });
+    }
 
     await t.step('the header at its fullest (W182): working, two drafts and the run rate ahead, the button still in its place and the header fitting the window', async () => {
       await t.fresh({ search: '?view=all', supervisor: 'working', approvals: true, runRate: 'ahead' });

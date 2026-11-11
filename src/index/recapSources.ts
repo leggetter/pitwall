@@ -6,6 +6,8 @@
 //                            queued mid-turn included (queuedEntryOf()), within FIRST_PROMPT_BUDGET
 //   the newest away_summary  awaySummaryOf(), reading backwards from the end
 //   the newest compaction    the newest user entry with `isCompactSummary: true`, reading backwards
+//   your messages            every user entry promptTextOf() accepts, reading forward from the start, or
+//                            from PROMPTS_BUDGET before the end, the newest PROMPTS_KEPT (W189)
 //
 // The backward read stops once it has both, or after NEWEST_BUDGET bytes. What's read is kept per
 // file, in memory, so the next recap reads only what was appended since: newer entries replace older
@@ -31,6 +33,16 @@ const CHUNK_BYTES = MIB;
 const MAX_LINE_BYTES = 8 * MIB;
 /** The most of a first prompt or a compaction summary kept, its start and end. A recap sends far less (src/recaps/input.ts). */
 export const SOURCE_TEXT_MAX = 64 * KIB;
+/**
+ * How far back from the end your messages are read on a file's first read (W189): a transcript's
+ * first read parses every line that may be a user entry, so a huge one is read from here. The first
+ * prompt has its own search from the start.
+ */
+export const PROMPTS_BUDGET = 32 * MIB;
+/** The most of your messages kept per file, the newest (W189). A recap sends far fewer. */
+export const PROMPTS_KEPT = 200;
+/** The most of each message kept, its start and end (W189). A recap sends far less of each. */
+export const PROMPT_KEPT_MAX = 2 * KIB;
 const NEWLINE = 0x0a;
 
 /** A compaction summary: Claude Code's summary of the conversation before it, written when it compacted. */
@@ -41,9 +53,19 @@ export interface CompactionSummary {
   at?: string;
 }
 
+/** One of your messages to the session (W189). */
+export interface RecapPrompt {
+  /** Trimmed, at most PROMPT_KEPT_MAX characters, its start and end. */
+  text: string;
+  /** ISO 8601, when its entry has a time. */
+  at?: string;
+}
+
 export interface RecapSources {
   /** The first prompt, whole and trimmed, or its start and end when it's over SOURCE_TEXT_MAX. */
   firstPrompt?: string;
+  /** Your messages, oldest first, the newest PROMPTS_KEPT, the first prompt among them when it's in range (W189). Absent when there are none. */
+  prompts?: RecapPrompt[];
   awaySummary?: AwaySummary;
   compaction?: CompactionSummary;
 }
@@ -60,6 +82,8 @@ export interface RecapSourceOptions {
   firstPromptBudget?: number;
   /** Default NEWEST_BUDGET. */
   newestBudget?: number;
+  /** Default PROMPTS_BUDGET. */
+  promptsBudget?: number;
   /** Default 1 MiB. */
   chunkBytes?: number;
 }
@@ -73,6 +97,10 @@ interface FileState {
   forwardOffset: number;
   /** The end of the last complete line the newest entries were read up to. */
   newestEnd: number;
+  /** Your messages so far, oldest first, at most PROMPTS_KEPT (W189). */
+  prompts: RecapPrompt[];
+  /** Where the forward read of your messages goes on from, or -1 before the first read (W189). */
+  promptsEnd: number;
   awaySummary?: AwaySummary;
   compaction?: CompactionSummary;
 }
@@ -116,6 +144,20 @@ function promptOf(line: string): string | undefined {
   return text === undefined ? undefined : startAndEnd(text, SOURCE_TEXT_MAX);
 }
 
+/** The prompt a line holds, with its time, as promptOf() reads it (W189). */
+function promptEntryOf(line: string): RecapPrompt | undefined {
+  if (!line.includes('"user"') && !line.includes('"queued_command"')) return undefined;
+  const entry = parse(line);
+  if (entry === undefined) return undefined;
+  const user = entry.type === 'attachment' ? queuedEntryOf(entry) : entry;
+  if (user === undefined || user.type !== 'user') return undefined;
+  const text = promptTextOf(user);
+  if (text === undefined) return undefined;
+  const ms = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
+  const kept = startAndEnd(text, PROMPT_KEPT_MAX);
+  return Number.isFinite(ms) ? { text: kept, at: new Date(ms).toISOString() } : { text: kept };
+}
+
 /** What a line says of the newest entries: an away_summary, a compaction summary, or neither. */
 function newestOf(line: string): { away?: AwaySummary; compaction?: CompactionSummary } | undefined {
   if (!line.includes('"away_summary"') && !line.includes('isCompactSummary')) return undefined;
@@ -152,6 +194,7 @@ const READ_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);
 export function createRecapSourceReader(options: RecapSourceOptions = {}): RecapSourceReader {
   const firstPromptBudget = options.firstPromptBudget ?? FIRST_PROMPT_BUDGET;
   const newestBudget = options.newestBudget ?? NEWEST_BUDGET;
+  const promptsBudget = options.promptsBudget ?? PROMPTS_BUDGET;
   const chunkBytes = Math.max(1, options.chunkBytes ?? CHUNK_BYTES);
   const files = new Map<string, FileState>();
   /** One read at a time per file, so two recaps never read the same bytes twice. */
@@ -248,8 +291,8 @@ export function createRecapSourceReader(options: RecapSourceOptions = {}): Recap
         return {};
       }
       let state = files.get(file);
-      if (state === undefined || state.dev !== info.dev || state.ino !== info.ino || info.size < state.newestEnd || info.size < state.forwardOffset) {
-        state = { dev: info.dev, ino: info.ino, forwardOffset: 0, newestEnd: -1 };
+      if (state === undefined || state.dev !== info.dev || state.ino !== info.ino || info.size < state.newestEnd || info.size < state.forwardOffset || info.size < state.promptsEnd) {
+        state = { dev: info.dev, ino: info.ino, forwardOffset: 0, newestEnd: -1, prompts: [], promptsEnd: -1 };
         files.set(file, state);
       }
       const current = state;
@@ -280,8 +323,23 @@ export function createRecapSourceReader(options: RecapSourceOptions = {}): Recap
           return false;
         });
       }
+      // Your messages (W189): from the start, or PROMPTS_BUDGET before the end on a huge file's first
+      // read, where the first line read may be part of one, which doesn't parse and is skipped; then
+      // what was appended since.
+      if (current.promptsEnd < 0) current.promptsEnd = Math.max(0, info.size - promptsBudget);
+      if (info.size > current.promptsEnd) {
+        current.promptsEnd = await forward(handle, current.promptsEnd, info.size, (line) => {
+          const prompt = promptEntryOf(line);
+          if (prompt !== undefined) {
+            current.prompts.push(prompt);
+            if (current.prompts.length > PROMPTS_KEPT) current.prompts.shift();
+          }
+          return false;
+        });
+      }
       const sources: RecapSources = {};
       if (current.firstPrompt !== undefined) sources.firstPrompt = current.firstPrompt;
+      if (current.prompts.length > 0) sources.prompts = current.prompts.map((prompt) => ({ ...prompt }));
       if (current.awaySummary !== undefined) sources.awaySummary = { ...current.awaySummary };
       if (current.compaction !== undefined) sources.compaction = { ...current.compaction };
       return sources;

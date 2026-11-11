@@ -11,13 +11,17 @@
 // A row is a piece of work (W106, work.ts): a session's, with the open PRs it owns, or a PR's that no
 // session owns (PrRow.tsx), each in the order the sort gives. The Pull requests view is this list too,
 // with its own filters, notices over the rows and a foot after them (PrList.tsx).
+//
+// The PR rows you dismissed, Not for me (W188), follow in a Dismissed section, collapsed by default,
+// muted, each with its Not for me toggle pressed, which is Undo (DismissedSection).
 
 import { useEffect, useId, useRef, useState, type FocusEvent, type ReactNode, type RefObject } from 'react';
 import { ENDED_SHOWN_DAYS, type PullRequestSummary, type SessionGroup, type SessionSummary } from '../../../src/shared/protocol.js';
 import { plainText } from '../format.js';
 import { prKey } from '../prs.js';
 import { holdOrder, needYou, sessionCount, type Listed } from '../sessions.js';
-import { isPrRow, rowKey, type ListRow } from '../work.js';
+import { DISMISSED_HEADING } from '../prDismiss.js';
+import { isPrRow, rowKey, type ListedPr, type ListRow } from '../work.js';
 import { Button } from './Button.js';
 import { Icon } from './Icon.js';
 import { PrRow, PrStartButton } from './PrRow.js';
@@ -107,6 +111,12 @@ export interface SessionListProps {
   onStartPr?: ((pr: PullRequestSummary) => void) | undefined;
   /** Offer Resume on the current rows of finished sessions that own an open PR (W107, RowResume.tsx). */
   offerResume?: boolean;
+  /** The PR rows you dismissed (W188), for the Dismissed section after Finished. */
+  dismissed?: readonly ListedPr[] | undefined;
+  dismissedCollapsed?: boolean;
+  onToggleDismissed?: (() => void) | undefined;
+  /** Not for me from a PR row's toggle, or with `false` Undo (W188). PR rows have no toggle without it. */
+  onDismissPr?: ((pr: PullRequestSummary, on: boolean) => void) | undefined;
 }
 
 /**
@@ -139,11 +149,11 @@ const rowButtons = (list: HTMLElement) => [...list.querySelectorAll<HTMLElement>
 /** The row a name button opens, as rowKey() names it. */
 const buttonRow = (button: HTMLElement) => button.dataset.openSession ?? `pr:${button.dataset.openPr ?? ''}`;
 
-/** A row's own control that can have focus: its name's button, its star toggle (W53), or its snooze menu or toggle (W154). */
-type RowPart = 'open' | 'star' | 'snooze';
+/** A row's own control that can have focus: its name's button, its star toggle (W53), its snooze menu or toggle (W154), or a PR row's Not for me (W188). */
+type RowPart = 'open' | 'star' | 'snooze' | 'dismiss';
 
-/** Each toggle's data attribute, which holds its session's id. */
-const PART_SELECTOR: Readonly<Record<Exclude<RowPart, 'open'>, string>> = { star: '[data-star-session]', snooze: '[data-snooze-session]' };
+/** Each toggle's data attribute, which holds its session's id, or its PR's key. */
+const PART_SELECTOR: Readonly<Record<Exclude<RowPart, 'open'>, string>> = { star: '[data-star-session]', snooze: '[data-snooze-session]', dismiss: '[data-dismiss-pr]' };
 
 /** The control in `row`'s row that's `part`, or its name's button when it has no such control. */
 function partOf(row: HTMLElement, part: RowPart): HTMLElement {
@@ -154,6 +164,7 @@ function partOf(row: HTMLElement, part: RowPart): HTMLElement {
 function rowPart(target: HTMLElement | undefined): { part: RowPart; id: string } | undefined {
   if (target?.dataset.starSession !== undefined) return { part: 'star', id: target.dataset.starSession };
   if (target?.dataset.snoozeSession !== undefined) return { part: 'snooze', id: target.dataset.snoozeSession };
+  if (target?.dataset.dismissPr !== undefined) return { part: 'dismiss', id: `pr:${target.dataset.dismissPr}` };
   if (target?.dataset.openSession !== undefined || target?.dataset.openPr !== undefined) return { part: 'open', id: buttonRow(target) };
   return undefined;
 }
@@ -255,6 +266,47 @@ export function FinishedSection({ finished, collapsed, onToggle, showGroup = fal
   );
 }
 
+export interface DismissedSectionProps {
+  dismissed: readonly ListedPr[];
+  collapsed: boolean;
+  onToggle: () => void;
+  showGroup?: boolean;
+  onOpenPr?: ((key: string) => void) | undefined;
+  onStepPr?: ((key: string, by: 1 | -1) => void) | undefined;
+  openPrKey?: string | undefined;
+  onDismissPr?: ((pr: PullRequestSummary, on: boolean) => void) | undefined;
+}
+
+/**
+ * "Dismissed (n)" over the PR rows you said are Not for me (W188), muted, as Finished's toggle and
+ * rows are, each with its toggle pressed: pressing it is Undo. Collapsed by default; never counted as need you.
+ */
+export function DismissedSection({ dismissed, collapsed, onToggle, showGroup = false, onOpenPr, onStepPr, openPrKey, onDismissPr }: DismissedSectionProps) {
+  const listId = useId();
+  return (
+    <li className="finished-list dismissed-list">
+      <button type="button" className="finished-toggle" aria-expanded={!collapsed} aria-controls={listId} onClick={onToggle} data-dismissed-toggle="">
+        <Icon name="expand" className="chevron" />
+        {DISMISSED_HEADING} ({dismissed.length})
+      </button>
+      <ul className="sessions finished-sessions dismissed-sessions" id={listId} hidden={collapsed}>
+        {dismissed.map((row) => (
+          <PrRow
+            key={rowKey(row)}
+            pr={row.pr}
+            group={row.group}
+            showGroup={showGroup}
+            isOpen={prKey(row.pr) === openPrKey}
+            onOpen={onOpenPr}
+            onStep={onStepPr}
+            onDismiss={onDismissPr}
+          />
+        ))}
+      </ul>
+    </li>
+  );
+}
+
 export function SessionList({
   alerts,
   heading,
@@ -288,6 +340,10 @@ export function SessionList({
   openPrKey,
   onStartPr,
   offerResume = false,
+  dismissed = [],
+  dismissedCollapsed = true,
+  onToggleDismissed,
+  onDismissPr,
 }: SessionListProps) {
   const headingId = useId();
   const main = useRef<HTMLElement>(null);
@@ -302,7 +358,7 @@ export function SessionList({
   // the one before it if it was last, or else the list's heading, rather than to the page. So does a
   // row unstarred in Starred (W53), from its star toggle: focus goes to the star toggle of the row
   // that took its place, so the next can be unstarred too; and a row snoozed in Needs you (W154),
-  // whose focus goes to the next row's snooze menu.
+  // whose focus goes to the next row's snooze menu, and a PR row dismissed (W188), to the next one's Not for me.
   const focusedRow = useRef<{ id: string; index: number; part: RowPart } | undefined>(undefined);
   useEffect(() => {
     if (!focusInside || main.current?.contains(document.activeElement)) return;
@@ -388,6 +444,7 @@ export function SessionList({
                   onStep={onStepPr}
                   older={row.older === true}
                   actions={onStartPr && <PrStartButton pr={row.pr} onStart={onStartPr} />}
+                  onDismiss={onDismissPr}
                 />
               ) : (
                 <SessionRow
@@ -420,6 +477,18 @@ export function SessionList({
                 onStar={onStar}
                 onSnooze={onSnooze}
                 older={older}
+              />
+            )}
+            {dismissed.length > 0 && onToggleDismissed && (
+              <DismissedSection
+                dismissed={dismissed}
+                collapsed={dismissedCollapsed}
+                onToggle={onToggleDismissed}
+                showGroup={showGroup}
+                onOpenPr={onOpenPr}
+                onStepPr={onStepPr}
+                openPrKey={openPrKey}
+                onDismissPr={onDismissPr}
               />
             )}
           </ul>

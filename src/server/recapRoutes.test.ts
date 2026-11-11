@@ -93,6 +93,7 @@ const RECAP = {
   waitingOn: 'you',
   title: 'Fix the export',
   goal: 'Make the export work.',
+  done: 'The fix is merged.',
   workingOn: 'The export fix, which the goal needs.',
   plan: 'Fix the made-up export, in three steps',
   items: PLAN_ITEMS,

@@ -1,0 +1,9 @@
+{
+  "name": "pitwall",
+  "version": "0.1.0",
+  "description": "For the sessions pitwall watches: while pitwall runs, a short SessionStart note says the session is watched and how to link sessions in pitwall; the pitwall skill proposes a new session, which you start from pitwall.",
+  "author": { "name": "Phil Leggetter" },
+  "homepage": "https://github.com/leggetter/pitwall",
+  "repository": "https://github.com/leggetter/pitwall",
+  "license": "Apache-2.0"
+}

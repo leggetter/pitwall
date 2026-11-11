@@ -1,6 +1,6 @@
 ---
-name: spin-off
-description: Propose a new, separate Claude Code session for a piece of work that shouldn't run in this one, and leave it to the user to start it from pitwall's Needs you. Use when the user asks to spin off, hand off or split out work into a new session, or when you find separate work whose result this session doesn't need back, such as a fix in another repo, a follow-up, or a side task that would fill this session's context. Not for work whose result you need now: use a sub-agent for that.
+name: pitwall
+description: Propose a new, separate Claude Code session for a piece of work that shouldn't run in this one, and leave it to the user to start it from pitwall. Use when the user asks to spin off, spawn, start, hand off or split out work into a new session, or when you find separate work whose result this session doesn't need back, such as a fix in another repo, a follow-up, or a side task that would fill this session's context. Not for work whose result you need now: use a sub-agent for that.
 ---
 
 # Spin off a new session

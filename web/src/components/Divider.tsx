@@ -11,23 +11,32 @@
 
 import { useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type PointerEvent } from 'react';
 import { widthOf } from '../layout.js';
-import { PANEL_MIN, PANEL_STEP, panelMax, panelReset, shownPanel, type PanelWidthStore } from '../panelWidth.js';
+import { PANEL_STEP, panelMax, panelMin, panelReset, shownPanel, type PanelWidthStore } from '../panelWidth.js';
 
 export interface DividerProps {
   /** The view's width, which pitwall.panel-width.v1 keeps, shared with the actions menu. */
   store: PanelWidthStore;
+  /**
+   * The supervisor's panel open beside the view, as a column of its own (W187): the view's limits
+   * are what its room leaves, and what the divider sets then is the width shown, kept once it closes.
+   */
+  beside?: boolean;
 }
 
 /** The pane the divider sits in, which takes the width: the divider's parent. Its own parent, the columns, is as wide as the app. */
 const paneOf = (divider: HTMLElement | null) => divider?.parentElement ?? null;
 const appWidthOf = (divider: HTMLElement | null) => widthOf(paneOf(divider)?.parentElement ?? null);
 
-export function Divider({ store }: DividerProps) {
+export function Divider({ store, beside = false }: DividerProps) {
   const self = useRef<HTMLDivElement>(null);
   const state = useSyncExternalStore(store.subscribe, store.get);
   const { requested, appWidth } = state;
+
+  useLayoutEffect(() => {
+    store.setBeside(beside);
+  }, [store, beside]);
   const [dragging, setDragging] = useState(false);
-  const drag = useRef<{ x: number; width: number } | undefined>(undefined);
+  const drag = useRef<{ x: number; width: number; moved: boolean } | undefined>(undefined);
 
   // The app's width, for the maximum, kept up to date as the window or the frame is resized.
   useLayoutEffect(() => {
@@ -65,7 +74,7 @@ export function Divider({ store }: DividerProps) {
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
-    const max = panelMax(appWidth);
+    const max = panelMax(appWidth, beside);
     // The divider is the view's left edge: moving it left widens the view.
     const next =
       event.key === 'ArrowLeft'
@@ -73,7 +82,7 @@ export function Divider({ store }: DividerProps) {
         : event.key === 'ArrowRight'
           ? shown - PANEL_STEP
           : event.key === 'Home'
-            ? PANEL_MIN
+            ? panelMin(appWidth, beside)
             : event.key === 'End'
               ? max
               : undefined;
@@ -87,7 +96,7 @@ export function Divider({ store }: DividerProps) {
     // No text selection while dragging; focus still moves here, as for any control.
     event.preventDefault();
     event.currentTarget.focus();
-    drag.current = { x: event.clientX, width: shown };
+    drag.current = { x: event.clientX, width: shown, moved: false };
     try {
       // So the drag follows the pointer off the divider. A pointer the browser no longer tracks throws.
       event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -99,15 +108,19 @@ export function Divider({ store }: DividerProps) {
 
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
     const start = drag.current;
-    if (!start) return;
+    if (!start || (!start.moved && event.clientX === start.x)) return;
+    start.moved = true;
     set(start.width + (start.x - event.clientX), false);
   };
 
+  // Saved only once the pointer has moved: a plain click asks for nothing, so it doesn't save the width
+  // shown, clamped as it may be while the supervisor's column is open (W187), over the one asked for.
   const endDrag = () => {
-    if (!drag.current) return;
+    const ended = drag.current;
+    if (!ended) return;
     drag.current = undefined;
     setDragging(false);
-    store.set(store.get().requested, true);
+    if (ended.moved) store.set(store.get().requested, true);
   };
 
   return (
@@ -118,8 +131,8 @@ export function Divider({ store }: DividerProps) {
       aria-orientation="vertical"
       aria-label="Resize the session view"
       aria-valuenow={shown}
-      aria-valuemin={PANEL_MIN}
-      aria-valuemax={panelMax(appWidth)}
+      aria-valuemin={panelMin(appWidth, beside)}
+      aria-valuemax={panelMax(appWidth, beside)}
       tabIndex={0}
       data-dragging={dragging || undefined}
       onKeyDown={onKeyDown}
@@ -128,7 +141,7 @@ export function Divider({ store }: DividerProps) {
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
       onLostPointerCapture={endDrag}
-      onDoubleClick={() => set(panelReset(appWidthOf(self.current)), true)}
+      onDoubleClick={() => set(panelReset(appWidthOf(self.current), beside), true)}
     />
   );
 }

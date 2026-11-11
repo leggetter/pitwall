@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MAX_STDOUT_CHARS, type RecapSpawner } from '../recaps/call.js';
 import { OWN_NAME_MS } from '../recaps/engine.js';
+import { RECAP_MAX_OUTPUT_TOKENS } from '../recaps/prompt.js';
 import {
   createRateLimitsReader,
   parseRateLimits,
@@ -154,7 +155,7 @@ describe('readRateLimits', () => {
     expect(calls[0]?.cwd).toBe('/made/up/dir');
     // The recap call's environment: nothing that loads code, output capped.
     expect(calls[0]?.env.NODE_OPTIONS).toBeUndefined();
-    expect(calls[0]?.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('4096');
+    expect(calls[0]?.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe(String(RECAP_MAX_OUTPUT_TOKENS));
     expect(pids).toEqual([4242]);
   });
 

@@ -252,9 +252,10 @@ export interface FrameProps {
   /** Escape that nothing nearer handled: a menu, a dialog, the drawer, the filter or the terminal. The view decides the rest. */
   onEscape: () => void;
   /**
-   * The supervisor's panel (W177): over the page, beside the session's or PR's view, which stays. A
-   * non-modal dialog in every layout, it slides in as it opens, and Escape is its first, wherever
-   * focus is, since it's the top layer: the view beside it has Escape again once it's closed.
+   * The supervisor's panel (W177, W187): beside the session's or PR's view, which stays. From 1,200 px
+   * a column of its own, a complementary landmark; below, over the view, a non-modal dialog. It slides
+   * in as it opens, and Escape is its first, wherever focus is: the view beside it has Escape again
+   * once it's closed.
    */
   panel?: boolean;
   children: ReactNode;
@@ -265,8 +266,9 @@ export const PANEL_ATTRIBUTE = 'data-view-panel';
 
 /**
  * The view's region: a <section> named by its heading, which is a non-modal dialog when it overlays
- * the list, or as the supervisor's panel. It slides in when it opens over the list, or as the panel,
- * but not when the window then crosses 1,200 px.
+ * the list, the supervisor's panel's too, and the supervisor's column a complementary landmark from
+ * 1,200 px (W187). It slides in when it opens over the list, or as the panel, but not when the window
+ * then crosses 1,200 px.
  */
 export function Frame({ layout, id = SESSION_VIEW_ID, className, hidden = false, animate, titleId, onEscape, panel = false, children }: FrameProps) {
   const [opening, setOpening] = useState(animate && (layout === 'overlay' || panel));
@@ -300,7 +302,7 @@ export function Frame({ layout, id = SESSION_VIEW_ID, className, hidden = false,
       id={hidden ? undefined : id}
       hidden={hidden}
       className={['session-view', className, layout === 'column' ? 'in-column' : 'overlay', panel && 'view-panel', opening && 'opening'].filter(Boolean).join(' ')}
-      {...(layout === 'overlay' || panel ? { role: 'dialog', 'aria-modal': false } : {})}
+      {...(layout === 'overlay' ? { role: 'dialog', 'aria-modal': false } : panel ? { role: 'complementary' } : {})}
       {...(panel ? { [PANEL_ATTRIBUTE]: '' } : {})}
       aria-labelledby={titleId}
       onAnimationEnd={(event) => {

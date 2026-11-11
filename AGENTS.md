@@ -86,9 +86,11 @@ NOW.md                   where the work stands and what is next; every session r
 PLAN.md                  the living design: architecture, security, open milestones, open questions
 docs/plan-archive.md     history: M0 to M5 work breakdowns, findings and decisions
 .claude/skills/handoff/  the handoff skill: update NOW.md, commit, /clear
-skills/spin-off/         the spin-off skill (W163), for the sessions pitwall watches, installed once as a personal
-                         skill (README): a session ends its turn with a `spin-off` block that proposes a new session.
-                         Outside .claude/, so it isn't one of this repo's project skills
+plugin/                  the pitwall plugin (W176), for the sessions pitwall watches, installed once (README): a
+                         SessionStart hook, hooks/sessionNote.mjs, that adds a short note while pitwall runs (found
+                         through $PITWALL_HOME/server.json, src/server/serverFile.ts), and the `pitwall` skill, W163's
+                         spin-off proposals. Outside .claude/, so it isn't one of this repo's project plugins. Its
+                         test is src/plugin/sessionNote.test.ts; typechecked, not built
 .claude/settings.json    pitwall's own project settings, checked in: the hand-off hook and disableClaudeAiConnectors.
                          .claude/settings.local.json, untracked, is a person's own (Efficiency)
 .claude/hooks/           handoffNudge.mjs, a Stop hook that tells a session past 200K tokens of context, and again
@@ -165,7 +167,7 @@ THIRD_PARTY_NOTICES.md   licences for the bundled fonts and icons
 .env.example             how to make a fixed PITWALL_TOKEN for npm run dev (D7), and PITWALL_DEV_RECAPS;
                          .env is gitignored
 CLAUDE.md                imports this file for Claude Code
-tsconfig.json            server typecheck: src/ with tests, .claude/hooks/, scripts/, config files
+tsconfig.json            server typecheck: src/ with tests, .claude/hooks/, plugin/hooks/, scripts/, config files
 tsconfig.build.json      server build: src/ to dist/, without tests
 web/tsconfig.json        web UI typecheck (DOM, react-jsx, bundler resolution)
 vite.config.ts           web UI build
