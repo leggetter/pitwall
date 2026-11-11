@@ -44,9 +44,9 @@ Last updated: 2026-11-11, on `docs/m5.3-answers`: Phil's answers on W184, W185 a
 
 ## Open questions for Phil
 
-1. **The supervisor's panel closes when you click away?** (Phil, 2026-11-11: "the supervisor dialog should probably close when you click away".) Lean: **only where it covers the page,** below 1,200 px, where the view behind is inert: a click on the covered part closes it. At 1,200 px and wider it sits beside the view and stays open while you change the selection, which was W177's (the supervisor opens over the page) point. Never when it would lose work: a message typed in its box, or a card being edited, keeps it open, as Escape already does. Escape and the header's Supervisor button (W182) still close it. If yes, it's W187.
+None open.
 
-Answered (Phil, 2026-11-11, "go with your leans"): W184 (the supervisor's connectors) goes ahead after W176 (the pitwall plugin); W185 (spike: real accounts) uses Slack and Notion first, Gmail later; finished pitwall sessions are stopped once their work merges ("supervisor table layout" and "pitwall-slack-notion-access" stopped 2026-11-11; `claude attach <id>` resumes one).
+Answered (Phil, 2026-11-11, "go with your leans"): W184 (the supervisor's connectors) goes ahead after W176 (the pitwall plugin); W185 (spike: real accounts) uses Slack and Notion first, Gmail later; finished pitwall sessions are stopped once their work merges ("supervisor table layout" and "pitwall-slack-notion-access" stopped 2026-11-11; `claude attach <id>` resumes one). The supervisor's panel closing on click-away is left for now (Phil, 2026-11-11, "let's leave it for now"); the lean was to close it only where it covers the page, below 1,200 px, and never while you're typing in it.
 
 Answered (Phil, 2026-11-10, "go with your leans"): (a) the M5.2 → `main` PR as drafted; (b) split M5.2 at W180, as M5.1 was at W164; (c) build W176 (the pitwall plugin) next, as M5.3's first item; (d) the builders' decisions are confirmed as built (recorded in the archive's M5.2 work breakdown: W156, W158, W159, W160, W177, W180); (e) the Supervisor button below 1,000 px stays as built (W182, the supervisor's button in the header).
 
