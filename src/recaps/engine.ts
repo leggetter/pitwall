@@ -45,7 +45,9 @@
 // items, one stored from W150 until W172 (prompt.ts lacksPlanItems()): it keeps showing the plan's
 // line alone until the session's next activity, which recaps it from the start, so the list appears
 // soon without a call of its own. Both calls also name the session's PRs from the PR list start() is given
-// (input.ts sessionPrs()), which runs no gh of its own.
+// (input.ts sessionPrs()), which runs no gh of its own, and since W189 (recaps a cold reader can act
+// on) the session's name, its group's label and your messages through it; a previous recap without
+// W189's done makes the call a first recap too.
 //
 // The call runs from one fixed 0700 directory, `$PITWALL_HOME/recap`, with recapArgs() and
 // recapEnvironment() (prompt.ts), no shell and a timeout, once `claude --version` says it's at
