@@ -1366,8 +1366,20 @@ Your open pull requests on github.com (M4, W95; Phil, 2026-10-16), and since W10
 
 - **Needs you:** while its PR needs attention it has a session row's bar, and counts in Needs you; never one that only the Pull requests view's Show older lists.
 - **Opening:** a click anywhere on the row that isn't a control, or its button, opens the PR view in the third column, as `?pr=`; ↑ and ↓ on its button, and `j` and `k`, step through the rows, sessions' and PRs' alike.
-- **Not on a PR row:** a star, a flag, a snooze, and its branch, which the filter matches and the PR view shows. Starred never lists one.
-- **Tab stops:** the title's button, then the action (W107).
+- **Not on a PR row:** a star, a flag, a snooze, and its branch, which the filter matches and the PR view shows. Starred never lists one. A PR has [Not for me](#not-for-me) instead (W188).
+- **Line 2's end:** the Not for me toggle, when the PR can be dismissed, in a `session-line-2` as a session row's snooze menu is, its right edge under the action's.
+- **Tab stops:** the title's button, then the action (W107), then Not for me (W188).
+
+#### Not for me
+
+(W188; Phil, 2026-11-11: "Have we a feature planned to dismiss a session or PR request (a conversation)? For example, PR reviews that I'm not going to take on.") A PR you're not taking on, such as a review you won't do. Its words keep clear of a session's: a session is [snoozed](#snooze) or [flagged](#flag-it-doesnt-need-me); a PR is Not for me, and its rows are under Dismissed.
+
+- **The toggle:** at the end of a PR row's line 2, under its action, a ghost sm `hide` icon button with `aria-pressed`, named "Not for me: #57" by its tooltip whatever its state, as the flag toggle is. On a screen that hovers it shows on hover and focus while it's off, as a snooze menu does; pressed, it always shows. None on a PR the server can't compare (no `stateHash`).
+- **Pressing it** dismisses the PR in the state the page shows: the page sends that state's hash, and a PR with something new since is refused, with the server's words in an error toast. Then a success toast with Undo: "#57 is out of Needs you, under Dismissed, until something new happens." It goes once the dismissal ends by itself, since Undo would do nothing.
+- **What it leaves:** everything `prNeedsAttention()` drives, as a snooze leaves what `needsAttention()` drives: Needs you and its rows, every need-you badge, the Pull requests item's included, the session list's "*n* need you", the root tabs' badges and the document title's count. A session that owns it keeps its row, without the need. The supervisor's `list_prs` says `dismissed` and never `needsYou`.
+- **The Dismissed section:** after Finished, in every view that lists PR rows but Needs you, Finished's toggle row with "Dismissed (*n*)", collapsed at each load and not stored. Its rows are PR rows, the most recently dismissed first: the title at 400 in `--pw-text-muted`, as a finished session's name, line 2's reason muted, the state badges set aside, outlined, as a snoozed session's state badge is, and no bar. The toggle is pressed: pressing it again is Undo, with no toast, as the row moves back. The section counts in the list's summary, and an otherwise empty Pull requests view shows it rather than "No open pull requests".
+- **The PR view:** under line 3, an outline sm "Not for me" button with the `hide` icon; while dismissed, in its place, a neutral alert, "You said this one is Not for me, so it doesn't need you. It comes back if something new happens: a new review request or mention of you, or on your own, a new review or failing CI.", with an outline sm Undo, which says so in a toast. Focus moves to the one that took the other's place.
+- **When it comes back:** something new on the PR (W188 in `PLAN.md` has the inputs). The dismissal is dropped and the row is back where it was, needing you if it does, and for 12 hours line 2 starts with "Back: something new", in `--pw-text` 500.
 
 #### Starting a session for a PR
 
