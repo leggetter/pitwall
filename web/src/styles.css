@@ -2744,9 +2744,10 @@ mark.match {
 /*
  * The recap strip (section 4: Recap strip, W111): between the session view's header and its tabs, on
  * --pw-surface-muted, as the footer is, with a bottom --pw-border. Line 1: the disclosure button, the
- * age, Refresh right after it (W150), and "May be out of date" while it's stale. Then the picture
- * (W150): Goal, Working on, on one line with an ellipsis while it's collapsed, the Plan section (W172),
- * and your to-dos; or, for a recap without one, the summary and, while it's open, the to-dos (W121). At
+ * age, Refresh right after it (W150), and "May be out of date" while it's stale. Then the summary, on
+ * one line with an ellipsis while it's collapsed, and, while it's open, the picture (W150, W189): Goal,
+ * Done, Working on, the Plan section (W172), your to-dos and the rest, each tagged with who acts; or,
+ * for a recap without one, the summary and, while it's open, the to-dos (W121). At
  * most 35% of the view's height, scrolling inside itself past that, as the footer does at half, so the
  * body always keeps its room.
  */
@@ -2775,8 +2776,8 @@ mark.match {
 }
 
 /*
- * The picture's lines (W150): "Goal:", "Working on:" and "For you (n):", each label in 500
- * --pw-text, then its text, wrapping while the strip is open.
+ * The picture's lines (W150, W189): "Goal:", "Done:", "Working on:", "For you (n):" and "Next:", each
+ * label in 500 --pw-text, then its text, wrapping.
  */
 .recap-line {
   margin: 0;
@@ -2790,33 +2791,6 @@ mark.match {
 
 .recap-label {
   font-weight: var(--pw-weight-medium);
-}
-
-/* Working on: wrapping under its label while it's open, as Goal does; collapsed, its label, its first line and "2 for you" on one baseline. */
-.session-recap[data-collapsed='true'] .recap-working-on {
-  display: flex;
-  align-items: baseline;
-  gap: var(--pw-space-1);
-}
-
-.recap-working-on .recap-label,
-.recap-working-on .badge {
-  flex: none;
-}
-
-.recap-working-on .badge {
-  margin-left: var(--pw-space-0-5);
-}
-
-.recap-working-on .recap-line-text {
-  min-width: 0;
-}
-
-/* Collapsed: Working on's first line, its whole in a tooltip when it's cut. */
-.session-recap[data-collapsed='true'] .recap-working-on .recap-line-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* Inside the picture's body: 4 px between its lines, as between the strip's. */

@@ -2010,8 +2010,17 @@ export interface SessionRecap {
    * 'claude-code'); goal, workingOn and plan are there together or not at all.
    */
   goal?: string;
-  /** W150: the item it's on now, with its ID when it has one, and why it matters to the goal or the plan. */
+  /**
+   * W150: the item it's on now, and why it matters to the goal or the plan. Since W189 (recaps a cold
+   * reader can act on) in plain words, an ID only beside what it is.
+   */
   workingOn?: string;
+  /**
+   * W189: what's finished so far that someone with no context needs to carry on: results, decisions
+   * and who made them, what was shipped or posted. Only with the picture, and in every recap made
+   * since W189.
+   */
+  done?: string;
   /** W150: the plan it works through, in one line; empty when the material shows none. */
   plan?: string;
   /**
@@ -2074,6 +2083,14 @@ export interface RecapHealth {
 /** The model recaps run on (spike 010: as right as Sonnet 5.5 on 56 recaps, at a fifteenth of the cost). */
 export const RECAP_MODEL = 'claude-haiku-5-5';
 
+/**
+ * The effort recaps run at unless the config file or the app chooses another (W189, recaps a cold
+ * reader can act on): at Claude Code's default, Haiku 5.5 thought for up to 7,100 tokens a recap, and
+ * a call whose thinking ran into its output cap was sent again, its whole input billed twice, as
+ * W189's evaluation measured (PLAN.md). At low it thought for about 1,900, in one request.
+ */
+export const RECAP_EFFORT: EffortLevel = 'low';
+
 /** How long a session with no recap yet must be idle after a turn ends before it's recapped (spike 010: trailing, 5 minutes). */
 export const RECAP_DEBOUNCE_MS = 5 * 60 * 1000;
 
@@ -2096,6 +2113,17 @@ export const RECAP_TURNS_CAP = 8000;
 
 /** Characters of the first prompt a recap reads, keeping its start and end. */
 export const RECAP_FIRST_PROMPT_CAP = 1500;
+
+/**
+ * Characters of your own messages through the session a recap reads (W189, recaps a cold reader can
+ * act on), as `<your-messages>`: your words are under 1% of a transcript's bytes, and they carry why
+ * the work started, what you decided and what you asked for since, which the latest turns of a long
+ * session never reach. The newest that fit, after the first prompt, which has its own block.
+ */
+export const RECAP_YOUR_MESSAGES_CAP = 6000;
+
+/** The longest of your messages in `<your-messages>`, keeping its start and end (W189). */
+export const RECAP_YOUR_MESSAGE_MAX = 600;
 
 /** The longest summary, the longest to-do, and the longest goal, working on and plan line (W150). */
 export const RECAP_FIELD_MAX = 400;
@@ -2459,7 +2487,7 @@ export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type EffortLevel = (typeof EFFORT_LEVELS)[number];
 
 /**
- * The levels recaps may run at (W119's review): a recap call may write at most 4,096 tokens, thinking
+ * The levels recaps may run at (W119's review): a recap call may write at most 8,192 tokens since W189, thinking
  * included (RECAP_MAX_OUTPUT_TOKENS in src/recaps/prompt.ts), and `xhigh` or `max` could use them up
  * before the answer, failing the recap.
  */
