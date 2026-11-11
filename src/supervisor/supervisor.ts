@@ -74,6 +74,8 @@ import { contextTokensOf, defaultConfigDir, encodeProjectDir, isSessionUuid } fr
 import { MCP_SERVER_NAME, type ConversationPage, type SupervisorState, type WorkChoice } from '../shared/protocol.js';
 import { createApprovalQueue, type ApprovalQueue } from './approvals.js';
 import { createSupervisorGate, SUPERVISOR_GATE_DIR_NAME, type SupervisorGate } from './gate.js';
+import { connectorLaunch, connectorOf, type SupervisorConnector } from './connectors.js';
+import { type ConnectorLauncher, defaultConnectorLauncher } from './connectorServer.js';
 import { isModelRejection, modelRejectedMessage } from '../server/work.js';
 import { ensureLaunchDir, pitwallHome } from '../server/launch.js';
 import { checkClaudeVersion, spawnRelayChild, type RelayChild, type RelayChildEvents, type RelaySpawner } from '../server/relay.js';
@@ -83,7 +85,7 @@ import {
   mcpConfigText,
   MIN_SUPERVISOR_CLAUDE_VERSION,
   SUPERVISOR_DIR_NAME,
-  SUPERVISOR_INIT_TOOLS,
+  supervisorInitTools,
   SUPERVISOR_NAME,
   SUPERVISOR_PERMISSION_MODE,
   SUPERVISOR_PROMPT_VERSION,
@@ -258,6 +260,13 @@ export interface SupervisorOptions {
   approvals?: ApprovalQueue;
   /** The recipient gate (W115). Default: gate.ts's, in the supervisor's folder. */
   gate?: SupervisorGate;
+  /**
+   * The connectors you turned on (W184, D28): the config file's `supervisor.connectors`, none with
+   * `--no-connectors`. Read at each start, with their variables from `env`. Default none.
+   */
+  connectors?: readonly SupervisorConnector[];
+  /** How a stdio connector is run. Default node and connectorLauncher.mjs beside connectorServer.ts. */
+  connectorLauncher?: ConnectorLauncher;
 }
 
 /** The longest stderr kept from a process, for the held check. */
@@ -282,6 +291,12 @@ interface Proc {
   initRequestId: string;
   /** Its recipient gate's id (gate.ts). */
   gateId: string;
+  /** What its system/init may list: SUPERVISOR_INIT_TOOLS and this start's connectors' chosen tools (W184). */
+  initTools: ReadonlySet<string>;
+  /** This start's connectors, by name. */
+  connectors: string[];
+  /** The connectors' statuses already logged, `<name>:<status>`. */
+  reported: Set<string>;
   readyTimer?: NodeJS.Timeout;
   /** Called once: with the start's outcome, when it's ready or exits first. */
   onSettled: ((outcome: SupervisorOutcome) => void)[];
@@ -472,9 +487,17 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
       if (holder !== undefined) return hold(holder);
     }
 
+    // The connectors (W184, D28): their servers, with their variables' values, go in the 0600 MCP config
+    // alone; one whose variables aren't all in pitwall's environment is left out of this start.
+    const env = options.env ?? process.env;
+    const connectors = connectorLaunch(options.connectors ?? [], env, options.connectorLauncher ?? defaultConnectorLauncher());
+    for (const skipped of connectors.skipped) {
+      log(`its connector ${skipped.name} is off for this start: ${skipped.why}.`);
+    }
+
     const token = randomSecret();
     try {
-      writeConfig(mcpConfigText(mcpUrl, token));
+      writeConfig(mcpConfigText(mcpUrl, token, connectors.servers));
     } catch (error) {
       log(`couldn't write its MCP config (${oneLine((error as Error).message)}).`);
       gate.forget(gateId);
@@ -492,6 +515,9 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
       stderr: '',
       initRequestId: `pitwall-init-${randomId()}`,
       gateId,
+      initTools: supervisorInitTools(connectors.allowed),
+      connectors: connectors.names,
+      reported: new Set(),
       onSettled: [],
       onExit: [],
     };
@@ -509,9 +535,18 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     configOwner = p;
     try {
       const settings = supervisorSettings(gate.hooks(gateId));
-      p.child = spawn(claudeBin, supervisorArgs({ mcpConfig: configFile, settings, ...(resume === undefined ? {} : { resume }), ...(options.work?.() ?? (options.model === undefined ? {} : { model: options.model })) }), {
+      p.child = spawn(
+        claudeBin,
+        supervisorArgs({
+          mcpConfig: configFile,
+          settings,
+          ...(resume === undefined ? {} : { resume }),
+          ...(connectors.names.length === 0 ? {} : { connectors: { allowed: connectors.allowed, disallowed: connectors.disallowed } }),
+          ...(options.work?.() ?? (options.model === undefined ? {} : { model: options.model })),
+        }),
+        {
         cwd,
-        env: supervisorEnvironment(options.env ?? process.env),
+        env: supervisorEnvironment(env),
       }, events);
     } catch (error) {
       log(`couldn't start it: ${oneLine((error as Error).message)}`);
@@ -763,7 +798,7 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
           const name = oneLine(block.name, 120);
           stats.toolCalls[name] = (stats.toolCalls[name] ?? 0) + 1;
           // Claude Code asks the approve tool about it, which denies it; say so.
-          if (!SUPERVISOR_INIT_TOOLS.has(name)) log(`it tried a tool pitwall doesn't give it (${name}); pitwall's approve tool denies it.`);
+          if (!p.initTools.has(name)) log(`it tried a tool pitwall doesn't give it (${name}); pitwall's approve tool denies it.`);
         }
         return;
       }
@@ -807,8 +842,16 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     if (!p.ready) markReady(p);
     p.busy = true;
     const tools = Array.isArray(event.tools) ? event.tools.filter((tool): tool is string => typeof tool === 'string') : [];
-    const extra = tools.find((tool) => !SUPERVISOR_INIT_TOOLS.has(tool) && !TOLERATED_TOOLS.has(tool));
+    const extra = tools.find((tool) => !p.initTools.has(tool) && !TOLERATED_TOOLS.has(tool));
     if (extra !== undefined) {
+      // A connector's tool you didn't choose, such as one its server added since (D28): fail closed.
+      const connector = connectorOf(extra, p.connectors);
+      if (connector !== undefined) {
+        return trip(
+          p,
+          `The supervisor's connector ${connector} offers a tool you haven't chosen (${oneLine(extra, 80)}), so pitwall stopped it. Run pitwall --connector-tools ${connector}, update its "tools" and "otherTools" in the config file, and restart pitwall.`,
+        );
+      }
       return trip(p, `The supervisor started with a tool pitwall didn't give it (${oneLine(extra, 80)}), so pitwall stopped it.`);
     }
     if (event.permissionMode !== undefined && event.permissionMode !== SUPERVISOR_PERMISSION_MODE) {
@@ -828,6 +871,17 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
         return trip(p, "The supervisor started without pitwall's tools connected, so it couldn't read your sessions; pitwall stopped it. Press Start to try again.");
       }
       if (status !== 'connected') log(`pitwall's MCP server is ${oneLine(String(status), 40)} for the supervisor.`);
+      // A connector that didn't connect only loses its own tools; the supervisor goes on without them (W184).
+      // Said once a process, for each connector and status.
+      for (const name of p.connectors) {
+        const server = event.mcp_servers.find((entry) => isRecord(entry) && entry.name === name);
+        const state = oneLine(String((isRecord(server) ? server.status : undefined) ?? 'missing'), 40);
+        if (state === 'connected' || p.reported.has(`${name}:${state}`)) continue;
+        p.reported.add(`${name}:${state}`);
+        // An OAuth connector not signed in (spike 017, finding 3): Claude Code keeps the sign-in, not pitwall.
+        if (state === 'needs-auth') log(`its connector ${name} needs a sign-in, so its tools aren't there. Run pitwall --connector-tools ${name} for how.`);
+        else log(`its connector ${name} is ${state}, so its tools aren't there.`);
+      }
     }
     const id = event.session_id;
     // Not from a process New conversation is stopping (W136): that conversation was left.
