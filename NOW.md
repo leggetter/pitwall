@@ -3,7 +3,7 @@
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
 
-Last updated: 2026-11-10, evening, on `docs/m5.3-coordination`: M5.2 is merged into `main` ([#234](https://github.com/leggetter/pitwall/pull/234)), and `m5.3/integration` is branched from it with [#236](https://github.com/leggetter/pitwall/pull/236) (fix(mcp): list_sessions reports `prOpen` null, not false, for a PR it didn't fetch; merged straight into `main`), [#237](https://github.com/leggetter/pitwall/pull/237) (docs: D28, the supervisor reads through read-only connectors; spike 016 (read-only connectors under the strict command line); W183 to W186) and [#238](https://github.com/leggetter/pitwall/pull/238) (fix(web): the supervisor's Sent and started rows on one line, the name said once). Phil answered the five M5.2 questions ("go with your leans"), listed below. The next free W number is W187.
+Last updated: 2026-11-11, on `docs/m5.3-answers`: Phil's answers on W184, W185 and stopping finished sessions; the supervisor's click-away close asked. Before it, 2026-11-10, evening, on `docs/m5.3-coordination`: M5.2 is merged into `main` ([#234](https://github.com/leggetter/pitwall/pull/234)), and `m5.3/integration` is branched from it with [#236](https://github.com/leggetter/pitwall/pull/236) (fix(mcp): list_sessions reports `prOpen` null, not false, for a PR it didn't fetch; merged straight into `main`), [#237](https://github.com/leggetter/pitwall/pull/237) (docs: D28, the supervisor reads through read-only connectors; spike 016 (read-only connectors under the strict command line); W183 to W186) and [#238](https://github.com/leggetter/pitwall/pull/238) (fix(web): the supervisor's Sent and started rows on one line, the name said once). Phil answered the five M5.2 questions ("go with your leans"), listed below. The next free W number is W187.
 
 **Servers:** 4518 runs `main` at f4458a7, restarted 21:44 on 2026-11-10. The 4519 try-out is stopped and its worktree removed.
 
@@ -44,9 +44,9 @@ Last updated: 2026-11-10, evening, on `docs/m5.3-coordination`: M5.2 is merged i
 
 ## Open questions for Phil
 
-1. **Go for W184 (the supervisor's connectors: config, tool choice and launch)?** Yes starts it after W176; no leaves D28 (the supervisor reads through read-only connectors) unbuilt. Lean: yes, after W176 (the pitwall plugin).
-2. **For W185 (spike: Slack, Notion and Gmail with real accounts), which services, with your per-service OK?** Each needs your account's access. Lean: Slack and Notion first, Gmail later.
-3. **Stop finished pitwall sessions after their work merges?** Yes frees them; a stopped session can be resumed. Lean: yes.
+1. **The supervisor's panel closes when you click away?** (Phil, 2026-11-11: "the supervisor dialog should probably close when you click away".) Lean: **only where it covers the page,** below 1,200 px, where the view behind is inert: a click on the covered part closes it. At 1,200 px and wider it sits beside the view and stays open while you change the selection, which was W177's (the supervisor opens over the page) point. Never when it would lose work: a message typed in its box, or a card being edited, keeps it open, as Escape already does. Escape and the header's Supervisor button (W182) still close it. If yes, it's W187.
+
+Answered (Phil, 2026-11-11, "go with your leans"): W184 (the supervisor's connectors) goes ahead after W176 (the pitwall plugin); W185 (spike: real accounts) uses Slack and Notion first, Gmail later; finished pitwall sessions are stopped once their work merges ("supervisor table layout" and "pitwall-slack-notion-access" stopped 2026-11-11; `claude attach <id>` resumes one).
 
 Answered (Phil, 2026-11-10, "go with your leans"): (a) the M5.2 → `main` PR as drafted; (b) split M5.2 at W180, as M5.1 was at W164; (c) build W176 (the pitwall plugin) next, as M5.3's first item; (d) the builders' decisions are confirmed as built (recorded in the archive's M5.2 work breakdown: W156, W158, W159, W160, W177, W180); (e) the Supervisor button below 1,000 px stays as built (W182, the supervisor's button in the header).
 
