@@ -126,11 +126,16 @@ describe('supervisorEnvironment()', () => {
   });
 
   it('caps a tool result with Claude Code’s MAX_MCP_OUTPUT_TOKENS, its own value, not yours (W184)', () => {
-    expect(supervisorEnvironment({ MAX_MCP_OUTPUT_TOKENS: '1000000' }).MAX_MCP_OUTPUT_TOKENS).toBe(String(SUPERVISOR_MCP_OUTPUT_TOKENS));
-    expect(supervisorEnvironment({ max_mcp_output_tokens: '1000000' }).max_mcp_output_tokens).toBeUndefined();
-    // Below Claude Code's default of 25,000, and room for pitwall's own answers of 40,000 characters.
-    expect(SUPERVISOR_MCP_OUTPUT_TOKENS).toBeLessThan(25_000);
-    expect(SUPERVISOR_MCP_OUTPUT_TOKENS * 2.5).toBeGreaterThanOrEqual(40_000);
+    const env = supervisorEnvironment({ MAX_MCP_OUTPUT_TOKENS: '1000000', ENABLE_MCP_LARGE_OUTPUT_FILES: '1', max_mcp_output_tokens: '1000000' });
+    expect(env.MAX_MCP_OUTPUT_TOKENS).toBe(String(SUPERVISOR_MCP_OUTPUT_TOKENS));
+    // Cut, not saved to a file under ~/.claude (W186's F3).
+    expect(env.ENABLE_MCP_LARGE_OUTPUT_FILES).toBe('0');
+    expect(env.max_mcp_output_tokens).toBeUndefined();
+    // A cut result, 4 characters a token plus Claude Code's note of about 1,000, stays under the
+    // threshold of about 50,000 characters past which Claude Code saves any tool result to a file;
+    // pitwall's own answers, at most 40,000 characters, are never cut.
+    expect(SUPERVISOR_MCP_OUTPUT_TOKENS * 4 + 1_000).toBeLessThan(48_000);
+    expect(SUPERVISOR_MCP_OUTPUT_TOKENS * 4).toBeGreaterThanOrEqual(40_000);
   });
 });
 

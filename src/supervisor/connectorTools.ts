@@ -45,9 +45,31 @@ export interface ListedTool {
   readOnlyHint: boolean;
   /** One plain line, at most DESCRIPTION_MAX characters. */
   description: string;
+  /**
+   * It takes a URL or URI, or says it fetches one (W186's F1): a "read" that sends what the model puts
+   * in it to any address, so never one to choose. Never preselected.
+   */
+  takesUrl: boolean;
 }
 
-export type ToolListing = { ok: true; tools: ListedTool[]; unusable: number } | { ok: false; error: string };
+/** A property's name that is a URL, URI or link. */
+const URL_PROPERTY = /(?:^|[_-])(?:url|uri|href|link|endpoint)s?$|(?:Url|Uri|URL|URI|Href|Link|Endpoint)s?$/;
+
+/** A description that says the tool fetches an address. */
+const FETCHES_URL = /\b(?:fetch|fetches|download|downloads|open|opens|visit|visits|request|requests|get|gets)\b[^.]{0,60}\b(?:url|uri|link|web ?page|website|address)/i;
+
+/** Whether a tool's input schema or description says it takes, or fetches, a URL. */
+export function takesUrl(item: Record<string, unknown>): boolean {
+  const schema = isRecord(item.inputSchema) ? item.inputSchema : {};
+  const properties = isRecord(schema.properties) ? schema.properties : {};
+  for (const [name, property] of Object.entries(properties)) {
+    if (URL_PROPERTY.test(name)) return true;
+    if (isRecord(property) && (property.format === 'uri' || property.format === 'url' || property.format === 'iri')) return true;
+  }
+  return typeof item.description === 'string' && FETCHES_URL.test(item.description);
+}
+
+export type ToolListing = { ok: true; tools: ListedTool[]; unusable: number; schemas?: false } | { ok: false; error: string };
 
 /** The MCP protocol version pitwall asks for. A server answers with the one it speaks. */
 export const MCP_PROTOCOL_VERSION = '2025-06-18';
@@ -123,7 +145,7 @@ export function readTools(raw: readonly unknown[]): { tools: ListedTool[]; unusa
     if (seen.has(name)) continue;
     seen.add(name);
     const annotations = isRecord(item.annotations) ? item.annotations : {};
-    tools.push({ name, readOnlyHint: annotations.readOnlyHint === true, description: plainLine(typeof item.description === 'string' ? item.description : '', DESCRIPTION_MAX) });
+    tools.push({ name, readOnlyHint: annotations.readOnlyHint === true, description: plainLine(typeof item.description === 'string' ? item.description : '', DESCRIPTION_MAX), takesUrl: takesUrl(item) });
   }
   return { tools, unusable };
 }
@@ -137,13 +159,24 @@ export function formatToolListing(connector: Pick<SupervisorConnector, 'name' | 
   const name = connector.name;
   lines.push(`${name}: ${listing.tools.length} tool${listing.tools.length === 1 ? '' : 's'}, named as Claude Code shows them. [read-only hint] is the server's own claim, not a check: keep only the tools that read.`);
   lines.push('');
-  for (const tool of listing.tools) lines.push(`  ${tool.readOnlyHint ? '[read-only hint] ' : '                 '}${tool.name}${tool.description === '' ? '' : `: ${tool.description}`}`);
+  for (const tool of listing.tools) {
+    const mark = tool.takesUrl ? '[takes a URL]    ' : tool.readOnlyHint ? '[read-only hint] ' : '                 ';
+    lines.push(`  ${mark}${tool.name}${tool.description === '' ? '' : `: ${tool.description}`}`);
+  }
+  if (listing.tools.some((tool) => tool.takesUrl)) {
+    lines.push('');
+    lines.push("  [takes a URL]: the tool takes a URL or link, or says it fetches one. Don't choose it, even if it only reads: what the supervisor puts in it, which could be your sessions' text, goes to whatever address it names, with no card.");
+  }
+  if (listing.schemas === false) {
+    lines.push('');
+    lines.push("  Listed through Claude Code, which shows names only: no hints, descriptions or inputs. Check each tool's inputs in the service's docs, and don't choose one that takes a URL or fetches one.");
+  }
   if (listing.unusable > 0) {
     lines.push('');
     lines.push(`  ${listing.unusable} more had a name pitwall can't use (letters, digits, _ and - only, at most 64), so the supervisor would stop if it saw them. Don't turn this connector on unless that's fixed.`);
   }
-  const chosen = listing.tools.filter((tool) => tool.readOnlyHint).map((tool) => tool.name);
-  const others = listing.tools.filter((tool) => !tool.readOnlyHint).map((tool) => tool.name);
+  const chosen = listing.tools.filter((tool) => tool.readOnlyHint && !tool.takesUrl).map((tool) => tool.name);
+  const others = listing.tools.filter((tool) => !tool.readOnlyHint || tool.takesUrl).map((tool) => tool.name);
   lines.push('');
   lines.push(`For the connector "${name}" in supervisor.connectors, move each tool that only reads into "tools", and leave the rest in "otherTools":`);
   lines.push('');
@@ -191,7 +224,7 @@ export function signInInstructions(name: string, server: HttpConnectorServer, la
     '',
     '  mkdir -p ~/pitwall-connector-signin && cd ~/pitwall-connector-signin',
     `  printf '%s\\n' '${json}' > ${name}.json`,
-    `  claude --strict-mcp-config --mcp-config ${name}.json`,
+    `  claude --setting-sources '' --strict-mcp-config --mcp-config ${name}.json`,
     '',
     `In that session, run /mcp, choose ${name}, then Authenticate, and approve in the browser; then /exit.`,
     `Then run pitwall --connector-tools ${name} again. A change to its URL or name in the config file needs a new sign-in.`,
@@ -301,7 +334,7 @@ export function readInit(name: string, event: Record<string, unknown>): ClaudeTo
   if (status !== 'connected') return { ok: false, error: `Claude Code says the connector ${name} is ${plainLine(status, 40)}.` };
   const prefix = `mcp__${name}__`;
   const tools = Array.isArray(event.tools) ? event.tools.filter((tool): tool is string => typeof tool === 'string' && tool.startsWith(prefix)) : [];
-  return { ok: true, ...readTools(tools.map((tool) => ({ name: tool.slice(prefix.length) }))) };
+  return { ok: true, ...readTools(tools.map((tool) => ({ name: tool.slice(prefix.length) }))), schemas: false };
 }
 
 class ListingError extends Error {}

@@ -590,7 +590,8 @@ describe('what it can do', () => {
         expect(JSON.stringify(supervisor.state())).not.toContain(secret);
       }
       // The cap on a result, a connector's above all.
-      expect(options.env.MAX_MCP_OUTPUT_TOKENS).toBe('16000');
+      expect(options.env.MAX_MCP_OUTPUT_TOKENS).toBe('11000');
+      expect(options.env.ENABLE_MCP_LARGE_OUTPUT_FILES).toBe('0');
     });
 
     it('accepts a turn whose init lists the chosen tools, and stops one that lists a tool you didn’t choose, saying to choose again', async () => {
@@ -643,7 +644,34 @@ describe('what it can do', () => {
       await supervisor.send('again');
       children[0]!.init(SESSION, { mcp_servers: [{ name: 'pitwall', status: 'connected' }, { name: 'fake', status: 'failed' }, { name: 'notion', status: 'needs-auth' }] });
       expect(logs.filter((line) => line.includes('fake is failed'))).toHaveLength(1);
-      expect(logs).toContain("its connector notion needs a sign-in, so its tools aren't there. Run pitwall --connector-tools notion for how.");
+      expect(logs).toContain("its connector notion needs a sign-in, so it's off until pitwall restarts. Run pitwall --connector-tools notion for how.");
+    });
+
+    it('leaves a connector that needed a sign-in out of every later start in the run, said once (W186’s F5)', async () => {
+      const { supervisor, children, logs } = harness({ connectors, connectorLauncher: launcher, env });
+      await supervisor.send('hello');
+      children[0]!.init(SESSION, { mcp_servers: [{ name: 'pitwall', status: 'connected' }, { name: 'fake', status: 'connected' }, { name: 'notion', status: 'needs-auth' }] });
+      children[0]!.init(SESSION, { mcp_servers: [{ name: 'pitwall', status: 'connected' }, { name: 'fake', status: 'connected' }, { name: 'notion', status: 'needs-auth' }] });
+      expect(logs.filter((line) => line.includes('notion needs a sign-in'))).toHaveLength(1);
+      children[0]!.exit(1, null);
+      await until(() => supervisor.state().status === 'failed');
+      await supervisor.start();
+      const args = children[1]!.args;
+      expect(flag(args, '--allowed-tools')).toBe([...SUPERVISOR_ALLOWED_TOOLS, 'mcp__fake__fake_search'].join(','));
+      expect(Object.keys((JSON.parse(readFileSync(flag(args, '--mcp-config')!, 'utf8')) as { mcpServers: object }).mcpServers).sort()).toEqual(['fake', 'pitwall']);
+    });
+
+    it('logs once a run when Claude Code saved a tool result to a file anyway (W186’s F3), and goes on', async () => {
+      const { supervisor, children, logs } = harness({ connectors, connectorLauncher: launcher, env });
+      await supervisor.send('hello');
+      children[0]!.init();
+      const saved = { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: '<persisted-output>\nOutput too large (200KB). Full output saved to: /made-up/tool-results/mcp-fake-x.txt' }] } };
+      children[0]!.emit({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't0', content: 'a short result' }] } });
+      expect(logs.filter((line) => line.includes('saved a large tool result'))).toHaveLength(0);
+      children[0]!.emit(saved);
+      children[0]!.emit(saved);
+      expect(logs.filter((line) => line.includes('saved a large tool result'))).toHaveLength(1);
+      expect(supervisor.state().status).toBe('working');
     });
   });
 

@@ -29,6 +29,7 @@
 import { MCP_SERVER_NAME, MCP_TOOLS, SUPERVISOR_MODEL, type WorkChoice } from '../shared/protocol.js';
 import { workArgs } from '../server/work.js';
 import { relayEnvironment } from '../server/relay.js';
+import { OUTPUT_LIMIT_VARIABLES, outputLimitEnvironment } from './claudeOutput.js';
 
 /** The supervisor's session name: what `claude agents --json` lists it as, and what a session sees as the sender. */
 export const SUPERVISOR_NAME = 'pitwall-supervisor';
@@ -101,13 +102,11 @@ export function supervisorInitTools(connectorTools: readonly string[]): Readonly
 }
 
 /**
- * The most tokens one MCP tool result may bring into the supervisor's context: Claude Code's
- * `MAX_MCP_OUTPUT_TOKENS` (default 25,000; checked on 2.1.322, which truncates a longer result with
- * "[OUTPUT TRUNCATED - exceeded ..."), for every server it has. A connector's result reaches the
- * model from Claude Code directly, so this is its cap (W184, D28). Room for pitwall's own answers,
- * capped at 40,000 characters, even at 2.5 characters a token.
+ * The most tokens one MCP tool result may bring into the supervisor's context, a connector's above all
+ * (W184, D28), and cut rather than saved to a file: claudeOutput.ts, which says what Claude Code does
+ * with a large result and how that was found (W186's F3).
  */
-export const SUPERVISOR_MCP_OUTPUT_TOKENS = 16_000;
+export { SUPERVISOR_MCP_OUTPUT_TOKENS } from './claudeOutput.js';
 
 /**
  * How long one call to pitwall's MCP server may take, in milliseconds: 30 minutes, so the approve
@@ -246,7 +245,7 @@ export function supervisorArgs(options: { mcpConfig: string; settings: string; r
 const EFFORT_VARIABLES: ReadonlySet<string> = new Set(['CLAUDE_CODE_EFFORT_LEVEL', 'MAX_THINKING_TOKENS']);
 
 /** MCP's timers, which pitwall sets itself for the supervisor: yours, in any case, are left out. */
-const MCP_TIMER_VARIABLES: ReadonlySet<string> = new Set(['MCP_TOOL_TIMEOUT', 'CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT', 'CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS', 'MAX_MCP_OUTPUT_TOKENS']);
+const MCP_TIMER_VARIABLES: ReadonlySet<string> = new Set(['MCP_TOOL_TIMEOUT', 'CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT', 'CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS', ...OUTPUT_LIMIT_VARIABLES]);
 
 /**
  * The supervisor's environment: the relay's (relayEnvironment(): childEnvironment(), D23, without
@@ -266,8 +265,8 @@ export function supervisorEnvironment(env: NodeJS.ProcessEnv): Record<string, st
   result.MCP_TOOL_TIMEOUT = String(SUPERVISOR_MCP_TIMEOUT_MS);
   result.CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT = String(SUPERVISOR_MCP_TIMEOUT_MS);
   result.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS = '0';
-  // A tool result's cap, a connector's above all (W184): yours, if set, is left out.
-  result.MAX_MCP_OUTPUT_TOKENS = String(SUPERVISOR_MCP_OUTPUT_TOKENS);
+  // A tool result's cap, a connector's above all, cut rather than saved (W184, W186's F3): yours are left out.
+  Object.assign(result, outputLimitEnvironment());
   return result;
 }
 

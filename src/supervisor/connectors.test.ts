@@ -97,7 +97,14 @@ describe('supervisor.connectors in the config file', () => {
       expect(parse(withServer({ url })).supervisor?.connectors[0]?.server, url).toMatchObject({ kind: 'http' });
     }
     expect(error(withServer({ url: 'https://x.example', headers: { Authorization: 'Bearer made-up-literal' } }))).toContain('carries a credential, so it must take it from a variable');
-    expect(error(withServer({ url: 'https://x.example', headers: { 'X-Api-Key': 'made-up-literal' } }))).toContain('carries a credential');
+    // Only Authorization may carry a credential: Claude Code sends other headers on through a redirect
+    // to another host (W186's F2).
+    expect(error(withServer({ url: 'https://x.example', headers: { 'X-Api-Key': 'made-up-literal' } }))).toContain("can't carry a credential: only Authorization can");
+    expect(error(withServer({ url: 'https://x.example', headers: { 'X-Api-Key': '${NOTION_API_KEY}' } }))).toContain("can't carry a credential: only Authorization can");
+    expect(error(withServer({ url: 'https://x.example', headers: { 'X-Workspace': '${WORKSPACE_ID}' } }))).toContain("can't carry a credential");
+    expect(error(withServer({ url: 'https://x.example', headers: { Cookie: 'a=${SESSION}' } }))).toContain("can't carry a credential");
+    expect(error(withServer({ url: 'https://x.example', headers: { 'Proxy-Authorization': 'Basic ${P}' } }))).toContain("can't carry a credential");
+    expect(parse(withServer({ url: 'https://x.example', headers: { authorization: 'Bearer ${NOTION_API_KEY}', 'Notion-Version': '2022-06-28' } })).supervisor?.connectors[0]?.server).toMatchObject({ kind: 'http' });
     expect(error(withServer({ url: 'https://x.example', headers: { Authorization: 'Bearer $NOTION' } }))).toContain('may use $ only in ${NAME}');
     expect(error(withServer({ url: 'https://x.example', headers: { Authorization: 'Bearer ${ANTHROPIC_API_KEY}' } }))).toContain("names a variable that isn't one, or one a connector may never have");
     expect(error(withServer({ url: 'https://x.example', headers: { Authorization: 'Bearer ${NOTION}\r\nX: y' } }))).toContain('must be printable ASCII');
@@ -154,8 +161,12 @@ describe('connectorLaunch()', () => {
     expect(launch.skipped).toEqual([{ name: 'slack', why: "pitwall's environment has no usable SLACK_BOT_TOKEN (unset, or holding ${ or a line break)" }]);
     expect(launch.allowed.some((tool) => tool.startsWith('mcp__slack__'))).toBe(false);
     expect(Object.keys(launch.servers)).toEqual(['notion']);
-    // A header value with a line break counts as missing, so it can't add a header.
+    // A value with a line break or other control character counts as missing, in a header or a stdio
+    // server's environment alike (W186's F7).
     expect(connectorLaunch(connectors, { ...env, NOTION_API_KEY: 'x\r\nX-Evil: 1' }, launcher).skipped).toEqual([{ name: 'notion', why: expect.stringContaining('no usable NOTION_API_KEY') }]);
+    expect(connectorLaunch(connectors, { ...env, SLACK_BOT_TOKEN: 'a\nb' }, launcher).skipped).toEqual([{ name: 'slack', why: expect.stringContaining('no usable SLACK_BOT_TOKEN') }]);
+    expect(connectorLaunch(connectors, { ...env, SLACK_BOT_TOKEN: 'a\u0000b' }, launcher).skipped.map((entry) => entry.name)).toEqual(['slack']);
+    expect(connectorLaunch(connectors, { ...env, SLACK_BOT_TOKEN: 'a\tb' }, launcher).skipped).toEqual([]);
     expect(connectorLaunch([], env, launcher)).toEqual({ servers: {}, allowed: [], disallowed: [], names: [], skipped: [] });
   });
 

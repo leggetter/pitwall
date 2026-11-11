@@ -151,8 +151,9 @@ Config file:
                         { "name", "server", "tools", "otherTools" }. "server"
                         is { "command", "args", "env" }, where "env" names the
                         variables it gets from pitwall's environment, or
-                        { "url", "headers" }, https only, where a header takes
-                        a variable as \${NAME}, or { "url", "oauth" } for one
+                        { "url", "headers" }, https only, where Authorization,
+                        the one header that may carry a credential, takes a
+                        variable as \${NAME}, or { "url", "oauth" } for one
                         you sign in to through Claude Code. Never a value in
                         the file.
                         "tools" are the tools you chose as read-only, the only

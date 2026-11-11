@@ -76,6 +76,7 @@ import { createApprovalQueue, type ApprovalQueue } from './approvals.js';
 import { createSupervisorGate, SUPERVISOR_GATE_DIR_NAME, type SupervisorGate } from './gate.js';
 import { connectorLaunch, connectorOf, type SupervisorConnector } from './connectors.js';
 import { type ConnectorLauncher, defaultConnectorLauncher } from './connectorServer.js';
+import { savedToolResult } from './claudeOutput.js';
 import { isModelRejection, modelRejectedMessage } from '../server/work.js';
 import { ensureLaunchDir, pitwallHome } from '../server/launch.js';
 import { checkClaudeVersion, spawnRelayChild, type RelayChild, type RelayChildEvents, type RelaySpawner } from '../server/relay.js';
@@ -342,6 +343,10 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
   const gate = options.gate ?? createSupervisorGate({ dir: path.join(dir, SUPERVISOR_GATE_DIR_NAME) });
   /** The names the gate lets through to an approval, as the server last gave them. */
   let recipients: readonly string[] = [];
+  /** Connectors that needed a sign-in in this run: left out of every later start (W186's F5). */
+  const needsSignIn = new Set<string>();
+  /** Whether a tool result saved to a file has been logged in this run. */
+  let savedResultSaid = false;
 
   let closed = false;
   let mcpUrl: string | undefined;
@@ -490,7 +495,13 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     // The connectors (W184, D28): their servers, with their variables' values, go in the 0600 MCP config
     // alone; one whose variables aren't all in pitwall's environment is left out of this start.
     const env = options.env ?? process.env;
-    const connectors = connectorLaunch(options.connectors ?? [], env, options.connectorLauncher ?? defaultConnectorLauncher());
+    // One that needed a sign-in earlier in this run stays out (W186's F5): each start of a connector
+    // that isn't signed in writes Claude Code's OAuth discovery state to its credential store.
+    const connectors = connectorLaunch(
+      (options.connectors ?? []).filter((connector) => !needsSignIn.has(connector.name)),
+      env,
+      options.connectorLauncher ?? defaultConnectorLauncher(),
+    );
     for (const skipped of connectors.skipped) {
       log(`its connector ${skipped.name} is off for this start: ${skipped.why}.`);
     }
@@ -802,10 +813,26 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
         }
         return;
       }
+      case 'user':
+        return onToolResults(event);
       case 'result':
         return onTurnEnd(p, event);
       default:
         return;
+    }
+  }
+
+  /**
+   * A tool result Claude Code saved to a file under ~/.claude instead of passing it on: the output
+   * limits (claudeOutput.ts) stopped holding. Said once a run; nothing else changes (W186's F3).
+   */
+  function onToolResults(event: Record<string, unknown>): void {
+    if (savedResultSaid) return;
+    for (const block of blocksOf(event)) {
+      if (block.type !== 'tool_result' || !savedToolResult(block.content)) continue;
+      savedResultSaid = true;
+      log("Claude Code saved a large tool result to a file in the supervisor's session folder under ~/.claude, though pitwall asked it to cut such results. Its text may be someone else's.");
+      return;
     }
   }
 
@@ -878,8 +905,12 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
         const state = oneLine(String((isRecord(server) ? server.status : undefined) ?? 'missing'), 40);
         if (state === 'connected' || p.reported.has(`${name}:${state}`)) continue;
         p.reported.add(`${name}:${state}`);
-        // An OAuth connector not signed in (spike 017, finding 3): Claude Code keeps the sign-in, not pitwall.
-        if (state === 'needs-auth') log(`its connector ${name} needs a sign-in, so its tools aren't there. Run pitwall --connector-tools ${name} for how.`);
+        // An OAuth connector not signed in (spike 017, finding 3): Claude Code keeps the sign-in, not
+        // pitwall. Left out of every later start in this run (W186's F5), and said once.
+        if (state === 'needs-auth') {
+          if (!needsSignIn.has(name)) log(`its connector ${name} needs a sign-in, so it's off until pitwall restarts. Run pitwall --connector-tools ${name} for how.`);
+          needsSignIn.add(name);
+        }
         else log(`its connector ${name} is ${state}, so its tools aren't there.`);
       }
     }

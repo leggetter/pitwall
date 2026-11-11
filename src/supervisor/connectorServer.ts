@@ -104,8 +104,15 @@ const MAX_URL_LENGTH = 2048;
 /** A header's name: an HTTP token, letters, digits and `-` only. */
 const HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/;
 
-/** A header that carries a credential, so its value must come from a variable, never the file. */
-const SECRET_HEADER = /^(?:authorization|proxy-authorization|cookie)$|key|token|secret|auth|session|password|credential/i;
+/**
+ * A header named like one that carries a credential. Only `Authorization` may, from a variable: W186
+ * (the connectors' security review, F2) found Claude Code, following a 307 to another host, drops
+ * `Authorization` but sends every other header, `X-Api-Key` included, on to the second host.
+ */
+const SECRET_HEADER = /^(?:proxy-authorization|cookie)$|key|token|secret|auth|session|password|credential/i;
+
+/** The one header that may carry a credential, from a variable. */
+const CREDENTIAL_HEADER = 'authorization';
 
 /** What Claude Code expands in an MCP config's entries (spike 017, finding 5). */
 export const EXPANSION = '${';
@@ -255,8 +262,13 @@ function parseHeaders(value: unknown, key: string, fail: Fail): Record<string, s
     if (references!.some((name) => !ENV_NAME_PATTERN.test(name) || refusedEnvName(name))) {
       fail(at, "names a variable that isn't one, or one a connector may never have (pitwall's, Claude Code's or Anthropic's)");
     }
-    if (SECRET_HEADER.test(name) && references!.length === 0) {
+    const isAuthorization = name.toLowerCase() === CREDENTIAL_HEADER;
+    if (isAuthorization && references!.length === 0) {
       fail(at, 'carries a credential, so it must take it from a variable, such as "Bearer ${NOTION_API_KEY}", never from the file');
+    }
+    // A credential anywhere but Authorization would follow a redirect to another host (W186's F2).
+    if (!isAuthorization && (references!.length > 0 || SECRET_HEADER.test(name))) {
+      fail(at, 'can\'t carry a credential: only Authorization can, since Claude Code sends other headers on when a server redirects it to another host. Put a credential in "Authorization", from a variable');
     }
     headers[name] = template as string;
   }
@@ -297,9 +309,13 @@ export function connectorEnvironment(server: StdioConnectorServer, env: NodeJS.P
 /** A server entry for the MCP config, or the variables it lacks: unset, or with a value it can't use. */
 export type ResolvedServer = { ok: true; entry: Record<string, unknown> } | { ok: false; missing: string[] };
 
-/** A variable's value a connector can take: set, and without `${`, which Claude Code would expand again. */
-function usable(value: string | undefined): value is string {
-  return value !== undefined && !value.includes(EXPANSION);
+/**
+ * A variable's value a connector can take: set, without `${`, which Claude Code would expand again,
+ * and without a line break or other control character but a tab, in a header or an environment alike.
+ */
+export function usable(value: string | undefined): value is string {
+  // eslint-disable-next-line no-control-regex
+  return value !== undefined && !value.includes(EXPANSION) && !/[\u0000-\u0008\u000A-\u001F\u007F]/.test(value);
 }
 
 /**

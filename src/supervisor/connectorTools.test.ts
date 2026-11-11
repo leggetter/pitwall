@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
-import { launchPlan } from './connectorLauncher.mjs';
+import { findCommand, launchPlan } from './connectorLauncher.mjs';
 import { defaultConnectorLauncher } from './connectorServer.js';
 import { formatToolListing, listConnectorTools, listingNotice, listsThroughClaude, listToolsThroughClaude, plainLine, readInit, readTools, signInInstructions, sseMessages } from './connectorTools.js';
 
@@ -29,18 +29,32 @@ describe('connectorLauncher.mjs', () => {
     }
   });
 
-  it('starts the server with only those variables, whatever its own environment holds', async () => {
+  it('finds a bare command on the kept PATH, as execvp would, and leaves a path as it is', () => {
+    const dir = path.dirname(process.execPath);
+    expect(findCommand('node', `relative:${dir}`)).toBe(path.join(dir, 'node'));
+    expect(findCommand('/made-up/server', '/usr/bin')).toBe('/made-up/server');
+    expect(findCommand('made-up-not-there', '/usr/bin:/bin')).toBeUndefined();
+    expect(findCommand('node', 'bin:.')).toBeUndefined();
+  });
+
+  it('starts the server with only those variables, whatever its own environment holds, replacing itself where Node can', async () => {
     const log = path.join(scratch, 'env-names.txt');
+    const pidLog = path.join(scratch, 'pid.txt');
     const launcher = defaultConnectorLauncher();
+    let launcherPid: number | undefined;
     await new Promise<void>((resolve, reject) => {
       const child = execFile(
         launcher.node,
-        [launcher.script, '--keep', 'FAKE_NAMED', '--', process.execPath, FAKE, '--env-log', log],
+        [launcher.script, '--keep', 'FAKE_NAMED', '--', process.execPath, FAKE, '--env-log', log, '--pid-log', pidLog],
         { env: { PATH: process.env.PATH ?? '/usr/bin:/bin', FAKE_NAMED: '1', ANTHROPIC_API_KEY: 'made-up', CLAUDE_CODE_MESSAGING_SOCKET: '/made-up.sock', CLAUDE_CODE_MESSAGING_TOKEN: 'made-up', CLAUDECODE: '1', PITWALL_TOKEN: 'made-up' }, timeout: 10_000 },
         (error) => (error === null || error.killed === false ? resolve() : reject(error)),
       );
+      launcherPid = child.pid;
       child.stdin?.end();
     });
+    // With process.execve the server is the launcher's own process, so no process holds the
+    // launcher's starting environment, with Claude Code's messaging token, for `ps -E` (W186's F4).
+    if (typeof process.execve === 'function') expect(Number(readFileSync(pidLog, 'utf8'))).toBe(launcherPid);
     const names = readFileSync(log, 'utf8').trim().split('\n');
     // Node may add none of its own; the kept two are there and nothing pitwall's or Claude Code's is.
     expect(names).toContain('PATH');
@@ -60,11 +74,12 @@ describe('listConnectorTools(): stdio', () => {
       ok: true,
       unusable: 0,
       tools: [
-        { name: 'fake_search', readOnlyHint: true, description: 'Search the fake workspace. [31m (read-only)' },
-        { name: 'fake_read_thread', readOnlyHint: true, description: 'Read a fake thread.' },
-        { name: 'fake_post', readOnlyHint: false, description: 'Post a message to the fake workspace (write).' },
+        { name: 'fake_search', readOnlyHint: true, description: 'Search the fake workspace. [31m (read-only)', takesUrl: false },
+        { name: 'fake_read_thread', readOnlyHint: true, description: 'Read a fake thread.', takesUrl: false },
+        { name: 'fake_fetch', readOnlyHint: true, description: 'Fetch a web page by URL.', takesUrl: true },
+        { name: 'fake_post', readOnlyHint: false, description: 'Post a message to the fake workspace (write).', takesUrl: false },
         // As Claude Code shows it, so it can be kept out.
-        { name: 'bad_name_with_spaces', readOnlyHint: false, description: 'A name Claude Code shows with _ for each space.' },
+        { name: 'bad_name_with_spaces', readOnlyHint: false, description: 'A name Claude Code shows with _ for each space.', takesUrl: false },
       ],
     });
   });
@@ -94,7 +109,7 @@ describe('listConnectorTools(): HTTP', () => {
       return new Response(`event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { tools } })}\n\n`, { headers: { 'content-type': 'text/event-stream' } });
     };
     const listing = await listConnectorTools({ kind: 'http', url: 'https://mcp.made-up.example/mcp', headers: { Authorization: 'Bearer ${NOTION_API_KEY}' } }, { env: { NOTION_API_KEY: 'made-up-key' }, fetch: fake });
-    expect(listing).toEqual({ ok: true, unusable: 0, tools: [{ name: 'search', readOnlyHint: true, description: '' }, { name: 'create_page', readOnlyHint: false, description: 'Create a page.' }] });
+    expect(listing).toEqual({ ok: true, unusable: 0, tools: [{ name: 'search', readOnlyHint: true, description: '', takesUrl: false }, { name: 'create_page', readOnlyHint: false, description: 'Create a page.', takesUrl: false }] });
     expect(calls).toHaveLength(3);
     for (const call of calls) {
       expect(call.url).toBe('https://mcp.made-up.example/mcp');
@@ -138,7 +153,7 @@ setTimeout(() => {}, 10000);
   it('runs claude under the strict flags with this connector alone, in a 0600 config, and reads its tools from system/init', async () => {
     const { bin, seen } = fakeClaude({ type: 'system', subtype: 'init', tools: ['mcp__notion__notion-search', 'mcp__notion__notion-create-pages', 'mcp__other__x'], mcp_servers: [{ name: 'notion', status: 'connected' }] });
     const listing = await listToolsThroughClaude('notion', server, { claudeBin: bin, env: { PATH: process.env.PATH, ANTHROPIC_API_KEY: 'made-up' }, timeoutMs: 10_000 });
-    expect(listing).toEqual({ ok: true, unusable: 0, tools: [{ name: 'notion-search', readOnlyHint: false, description: '' }, { name: 'notion-create-pages', readOnlyHint: false, description: '' }] });
+    expect(listing).toEqual({ ok: true, unusable: 0, schemas: false, tools: [{ name: 'notion-search', readOnlyHint: false, description: '', takesUrl: false }, { name: 'notion-create-pages', readOnlyHint: false, description: '', takesUrl: false }] });
     const run = JSON.parse(readFileSync(seen, 'utf8')) as { args: string[]; mode: number; config: unknown };
     const value = (flag: string) => run.args[run.args.indexOf(flag) + 1];
     expect(value('--tools')).toBe('');
@@ -157,7 +172,8 @@ setTimeout(() => {}, 10000);
     expect(await listToolsThroughClaude('notion', server, { claudeBin: bin, env: { PATH: process.env.PATH }, timeoutMs: 10_000 })).toEqual({ ok: false, needsAuth: true, error: "the connector notion isn't signed in." });
     const text = signInInstructions('notion', server, { node: '/n', script: '/s' });
     expect(text).toContain(`'{"mcpServers":{"notion":{"type":"http","url":"https://mcp.made-up.example/mcp","oauth":{"clientId":"1234.5678","callbackPort":3118},"timeout":60000}}}' > notion.json`);
-    expect(text).toContain('claude --strict-mcp-config --mcp-config notion.json');
+    // Settings off, as the supervisor runs (spike 017; W186's F8).
+    expect(text).toContain("claude --setting-sources '' --strict-mcp-config --mcp-config notion.json");
     expect(readInit('notion', { mcp_servers: [{ name: 'notion', status: 'failed' }] })).toEqual({ ok: false, error: 'Claude Code says the connector notion is failed.' });
     expect(listsThroughClaude(server)).toBe(true);
     expect(listsThroughClaude({ ...server, headers: { Authorization: 'Bearer ${X}' } })).toBe(false);
@@ -166,8 +182,24 @@ setTimeout(() => {}, 10000);
 });
 
 describe('what --connector-tools prints', () => {
+  it('marks a tool that takes or fetches a URL, never preselects it, and says not to choose it (W186’s F1)', () => {
+    const listing = { ok: true as const, unusable: 0, tools: readTools([
+      { name: 'fetch', description: 'Fetch a page.', inputSchema: { properties: { url: { type: 'string' } } }, annotations: { readOnlyHint: true } },
+      { name: 'open_link', inputSchema: { properties: { target: { type: 'string', format: 'uri' } } }, annotations: { readOnlyHint: true } },
+      { name: 'reader', description: 'Downloads the web page at the given address.', annotations: { readOnlyHint: true } },
+      { name: 'search', description: 'Search messages.', inputSchema: { properties: { query: { type: 'string' } } }, annotations: { readOnlyHint: true } },
+    ]).tools };
+    expect(listing.tools.map((tool) => tool.takesUrl)).toEqual([true, true, true, false]);
+    const text = formatToolListing({ name: 'web' }, listing);
+    expect(text).toContain('  [takes a URL]    fetch: Fetch a page.');
+    expect(text).toContain("Don't choose it, even if it only reads");
+    expect(text).toContain('"tools": ["search"],');
+    expect(text).toContain('"otherTools": ["fetch","open_link","reader"]');
+    expect(formatToolListing({ name: 'n' }, { ok: true, unusable: 0, schemas: false, tools: [] })).toContain('Listed through Claude Code, which shows names only');
+  });
+
   it('marks the hint as the server’s claim, preselects the hinted tools, and says what changed since the config file’s lists', () => {
-    const listing = { ok: true as const, unusable: 1, tools: [{ name: 'fake_search', readOnlyHint: true, description: 'Search.' }, { name: 'fake_post', readOnlyHint: false, description: '' }, { name: 'fake_new', readOnlyHint: false, description: '' }] };
+    const listing = { ok: true as const, unusable: 1, tools: [{ name: 'fake_search', readOnlyHint: true, description: 'Search.', takesUrl: false }, { name: 'fake_post', readOnlyHint: false, description: '', takesUrl: false }, { name: 'fake_new', readOnlyHint: false, description: '', takesUrl: false }] };
     const text = formatToolListing({ name: 'fake', tools: ['fake_search', 'fake_gone'], otherTools: ['fake_post'] }, listing);
     expect(text).toContain("[read-only hint] is the server's own claim, not a check");
     expect(text).toContain('  [read-only hint] fake_search: Search.');
@@ -182,7 +214,7 @@ describe('what --connector-tools prints', () => {
 
   it('reads tools defensively and strips control, format and invisible characters', () => {
     expect(readTools([null, { name: 'a' }, { name: 'a' }, { name: 'x y' }, { name: 7 }, { name: 'x'.repeat(65) }, { name: '' }])).toEqual({
-      tools: [{ name: 'a', readOnlyHint: false, description: '' }, { name: 'x_y', readOnlyHint: false, description: '' }],
+      tools: [{ name: 'a', readOnlyHint: false, description: '', takesUrl: false }, { name: 'x_y', readOnlyHint: false, description: '', takesUrl: false }],
       unusable: 4,
     });
     expect(plainLine('a\u0007b​c‮d\ne\u{E0041}f', 100)).toBe('a b c d e f');

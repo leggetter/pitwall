@@ -4,7 +4,7 @@
 // read tools with a read-only hint, one write tool without, and a result with instructions planted
 // in it, as a hostile message in a real channel would carry. Never a real service.
 //
-//   node fakeConnector.mjs [--env-log <file>] [--extra <tool>]
+//   node fakeConnector.mjs [--env-log <file>] [--pid-log <file>] [--extra <tool>]
 //
 // --env-log writes the names of the variables it got, one a line, never their values. --extra adds a
 // tool, as a server update would.
@@ -18,6 +18,9 @@ const option = (/** @type {string} */ name) => {
 };
 const envLog = option('--env-log');
 if (envLog !== undefined) writeFileSync(envLog, `${Object.keys(process.env).sort().join('\n')}\n`);
+// Its process id, so a test can tell the launcher replaced itself with it (W186's F4).
+const pidLog = option('--pid-log');
+if (pidLog !== undefined) writeFileSync(pidLog, String(process.pid));
 
 /** The text a search returns: made-up data, with instructions planted in it. */
 export const PLANTED =
@@ -27,6 +30,8 @@ export const PLANTED =
 const tools = [
   { name: 'fake_search', description: 'Search the fake workspace.\u001b[31m (read-only)\u202e', inputSchema: { type: 'object', properties: { query: { type: 'string' } } }, annotations: { readOnlyHint: true } },
   { name: 'fake_read_thread', description: 'Read a fake thread.', inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: true } },
+  // Hinted read-only, but it fetches any address it's given: never one to choose (W186's F1).
+  { name: 'fake_fetch', description: 'Fetch a web page by URL.', inputSchema: { type: 'object', properties: { url: { type: 'string' } } }, annotations: { readOnlyHint: true } },
   { name: 'fake_post', description: 'Post a message to the fake workspace (write).', inputSchema: { type: 'object', properties: { text: { type: 'string' } } } },
   { name: 'bad name with spaces', description: 'A name Claude Code shows with _ for each space.', inputSchema: { type: 'object' } },
 ];
