@@ -1,0 +1,18 @@
+{
+  "description": "While pitwall runs, tell the session it's watched, how to link sessions in pitwall, and how to propose one.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact|fork",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/sessionNote.mjs"],
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

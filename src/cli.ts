@@ -35,6 +35,7 @@ import { createWorkStore } from './server/work.js';
 import { isPitwallOwn } from './server/own.js';
 import { createUsageSource } from './usage/service.js';
 import { type DirCheckContext, LaunchDirError, pitwallHome, prepareLaunchDir, removeWhenUsed, writeLaunchFile } from './server/launch.js';
+import { type ServerFileHandle, claimServerFile } from './server/serverFile.js';
 import { RELAY_NAME } from './server/relayPrompt.js';
 import { SUPERVISOR_NAME } from './supervisor/prompt.js';
 import { DEFAULT_POLL_INTERVAL_MS, PRS_POLL_INTERVAL_MS, RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, RECAP_MODEL, RECAP_UPDATE_DEBOUNCE_MS, SUPERVISOR_MODEL } from './shared/protocol.js';
@@ -678,9 +679,12 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   // handler yet would kill the process outright, skipping the exit hook that
   // deletes the launch file. SIGHUP comes when the terminal closes.
   let stopping = false;
+  // Set once the signal handlers are in: where this run listens, for the plugin's SessionStart hook (W176).
+  let serverFile: ServerFileHandle | undefined;
   const shutdown = () => {
     if (stopping) return;
     stopping = true;
+    serverFile?.close();
     // tsx watch and terminals can deliver the same signal twice; the second is ignored.
     setTimeout(() => process.exit(1), 3000).unref();
     server
@@ -700,6 +704,10 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
   process.on('SIGHUP', shutdown);
+  // The URL and pid only, never the token (W176). A run under npm run dev, which sets the marker,
+  // doesn't replace a live CLI run's file. Deleted on close, and on exit, only while it's still this run's.
+  serverFile = claimServerFile({ home: pitwallHome(), url: server.url, dev: marker !== undefined });
+  process.once('exit', () => serverFile?.close());
 
   // The launch file always has the token: it's the one place a fixed token is written (D7).
   const url = `${server.url}/#token=${token}`;

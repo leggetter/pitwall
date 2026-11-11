@@ -41,8 +41,8 @@ export interface AskedYou {
 
 /**
  * A new session a session proposes (W163, spin-off proposals): the newest assistant message ended its
- * turn with a fenced block whose info string is `spin-off` (the `spin-off` skill, skills/spin-off/ in
- * pitwall's repo), naming a folder, an optional name and the first prompt. Untrusted session text,
+ * turn with a fenced block whose info string is `spin-off` (the pitwall plugin's `pitwall` skill,
+ * plugin/skills/pitwall/ in pitwall's repo, W176), naming a folder, an optional name and the first prompt. Untrusted session text,
  * read by the index (src/index/spinOff.ts) behind the transcript adapter and bounded there: each
  * field at most its limit below, and no character that doesn't show as itself (hiddenTextProblem()).
  * Nothing starts from it: the card in Needs you opens New session filled in, after the server checks

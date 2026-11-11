@@ -21,7 +21,7 @@ Claude Code has two kinds of session, and pitwall handles both. Interactive sess
 - **Starts new sessions** in any directory under a root, with files attached to the first prompt. It also stops and removes background sessions, ends a running interactive session, leaving its terminal at the shell, and brings an ended interactive session back in the background.
 - **Opens a session's directory** in VS Code or Cursor.
 - **Has a supervisor you talk to** instead of visiting each session: a Claude Code session pitwall runs, which reads your sessions and drafts messages to them, new sessions and resumes, each sent only when you approve it. Attach a text file to a message, see how big its context is, and start a new conversation when it grows.
-- **Takes a session's proposal for a new session:** with the [`spin-off` skill](#the-spin-off-skill), a session can end its turn proposing a separate session, for work whose result it doesn't need back. The proposal waits in Needs you, and you start it, after reading and changing it if you like.
+- **Takes a session's proposal for a new session:** with the [pitwall plugin](#the-pitwall-plugin), a session can end its turn proposing a separate session, for work whose result it doesn't need back. The proposal waits in Needs you, and you start it, after reading and changing it if you like.
 
 **Status:** in daily use by its author, on macOS only so far, and still changing quickly. It runs from a clone of this repo and isn't published to npm. The [roadmap](#roadmap) says what's next.
 
@@ -91,7 +91,7 @@ node dist/cli.js ~/code
   - **Resume** an ended interactive session, or a background one that has stopped, in the background, with `claude --resume <id> --bg`.
   - **Clone** a pull request's repo, when no root has a clone of it, with `gh repo clone` and your GitHub login, into the root that claims its owner, after a click that shows where and whose it is: a pull request that isn't yours gets a warning that cloning it puts someone else's code on this machine. pitwall picks the folder itself, refuses one that exists, and never clones into your home folder or a folder above it, where a new folder could be `~/bin` or `~/Applications`. It clones into a hidden temporary folder in the root and moves it into place only then, and removes only that temporary folder when anything fails, or when pitwall stops mid-clone ([D25](docs/decisions.md#d25---cloning-a-pull-requests-repo-is-the-servers-decision-after-a-click)).
   - **Open** a session's directory in VS Code or Cursor.
-- **Its own files are in `~/.pitwall/`:** the launch file, its relay's folders, the empty folder its recap calls run in and the day's recap count, the supervisor's folder, the files you attach to a new session's first prompt, and what each session pitwall started with a profile used, in `session-launches.json`, so its resume uses it again. An attachment is deleted after an hour if it's unused, or 7 days after its session started. `PITWALL_HOME` moves the folder, and the [config file](#configuration) you may keep there. The relay and the supervisor are Claude Code sessions too, so Claude Code keeps their transcripts in `~/.claude/projects/`, as it does for every session.
+- **Its own files are in `~/.pitwall/`:** the launch file, its relay's folders, the empty folder its recap calls run in and the day's recap count, the supervisor's folder, the files you attach to a new session's first prompt, `server.json` with its address and process id while it runs (for the [plugin](#the-pitwall-plugin)), and what each session pitwall started with a profile used, in `session-launches.json`, so its resume uses it again. An attachment is deleted after an hour if it's unused, or 7 days after its session started. `PITWALL_HOME` moves the folder, and the [config file](#configuration) you may keep there. The relay and the supervisor are Claude Code sessions too, so Claude Code keeps their transcripts in `~/.claude/projects/`, as it does for every session.
 
 ### Security, in brief
 
@@ -191,23 +191,40 @@ With `--config <path>`, pitwall reads that file, which must exist. Without it, p
 - **Mistakes:** a bad value stops pitwall with a message naming the key and the file, as a bad flag does. An unknown key is a warning, so an older pitwall can read a newer file.
 - **Security** ([D24](docs/decisions.md#d24---a-config-file-beside-the-flags)): the file decides which directories pitwall reads, so on macOS and Linux it must be yours and not writable by group or others, or pitwall refuses it. It never holds a token: a key named like one, or a GitHub token anywhere in it, is an error, since `PITWALL_TOKEN` comes from the environment only and GitHub's stays in `gh`. No message quotes a value from the file. Nothing in it can turn off the token, the `Host` and `Origin` checks or listening on 127.0.0.1 alone, and pitwall reads no config file from inside a repo.
 
-### The spin-off skill
+### The pitwall plugin
 
-pitwall ships a skill, `skills/spin-off/SKILL.md`, that teaches a session to propose a new one: it ends its turn with a fenced `spin-off` block naming a folder, a name and the first prompt. Install it once, as a personal skill, so it works in every repo. From the clone:
+pitwall ships a Claude Code plugin, in [`plugin/`](plugin/), for the sessions it watches. Install it once and every session on the machine gets two things:
 
-```
-mkdir -p ~/.claude/skills
-ln -s "$PWD/skills/spin-off" ~/.claude/skills/spin-off
-```
+- **A short note at its start, while pitwall runs:** pitwall watches this session, at its link; a session it mentions gets a few words on what it is and its short ID linked in pitwall; and the `pitwall` skill proposes a new session. A `SessionStart` hook adds it, at a session's start and at `/clear`, compact, resume and fork. With no pitwall running it adds nothing. It's four lines, about 200 tokens, plus about 160 for the skill's listing, measured on a fresh session's first call (W176).
+- **The `pitwall` skill (`pitwall:pitwall`)**, which teaches a session to propose a new one: it ends its turn with a fenced `spin-off` block naming a folder, a name and the first prompt. Ask a session to spin off a piece of work, or let it propose one when it finds separate work. The block is the session's text, so pitwall treats it as untrusted: it shows nothing that doesn't show as itself, checks the folder is under a root, and starts nothing until you click Start session.
 
-A link keeps it in step with the clone, so every session on the machine follows whatever that clone has checked out, a branch or someone's pull request included. If you check out others' work there, copy the folder instead, `cp -R skills/spin-off ~/.claude/skills/`, and copy it again after an update. Then ask a session to spin off a piece of work, or let it propose one when it finds separate work. The block is the session's text, so pitwall treats it as untrusted: it shows nothing that doesn't show as itself, checks the folder is under a root, and starts nothing until you click Start session.
+**Install it** from the clone, one of two ways. Either works for every repo, since both install at user scope.
+
+- As a local marketplace, the folder itself; after a `git pull`, `claude plugin update pitwall@pitwall-local` picks up a change, for sessions started after it:
+
+  ```
+  claude plugin marketplace add "$PWD/plugin"
+  claude plugin install pitwall@pitwall-local
+  ```
+
+- Or in one step, which adds the same marketplace first:
+
+  ```
+  claude plugin install pitwall --marketplace "$PWD/plugin"
+  ```
+
+Spike 015 (the plugin's spike) found a local marketplace's plugin runs from the clone in place, so every session can follow whatever the clone has checked out, a branch or someone's pull request included. If you check out others' work there, install from a separate clone you keep on `main`. To try it in one session without installing it, start that session with `claude --plugin-dir "$PWD/plugin"`. `claude plugin uninstall pitwall@pitwall-local` removes it.
+
+**How pitwall is found:** pitwall writes its address and process id, never its token, to `~/.pitwall/server.json` while it runs, and deletes it on close. The hook adds the note only while that process runs and its port answers. A background session's hooks get Claude Code's background service's environment, not your shell's, so they read only `~/.pitwall/server.json`; a pitwall started with another `PITWALL_HOME` reaches only foreground sessions started with the same `PITWALL_HOME`. A session that was already running gets the note at its next `/clear`, compact or resume; attaching to it, from a terminal or pitwall's Terminal tab, adds nothing.
+
+**The `spin-off` skill it replaces:** before the plugin, the same skill was `skills/spin-off/`, to install as a personal skill. It's now the plugin's `pitwall` skill, with the same block, so pitwall reads proposals from either. If you linked or copied it into `~/.claude/skills/spin-off`, remove that once the plugin is installed, so a session doesn't see the skill twice: `rm -r ~/.claude/skills/spin-off`.
 
 ### In the page
 
 - **Three columns:** repos, then the selected repo's sessions, then the open session. Needs you, All sessions and Starred head the repo list. On a narrower window the session view lies over the list, and the repo list becomes a drawer.
 - **A session's view** has its conversation, a Terminal tab for a background session, and a Sub-agents tab once it has any. An interactive session's view ends with a message box, where ⌘↵ (Ctrl+Enter elsewhere) sends and Enter adds a line. Its actions menu stops or removes a background session, ends a running interactive one, opens the directory in an editor and copies the session's commands. With a session open, New session starts in its directory, which you can change. An ended session's view offers Resume in background.
 - **The supervisor** is first in the repo list: its view, in the third column, is your conversation with it, with questions to start from, a message box with Stop, and its status and cost. Opening it starts nothing; Start or a message does. It answers first and drafts a message to a session, a new session, or a message to a finished session that pitwall resumes to take it, only when you ask; each waits as a card for you to send, edit or not send, and counts in Needs you. It never sees a session's reply: Sent and started lists each session it messaged, started or resumed, with its state, whether it needs you, and Open, so you carry on in the session.
-- **Proposed sessions** are cards at the top of Needs you, one for each session that proposed one with the [`spin-off` skill](#the-spin-off-skill), naming that session, with the folder, the name and the whole prompt, and counted in Needs you. Start checks the proposal, then opens New session filled in with it, to change before you start it. Dismiss, or starting it, takes the card away; so does the session's next turn, if it proposes nothing.
+- **Proposed sessions** are cards at the top of Needs you, one for each session that proposed one with the [pitwall plugin's skill](#the-pitwall-plugin), naming that session, with the folder, the name and the whole prompt, and counted in Needs you. Start checks the proposal, then opens New session filled in with it, to change before you start it. Dismiss, or starting it, takes the card away; so does the session's next turn, if it proposes nothing.
 - **Finished and ended sessions** sit in a Finished section at the end of each list. A snooze takes a session that needs you out of Needs you for an hour, three hours, until tomorrow or next week, or until it's woken by a turn you didn't start, such as another session's message or a background task finishing. Its flag, "It doesn't need me", says Needs you got it wrong: pitwall logs it for counting the false calls, takes the session out of Needs you, and asks the session what, if anything, it needs (`npx tsx scripts/flag-report.ts` reads the log).
 - **Pull requests** are listed with the session that worked on them last, or as rows of their own, under their repos. A pull request with no session has a New session button on its row and in its view, which opens New session in its clone, named `pr-<number>`, with a first prompt that names the pull request and why it needs you, all of which you can change; the new session then owns it. For a repo you haven't cloned, Clone and start says where it will clone it first, then opens New session there. A finished or ended session that owns an open pull request stays in the list, with Resume on its row.
 - **Keyboard:** `/` filters, `n` starts a session, `j` and `k` step to the next or previous session, `s` stars the open session and `?` lists every shortcut. F6 leaves the terminal. The shortcuts dialog can turn the single-key ones off.
