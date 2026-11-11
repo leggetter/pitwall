@@ -24,8 +24,14 @@ Merged into `m5.3/integration` on 2026-11-11, each after a fresh review and its 
 
 | Item | State |
 | --- | --- |
-| [#244](https://github.com/leggetter/pitwall/pull/244) (W184, the supervisor's connectors: config, tool choice and launch), on `m5.3/supervisor-connectors` | W186 (the connectors' security review, xhigh) approves once its blocking fixes land: F2 (a secret in a non-Authorization header follows a redirect) and F3 (big results aren't truncated but saved whole to `~/.claude/projects/…/tool-results/` at 0644). The builder is making them and F1, F4 to F8. Next: check the fixes, merge on green, then record W186 as done in `PLAN.md` |
-| [#246](https://github.com/leggetter/pitwall/pull/246) (W188, dismiss a PR you're not taking on: "Not for me", a Dismissed section, back when something new happens) | Merged (90dc6a1) after a review that said merge as is. Its four low follow-ups are being built by its sub-agent on `m5.3/pr-dismiss-followups` in `.worktrees/w188`: tombstones so a second pitwall on one home can't undo an Undo; no false "Back: something new" when the hash is briefly unreadable; your own red PR doesn't come back when CI goes pending; and the `src/index/exec.test.ts` flake's bound widened from 2,600 to about 4,000 ms. Next: review its PR, merge on green |
+| [#244](https://github.com/leggetter/pitwall/pull/244) (W184, the supervisor's connectors: config, tool choice and launch) | W186 (the connectors' security review, xhigh) found F1 to F8; all fixed on `m5.3/supervisor-connectors` at 18d7215, in `.worktrees/w184`:
+  - F2: only `Authorization` carries a credential.
+  - F3: `src/supervisor/claudeOutput.ts` sets `ENABLE_MCP_LARGE_OUTPUT_FILES=0` and `MAX_MCP_OUTPUT_TOKENS=11000`, under the measured about 50,000-character persistence threshold.
+  - F4: the launcher uses `process.execve`.
+  - F5: a `needs-auth` connector is skipped for the rest of the run.
+  - F1 is recorded as an accepted risk, pending Phil (open question 3).
+  - Next: a fresh xhigh verification of the fixes, as W180's were checked; then merge on green, and mark W184 and W186 done in `PLAN.md`. |
+| [#246](https://github.com/leggetter/pitwall/pull/246) and [#249](https://github.com/leggetter/pitwall/pull/249) (W188, dismiss a PR you're not taking on, and its review follow-ups) | Both merged. #249 adds tombstones, keeps a dismissal when the hash is briefly missing, holds a dismissal while CI is pending, and widens `exec.test.ts`'s bound. Dismissals made before #249 end once. |
 | W189 (recaps a cold reader can act on), on `m5.3/recaps-cold-reader` in `.worktrees/w189` | Phil, 2026-11-11: recaps are "useless… it just lists IDs and gives a vague overview"; they must tell someone with no context what's being done, the goal, why, and what's next. The builder diagnoses, redesigns, and scores old against new with a cold-reader model check, on Haiku and Sonnet, with cost. **Its PR waits for Phil to judge the samples** (local `scratch/` files, never committed) before merging |
 | W165 (a diagnostics log: why a row is in Needs you) | Planned; approved for planning 2026-11-09 ([#199](https://github.com/leggetter/pitwall/pull/199)) |
 | W167 (session lineage), W168 (Clear and continue: a hand-off you start with one click; spike 014 is done) | Planned; Phil approved both on 2026-11-09 |
@@ -41,7 +47,7 @@ Merged into `m5.3/integration` on 2026-11-11, each after a fresh review and its 
 
 ## Next, in order
 
-1. **Merge #244 (W184) once W186's fixes are in, and W188's follow-up PR,** each after checking its fixes, on green (see Open work).
+1. **Verify W186's fixes on #244 (W184) with a fresh xhigh reviewer, then merge on green** (see Open work).
 2. **W189's samples to Phil,** to judge before its PR merges.
 3. **The rest of M5.3** (`PLAN.md`), one session per item (`AGENTS.md`, Efficiency): W165, W167, W168, W171, W173 to W175, W178, W179.
 4. **One blog-editing session on Sonnet for Phil to judge** (agreed; not the evals post).
