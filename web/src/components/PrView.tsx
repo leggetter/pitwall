@@ -9,6 +9,9 @@
 // session. With no session, Sessions offers New session, or Clone and start for a repo that isn't
 // cloned (W107), as the PR's row does.
 //
+// Not for me (W188): under how it's yours, a button that dismisses it, out of Needs you until something
+// new happens; while it's dismissed, a neutral alert that says so and what brings it back, with Undo.
+//
 // Open on GitHub is a link that leaves pitwall, in a new tab, with noopener and noreferrer, and only
 // for the PR's own https://github.com/ address (githubPrUrl()); otherwise there's neither it nor Copy
 // link. Titles, check names and branch names are text, never markup.
@@ -18,9 +21,10 @@
 // open, merged or closed, shows what it showed last, with an alert that says so; so does one whose
 // list is off or failed since, but not while the first fetch after a restart runs (PrMissing).
 
-import { useId, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import type { PrLinkKind, PullRequestSummary } from '../../../src/shared/protocol.js';
 import { plainText } from '../format.js';
+import { canDismiss, DISMISSED_NOTE, NOT_FOR_ME, UNDO_DISMISS } from '../prDismiss.js';
 import { githubPrUrl, prName, prRelationText, type LinkedSession } from '../prs.js';
 import { statusBadge } from '../sessions.js';
 import { Alert } from './Alert.js';
@@ -133,9 +137,13 @@ export interface PrViewProps {
   animate?: boolean;
   /** At 600 px and narrower, in Close's place: "Back to pull requests", or "Back to sessions" over the session list. */
   backLabel?: string | undefined;
+  /** Not for me (W188): offered while it's listed and can be dismissed. */
+  onDismiss?: ((pr: PullRequestSummary) => void) | undefined;
+  /** Undo, while it's dismissed. */
+  onUndismiss?: ((pr: PullRequestSummary) => void) | undefined;
 }
 
-export function PrView({ pr, missing, sessions, ownerId, onOpenSession, onStart, onClose, layout = 'overlay', compact = false, headingRef, onStep, animate = true, backLabel }: PrViewProps) {
+export function PrView({ pr, missing, sessions, ownerId, onOpenSession, onStart, onClose, layout = 'overlay', compact = false, headingRef, onStep, animate = true, backLabel, onDismiss, onUndismiss }: PrViewProps) {
   const ids = { title: useId(), details: useId(), sessions: useId(), mentioned: useId() };
   const title = plainText(pr.title);
   const url = githubPrUrl(pr);
@@ -146,10 +154,21 @@ export function PrView({ pr, missing, sessions, ownerId, onOpenSession, onStart,
     onStep(event.key === 'ArrowDown' ? 1 : -1);
   };
   const relation = prRelationText(pr);
+  // Not for me and Undo replace each other once the list says so: focus follows to the one that came.
+  const head = useRef<HTMLElement>(null);
+  const focusNext = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const wanted = focusNext.current;
+    if (wanted === undefined) return;
+    const target = head.current?.querySelector<HTMLElement>(wanted);
+    if (!target) return;
+    focusNext.current = undefined;
+    target.focus();
+  });
 
   return (
     <Frame layout={layout} id={PR_VIEW_ID} className="pr-view" animate={animate} titleId={ids.title} onEscape={onClose}>
-      <header className="session-view-head" onKeyDown={onHeaderKey}>
+      <header className="session-view-head" ref={head} onKeyDown={onHeaderKey}>
         <Top
           compact={compact}
           onClose={onClose}
@@ -184,6 +203,39 @@ export function PrView({ pr, missing, sessions, ownerId, onOpenSession, onStart,
           <p className="pr-view-relation" data-relation={pr.relation}>
             {relation}
           </p>
+        )}
+        {pr.dismissed !== undefined && missing === undefined ? (
+          <Alert
+            tone="neutral"
+            className="pr-view-dismissed"
+            actions={
+              onUndismiss && (
+                <Button size="sm" icon="undo" data-undismiss-pr-view="" onClick={() => {
+                    focusNext.current = '[data-dismiss-pr-view]';
+                    onUndismiss(pr);
+                  }}
+                >
+                  {UNDO_DISMISS}
+                </Button>
+              )
+            }
+          >
+            {DISMISSED_NOTE}
+          </Alert>
+        ) : (
+          onDismiss &&
+          missing === undefined &&
+          canDismiss(pr) && (
+            <div className="pr-view-dismiss">
+              <Button size="sm" icon="hide" data-dismiss-pr-view="" onClick={() => {
+                  focusNext.current = '[data-undismiss-pr-view]';
+                  onDismiss(pr);
+                }}
+              >
+                {NOT_FOR_ME}
+              </Button>
+            </div>
+          )
         )}
         {missing !== undefined && (
           <Alert tone="neutral" role="status">

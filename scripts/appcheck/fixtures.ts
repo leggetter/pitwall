@@ -39,6 +39,7 @@ import type {
   RunRate,
   RunRateChart,
 } from '../../src/shared/protocol.js';
+import { createHash } from 'node:crypto';
 import { withSupervisorFooter } from '../../src/shared/protocol.js';
 import { chartOf, DEFAULT_RUN_RATE_TARGET, levelOf, paceAt, project, WEEK_MS, type WeekReading } from '../../src/usage/runRate.js';
 import { REFUSED_TO_SUPERVISOR_NOTICE } from '../../src/index/conversation.js';
@@ -434,6 +435,11 @@ export class World {
   #cloneFails = false;
   /** PRs listed with another relation than their own until the next reset, by key (W108): `notYours()`. */
   #relations = new Map<string, PullRequestRelation>();
+  /** The PRs dismissed, Not for me, until the next reset (W188), by key (PRS), with when; and those whose dismissal ended. */
+  #dismissed = new Map<string, string>();
+  #dismissalEnded = new Map<string, string>();
+  /** PRs with something new since, by key (W188): their state hash changes, as a new review request's would. */
+  #changed = new Set<string>();
   /** The supervisor (W114): its status, drafts, conversation and cost, and its timers' generation. */
   #supervisor: SupervisorWorldState = 'none';
   #approvals: SupervisorApproval[] = [];
@@ -478,6 +484,9 @@ export class World {
     this.#cloned = new Map();
     this.#cloneFails = false;
     this.#relations = new Map();
+    this.#dismissed = new Map();
+    this.#dismissalEnded = new Map();
+    this.#changed = new Set();
     this.#sessions = new Map(this.#baseSessions(options.cloned ?? false).map((each) => [each.sessionId, each]));
     this.#recapsState = options.recaps ?? 'off';
     this.#recapCalls = this.#recapsState === 'spent' ? this.#recapBudget : 37;
@@ -1001,6 +1010,24 @@ export class World {
   /** Until the next reset, the PR `key` (PRS) is listed as `relation`, as one of yours mentioned by someone else's would be (W108). The server sends the list to the page. */
   listAs(key: string, relation: PullRequestRelation): void {
     this.#relations.set(key, relation);
+  }
+
+  /** The PR `key` (PRS) as listed now, or undefined. */
+  prByKey(key: string): PullRequestSummary | undefined {
+    return this.#pullRequests().find((pr) => `${pr.repo}/${pr.number}` === key);
+  }
+
+  /** Not for me (W188), as src/server/prDismissals.ts answers it: dismissed in its state now. Its Undo with `false`. The server sends the list to the page. */
+  dismissPr(key: string, on: boolean): void {
+    if (on) this.#dismissed.set(key, new Date().toISOString());
+    else this.#dismissed.delete(key);
+    this.#dismissalEnded.delete(key);
+  }
+
+  /** Something new on the PR `key` (W188): its state hash changes, so a dismissal of it ends and says so. The server sends the list to the page. */
+  somethingNew(key: string): void {
+    this.#changed.add(key);
+    if (this.#dismissed.delete(key)) this.#dismissalEnded.set(key, new Date().toISOString());
   }
 
   setPrs(state: PrsState): void {
@@ -1548,6 +1575,10 @@ export class World {
         relation: 'authored',
         ...extra,
         ...(this.#relations.has(key) ? { relation: this.#relations.get(key) as PullRequestRelation } : {}),
+        // W188's state hash: made up from the key, and from whether something new has happened since.
+        stateHash: createHash('sha256').update(`${key}${this.#changed.has(key) ? '+new' : ''}`).digest('hex').slice(0, 16),
+        ...(this.#dismissed.has(key) ? { dismissed: { at: this.#dismissed.get(key)! } } : {}),
+        ...(this.#dismissalEnded.has(key) ? { dismissalEnded: { at: this.#dismissalEnded.get(key)! } } : {}),
       };
     };
     const day = 24 * 60;
