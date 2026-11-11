@@ -23,6 +23,11 @@
 // plan's week used by `day` at `time`, local time, each optional, 80% by
 // Friday 18:00 by default (usage/runRate.ts).
 //
+// `supervisor.connectors` (W184, D28) are the supervisor's read-only connectors: each a name, its MCP
+// server (a command with the variables it gets by name, or an HTTP URL with headers that name
+// variables) and the tools you chose as read-only (supervisor/connectors.ts). Variable names only,
+// never values: those come from pitwall's environment at each start.
+//
 // Security (D24):
 // - It never holds the token. A key named like one, or a GitHub token, anywhere
 //   in the file, is an error: PITWALL_TOKEN comes from the environment only,
@@ -42,6 +47,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { type DirCheckContext, pitwallHome } from './server/launch.js';
 import { parseProfiles } from './server/profiles.js';
 import { parseWorkChoices } from './server/work.js';
+import { parseSupervisorConfig, type SupervisorConfig } from './supervisor/connectors.js';
 import { GITHUB_OWNER_PATTERN, type RootOwners, type RunRateTarget, type WorkChoices, type WorkProfile } from './shared/protocol.js';
 import { parseRunRateTarget } from './usage/runRate.js';
 
@@ -93,6 +99,8 @@ export interface LoadedConfig {
   profiles?: WorkProfile[];
   /** The `runRate` block (W159), checked, its defaults filled in. Absent when the file has none. */
   runRate?: RunRateTarget;
+  /** The `supervisor` block (W184), checked: its connectors. Absent when the file has none. */
+  supervisor?: SupervisorConfig;
   /** One line for each unknown key, to print on stderr. */
   warnings: string[];
 }
@@ -202,7 +210,7 @@ export function parseConfig(
   text: string,
   file: string,
   options: Pick<LoadConfigOptions, 'home' | 'realpath'> = {},
-): { roots?: ConfiguredRoot[]; work?: WorkChoices; profiles?: WorkProfile[]; runRate?: RunRateTarget; warnings: string[] } {
+): { roots?: ConfiguredRoot[]; work?: WorkChoices; profiles?: WorkProfile[]; runRate?: RunRateTarget; supervisor?: SupervisorConfig; warnings: string[] } {
   const invalid = (at: number) =>
     new ConfigError(`${file} isn't valid JSON${at === -1 ? '' : ` at ${lineAndColumn(text, at)}`}. Comments and trailing commas are allowed.`);
   let stripped: string;
@@ -238,11 +246,12 @@ export function parseConfig(
     throw new ConfigError(`${file}: ${quote(key)} ${message}`);
   };
 
-  for (const key of Object.keys(value)) if (key !== 'roots' && key !== 'work' && key !== 'profiles' && key !== 'runRate') unknown(key);
+  for (const key of Object.keys(value)) if (!['roots', 'work', 'profiles', 'runRate', 'supervisor'].includes(key)) unknown(key);
   const work = {
     ...(Object.hasOwn(value, 'work') ? { work: parseWorkChoices(value.work, 'work', fail, unknown) } : {}),
     ...(Object.hasOwn(value, 'profiles') ? { profiles: parseProfiles(value.profiles, 'profiles', fail, unknown) } : {}),
     ...(Object.hasOwn(value, 'runRate') ? { runRate: parseRunRateTarget(value.runRate, 'runRate', fail, unknown) } : {}),
+    ...(Object.hasOwn(value, 'supervisor') ? { supervisor: parseSupervisorConfig(value.supervisor, 'supervisor', fail, unknown, options.home ?? os.homedir()) } : {}),
   };
   if (!Object.hasOwn(value, 'roots')) return { ...work, warnings };
   const list = value.roots;

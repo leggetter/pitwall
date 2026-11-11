@@ -67,7 +67,9 @@ npm start -- [root...]   run the built CLI, node dist/cli.js. `--interval <secon
                          `--no-open` leaves the browser alone, `--no-prs` turns off your open
                          pull requests, so pitwall never runs gh, `--no-recaps` turns off recaps, so
                          pitwall never sends transcript excerpts to the model, `--no-supervisor` turns
-                         off the supervisor, so pitwall never runs it, `--no-usage` turns off the plan's
+                         off the supervisor, so pitwall never runs it, `--no-connectors` gives it none of
+                         the config file's connectors (W184), `--connector-tools <name>` lists one's tools and
+                         exits, `--no-usage` turns off the plan's
                          percentages, so pitwall never runs `/usage`, and `--config <path>`
                          reads that config file instead of ~/.pitwall/config.json (README's Configuration)
 npm run appcheck -- --out <dir>   the headless app check of the production build, after npm run build
@@ -121,8 +123,10 @@ src/supervisor/          the supervisor (M5, W113, W115, D4): one claude -p sess
                          supervisorGateHook.mjs the deny-only recipient gate. Its MCP server is
                          src/server/mcp.ts (the route, by hand), mcpTools.ts (the read-only tools, W112) and
                          supervisorActions.ts (approve, spawn_session and the checks, W115); the snapshot's
-                         view and routes are src/server/snapshotSupervisor.ts and supervisorRoutes.ts. Off
-                         with --no-supervisor
+                         view and routes are src/server/snapshotSupervisor.ts and supervisorRoutes.ts. Its
+                         read-only connectors (W184, D28): connectors.ts the config and what a start adds,
+                         connectorServer.ts the credential routes, connectorLauncher.mjs a stdio connector's
+                         environment, connectorTools.ts `--connector-tools`. Off with --no-supervisor
 src/usage/               the usage report's reads and totals (M5.1, W131): scan.ts streams transcripts and keeps
                          numbers only, report.ts aggregates them by repo, model, day, hour and sub-agent,
                          prices.ts has the API list prices behind its stand-in cost, format.ts the text tables,

@@ -1,7 +1,7 @@
 // The supervisor's process (M5, W113), with a fake child that speaks stream-json as Claude Code
 // 2.1.312 does (spike 009, and the handshake probe in src/server/mcp.ts), a fake session list and a
 // state store in memory. No test runs `claude`. Made-up sessions and text only.
-import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -11,6 +11,7 @@ import { SUPERVISOR_MODEL, type WorkChoice } from '../shared/protocol.js';
 import { modelRejectedMessage } from '../server/work.js';
 import type { RelayChild, RelayChildEvents } from '../server/relay.js';
 import { createApprovalQueue } from './approvals.js';
+import type { SupervisorConnector } from './connectors.js';
 import { SUPERVISOR_ALLOWED_TOOLS, SUPERVISOR_ASK_TOOLS, SUPERVISOR_MAX_TURNS, SUPERVISOR_NAME } from './prompt.js';
 import { markReady, readRecipients } from './supervisorGateHook.mjs';
 import { memoryState, type SupervisorRecord } from './state.js';
@@ -557,6 +558,138 @@ describe('what it can do', () => {
     await supervisor.send('again');
     children[0]!.init(SESSION, { tools: ['SendMessage', 'mcp__pitwall__run_command'] });
     expect(supervisor.state()).toMatchObject({ status: 'failed', error: "The supervisor started with a tool pitwall didn't give it (mcp__pitwall__run_command), so pitwall stopped it." });
+  });
+
+  describe('connectors (W184, D28)', () => {
+    const connectors: SupervisorConnector[] = [
+      { name: 'fake', server: { kind: 'stdio', command: 'fake-mcp', args: ['--flag'], env: ['FAKE_KEY'] }, tools: ['fake_search'], otherTools: ['fake_post'] },
+      { name: 'notion', server: { kind: 'http', url: 'https://mcp.made-up.example/mcp', headers: { Authorization: 'Bearer ${NOTION_API_KEY}' } }, tools: ['search'], otherTools: [] },
+    ];
+    const launcher = { node: '/made-up/node', script: '/made-up/connectorLauncher.mjs' };
+    const env = { PATH: '/usr/bin:/bin', ANTHROPIC_API_KEY: 'made-up-key', FAKE_KEY: 'made-up-fake-secret', NOTION_API_KEY: 'made-up-notion-secret' };
+
+    it('puts each connector in the 0600 MCP config with its values, allows only its chosen tools, disallows the rest, and keeps every value off the command line and out of claude’s environment', async () => {
+      const { supervisor, children, logs } = harness({ connectors, connectorLauncher: launcher, env });
+      await supervisor.start();
+      const { args, options } = children[0]!;
+      expect(flag(args, '--allowed-tools')).toBe([...SUPERVISOR_ALLOWED_TOOLS, 'mcp__fake__fake_search', 'mcp__notion__search'].join(','));
+      expect(flag(args, '--disallowed-tools')).toBe('mcp__fake__fake_post');
+      expect(args).toContain('--strict-mcp-config');
+      expect(flag(args, '--setting-sources')).toBe('');
+      expect(flag(args, '--tools')).toBe('SendMessage');
+      const file = flag(args, '--mcp-config')!;
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+      const config = JSON.parse(readFileSync(file, 'utf8')) as { mcpServers: Record<string, Record<string, unknown>> };
+      expect(Object.keys(config.mcpServers).sort()).toEqual(['fake', 'notion', 'pitwall']);
+      expect(config.mcpServers.fake).toMatchObject({ command: '/made-up/node', args: ['/made-up/connectorLauncher.mjs', '--keep', 'FAKE_KEY', '--', 'fake-mcp', '--flag'], env: { PATH: '/usr/bin:/bin', FAKE_KEY: 'made-up-fake-secret' } });
+      expect(config.mcpServers.notion).toMatchObject({ type: 'http', headers: { Authorization: 'Bearer made-up-notion-secret' } });
+      expect(JSON.stringify(config.mcpServers.fake)).not.toContain('made-up-key');
+      for (const secret of ['made-up-fake-secret', 'made-up-notion-secret']) {
+        expect(args.join('\n')).not.toContain(secret);
+        expect(logs.join('\n')).not.toContain(secret);
+        expect(JSON.stringify(supervisor.state())).not.toContain(secret);
+      }
+      // The cap on a result, a connector's above all.
+      expect(options.env.MAX_MCP_OUTPUT_TOKENS).toBe('11000');
+      expect(options.env.ENABLE_MCP_LARGE_OUTPUT_FILES).toBe('0');
+    });
+
+    it('accepts a turn whose init lists the chosen tools, and stops one that lists a tool you didn’t choose, saying to choose again', async () => {
+      const { supervisor, children } = harness({ connectors, connectorLauncher: launcher, env });
+      await supervisor.send('hello');
+      const base = ['SendMessage', ...SUPERVISOR_ALLOWED_TOOLS, 'mcp__pitwall__spawn_session'];
+      const servers = [{ name: 'pitwall', status: 'connected' }, { name: 'fake', status: 'connected' }, { name: 'notion', status: 'connected' }];
+      children[0]!.init(SESSION, { tools: [...base, 'mcp__fake__fake_search', 'mcp__notion__search'], mcp_servers: servers });
+      expect(supervisor.state().status).toBe('working');
+      children[0]!.result();
+      await supervisor.send('again');
+      // A tool the server added since you chose: in the model's list, since it's in neither list (D28).
+      children[0]!.init(SESSION, { tools: [...base, 'mcp__fake__fake_search', 'mcp__fake__fake_delete'], mcp_servers: servers });
+      expect(supervisor.state()).toMatchObject({
+        status: 'failed',
+        error: expect.stringContaining("The supervisor's connector fake offers a tool you haven't chosen (mcp__fake__fake_delete), so pitwall stopped it. Run pitwall --connector-tools fake"),
+      });
+    });
+
+    it('stops one whose init lists a disallowed tool anyway, as Claude Code should never', async () => {
+      const { supervisor, children } = harness({ connectors, connectorLauncher: launcher, env });
+      await supervisor.send('hello');
+      children[0]!.init(SESSION, { tools: ['SendMessage', ...SUPERVISOR_ALLOWED_TOOLS, 'mcp__fake__fake_post'] });
+      expect(supervisor.state()).toMatchObject({ status: 'failed', error: expect.stringContaining('(mcp__fake__fake_post)') });
+    });
+
+    it('without connectors, or with a connector’s variable missing, its tools are a tool pitwall didn’t give it', async () => {
+      const none = harness({ env });
+      await none.supervisor.send('hello');
+      expect(flag(none.children[0]!.args, '--disallowed-tools')).toBeUndefined();
+      none.children[0]!.init(SESSION, { tools: ['SendMessage', 'mcp__fake__fake_search'] });
+      expect(none.supervisor.state()).toMatchObject({ status: 'failed', error: "The supervisor started with a tool pitwall didn't give it (mcp__fake__fake_search), so pitwall stopped it." });
+
+      const missing = harness({ connectors, connectorLauncher: launcher, env: { ...env, FAKE_KEY: undefined } });
+      await missing.supervisor.start();
+      expect(missing.logs).toContain("its connector fake is off for this start: pitwall's environment has no usable FAKE_KEY (unset, or holding ${ or a line break).");
+      const args = missing.children[0]!.args;
+      expect(flag(args, '--allowed-tools')).toBe([...SUPERVISOR_ALLOWED_TOOLS, 'mcp__notion__search'].join(','));
+      expect(flag(args, '--disallowed-tools')).toBeUndefined();
+      expect(Object.keys((JSON.parse(readFileSync(flag(args, '--mcp-config')!, 'utf8')) as { mcpServers: object }).mcpServers).sort()).toEqual(['notion', 'pitwall']);
+    });
+
+    it('goes on without a connector that failed to connect, saying so', async () => {
+      const { supervisor, children, logs } = harness({ connectors, connectorLauncher: launcher, env });
+      await supervisor.send('hello');
+      children[0]!.init(SESSION, { mcp_servers: [{ name: 'pitwall', status: 'connected' }, { name: 'fake', status: 'failed' }, { name: 'notion', status: 'connected' }] });
+      expect(supervisor.state().status).toBe('working');
+      expect(logs).toContain("its connector fake is failed, so its tools aren't there.");
+      children[0]!.result();
+      await supervisor.send('again');
+      children[0]!.init(SESSION, { mcp_servers: [{ name: 'pitwall', status: 'connected' }, { name: 'fake', status: 'failed' }, { name: 'notion', status: 'needs-auth' }] });
+      expect(logs.filter((line) => line.includes('fake is failed'))).toHaveLength(1);
+      expect(logs).toContain("its connector notion needs a sign-in, so it's off until pitwall restarts. Run pitwall --connector-tools notion for how.");
+    });
+
+    it('leaves a connector that needed a sign-in out of every later start in the run, said once (W186’s F5)', async () => {
+      const { supervisor, children, logs } = harness({ connectors, connectorLauncher: launcher, env });
+      await supervisor.send('hello');
+      children[0]!.init(SESSION, { mcp_servers: [{ name: 'pitwall', status: 'connected' }, { name: 'fake', status: 'connected' }, { name: 'notion', status: 'needs-auth' }] });
+      children[0]!.init(SESSION, { mcp_servers: [{ name: 'pitwall', status: 'connected' }, { name: 'fake', status: 'connected' }, { name: 'notion', status: 'needs-auth' }] });
+      expect(logs.filter((line) => line.includes('notion needs a sign-in'))).toHaveLength(1);
+      children[0]!.exit(1, null);
+      await until(() => supervisor.state().status === 'failed');
+      await supervisor.start();
+      const args = children[1]!.args;
+      expect(flag(args, '--allowed-tools')).toBe([...SUPERVISOR_ALLOWED_TOOLS, 'mcp__fake__fake_search'].join(','));
+      expect(Object.keys((JSON.parse(readFileSync(flag(args, '--mcp-config')!, 'utf8')) as { mcpServers: object }).mcpServers).sort()).toEqual(['fake', 'pitwall']);
+    });
+
+    it('checks at each start that its project folder is 0700, logging once a run if not, and never changes it (W186’s N1)', async () => {
+      const { supervisor, children, logs, configDir, sessionDir } = harness({ env });
+      await supervisor.start();
+      const folder = path.join(configDir, 'projects', encodeProjectDir(realpathSync(sessionDir)));
+      expect(logs.filter((line) => line.includes('is open to other users'))).toHaveLength(0);
+      mkdirSync(folder, { recursive: true, mode: 0o755 });
+      chmodSync(folder, 0o755);
+      children[0]!.exit(1, null);
+      await until(() => supervisor.state().status === 'failed');
+      await supervisor.start();
+      children[1]!.exit(1, null);
+      await until(() => supervisor.state().status === 'failed');
+      await supervisor.start();
+      expect(logs.filter((line) => line.includes('is open to other users'))).toEqual([expect.stringContaining('(mode 755)')]);
+      expect(statSync(folder).mode & 0o777).toBe(0o755);
+    });
+
+    it('logs once a run when Claude Code saved a tool result to a file anyway (W186’s F3), and goes on', async () => {
+      const { supervisor, children, logs } = harness({ connectors, connectorLauncher: launcher, env });
+      await supervisor.send('hello');
+      children[0]!.init();
+      const saved = { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: '<persisted-output>\nOutput too large (200KB). Full output saved to: /made-up/tool-results/mcp-fake-x.txt' }] } };
+      children[0]!.emit({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't0', content: 'a short result' }] } });
+      expect(logs.filter((line) => line.includes('saved a large tool result'))).toHaveLength(0);
+      children[0]!.emit(saved);
+      children[0]!.emit(saved);
+      expect(logs.filter((line) => line.includes('saved a large tool result'))).toHaveLength(1);
+      expect(supervisor.state().status).toBe('working');
+    });
   });
 
   it('stops a supervisor whose recipient gate didn’t load: its SessionStart hook never ran', async () => {
