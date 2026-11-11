@@ -3,7 +3,7 @@
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
 
-Last updated: 2026-11-11, on `docs/m5.3-answers`: Phil's answers on W184, W185 and stopping finished sessions; the supervisor's click-away close asked. Before it, 2026-11-10, evening, on `docs/m5.3-coordination`: M5.2 is merged into `main` ([#234](https://github.com/leggetter/pitwall/pull/234)), and `m5.3/integration` is branched from it with [#236](https://github.com/leggetter/pitwall/pull/236) (fix(mcp): list_sessions reports `prOpen` null, not false, for a PR it didn't fetch; merged straight into `main`), [#237](https://github.com/leggetter/pitwall/pull/237) (docs: D28, the supervisor reads through read-only connectors; spike 016 (read-only connectors under the strict command line); W183 to W186) and [#238](https://github.com/leggetter/pitwall/pull/238) (fix(web): the supervisor's Sent and started rows on one line, the name said once). Phil answered the five M5.2 questions ("go with your leans"), listed below. The next free W number is W187.
+Last updated: 2026-11-11, on `docs/handoff-m5.3-batch`: the coordinating session hands off mid-batch (at about 400K of context). Three sub-agents are still running and report to the next coordinator. Before it, 2026-11-10: M5.2 merged into `main` ([#234](https://github.com/leggetter/pitwall/pull/234)) and `m5.3/integration` branched from it. The next free W number is W190.
 
 **Servers:** 4518 runs `main` at f4458a7, restarted 21:44 on 2026-11-10. The 4519 try-out is stopped and its worktree removed.
 
@@ -18,10 +18,15 @@ Last updated: 2026-11-11, on `docs/m5.3-answers`: Phil's answers on W184, W185 a
 
 ## Open work
 
+Merged into `m5.3/integration` on 2026-11-11, each after a fresh review and its fixes: [#240](https://github.com/leggetter/pitwall/pull/240) and [#241](https://github.com/leggetter/pitwall/pull/241) (NOW.md answers); [#242](https://github.com/leggetter/pitwall/pull/242) (W176, the pitwall plugin: a SessionStart note while pitwall runs, and the pitwall skill), after an xhigh security review, with F1 (a reused pid and a taken-over port) and F2 (install from a clone kept on `main`) fixed; [#243](https://github.com/leggetter/pitwall/pull/243) (W185's spike 017, Slack and Notion credentials for the supervisor's connectors); [#245](https://github.com/leggetter/pitwall/pull/245) (W187, the supervisor pushes the other panels left from 1,200 px; below that, over the page).
+
+**In flight:** sub-agents of the previous coordinator; they report to the next one after `/clear`. Each PR merges into `m5.3/integration` only on green CI after its review.
+
 | Item | State |
 | --- | --- |
-| **W176 (a pitwall plugin: every session knows it's watched, links sessions, and can propose one)** | **First in M5.3** (Phil, 2026-11-10), from spike 015's design (`docs/spikes/015-plugin-session-note.md`): a fresh session; the plugin's `SessionStart` note points a session at W163's (spin-off proposals) `spin-off` block |
-| list_sessions `pr` lookup said `prOpen: false` for an open PR it never fetched (hookdeck/hookdeck-cli#490, 2026-11-10) | PR open: `prOpen` is now `true` (listed) or `null` (not fetched, state unknown) with a `prNote`. Which PRs are fetched is unchanged (Phil: it works as wanted). A per-repo opt-in is noted in PLAN.md's Nice to have |
+| [#244](https://github.com/leggetter/pitwall/pull/244) (W184, the supervisor's connectors: config, tool choice and launch), on `m5.3/supervisor-connectors` | W186 (the connectors' security review, xhigh) approves once its blocking fixes land: F2 (a secret in a non-Authorization header follows a redirect) and F3 (big results aren't truncated but saved whole to `~/.claude/projects/…/tool-results/` at 0644). The builder is making them and F1, F4 to F8. Next: check the fixes, merge on green, then record W186 as done in `PLAN.md` |
+| [#246](https://github.com/leggetter/pitwall/pull/246) (W188, dismiss a PR you're not taking on: "Not for me", a Dismissed section, back when something new happens) | A fresh reviewer (Opus, high, security focus) is running. Next: fixes if any, then merge on green |
+| W189 (recaps a cold reader can act on), on `m5.3/recaps-cold-reader` in `.worktrees/w189` | Phil, 2026-11-11: recaps are "useless… it just lists IDs and gives a vague overview"; they must tell someone with no context what's being done, the goal, why, and what's next. The builder diagnoses, redesigns, and scores old against new with a cold-reader model check, on Haiku and Sonnet, with cost. **Its PR waits for Phil to judge the samples** (local `scratch/` files, never committed) before merging |
 | W165 (a diagnostics log: why a row is in Needs you) | Planned; approved for planning 2026-11-09 ([#199](https://github.com/leggetter/pitwall/pull/199)) |
 | W167 (session lineage), W168 (Clear and continue: a hand-off you start with one click; spike 014 is done) | Planned; Phil approved both on 2026-11-09 |
 | W171 (a team's open request doesn't keep a reviewed PR in Needs you), W173 (a moved-past to-do), W174 (a working session's to-dos), W175 (a pitwall link opens in a new tab; needs a security review) | Planned (Phil, 2026-11-09, planning only) |
@@ -31,28 +36,31 @@ Last updated: 2026-11-11, on `docs/m5.3-answers`: Phil's answers on W184, W185 a
 | Left from M5.1's items | Each item's "Left" is in its archive entry: for example W153's (flag) no retry of a failed ask, W154's (snooze) unseen scheduled wake-ups, W163's (spin-off proposals) overlap check, "Ask the supervisor" and the profile's model, with M6 |
 | [#143](https://github.com/leggetter/pitwall/issues/143) (Session view: expand the conversation or terminal to the full page) | Later (Phil, 2026-11-03) |
 | W89, the first paste into New session's prompt is lost | Parked (Phil, 2026-11-02): he'll say if it happens again; Grammarly is suspected, not confirmed |
-| A flaky `src/cli.test.ts` clean-up (`ENOTEMPTY`) | In "Nice to have, later" |
+| Flaky tests: `src/cli.test.ts` clean-up (`ENOTEMPTY`), and `src/index/exec.test.ts` "after an abort…" (timing-based; failed once in each of two full runs, passes alone) | The first is in "Nice to have, later"; add the second beside it (not done: this hand-off edited only `NOW.md`) |
 | M6, triage | After M5.3; not started |
 
 ## Next, in order
 
-1. **W176 (the pitwall plugin) first,** in a fresh session, from spike 015's design (`docs/spikes/015-plugin-session-note.md`).
-2. **Then the rest of M5.3** (`PLAN.md`), one session per item (`AGENTS.md`, Efficiency): W165, W167, W168, W171, W173, W174, W175, W178, W179.
-3. **W184 (the supervisor's connectors), W185 (spike: Slack, Notion and Gmail with real accounts) and W186 (their security review),** once Phil says go (open questions); one session each.
+1. **Merge #244 and #246** once ready (see Open work).
+2. **W189's samples to Phil,** to judge before its PR merges.
+3. **The rest of M5.3** (`PLAN.md`), one session per item (`AGENTS.md`, Efficiency): W165, W167, W168, W171, W173 to W175, W178, W179.
 4. **One blog-editing session on Sonnet for Phil to judge** (agreed; not the evals post).
 5. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
 
 ## Open questions for Phil
 
-None open.
+1. **Hosted connectors and policy:** may the supervisor use Slack's and Notion's hosted MCP servers, given that your organisation's managed policy blocks the claude.ai versions? Lean: check with the policy's owner first.
+2. **Slack scope:** public channels only, with 4 read scopes? Lean: yes, to start.
+3. **Read arguments unguarded by a card (W186's F1):** accept that a connector's read arguments are guarded only by the prompt rule and your choice of tools, with no approval card, with `--connector-tools` flagging URL-fetching tools as the mitigation? Lean: yes.
+4. **Spike 017's leftovers:** it left OAuth discovery entries (`notion`, `slack`, `pitwall-test-slack`) inside the `Claude Code-credentials` keychain item. They're harmless; don't delete that item. Lean: leave them.
 
-Answered (Phil, 2026-11-11, "go with your leans"): W184 (the supervisor's connectors) goes ahead after W176 (the pitwall plugin); W185 (spike: real accounts) uses Slack and Notion first, Gmail later; finished pitwall sessions are stopped once their work merges ("supervisor table layout" and "pitwall-slack-notion-access" stopped 2026-11-11; `claude attach <id>` resumes one). The supervisor's panel closing on click-away is left for now (Phil, 2026-11-11, "let's leave it for now"); the lean was to close it only where it covers the page, below 1,200 px, and never while you're typing in it.
+Answered (Phil, 2026-11-11): go with the leans on the supervisor panel (it pushes, as W187); build W188 now; W176, W184, W185 and W187 run in parallel as sub-agents.
 
-Answered (Phil, 2026-11-10, "go with your leans"): (a) the M5.2 → `main` PR as drafted; (b) split M5.2 at W180, as M5.1 was at W164; (c) build W176 (the pitwall plugin) next, as M5.3's first item; (d) the builders' decisions are confirmed as built (recorded in the archive's M5.2 work breakdown: W156, W158, W159, W160, W177, W180); (e) the Supervisor button below 1,000 px stays as built (W182, the supervisor's button in the header).
+Answered (Phil, 2026-11-11, "go with your leans"): W184 goes ahead after W176; W185 uses Slack and Notion first, Gmail later; finished pitwall sessions are stopped once their work merges (`claude attach <id>` resumes one).
 
-Answered (Phil, 2026-11-09, "go with your leans"): no user guide for now; the README stays the only user-facing description of what pitwall does, and is revisited when its "What it does" outgrows a screen or someone asks how a feature works (the repo is already public, so the earlier "until it goes public" didn't apply). W163's (spin-off proposals) card stays as built: over Needs you's rows, dismissals kept per browser, the folder checked at Start. W138's (the supervisor's messages say they're from it) footer stays, though it wraps to 3 lines in a draft card at 1,200 px.
-Answered (Phil, 2026-11-09): the M5.1 → `main` PR text, opened as written ([#197](https://github.com/leggetter/pitwall/pull/197)), and merged on green.
-Answered (Phil, 2026-11-06): W155 (work profiles) sets the sub-agent model as a default only, not forced, revisited with W158's (the Usage view) figures; profiles are launch settings plus an optional skill to start with; the run rate's target line is a weekend reserve; profiles first; the four built-in profiles; and the stand-in cost, set against `/usage`, only if spike 013 can't read the percentage.
+Answered (Phil, 2026-11-10, "go with your leans"): M5.2 → `main` PR as drafted; split M5.2 at W180; build W176 next; builders' decisions confirmed as built (archive's M5.2 work breakdown); the Supervisor button below 1,000 px stays as built (W182).
+
+Older answers (2026-11-06 to 11-09: no user guide for now, W163's card as built, W155 work profiles and the Usage view) were cut from here; they are in this file's git history.
 
 ## Standing context
 
