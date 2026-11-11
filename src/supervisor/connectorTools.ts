@@ -52,19 +52,44 @@ export interface ListedTool {
   takesUrl: boolean;
 }
 
-/** A property's name that is a URL, URI or link. */
-const URL_PROPERTY = /(?:^|[_-])(?:url|uri|href|link|endpoint)s?$|(?:Url|Uri|URL|URI|Href|Link|Endpoint)s?$/;
+/** A property's name that is, or commonly holds, an address. */
+const URL_PROPERTY = /(?:^|[_-])(?:url|uri|iri|href|link|endpoint|website|site|webpage|page_url|src|source_url|target|address|location|domain|host)s?$|(?:Url|Uri|URL|URI|Href|Link|Endpoint|Website|Site|Src|Target|Address|Location|Domain|Host)s?$/i;
 
-/** A description that says the tool fetches an address. */
-const FETCHES_URL = /\b(?:fetch|fetches|download|downloads|open|opens|visit|visits|request|requests|get|gets)\b[^.]{0,60}\b(?:url|uri|link|web ?page|website|address)/i;
+/** A string format that is an address. */
+const URL_FORMATS: ReadonlySet<string> = new Set(['uri', 'url', 'iri', 'uri-reference', 'iri-reference', 'uri-template', 'hostname', 'idn-hostname']);
 
-/** Whether a tool's input schema or description says it takes, or fetches, a URL. */
+/** A description that says the tool fetches or reads an address, or the web. */
+const FETCHES_URL =
+  /\b(?:fetch|fetches|download|downloads|open|opens|visit|visits|request|requests|get|gets|retrieve|retrieves|read|reads|load|loads|scrape|scrapes|crawl|crawls|browse|browses)\b[^.]{0,80}\b(?:url|uri|link|links|web ?pages?|websites?|web sites?|address|the web|internet|html)\b|\bhttps?:\/\//i;
+
+/** Most levels of a schema looked into: properties, array items and nested objects. */
+const MAX_SCHEMA_DEPTH = 6;
+
+/**
+ * Whether a tool's input schema or description says it takes, or fetches, a URL: a property named
+ * like an address or of an address's format, at any depth, in array items and nested objects
+ * included, or a description that says it fetches or reads one or the web. Common shapes only: a
+ * server can always describe a URL-taking tool so it isn't seen, which is why you choose.
+ */
 export function takesUrl(item: Record<string, unknown>): boolean {
-  const schema = isRecord(item.inputSchema) ? item.inputSchema : {};
-  const properties = isRecord(schema.properties) ? schema.properties : {};
-  for (const [name, property] of Object.entries(properties)) {
-    if (URL_PROPERTY.test(name)) return true;
-    if (isRecord(property) && (property.format === 'uri' || property.format === 'url' || property.format === 'iri')) return true;
+  const stack: { schema: unknown; depth: number }[] = [{ schema: item.inputSchema, depth: 0 }];
+  let seen = 0;
+  while (stack.length > 0 && seen++ < 500) {
+    const { schema, depth } = stack.pop()!;
+    if (!isRecord(schema) || depth > MAX_SCHEMA_DEPTH) continue;
+    if (typeof schema.format === 'string' && URL_FORMATS.has(schema.format)) return true;
+    if (typeof schema.description === 'string' && depth > 0 && FETCHES_URL.test(schema.description)) return true;
+    if (isRecord(schema.properties)) {
+      for (const [name, property] of Object.entries(schema.properties)) {
+        if (URL_PROPERTY.test(name)) return true;
+        stack.push({ schema: property, depth: depth + 1 });
+      }
+    }
+    for (const key of ['items', 'additionalProperties']) stack.push({ schema: schema[key], depth: depth + 1 });
+    for (const key of ['anyOf', 'oneOf', 'allOf', 'prefixItems']) {
+      const list = schema[key];
+      if (Array.isArray(list)) for (const each of list) stack.push({ schema: each, depth: depth + 1 });
+    }
   }
   return typeof item.description === 'string' && FETCHES_URL.test(item.description);
 }

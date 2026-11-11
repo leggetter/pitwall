@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import { findCommand, launchPlan } from './connectorLauncher.mjs';
 import { defaultConnectorLauncher } from './connectorServer.js';
-import { formatToolListing, listConnectorTools, listingNotice, listsThroughClaude, listToolsThroughClaude, plainLine, readInit, readTools, signInInstructions, sseMessages } from './connectorTools.js';
+import { formatToolListing, listConnectorTools, listingNotice, listsThroughClaude, listToolsThroughClaude, plainLine, readInit, readTools, signInInstructions, sseMessages, takesUrl } from './connectorTools.js';
 
 const FAKE = fileURLToPath(new URL('../test/fakeConnector.mjs', import.meta.url));
 const scratch = mkdtempSync(path.join(os.tmpdir(), 'pitwall-test-connectors-'));
@@ -190,6 +190,19 @@ describe('what --connector-tools prints', () => {
       { name: 'search', description: 'Search messages.', inputSchema: { properties: { query: { type: 'string' } } }, annotations: { readOnlyHint: true } },
     ]).tools };
     expect(listing.tools.map((tool) => tool.takesUrl)).toEqual([true, true, true, false]);
+    // Wider shapes (W186's verification): URL-format array items, nested { url }, names such as
+    // target, website and src, a web page in the description.
+    const shapes: Record<string, unknown>[] = [
+      { name: 'a', inputSchema: { properties: { pages: { type: 'array', items: { type: 'string', format: 'uri' } } } } },
+      { name: 'b', inputSchema: { properties: { request: { type: 'object', properties: { url: { type: 'string' } } } } } },
+      { name: 'c', inputSchema: { properties: { target: { type: 'string' } } } },
+      { name: 'd', inputSchema: { properties: { website: { type: 'string' } } } },
+      { name: 'e', inputSchema: { properties: { src: { type: 'string' } } } },
+      { name: 'f', description: 'Retrieve the contents of a web page.' },
+      { name: 'g', inputSchema: { properties: { items: { type: 'array', items: { anyOf: [{ type: 'object', properties: { pageUrl: { type: 'string' } } }] } } } } },
+      { name: 'h', description: 'Search messages in a channel.', inputSchema: { properties: { query: { type: 'string' }, channel: { type: 'string' }, limit: { type: 'number' } } } },
+    ];
+    expect(shapes.map((shape) => takesUrl(shape))).toEqual([true, true, true, true, true, true, true, false]);
     const text = formatToolListing({ name: 'web' }, listing);
     expect(text).toContain('  [takes a URL]    fetch: Fetch a page.');
     expect(text).toContain("Don't choose it, even if it only reads");

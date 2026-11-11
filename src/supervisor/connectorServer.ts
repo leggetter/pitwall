@@ -315,7 +315,7 @@ export type ResolvedServer = { ok: true; entry: Record<string, unknown> } | { ok
  */
 export function usable(value: string | undefined): value is string {
   // eslint-disable-next-line no-control-regex
-  return value !== undefined && !value.includes(EXPANSION) && !/[\u0000-\u0008\u000A-\u001F\u007F]/.test(value);
+  return value !== undefined && !value.includes(EXPANSION) && !/[\u0000-\u0008\u000A-\u001F\u007F-\u009F]/.test(value);
 }
 
 /**

@@ -1,7 +1,7 @@
 // The supervisor's process (M5, W113), with a fake child that speaks stream-json as Claude Code
 // 2.1.312 does (spike 009, and the handshake probe in src/server/mcp.ts), a fake session list and a
 // state store in memory. No test runs `claude`. Made-up sessions and text only.
-import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -659,6 +659,23 @@ describe('what it can do', () => {
       const args = children[1]!.args;
       expect(flag(args, '--allowed-tools')).toBe([...SUPERVISOR_ALLOWED_TOOLS, 'mcp__fake__fake_search'].join(','));
       expect(Object.keys((JSON.parse(readFileSync(flag(args, '--mcp-config')!, 'utf8')) as { mcpServers: object }).mcpServers).sort()).toEqual(['fake', 'pitwall']);
+    });
+
+    it('checks at each start that its project folder is 0700, logging once a run if not, and never changes it (W186’s N1)', async () => {
+      const { supervisor, children, logs, configDir, sessionDir } = harness({ env });
+      await supervisor.start();
+      const folder = path.join(configDir, 'projects', encodeProjectDir(realpathSync(sessionDir)));
+      expect(logs.filter((line) => line.includes('is open to other users'))).toHaveLength(0);
+      mkdirSync(folder, { recursive: true, mode: 0o755 });
+      chmodSync(folder, 0o755);
+      children[0]!.exit(1, null);
+      await until(() => supervisor.state().status === 'failed');
+      await supervisor.start();
+      children[1]!.exit(1, null);
+      await until(() => supervisor.state().status === 'failed');
+      await supervisor.start();
+      expect(logs.filter((line) => line.includes('is open to other users'))).toEqual([expect.stringContaining('(mode 755)')]);
+      expect(statSync(folder).mode & 0o777).toBe(0o755);
     });
 
     it('logs once a run when Claude Code saved a tool result to a file anyway (W186’s F3), and goes on', async () => {

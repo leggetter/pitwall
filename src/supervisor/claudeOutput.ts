@@ -18,9 +18,20 @@
 // So the supervisor runs with ENABLE_MCP_LARGE_OUTPUT_FILES=0 and 11,000 tokens: a cut result is at
 // most 44,000 characters plus the note, 44,961 in the check, under that threshold with room. Pitwall's
 // own answers are at most 40,000 characters, so they're never cut, though one past 11,000 tokens gets
-// the note. If either variable stops holding, a result is saved to a file under `~/.claude` again:
-// pitwall can't prevent that, but it reads the stream, and logs once a run when a tool result says it
-// was saved (savedToolResult()).
+// the note.
+//
+// That bounds most results, not all (W186's verification, N1). Claude Code decides whether to cut by
+// a result's real token count (count_tokens), not its length, so a result of at most 11,000 tokens but
+// over 50,000 characters, such as one character and 60,000 spaces, is never cut, and is saved whole to
+// `tool-results/<tool use id>.json` at 0644. A connector can return that, so other people's text can
+// still land there: a residual risk. Claude Code makes the session's project folder 0700 and its
+// transcript 0600, so other users can't read it; pitwall checks the folder at each start and logs once
+// if it isn't 0700 (supervisor.ts), and never changes Claude Code's folders. 2.1.322 also has a budget
+// of 200,000 characters of tool results a message, behind a remote flag that's off now; unverified.
+//
+// If either variable stops holding, large results are saved to a file under `~/.claude` again: pitwall
+// can't prevent that, but it reads the stream, and logs once a run when a tool result says it was
+// saved (savedToolResult()), whatever the cause.
 
 /** The most tokens one MCP tool result may bring in: Claude Code's `MAX_MCP_OUTPUT_TOKENS`. */
 export const SUPERVISOR_MCP_OUTPUT_TOKENS = 11_000;

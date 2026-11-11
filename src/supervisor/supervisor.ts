@@ -347,6 +347,8 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
   const needsSignIn = new Set<string>();
   /** Whether a tool result saved to a file has been logged in this run. */
   let savedResultSaid = false;
+  /** Whether a project folder open to other users has been logged in this run. */
+  let projectFolderSaid = false;
 
   let closed = false;
   let mcpUrl: string | undefined;
@@ -464,6 +466,8 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
       gate.forget(gateId);
       return fail(`pitwall couldn't prepare the supervisor's folder, ${dir}, so it didn't start.`);
     }
+
+    checkProjectFolder(cwd);
 
     // Which conversation: the one on file, if it started on this prompt and its transcript is there.
     const record = store.read();
@@ -950,6 +954,25 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
    * names it, or, failing that, in any project folder (a background session that held its id wrote
    * to the same file; spike 009, finding 3). Only a regular file, never a symbolic link.
    */
+  /**
+   * Its project folder under Claude Code's, where its transcript and any tool result Claude Code saves
+   * go, other people's text from a connector included (claudeOutput.ts): Claude Code makes it 0700.
+   * Checked at each start, said once a run when group or others can reach it; never changed, since
+   * it's Claude Code's. A folder that isn't there yet, or can't be read, is left alone (W186's N1).
+   */
+  function checkProjectFolder(cwd: string): void {
+    if (projectFolderSaid || process.platform === 'win32') return;
+    const folder = path.join(configDir, 'projects', encodeProjectDir(cwd));
+    try {
+      const stats = lstatSync(folder);
+      if (!stats.isDirectory() || (stats.mode & 0o077) === 0) return;
+      projectFolderSaid = true;
+      log(`its project folder, ${folder}, is open to other users (mode ${(stats.mode & 0o777).toString(8)}), and Claude Code keeps its transcript and large tool results there. Run chmod 700 on it.`);
+    } catch {
+      // Not there yet: Claude Code makes it, 0700.
+    }
+  }
+
   function findTranscript(id: string, cwd?: string): string | undefined {
     if (!isSessionUuid(id)) return undefined;
     const projects = path.join(configDir, 'projects');

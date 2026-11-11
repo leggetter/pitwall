@@ -167,6 +167,9 @@ describe('connectorLaunch()', () => {
     expect(connectorLaunch(connectors, { ...env, SLACK_BOT_TOKEN: 'a\nb' }, launcher).skipped).toEqual([{ name: 'slack', why: expect.stringContaining('no usable SLACK_BOT_TOKEN') }]);
     expect(connectorLaunch(connectors, { ...env, SLACK_BOT_TOKEN: 'a\u0000b' }, launcher).skipped.map((entry) => entry.name)).toEqual(['slack']);
     expect(connectorLaunch(connectors, { ...env, SLACK_BOT_TOKEN: 'a\tb' }, launcher).skipped).toEqual([]);
+    // C1 controls too, such as U+009B, a terminal's escape introducer (W186's verification).
+    for (const c1 of ['\u0080', '\u009b', '\u009f']) expect(connectorLaunch(connectors, { ...env, SLACK_BOT_TOKEN: `a${c1}b` }, launcher).skipped.map((entry) => entry.name)).toEqual(['slack']);
+    expect(connectorLaunch(connectors, { ...env, SLACK_BOT_TOKEN: 'a\u00a0b' }, launcher).skipped).toEqual([]);
     expect(connectorLaunch([], env, launcher)).toEqual({ servers: {}, allowed: [], disallowed: [], names: [], skipped: [] });
   });
 
