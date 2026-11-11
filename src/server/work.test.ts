@@ -3,7 +3,7 @@
 // supervisor's in their own tests.
 import { describe, expect, it } from 'vitest';
 import { RECAP_MAX_OUTPUT_TOKENS, recapArgs } from '../recaps/prompt.js';
-import { isWorkModel, RECAP_MODEL, SUPERVISOR_MODEL } from '../shared/protocol.js';
+import { isWorkModel, RECAP_EFFORT, RECAP_MODEL, SUPERVISOR_MODEL } from '../shared/protocol.js';
 import { supervisorArgs } from '../supervisor/prompt.js';
 import { relayArgs } from './relayPrompt.js';
 import { BUILT_IN_WORK, RECAP_EFFORT_PROBLEM, createWorkStore, emptyChoices, isModelRejection, mergeChoices, withEffort, workArgs } from './work.js';
@@ -29,7 +29,7 @@ describe('isWorkModel', () => {
 describe('precedence: the app, then the config file, then pitwall', () => {
   it('merges field by field', () => {
     expect(mergeChoices({ effort: 'low' }, { model: 'opus', effort: 'high' }, { model: 'claude-opus-5-5' })).toEqual({ model: 'opus', effort: 'low' });
-    expect(mergeChoices({}, {}, BUILT_IN_WORK.recaps)).toEqual({ model: RECAP_MODEL });
+    expect(mergeChoices({}, {}, BUILT_IN_WORK.recaps)).toEqual({ model: RECAP_MODEL, effort: RECAP_EFFORT });
   });
 
   it("is today's behaviour with no config and no overrides", () => {
@@ -37,7 +37,7 @@ describe('precedence: the app, then the config file, then pitwall', () => {
     expect(store.choice('session')).toEqual({});
     expect(store.choice('subagents')).toEqual({});
     expect(store.choice('supervisor')).toEqual({ model: SUPERVISOR_MODEL });
-    expect(store.choice('recaps')).toEqual({ model: RECAP_MODEL });
+    expect(store.choice('recaps')).toEqual({ model: RECAP_MODEL, effort: RECAP_EFFORT });
     expect(store.choice('relay')).toEqual({ model: 'haiku' });
     expect(store.settings()).not.toHaveProperty('configFile');
   });
@@ -71,7 +71,7 @@ describe('precedence: the app, then the config file, then pitwall', () => {
     const settings = store.settings();
     settings.builtIn.recaps.model = 'opus';
     settings.overrides.recaps.model = 'opus';
-    expect(store.choice('recaps')).toEqual({ model: RECAP_MODEL });
+    expect(store.choice('recaps')).toEqual({ model: RECAP_MODEL, effort: RECAP_EFFORT });
   });
 });
 

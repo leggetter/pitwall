@@ -1,5 +1,5 @@
 // Recaps (M5, W111, W121, W150): the real RecapStrip in every state, in the session view and alone at its
-// width, the picture (W150: goal, working on, plan and your to-dos), its Plan section with the plan's
+// width, the picture (W150, W189: the summary, goal, done, working on, plan, your to-dos and the rest), its Plan section with the plan's
 // items (W172), and recaps without it, the session rows' recap reasons on line 2, and the app strip's recap lines. Each strip has a stub
 // API (stubs.ts) holding its made-up recap, and its own collapsed settings in memory, so pressing one
 // changes none of the others. Every recap here is made up, as spike 010's examples are.
@@ -55,6 +55,7 @@ function recap(extra: Partial<SessionRecap> = {}): SessionRecap {
 /** W150's picture of the made-up recap: the goal, what it's on and why, and the plan's line, with W172's items and changes. */
 const PICTURE: Partial<SessionRecap> = {
   goal: 'Make the made-up nightly export work on files over 2 GB.',
+  done: 'It found why big files fail, a 32-bit size field in the upload step, and opened the fix as a draft PR (#42), with a test.',
   workingOn: '#42: the fix for the 32-bit size field in the upload step, which the large-file goal needs before the archive job can reuse it.',
   plan: 'The made-up large-file plan: #42, then the archive job, then the thumbnails; on #42 now',
   planItems: [
@@ -289,19 +290,19 @@ export function RecapSpecimens() {
           <SessionView session={VIEW_ENDED} listed onClose={noop} recaps={HEALTHY} />
         </Stubbed>
       </Specimen>
-      <StripSpecimen title="The picture, waiting on you" note="W150: Goal, Working on, the Plan section, collapsed by default, its line on one row with the toggle (W172), then For you (2): only your to-dos, in order, with no tags, since they're all yours. The session's own, CI's and someone else's to-dos aren't shown: what's next is the conversation's.">
+      <StripSpecimen title="The picture, waiting on you" note="W189: the summary first, what the session is doing; then Goal, Done, Working on, the Plan section, collapsed by default, its line on one row with the toggle (W172), For you (2): your to-dos, with no tags, since they're all yours, and Next: everyone else's, each tagged with who acts.">
         <Strip of={PICTURE_YOU} />
       </StripSpecimen>
       <StripSpecimen title="The picture, waiting on CI" note="Your to-do comes after CI's, so it's listed, and a quiet line says what it waits on now: Waiting on CI.">
         <Strip of={PICTURE_CI} />
       </StripSpecimen>
-      <StripSpecimen title="The picture, no plan, waiting on someone else" note="The recap names no plan: no Plan section at all (W172). Nothing for you, so no For you line; the quiet line says what it waits on.">
+      <StripSpecimen title="The picture, no plan, waiting on someone else" note="The recap names no plan: no Plan section at all (W172). Nothing for you, so no For you line; Next has someone else's to-do, tagged, and the quiet line says what it waits on.">
         <Strip of={PICTURE_SOMEONE} />
       </StripSpecimen>
       <StripSpecimen title="The picture, nothing left" note="No to-dos at all: Nothing left to do.">
         <Strip of={PICTURE_DONE} />
       </StripSpecimen>
-      <StripSpecimen title="The picture, collapsed" note="Working on on one line, its whole in a tooltip when it's cut, and 2 for you after it. The goal, the plan and your to-dos are hidden.">
+      <StripSpecimen title="The picture, collapsed" note="The summary on one line, its whole in a tooltip when it's cut, and 2 for you after it. Everything else is hidden (W189).">
         <Strip of={PICTURE_YOU} collapsed />
       </StripSpecimen>
       <StripSpecimen title="The picture, may be out of date" note="Line 1: the age, Refresh right after it, as the recap's own, then May be out of date. The view asked for a new one once as it opened, which this stub refuses quietly.">

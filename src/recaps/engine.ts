@@ -45,7 +45,9 @@
 // items, one stored from W150 until W172 (prompt.ts lacksPlanItems()): it keeps showing the plan's
 // line alone until the session's next activity, which recaps it from the start, so the list appears
 // soon without a call of its own. Both calls also name the session's PRs from the PR list start() is given
-// (input.ts sessionPrs()), which runs no gh of its own.
+// (input.ts sessionPrs()), which runs no gh of its own, and since W189 (recaps a cold reader can act
+// on) the session's name, its group's label and your messages through it; a previous recap without
+// W189's done makes the call a first recap too.
 //
 // The call runs from one fixed 0700 directory, `$PITWALL_HOME/recap`, with recapArgs() and
 // recapEnvironment() (prompt.ts), no shell and a timeout, once `claude --version` says it's at
@@ -261,9 +263,9 @@ function sameTitle(title: string, name: string): boolean {
   return shown === '' || shown === titleText(name).toLowerCase();
 }
 
-/** The session with this id in the snapshot. */
-function findSession(snapshot: IndexSnapshot | undefined, sessionId: string): SessionSummary | undefined {
-  for (const group of snapshot?.groups ?? []) for (const session of group.sessions) if (session.sessionId === sessionId) return session;
+/** The session with this id in the snapshot, and its group's label, the repo a recap names (W189). */
+function findSessionAndRepo(snapshot: IndexSnapshot | undefined, sessionId: string): { session: SessionSummary; repo: string } | undefined {
+  for (const group of snapshot?.groups ?? []) for (const session of group.sessions) if (session.sessionId === sessionId) return { session, repo: group.label };
   return undefined;
 }
 
@@ -563,8 +565,9 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   async function run(job: Job, entry: Running): Promise<void> {
     const source = index;
     if (source === undefined) return;
-    const session = findSession(source.latest(), job.sessionId);
-    if (session === undefined) return;
+    const found = findSessionAndRepo(source.latest(), job.sessionId);
+    if (found === undefined) return;
+    const { session, repo } = found;
     const startedActivity = parseMs(session.lastActivityAt);
     const file = facts.get(job.sessionId)?.file;
     if (file === undefined || session.transcript !== 'ok') {
@@ -574,9 +577,11 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     const previous = recaps.get(job.sessionId);
     const read = await sources.read(file);
     // A first recap when there's no previous one, nothing since it, no picture in it (W150), a plan
-    // line without its items (W172), or a compaction since it, after which the picture is read again (W150).
+    // line without its items (W172), no done (W189), or a compaction since it, after which the picture
+    // is read again (W150). The store keeps none from before W189, so only the first two happen now.
     const compactedSince = previous !== undefined && read.compaction?.at !== undefined && parseMs(read.compaction.at) > parseMs(previous.throughAt);
-    const update = previous !== undefined && !(startedActivity <= parseMs(previous.throughAt)) && hasPicture(previous) && !lacksPlanItems(previous) && !compactedSince;
+    const update =
+      previous !== undefined && !(startedActivity <= parseMs(previous.throughAt)) && hasPicture(previous) && !lacksPlanItems(previous) && previous.done !== undefined && !compactedSince;
     const collector = new TurnCollector({
       ...(options.relay === undefined ? {} : { relay: options.relay }),
       ...(update ? { after: previous.throughAt } : { cap: PLAN_TURNS_CAP }),
@@ -598,10 +603,16 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     }
     const prs = prsOf(session);
     const withPrs = prs === undefined ? {} : { prs };
+    // Who the session is and your messages through it (W189), in both kinds of call.
+    const about = { name: session.name, repo, ...(read.prompts === undefined ? {} : { prompts: read.prompts }) };
     const input = update
-      ? updateRecapInput({ ...(read.firstPrompt === undefined ? {} : { firstPrompt: read.firstPrompt }), previous: answerOf(previous), turns: collector.text(), ...withPrs }, options.randomId)
+      ? updateRecapInput(
+          { ...about, ...(read.firstPrompt === undefined ? {} : { firstPrompt: read.firstPrompt }), previous: answerOf(previous), turns: collector.text(), ...withPrs },
+          options.randomId,
+        )
       : firstRecapInput(
           {
+            ...about,
             ...(read.firstPrompt === undefined ? {} : { firstPrompt: read.firstPrompt }),
             ...(read.awaySummary === undefined ? {} : { awaySummary: read.awaySummary }),
             ...(read.compaction === undefined ? {} : { compaction: read.compaction }),
@@ -868,10 +879,11 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   };
 }
 
-/** A stored recap's answer fields, for an update's input: W150's goal, working on and plan when it has them, and W172's plan items and changes. */
+/** A stored recap's answer fields, for an update's input: W150's goal, working on and plan when it has them, W189's done, and W172's plan items and changes. */
 function answerOf(recap: SessionRecap): RecapAnswer {
   const answer: RecapAnswer = { summary: recap.summary, todos: recap.todos.map(todoOf), waitingOn: recap.waitingOn, title: recap.title };
   if (hasPicture(recap)) Object.assign(answer, { goal: recap.goal, workingOn: recap.workingOn, plan: recap.plan });
+  if (recap.done !== undefined) answer.done = recap.done;
   if (recap.planItems !== undefined) answer.planItems = recap.planItems.map(({ text, state }) => ({ text, state }));
   if (recap.planChanges !== undefined) answer.planChanges = recap.planChanges;
   return answer;

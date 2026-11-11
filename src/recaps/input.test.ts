@@ -11,6 +11,8 @@ import {
   RECAP_FIRST_PROMPT_CAP,
   RECAP_PRS_MAX,
   RECAP_TURNS_CAP,
+  RECAP_YOUR_MESSAGE_MAX,
+  RECAP_YOUR_MESSAGES_CAP,
   type ConversationEntry,
   type PrLink,
   type PullRequestList,
@@ -28,6 +30,7 @@ import {
   TOOLS_LINE_MAX,
   TurnCollector,
   updateRecapInput,
+  yourMessagesBlock,
 } from './input.js';
 
 const at = (minute: number) => new Date(Date.UTC(2026, 9, 28, 15, minute)).toISOString();
@@ -316,8 +319,56 @@ describe('the input', () => {
       '[10-28 15:50] Claude: CI passed.',
       '</turns-since-previous-recap>',
       '</session-3f9a1c2e3f9a1c2e>',
-      'Revise the previous recap with what the newer turns show: keep its goal, plan, plan items and summary steady, and the why of what it is working on, changing only what they change, and drop the to-dos they finished, a question you answered included. Answer with the JSON object only.',
+      'Revise the previous recap with what the newer turns show: keep its goal, plan, plan items and summary steady, and the why of what it is working on, changing only what they change, move what they finished into done, and drop the to-dos they finished, a question you answered included. Rewrite any text that breaks the rules for a reader with no context, such as a bare ID. Answer with the JSON object only.',
     ]);
+  });
+
+  it("names the session and its repo, and your later messages, in a first recap's input and an update's (W189)", () => {
+    const prompts = [
+      { text: 'Fix the export.', at: '2026-10-28T10:00:00.000Z' },
+      { text: 'Why does it fail on big files?', at: '2026-10-28T11:00:00.000Z' },
+      { text: 'Yes, merge it\nonce CI passes.', at: '2026-10-28T12:00:00.000Z' },
+    ];
+    const first = firstRecapInput({ name: 'export-fix', repo: 'tools/export', firstPrompt: 'Fix the export.', prompts, turns: '' }, fixedId);
+    expect(first.split('\n').slice(1, 14)).toEqual([
+      '<session-3f9a1c2e3f9a1c2e>',
+      '<session-info>',
+      'Name: export-fix',
+      'Repo: tools/export',
+      '</session-info>',
+      '<first-prompt>',
+      'Fix the export.',
+      '</first-prompt>',
+      '<your-messages>',
+      // The first prompt isn't repeated; each message is one line with its time.
+      '[10-28 11:00] Why does it fail on big files?',
+      '[10-28 12:00] Yes, merge it once CI passes.',
+      '</your-messages>',
+      '<latest-turns>',
+    ]);
+    const previous = { summary: 'S.', todos: [], waitingOn: 'nothing' as const, title: 'T' };
+    const update = updateRecapInput({ name: 'export-fix', repo: 'tools/export', firstPrompt: 'Fix the export.', prompts, previous, turns: '' }, fixedId);
+    expect(update).toContain('<session-info>\nName: export-fix\nRepo: tools/export\n</session-info>');
+    expect(update).toContain('<your-messages>\n[10-28 11:00] Why does it fail on big files?');
+    // Neither block without its material; the name and repo are plain lines.
+    const bare = firstRecapInput({ turns: '' }, fixedId);
+    expect(bare).not.toContain('<session-info>');
+    expect(bare).not.toContain('<your-messages>');
+    expect(firstRecapInput({ name: 'a\u202e\nb', turns: '' }, fixedId)).toContain('Name: a b');
+  });
+
+  it('keeps the newest of your messages that fit in RECAP_YOUR_MESSAGES_CAP, each to RECAP_YOUR_MESSAGE_MAX, and says how many were left out (W189)', () => {
+    const prompts = Array.from({ length: 40 }, (_, i) => ({ text: `message ${i} ${'m'.repeat(RECAP_YOUR_MESSAGE_MAX * 2)} end ${i}` }));
+    const body = /<your-messages>\n([\s\S]*?)\n<\/your-messages>/.exec(yourMessagesBlock(prompts, undefined)[0]!)![1]!;
+    const lines = body.split('\n');
+    expect(body.length).toBeLessThanOrEqual(RECAP_YOUR_MESSAGES_CAP + 60);
+    expect(lines[0]).toMatch(/^\[… \d+ older messages left out …\]$/);
+    for (const line of lines.slice(1)) expect(line.length).toBeLessThanOrEqual(RECAP_YOUR_MESSAGE_MAX);
+    expect(lines.at(-1)!.endsWith('end 39')).toBe(true);
+    const kept = lines.length - 1;
+    expect(lines[0]).toBe(`[… ${40 - kept} older messages left out …]`);
+    expect(yourMessagesBlock([], undefined)).toEqual([]);
+    expect(yourMessagesBlock([{ text: 'Only the first.' }], 'Only the first.')).toEqual([]);
   });
 
   it("passes on each previous to-do's `after` when it has one (W166)", () => {
@@ -340,6 +391,9 @@ describe('the input', () => {
     const input = updateRecapInput({ previous, turns: '' }, fixedId);
     const json = /<previous-recap>\n([\s\S]*?)\n<\/previous-recap>/.exec(input)![1]!;
     expect(Object.keys(JSON.parse(json) as object)).toEqual(['goal', 'workingOn', 'plan', 'items', 'changes', 'summary', 'todos', 'waitingOn', 'title']);
+    // W189's done, after the goal, when the previous recap has it.
+    const withDone = /<previous-recap>\n([\s\S]*?)\n<\/previous-recap>/.exec(updateRecapInput({ previous: { ...previous, done: 'The reader.' }, turns: '' }, fixedId))![1]!;
+    expect(Object.keys(JSON.parse(withDone) as object)).toEqual(['goal', 'done', 'workingOn', 'plan', 'items', 'changes', 'summary', 'todos', 'waitingOn', 'title']);
     // No plan: the answer's own empty list and string (W172).
     expect(JSON.parse(json)).toMatchObject({ goal: previous.goal, workingOn: previous.workingOn, plan: '', items: [], changes: '' });
   });

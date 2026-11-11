@@ -33,6 +33,10 @@
 // - **The plan's items** (W172, the plan is part of the recap): since W172 the recap also has the
 //   plan's items, each Done, Now, Next or Dropped, and how the plan changed, which the strip shows
 //   as the picture's Plan section. W123's Plan status, a call of its own, is gone.
+// - **For a cold reader** (W189, recaps a cold reader can act on; Phil, 2026-11-11: "I need it to tell
+//   me what we're doing, what the goal is, why we're doing it, and what's next"): the summary, what
+//   the session is doing, leads the picture, collapsed or open; then what's done, and every to-do:
+//   yours under For you, as questions, and the rest under Next, each tagged with who acts.
 //
 // Only two things are stored, per viewer (D14): whether the strip is collapsed, and whether its Plan
 // section is, each a boolean.
@@ -176,14 +180,14 @@ function parsePlanItem(raw: unknown): PlanItem | undefined {
  * known `waitingOn`, `source` and owner for each to-do, and times that are times; anything else is no
  * recap. The summary, each to-do and the title are cut to RECAP_FIELD_MAX, and the to-dos to
  * RECAP_TODOS_MAX, as the server should already have them. W150's goal, working on and plan are kept,
- * cut the same way, only when all three are text; one that isn't text makes it no recap. W172's plan
+ * cut the same way, only when all three are text, with W189's done when it's text too; one that isn't text makes it no recap. W172's plan
  * items, each exactly a text and a known state, the first PLAN_ITEMS_MAX, and its changes are kept
  * with a plan's line; items that aren't that, or changes that aren't text, make it no recap.
  */
 export function parseRecap(body: unknown): SessionRecap | undefined {
   if (!isRecord(body)) return undefined;
-  const { summary, todos, waitingOn, title, at, throughAt, source, stale, goal, workingOn, plan, planItems, planChanges } = body;
-  for (const field of [goal, workingOn, plan, planChanges]) if (field !== undefined && typeof field !== 'string') return undefined;
+  const { summary, todos, waitingOn, title, at, throughAt, source, stale, goal, done, workingOn, plan, planItems, planChanges } = body;
+  for (const field of [goal, done, workingOn, plan, planChanges]) if (field !== undefined && typeof field !== 'string') return undefined;
   if (planItems !== undefined && !Array.isArray(planItems)) return undefined;
   const items = planItems === undefined ? undefined : planItems.slice(0, PLAN_ITEMS_MAX).map(parsePlanItem);
   if (items?.some((item) => item === undefined)) return undefined;
@@ -207,6 +211,7 @@ export function parseRecap(body: unknown): SessionRecap | undefined {
     recap.goal = cutText(goal, RECAP_FIELD_MAX);
     recap.workingOn = cutText(workingOn, RECAP_FIELD_MAX);
     recap.plan = cutText(plan, RECAP_FIELD_MAX);
+    if (typeof done === 'string') recap.done = cutText(done, RECAP_FIELD_MAX);
     if (items !== undefined) recap.planItems = items as PlanItem[];
     if (typeof planChanges === 'string' && planChanges !== '') recap.planChanges = cutText(planChanges, RECAP_FIELD_MAX);
   }
@@ -217,6 +222,8 @@ export function parseRecap(body: unknown): SessionRecap | undefined {
 /** W150's picture of a recap: its goal, what it's working on and its plan's line, as plain text, and since W172 the plan's items and changes. */
 export interface RecapPicture {
   goal: string;
+  /** What's finished so far, plain (W189). Absent from a recap made before W189. */
+  done?: string;
   workingOn: string;
   /** Empty when the recap names no plan: then there's no Plan section (W172). */
   plan: string;
@@ -238,6 +245,8 @@ export function recapPicture(recap: SessionRecap): RecapPicture | undefined {
   if (goal === '' || workingOn === '') return undefined;
   const plan = plainText(recap.plan).trim();
   const picture: RecapPicture = { goal, workingOn, plan };
+  const done = recap.done === undefined ? '' : plainText(recap.done).trim();
+  if (done !== '') picture.done = done;
   if (plan === '') return picture;
   const items = (recap.planItems ?? []).map(({ text, state }) => ({ text: plainText(text).trim(), state })).filter((item) => item.text !== '');
   if (items.length > 0) picture.items = items;
@@ -248,7 +257,11 @@ export function recapPicture(recap: SessionRecap): RecapPicture | undefined {
 
 /** The picture's labels (W150). */
 export const GOAL_LABEL = 'Goal:';
+/** Before what's finished so far (W189). */
+export const DONE_LABEL = 'Done:';
 export const WORKING_ON_LABEL = 'Working on:';
+/** Before the to-dos that aren't yours, each tagged with who acts (W189). */
+export const NEXT_LABEL = 'Next:';
 /** The Plan section's heading, a disclosure when it has items (W172). */
 export const PLAN_LABEL = 'Plan';
 /** Before the plan's changes, in its open section (W172). */

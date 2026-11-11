@@ -256,6 +256,8 @@ export const RECAP_CALL_MS = 600;
  */
 export const RECAP_PICTURE = {
   goal: 'Give the made-up API a health route that the load balancer can check.',
+  // W189 (recaps a cold reader can act on): what's finished so far.
+  done: 'The health route and its test are in the draft PR (#51); the made-up CI run on it is red on lint.',
   workingOn: '#51: the health route and its test, which the load balancer needs before the old ping can go.',
   plan: 'The made-up API plan: #51, then the load balancer, then retiring the ping; on #51 now',
   planItems: [
@@ -271,6 +273,7 @@ export const RECAP_PICTURE = {
 /** The picture of RECAPPED.anotherSession's recap: a plan with items and no changes (W172). */
 export const RECAP_PICTURE_STEADY = {
   goal: 'Add a made-up route on top of the health route, so the load balancer can check both.',
+  done: 'It agreed the route with the health route session.',
   workingOn: 'Step 2: drafting the route and its tests, which need the health route from pitwall-test-api first.',
   plan: 'The made-up route plan, in three steps; on step 2 now',
   planItems: [
@@ -897,6 +900,7 @@ export class World {
         title: 'Tidy both made-up services',
         // A picture with no plan (W150): no Plan section (W172).
         goal: 'Tidy both made-up services so they share one config loader.',
+        done: 'It pushed the shared loader as a PR (#19) and asked for a review.',
         workingOn: '#19: the shared loader, which both services need before the old one can go.',
         plan: '',
       }),

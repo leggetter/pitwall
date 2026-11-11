@@ -12,12 +12,14 @@
 //   after the age, so it reads as the recap's own (W150), busy while a new one is coming and off,
 //   saying why, while the day's budget is spent; then "May be out of date" while it's older than the
 //   session's latest turn.
-// - **The picture** (W150), for a recap that has one (recapPicture()): "Goal:", why it was started;
-//   "Working on:", the item it's on and why; the Plan section (W172); "For you (n):", only your
-//   to-dos, or "Nothing left to do." with none at all; and a quiet "Waiting on CI." (or someone else,
-//   or another session). The session's, CI's and someone else's to-dos aren't shown: what's next is
-//   the conversation's. Collapsed: "Working on" on one line with an ellipsis, its whole in a tooltip
-//   when it's cut, and "2 for you" after it.
+// - **The picture** (W150), for a recap that has one (recapPicture()), written since W189 (recaps a
+//   cold reader can act on) for someone with no context: the summary, what the session is doing and
+//   where it stands, first; then, while it's open, "Goal:", the outcome and why it matters; "Done:",
+//   what's finished (W189); "Working on:", what's in progress; the Plan section (W172); "For you
+//   (n):", your to-dos, written as questions; "Next:", everyone else's, each tagged with who acts
+//   (W189; Phil, 2026-11-11: "what's next"), or "Nothing left to do." with none at all; and a quiet
+//   "Waiting on CI." (or someone else, or another session). Collapsed: the summary on one line with
+//   an ellipsis, its whole in a tooltip when it's cut, and "2 for you" after it.
 // - **The Plan section** (W172, the plan is part of the recap; Phil, 2026-11-09: "it's probably better
 //   as a section like the recap"): in the picture's body, so hidden while the strip is collapsed, and
 //   only when the recap names a plan. It mirrors the strip's own head: a disclosure, "Plan", with the
@@ -46,7 +48,9 @@ import { plainText } from '../format.js';
 import {
   forYouLabel,
   forYouText,
+  DONE_LABEL,
   GOAL_LABEL,
+  NEXT_LABEL,
   NOTHING_LEFT_TEXT,
   PLAN_CHANGES_LABEL,
   PLAN_LABEL,
@@ -107,7 +111,6 @@ export function RecapStrip({ session, health, listed, hidden = false, storage, t
   const [collapsed, setCollapsed] = useRecapCollapsed(storage);
   const [planCollapsed, setPlanCollapsed] = usePlanCollapsed(storage);
   const headingId = useId();
-  const goalId = useId();
   const bodyId = useId();
   const { state } = recap;
   const waiting = useWaiting(ref, state.kind === 'loading');
@@ -129,7 +132,7 @@ export function RecapStrip({ session, health, listed, hidden = false, storage, t
       <div className="recap-head">
         <h3 className="recap-heading" id={headingId}>
           {openable ? (
-            <button type="button" className="recap-toggle" aria-expanded={open} aria-controls={picture ? `${goalId} ${bodyId}` : bodyId} onClick={() => setCollapsed(!collapsed)}>
+            <button type="button" className="recap-toggle" aria-expanded={open} aria-controls={bodyId} onClick={() => setCollapsed(!collapsed)}>
               <Icon name="expand" className="chevron" />
               {title}
             </button>
@@ -152,7 +155,6 @@ export function RecapStrip({ session, health, listed, hidden = false, storage, t
           recap={shown}
           picture={picture}
           open={open}
-          goalId={goalId}
           bodyId={bodyId}
           planCollapsed={planCollapsed}
           onPlanCollapsed={setPlanCollapsed}
@@ -202,16 +204,16 @@ export function RecapStrip({ session, health, listed, hidden = false, storage, t
 }
 
 /**
- * The picture (W150): "Goal:" while it's open; "Working on:", always, on one line with an ellipsis and
- * "2 for you" while it's collapsed; then, while it's open, the Plan section (W172) when it names a
- * plan, "For you (n):" with only your to-dos, or "Nothing left to do." with none at all, and a quiet
- * line for what else it waits on.
+ * The picture (W150; W189): the summary, what the session is doing, always, on one line with an
+ * ellipsis and "2 for you" while it's collapsed; then, while it's open, "Goal:", "Done:" when the recap
+ * has it, "Working on:", the Plan section (W172) when it names a plan, "For you (n):" with your to-dos,
+ * "Next:" with the rest, each tagged with who acts, or "Nothing left to do." with none at all, and a
+ * quiet line for what else it waits on.
  */
 function Picture({
   recap,
   picture,
   open,
-  goalId,
   bodyId,
   planCollapsed,
   onPlanCollapsed,
@@ -219,44 +221,42 @@ function Picture({
   recap: SessionRecap;
   picture: RecapPicture;
   open: boolean;
-  goalId: string;
   bodyId: string;
   planCollapsed: boolean;
   onPlanCollapsed: (collapsed: boolean) => void;
 }) {
   const yours = recap.todos.filter((todo) => todo.owner === 'you');
+  const others = recap.todos.filter((todo) => todo.owner !== 'you');
   const waitingLine = waitingLineText(recap.waitingOn);
   return (
     <>
-      <p className="recap-line" data-line="goal" id={goalId} hidden={!open}>
-        <span className="recap-label">{GOAL_LABEL}</span> <bdi className="recap-line-text">{picture.goal}</bdi>
-      </p>
-      <Tooltip content={picture.workingOn} relation="none" onlyIfCut>
-        <p className="recap-line recap-working-on" data-line="working-on">
-          <span className="recap-label">{WORKING_ON_LABEL}</span>{' '}
-          <span className="recap-line-text">
-            <bdi>{picture.workingOn}</bdi>
-          </span>
-          {!open && yours.length > 0 && (
-            <>
-              <span className="visually-hidden">. </span>
-              <Badge look="subtle-warning" className="recap-for-you">
-                {forYouText(yours.length)}
-              </Badge>
-            </>
-          )}
-        </p>
-      </Tooltip>
+      <Summary recap={recap} collapsed={!open} />
       <div className="recap-body" id={bodyId} hidden={!open}>
+        <p className="recap-line" data-line="goal">
+          <span className="recap-label">{GOAL_LABEL}</span> <bdi className="recap-line-text">{picture.goal}</bdi>
+        </p>
+        {picture.done !== undefined && (
+          <p className="recap-line" data-line="done">
+            <span className="recap-label">{DONE_LABEL}</span> <bdi className="recap-line-text">{picture.done}</bdi>
+          </p>
+        )}
+        <p className="recap-line" data-line="working-on">
+          <span className="recap-label">{WORKING_ON_LABEL}</span> <bdi className="recap-line-text">{picture.workingOn}</bdi>
+        </p>
         {picture.plan !== '' && <PlanSection picture={picture} collapsed={planCollapsed} onCollapsed={onPlanCollapsed} />}
-        {yours.length > 0 ? (
+        {yours.length > 0 && (
           <div className="recap-line" data-line="for-you">
             <span className="recap-label">{forYouLabel(yours.length)}</span>
             <Todos todos={yours} tags={false} label="For you" />
           </div>
-        ) : (
-          recap.todos.length === 0 && <p className="recap-note">{NOTHING_LEFT_TEXT}</p>
         )}
+        {others.length > 0 && (
+          <div className="recap-line" data-line="next">
+            <span className="recap-label">{NEXT_LABEL}</span>
+            <Todos todos={others} label="Next" />
+          </div>
+        )}
+        {recap.todos.length === 0 && <p className="recap-note">{NOTHING_LEFT_TEXT}</p>}
         {waitingLine !== undefined && <p className="recap-note recap-waiting">{waitingLine}</p>}
       </div>
     </>
