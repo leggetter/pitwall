@@ -115,6 +115,8 @@ export interface Records {
   relays: Array<{ name: string; length: number }>;
   /** Each flag and unflag the server answered (W153), by the session's name, with the flag's reason and where it came from. */
   flags: Array<{ action: 'flag' | 'unflag'; name: string; reason?: string; from?: string }>;
+  /** Each Not for me and Undo the server answered (W188), by the PR's key, with the status it got. */
+  prDismissals: Array<{ action: 'dismiss' | 'undismiss'; key: string; status: number }>;
   /** Each snooze and unsnooze the server answered (W154), by the session's name, with its `until`, if any. */
   snoozes: Array<{ action: 'snooze' | 'unsnooze'; name: string; until?: string }>;
   /** Each spin-off check the server answered (W163), by the asking session's name, with the key asked for and the status. */
@@ -154,6 +156,7 @@ const emptyRecords = (): Records => ({
   workPosts: [],
   relays: [],
   flags: [],
+  prDismissals: [],
   snoozes: [],
   spinOffChecks: [],
   actions: [],
@@ -363,6 +366,25 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (method === 'GET' && url.pathname === protocol.EDITORS_PATH) return json(res, 200, EDITORS);
     if (method === 'GET' && url.pathname === protocol.PRS_PATH) return json(res, 200, world.prList() satisfies PullRequestList);
     if (method === 'POST' && url.pathname === protocol.PRS_REFRESH_PATH) return refreshPrs(req, res);
+    if (method === 'POST' && (url.pathname === protocol.PR_DISMISS_PATH || url.pathname === protocol.PR_UNDISMISS_PATH)) {
+      // Not for me and its Undo (W188), as src/server/prDismissals.ts answers them: the PR by repo and
+      // number, and to dismiss, the state hash the page saw, which must be its hash now.
+      const on = url.pathname === protocol.PR_DISMISS_PATH;
+      const raw = await readJson(req);
+      const body = isRecord(raw) ? raw : {};
+      const key = typeof body.repo === 'string' && typeof body.number === 'number' ? `${body.repo}/${body.number}` : undefined;
+      const answer = (status: number, result: unknown) => {
+        records.prDismissals.push({ action: on ? 'dismiss' : 'undismiss', key: key ?? '', status });
+        return json(res, status, result);
+      };
+      if (key === undefined || (on && typeof body.seen !== 'string')) return answer(400, { ok: false, error: 'Made up: not a PrDismissRequest.' });
+      const pr = world.prByKey(key);
+      if (on && pr === undefined) return answer(404, { ok: false, error: "That pull request isn't among your open pull requests." });
+      if (on && pr?.stateHash !== body.seen) return answer(409, { ok: false, error: 'Something new happened on it since the page showed it. Look again before you dismiss it.' });
+      world.dismissPr(key, on);
+      broadcastPrs();
+      return answer(200, on ? { ok: true, dismissed: world.prByKey(key)?.dismissed } : { ok: true });
+    }
     if (method === 'POST' && url.pathname === protocol.CLONE_PATH) return clone(req, res);
     if (method === 'GET' && url.pathname === protocol.WORK_PATH) return json(res, 200, await work.describe(url.searchParams.get('dir') || undefined));
     if (method === 'GET' && url.pathname === protocol.USAGE_PATH) {

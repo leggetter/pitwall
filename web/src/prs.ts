@@ -16,6 +16,7 @@ import {
   GITHUB_REPO_NAME_PATTERN,
   PR_FAILING_CHECKS_MAX,
   PR_RELATIONS,
+  PR_STATE_HASH_PATTERN,
   PR_TITLE_MAX,
   prLinkIsStrong,
   prLinkMatches,
@@ -140,7 +141,7 @@ export function parseRootOwners(value: unknown): RootOwners[] | undefined {
 /** One PR from the 'prs' message, or undefined when it isn't the contract's shape. */
 export function parsePullRequest(value: unknown): PullRequestSummary | undefined {
   if (!isRecord(value)) return undefined;
-  const { url, repo, repoLabel, number, title, draft, createdAt, updatedAt, head, checks, failingChecks, failingCount, review, mergeable, relation, reviewRequest, place } = value;
+  const { url, repo, repoLabel, number, title, draft, createdAt, updatedAt, head, checks, failingChecks, failingCount, review, mergeable, relation, reviewRequest, place, stateHash, dismissed, dismissalEnded } = value;
   if (typeof repo !== 'string' || !isRepoKey(repo)) return undefined;
   if (typeof repoLabel !== 'string' || repoLabel.toLowerCase() !== repo) return undefined;
   if (typeof number !== 'number' || !Number.isSafeInteger(number) || number < 1) return undefined;
@@ -183,8 +184,15 @@ export function parsePullRequest(value: unknown): PullRequestSummary | undefined
   }
   const placed = parsePlace(place);
   if (placed) pr.place = placed;
+  // Not for me (W188): the state hash the page sends back, and when it was dismissed or came back.
+  if (typeof stateHash === 'string' && STATE_HASH.test(stateHash)) pr.stateHash = stateHash;
+  if (isRecord(dismissed) && isTime(dismissed.at)) pr.dismissed = { at: dismissed.at };
+  else if (isRecord(dismissalEnded) && isTime(dismissalEnded.at)) pr.dismissalEnded = { at: dismissalEnded.at };
   return pr;
 }
+
+/** PullRequestSummary.stateHash (W188). */
+const STATE_HASH = new RegExp(`^${PR_STATE_HASH_PATTERN}$`);
 
 /**
  * How a review was requested (W101), or undefined when it isn't the contract's shape. A team's name

@@ -118,6 +118,7 @@
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ApiContext } from '../api.js';
 import { flaggedText, flagSession, UNDO_FLAG, unflaggedText, unflagSession } from '../flags.js';
+import { dismissedToast, dismissPr, UNDO_DISMISS, undismissedToast, undismissPr } from '../prDismiss.js';
 import { dropOldMarks, snoozedToast, snoozeSession, UNDO_SNOOZE, unsnoozeSession, wokenText } from '../snooze.js';
 import type { PullRequestRelation, PullRequestSummary, SessionSummary } from '../../../src/shared/protocol.js';
 import {
@@ -518,9 +519,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // The root tab's older PR rows (W106): only the Pull requests view lists them, with Show older on, and nothing counts them.
   const olderPrs = useMemo(() => olderPrRows(shownGroups, work, tab), [shownGroups, work, tab]);
   const listed = useMemo(() => {
-    const base = scope ? listWork(shownGroups, scope, sort, grouped.home, work) : { current: [], finished: [] };
+    const base = scope ? listWork(shownGroups, scope, sort, grouped.home, work) : { current: [], finished: [], dismissed: [] };
     if (scope?.kind !== 'prs' || !showOlderPrs || olderPrs.length === 0) return base;
-    return { current: [...base.current, ...olderPrs].sort(rowOrder('urgency', work)), finished: [] };
+    return { current: [...base.current, ...olderPrs].sort(rowOrder('urgency', work)), finished: [], dismissed: base.dismissed };
   }, [shownGroups, scope?.kind, selectedGroup, sort, grouped.home, starred.set, work, showOlderPrs, olderPrs]);
   const [prFilter, setPrFilter] = useState('');
   // The Pull requests view's chips (W101): the page's, none on at each load, never stored, as the filter's text.
@@ -532,6 +533,13 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     [listed, filters, prsSelected, prFilters, prRelations, work],
   );
   const finished = useMemo(() => filterRows(listed.finished, filters, work), [listed, filters, work]);
+  // The PR rows you dismissed, Not for me (W188), as the filters show them: the Dismissed section's.
+  const dismissedRows = useMemo(
+    () => (prsSelected ? filterRows(listed.dismissed, prFilters, work).filter((row) => matchesRelations(row, prRelations, work)) : filterRows(listed.dismissed, filters, work)),
+    [listed, filters, prsSelected, prFilters, prRelations, work],
+  );
+  // The Dismissed section is collapsed at each load, as nothing in it needs you.
+  const [dismissedOpen, setDismissedOpen] = useState(false);
   // The selection's ended sessions older than ENDED_SHOWN_DAYS (W67), as the filters show them, with
   // Show older on or off: how many its button says, and whether the selection has one at all. Never
   // one that owns an open PR, which isn't finished work (W106).
@@ -1087,7 +1095,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     // and Show older show: so every session, as olderCount reads them.
     const every = tabGroups(groupedAll.groups, tab);
     const everyScope = scopeOf(every);
-    const inView = everyScope ? listWork(every, everyScope, sort, groupedAll.home, work) : { current: [], finished: [] };
+    const inView = everyScope ? listWork(every, everyScope, sort, groupedAll.home, work) : { current: [], finished: [], dismissed: [] };
     const viewLists = [...inView.current, ...inView.finished].some((row) => !isPrRow(row) && row.session.sessionId === sessionId);
     const next = snapshot ? selectionShowing({ roots, groups: groupedAll.groups }, selection, tab, sessionId, groupedAll.home, viewLists) : undefined;
     if (next === undefined && !closePanel) {
@@ -1327,6 +1335,41 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       snoozeToasts.current.set(sessionId, outcome.snoozed.at);
       const message = snoozedToast(session.name, outcome.snoozed, new Date(), prNeeding(session, work)?.number);
       toasts.show({ tone: 'success', key, message, action: { label: UNDO_SNOOZE, onAction: () => setSnooze(session, false, 'toast') } });
+    });
+  };
+  // Not for me (W188): from a PR row or the PR view. The server keeps it, so the list says it's
+  // dismissed as soon as it is; the toast says it's under Dismissed and what brings it back, with Undo.
+  // Undo from a dismissed row needs no toast, as the row moves back; from the view, it's a toast.
+  // A dismissal's toast goes once it ends by itself, something new on the PR, since Undo would have nothing to do.
+  const dismissKey = (pr: Pick<PullRequestSummary, 'repo' | 'number'>) => `pr-dismiss:${prKey(pr)}`;
+  const dismissToasts = useRef(new Set<string>());
+  useEffect(() => {
+    for (const key of dismissToasts.current) {
+      const pr = allPrs.find((each) => prKey(each) === key);
+      if (pr?.dismissed !== undefined || pr?.dismissalEnded === undefined) continue;
+      dismissToasts.current.delete(key);
+      dismissToast(dismissKey(pr));
+    }
+  }, [allPrs, dismissToast]);
+  const setDismissal = (pr: PullRequestSummary, on: boolean, from: 'row' | 'view' | 'toast') => {
+    if (!api) return;
+    const key = dismissKey(pr);
+    if (!on) {
+      dismissToasts.current.delete(prKey(pr));
+      void undismissPr(api, pr).then((error) => {
+        if (error !== undefined) toasts.show({ tone: 'error', key, message: error });
+        else if (from === 'view') toasts.show({ tone: 'success', key, message: undismissedToast(pr) });
+        else toasts.dismiss(key);
+      });
+      return;
+    }
+    void dismissPr(api, pr).then((outcome) => {
+      if (outcome.kind === 'failed') {
+        toasts.show({ tone: 'error', key, message: outcome.error });
+        return;
+      }
+      dismissToasts.current.add(prKey(pr));
+      toasts.show({ tone: 'success', key, message: dismissedToast(pr), action: { label: UNDO_DISMISS, onAction: () => setDismissal(pr, false, 'toast') } });
     });
   };
   useEffect(() => {
@@ -1598,8 +1641,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       />
     );
   }
-  const total = listed.current.length + listed.finished.length;
-  const shown = current.length + finished.length;
+  const total = listed.current.length + listed.finished.length + listed.dismissed.length;
+  const shown = current.length + finished.length + dismissedRows.length;
   // No summary where it would only repeat the empty state below it: "0 sessions · Nothing needs you"
   // over no sessions at all, or "Nothing needs you" over Needs you's own "Nothing needs you right now",
   // or over Starred's "No starred sessions", or Pull requests' "No open pull requests", or its states
@@ -1913,6 +1956,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         sessions={sessionsFor(shownPr, everyListed)}
         ownerId={work.ownerOf.get(prOpen)?.sessionId}
         onStart={snapshot && prMissing === undefined && work.ownerOf.get(prOpen) === undefined ? startPr : undefined}
+        onDismiss={api && prMissing === undefined ? (pr) => setDismissal(pr, true, 'view') : undefined}
+        onUndismiss={api && prMissing === undefined ? (pr) => setDismissal(pr, false, 'view') : undefined}
         onOpenSession={(sessionId) => openSessionFromPr(sessionId)}
         onClose={closePr}
         layout={viewLayout}
@@ -2126,6 +2171,10 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             openPrKey={prOpen}
             onStartPr={snapshot ? startPr : undefined}
             offerResume
+            dismissed={dismissedRows}
+            dismissedCollapsed={!dismissedOpen}
+            onToggleDismissed={() => setDismissedOpen((open) => !open)}
+            onDismissPr={api ? (pr, on) => setDismissal(pr, on, 'row') : undefined}
           />
         </HighlightContext.Provider>
         {/* The third column from 1,200 px; below that, display: contents, and the view overlays the list.

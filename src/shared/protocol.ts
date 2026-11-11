@@ -1559,6 +1559,25 @@ export interface PullRequestSummary {
    * doesn't place PRs, which the web UI treats as 'unclaimed'.
    */
   place?: PullRequestPlace;
+  /**
+   * A hash of the state that needs you (W188), PR_STATE_HASH_PATTERN: 16 hex digits, from the server,
+   * which works it out from what a new review request, mention, review or red CI would change
+   * (src/prs/parse.ts, stateHashOf()). Opaque to the page, which sends it back with Not for me so a
+   * dismissal is of the state it saw. Absent when an input it needs couldn't be read: such a PR can't
+   * be dismissed, and a dismissal of it ends.
+   */
+  stateHash?: string;
+  /**
+   * You said Not for me (W188): it doesn't need you, in any count, until something new happens, when
+   * its stateHash changes. Kept on the server (src/server/prDismissals.ts), so every page and the
+   * supervisor see it.
+   */
+  dismissed?: PrDismissal;
+  /**
+   * A dismissal of it ended because something new happened (W188), for PR_DISMISSAL_ENDED_SHOWN_MS
+   * after it did, so its row can say why it's back. Not set while it's dismissed again.
+   */
+  dismissalEnded?: PrDismissal;
 }
 
 /**
@@ -1614,9 +1633,11 @@ export interface RootOwners {
  *   request is met, when the next fetch drops it (PullRequestRelation).
  *
  * One that only mentions you never does, and neither do another author's failing checks or
- * conflicts: they're theirs to fix.
+ * conflicts: they're theirs to fix. Nor does one you dismissed, Not for me (W188), until something
+ * new happens.
  */
 export function prNeedsAttention(pr: PullRequestSummary): boolean {
+  if (pr.dismissed !== undefined) return false;
   if (pr.relation === 'review-requested') return true;
   if (pr.relation !== 'authored') return false;
   return pr.checks === 'failing' || pr.mergeable === 'conflicts' || pr.review === 'changes-requested';
@@ -1734,6 +1755,53 @@ export function prIsOlder(pr: Pick<PullRequestSummary, 'updatedAt'>, now: number
   const updated = Date.parse(pr.updatedAt);
   return !Number.isNaN(updated) && updated < now - PRS_SHOWN_DAYS * 24 * 60 * 60 * 1000;
 }
+
+// ---------------------------------------------------------------------------
+// W188: Not for me. A PR you're not taking on, such as a review you won't do, leaves Needs you and
+// every count it feeds until something new happens: its stateHash changes. Kept on the server.
+// ---------------------------------------------------------------------------
+
+/** When you dismissed a PR, or when its dismissal ended (PullRequestSummary.dismissed, dismissalEnded). */
+export interface PrDismissal {
+  /** ISO 8601. */
+  at: string;
+}
+
+/** PullRequestSummary.stateHash: 16 lowercase hex digits, 64 bits of a SHA-256. */
+export const PR_STATE_HASH_PATTERN = '[0-9a-f]{16}';
+
+/** How long a row says a dismissal ended (PullRequestSummary.dismissalEnded): 12 hours, as a snooze's end. */
+export const PR_DISMISSAL_ENDED_SHOWN_MS = 12 * 60 * 60 * 1000;
+
+/**
+ * POST, body PrDismissRequest: Not for me (W188). Answered with a PrDismissResult. Behind the /api/*
+ * checks, as every POST is. Nothing is sent to GitHub.
+ *
+ * - 400 when the body isn't a PrDismissRequest.
+ * - 404 when the PR isn't in the list.
+ * - 409 when it has no stateHash, or `seen` isn't its stateHash now: something changed since the page showed it.
+ */
+export const PR_DISMISS_PATH = '/api/prs/dismiss';
+
+/** POST, body PrUndismissRequest: Undo a Not for me (W188). 200 whether or not it was dismissed. */
+export const PR_UNDISMISS_PATH = '/api/prs/undismiss';
+
+/** Body of a POST to PR_DISMISS_PATH: the PR, and the stateHash the page showed. */
+export interface PrDismissRequest {
+  /** Lowercase `owner/name`, as PullRequestSummary.repo. */
+  repo: string;
+  number: number;
+  seen: string;
+}
+
+/** Body of a POST to PR_UNDISMISS_PATH. */
+export interface PrUndismissRequest {
+  repo: string;
+  number: number;
+}
+
+/** The answer to a POST to PR_DISMISS_PATH or PR_UNDISMISS_PATH. */
+export type PrDismissResult = { ok: true; dismissed?: PrDismissal } | { ok: false; error: string };
 
 /** The longest PR title kept, in characters. */
 export const PR_TITLE_MAX = 300;

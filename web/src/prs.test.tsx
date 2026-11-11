@@ -45,6 +45,16 @@ describe('parsePullRequestList', () => {
     expect(parsePullRequestList(JSON.parse(JSON.stringify(list)))).toEqual(list);
   });
 
+  it('keeps Not for me’s state hash, and when it was dismissed or came back, only in their shape (W188)', () => {
+    const at = minutesAgo(5);
+    const list = prList([pr({ number: 1, stateHash: '0123456789abcdef', dismissed: { at } }), pr({ number: 2, stateHash: 'fedcba9876543210', dismissalEnded: { at } })]);
+    expect(parsePullRequestList(JSON.parse(JSON.stringify(list)))).toEqual(list);
+    const odd = prList([pr({ number: 3 })]);
+    Object.assign(odd.prs[0]!, { stateHash: 'ABCDEF0123456789', dismissed: { at: 'soon' }, dismissalEnded: 'yesterday' });
+    const read = parsePullRequestList(JSON.parse(JSON.stringify(odd)))!.prs[0]!;
+    expect([read.stateHash, read.dismissed, read.dismissalEnded]).toEqual([undefined, undefined, undefined]);
+  });
+
   it('ignores a list that is not the shape: no source, no refreshing, prs that are not a list', () => {
     const good = prList([pr({ number: 1 })]);
     for (const bad of [

@@ -123,6 +123,7 @@ export const PRS_FRAGMENT = `fragment pr on PullRequest {
   commits(last: 1) {
     nodes {
       commit {
+        oid
         statusCheckRollup {
           state
           contexts(first: ${PRS_CONTEXTS_MAX}) {
@@ -150,18 +151,59 @@ export const PRS_REVIEW_REQUESTS = `reviewRequests(first: ${PRS_REVIEW_REQUESTS_
         }`;
 
 /**
- * The query for one search: one page, `$after` null for page 1, with the viewer's login for the
- * review-requested one, which says whether a request names you. Made only from constants.
+ * The most reviews and timeline events read per PR for W188's state hash (parse.ts, stateHashOf()):
+ * the newest review of your PR by someone else, and the newest review request and mention of you on
+ * one that isn't yours. A nested connection costs one request per PR whatever its size, and on
+ * 2026-11-11, by hand, a page of 25 still cost 1 point with them, and took 0.3 to 1.1 s longer on
+ * your own search (3.4 to 4.5 s) and about the same on the other two (1.2 to 1.9 s).
+ */
+export const PRS_HASH_ITEMS_MAX = 50;
+
+/**
+ * For your own PRs (W188): the newest reviews, not pending ones, with who wrote them, so a new review
+ * by someone else, a changes request included, brings back a PR you dismissed. Your own replies are
+ * reviews too, which is why the author is read: they never bring it back.
+ */
+export const PRS_REVIEWS = `reviews(last: ${PRS_HASH_ITEMS_MAX}, states: [APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]) {
+          nodes { id author { login } }
+        }`;
+
+/**
+ * For PRs that aren't yours (W188): the newest review requests and mentions. A MentionedEvent's
+ * actor is the person mentioned, as the REST timeline's `mentioned` event's is (checked by hand on
+ * 2026-11-11: one mention of two people is two events, one for each).
+ */
+export const PRS_TIMELINE = `timelineItems(last: ${PRS_HASH_ITEMS_MAX}, itemTypes: [REVIEW_REQUESTED_EVENT, MENTIONED_EVENT]) {
+          nodes {
+            __typename
+            ... on ReviewRequestedEvent {
+              createdAt
+              requestedReviewer {
+                __typename
+                ... on User { login }
+                ... on Team { combinedSlug }
+              }
+            }
+            ... on MentionedEvent { createdAt actor { login } }
+          }
+        }`;
+
+/**
+ * The query for one search: one page, `$after` null for page 1, with the viewer's login, which says
+ * whether a review request names you, and which reviews, requests and mentions are of you or by you
+ * (W188). Your own search reads reviews; the other two the timeline, and the review-requested one its
+ * requests too. Made only from constants.
  */
 export function prsQuery(relation: PullRequestRelation): string {
-  const reviews = relation === 'review-requested';
-  return `query($q: String!, $after: String) {${reviews ? '\n  viewer { login }' : ''}
+  const extra = relation === 'authored' ? [PRS_REVIEWS] : relation === 'review-requested' ? [PRS_REVIEW_REQUESTS, PRS_TIMELINE] : [PRS_TIMELINE];
+  return `query($q: String!, $after: String) {
+  viewer { login }
   search(query: $q, type: ISSUE, first: ${PRS_PAGE_SIZE}, after: $after) {
     issueCount
     pageInfo { hasNextPage endCursor }
     nodes {
       ... on PullRequest {
-        ...pr${reviews ? `\n        ${PRS_REVIEW_REQUESTS}` : ''}
+        ...pr${extra.map((part) => `\n        ${part}`).join('')}
       }
     }
   }

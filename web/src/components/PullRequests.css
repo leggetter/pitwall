@@ -76,6 +76,40 @@
   max-width: calc(100% - 10em - var(--pw-control-sm));
 }
 
+/*
+ * A dismissed PR's row, in the Dismissed section (W188): its title at 400 in muted, as a finished
+ * session's name is, and nothing in a tone colour, since it doesn't need you.
+ */
+.session.pr-dismissed .session-name {
+  color: var(--pw-text-muted);
+  font-weight: var(--pw-weight-regular);
+}
+
+.session.pr-dismissed .asked {
+  color: var(--pw-text-muted);
+}
+
+/* Its badges set aside, outlined, as a snoozed or flagged session's state badge is (W154). */
+.session.pr-dismissed .pr-badges .badge {
+  background: none;
+  box-shadow: none;
+  outline: 1px dashed var(--pw-state-offline-border);
+  outline-offset: -1px;
+  color: var(--pw-state-offline-fg);
+}
+
+/* "Something new since you dismissed it" (W188), first on line 2 for a while: why it's back. */
+.pr-back {
+  flex: none;
+  color: var(--pw-text);
+  font-weight: var(--pw-weight-medium);
+}
+
+/* The PR view's Not for me (W188), under how it's yours. */
+.pr-view-dismiss {
+  display: flex;
+}
+
 /* Line 2's end, "No session yet" or "Not cloned": quiet, and never cut, as the sub-agents count is. */
 .pr-row-end {
   flex: none;
