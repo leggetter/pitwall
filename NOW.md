@@ -3,9 +3,9 @@
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
 
-Last updated: 2026-11-11, on `docs/handoff-m5.3-batch`: the coordinating session hands off mid-batch (at about 400K of context). Three sub-agents are still running and report to the next coordinator. Before it, 2026-11-10: M5.2 merged into `main` ([#234](https://github.com/leggetter/pitwall/pull/234)) and `m5.3/integration` branched from it. The next free W number is W190.
+Last updated: 2026-11-11, on `docs/handoff-batch-done`: the first M5.3 batch is merged into `m5.3/integration` and nothing is in flight. Before it, 2026-11-10: M5.2 merged into `main` ([#234](https://github.com/leggetter/pitwall/pull/234)) and `m5.3/integration` branched from it. The next free W number is W190.
 
-**Servers:** 4518 runs `main` at f4458a7, restarted 21:44 on 2026-11-10. The 4519 try-out is stopped and its worktree removed.
+**Servers:** 4518 runs `main` at f4458a7. A try-out on 4519 runs `m5.3/integration` at 1c07eb9 (before #244), from `.worktrees/tryout`, with its own home (`.worktrees/tryout/scratch/home`) and recaps on; Phil is trying it. Stop it and remove the worktree when he's done.
 
 ## Current milestone
 
@@ -18,21 +18,20 @@ Last updated: 2026-11-11, on `docs/handoff-m5.3-batch`: the coordinating session
 
 ## Open work
 
-Merged into `m5.3/integration` on 2026-11-11, each after a fresh review and its fixes: [#240](https://github.com/leggetter/pitwall/pull/240) and [#241](https://github.com/leggetter/pitwall/pull/241) (NOW.md answers); [#242](https://github.com/leggetter/pitwall/pull/242) (W176, the pitwall plugin: a SessionStart note while pitwall runs, and the pitwall skill), after an xhigh security review, with F1 (a reused pid and a taken-over port) and F2 (install from a clone kept on `main`) fixed; [#243](https://github.com/leggetter/pitwall/pull/243) (W185's spike 017, Slack and Notion credentials for the supervisor's connectors); [#245](https://github.com/leggetter/pitwall/pull/245) (W187, the supervisor pushes the other panels left from 1,200 px; below that, over the page).
+**Nothing is in flight:** no sub-agents are running. Merged into `m5.3/integration` on 2026-11-11, each after a fresh review, its fixes and green CI (details in `PLAN.md`'s items):
 
-**In flight:** sub-agents of the previous coordinator; they report to the next one after `/clear`. Each PR merges into `m5.3/integration` only on green CI after its review.
+- [#240](https://github.com/leggetter/pitwall/pull/240) and [#241](https://github.com/leggetter/pitwall/pull/241): NOW.md answers.
+- [#242](https://github.com/leggetter/pitwall/pull/242): W176 (the pitwall plugin), after an xhigh security review.
+- [#243](https://github.com/leggetter/pitwall/pull/243): W185 (spike 017, Slack and Notion credentials).
+- [#244](https://github.com/leggetter/pitwall/pull/244): W184 (the supervisor's connectors). W186 (its xhigh security review) found F1 to F8, an xhigh verification checked the fixes, and **W186 is done**. F3's residual is accepted: a result under 11,000 tokens but over 50,000 characters is saved whole by Claude Code, in a 0700 folder.
+- [#245](https://github.com/leggetter/pitwall/pull/245): W187 (the supervisor pushes the other panels left from 1,200 px).
+- [#246](https://github.com/leggetter/pitwall/pull/246) and [#249](https://github.com/leggetter/pitwall/pull/249): W188 (Not for me: dismiss a PR) and its follow-ups.
+- [#251](https://github.com/leggetter/pitwall/pull/251): W189 (recaps a cold reader can act on). Phil: "Let's just go with what you've implemented, and I'll provide feedback if I'm still finding that the recaps aren't that effective." His note that the summary repeated other fields led to a prompt fix, not yet measured. Haiku at low effort, the fuller length kept. Re-check repetition and length after a few days of use.
+
+Still to do:
 
 | Item | State |
 | --- | --- |
-| [#244](https://github.com/leggetter/pitwall/pull/244) (W184, the supervisor's connectors: config, tool choice and launch) | W186 (the connectors' security review, xhigh) found F1 to F8; all fixed on `m5.3/supervisor-connectors` at 18d7215, in `.worktrees/w184`:
-  - F2: only `Authorization` carries a credential.
-  - F3: `src/supervisor/claudeOutput.ts` sets `ENABLE_MCP_LARGE_OUTPUT_FILES=0` and `MAX_MCP_OUTPUT_TOKENS=11000`, under the measured about 50,000-character persistence threshold.
-  - F4: the launcher uses `process.execve`.
-  - F5: a `needs-auth` connector is skipped for the rest of the run.
-  - F1 is recorded as an accepted risk, pending Phil (open question 3).
-  - Next: a fresh xhigh verification of the fixes, as W180's were checked; then merge on green, and mark W184 and W186 done in `PLAN.md`. |
-| [#246](https://github.com/leggetter/pitwall/pull/246) and [#249](https://github.com/leggetter/pitwall/pull/249) (W188, dismiss a PR you're not taking on, and its review follow-ups) | Both merged. #249 adds tombstones, keeps a dismissal when the hash is briefly missing, holds a dismissal while CI is pending, and widens `exec.test.ts`'s bound. Dismissals made before #249 end once. |
-| W189 (recaps a cold reader can act on), on `m5.3/recaps-cold-reader` in `.worktrees/w189` | Phil, 2026-11-11: recaps are "useless… it just lists IDs and gives a vague overview"; they must tell someone with no context what's being done, the goal, why, and what's next. The builder diagnoses, redesigns, and scores old against new with a cold-reader model check, on Haiku and Sonnet, with cost. **Its PR waits for Phil to judge the samples** (local `scratch/` files, never committed) before merging |
 | W165 (a diagnostics log: why a row is in Needs you) | Planned; approved for planning 2026-11-09 ([#199](https://github.com/leggetter/pitwall/pull/199)) |
 | W167 (session lineage), W168 (Clear and continue: a hand-off you start with one click; spike 014 is done) | Planned; Phil approved both on 2026-11-09 |
 | W171 (a team's open request doesn't keep a reviewed PR in Needs you), W173 (a moved-past to-do), W174 (a working session's to-dos), W175 (a pitwall link opens in a new tab; needs a security review) | Planned (Phil, 2026-11-09, planning only) |
@@ -47,11 +46,9 @@ Merged into `m5.3/integration` on 2026-11-11, each after a fresh review and its 
 
 ## Next, in order
 
-1. **Verify W186's fixes on #244 (W184) with a fresh xhigh reviewer, then merge on green** (see Open work).
-2. **W189's samples to Phil,** to judge before its PR merges.
-3. **The rest of M5.3** (`PLAN.md`), one session per item (`AGENTS.md`, Efficiency): W165, W167, W168, W171, W173 to W175, W178, W179.
-4. **One blog-editing session on Sonnet for Phil to judge** (agreed; not the evals post).
-5. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
+1. **Phil's feedback from the 4519 try-out** (`m5.3/integration` at 1c07eb9, before #244): it becomes new work items. Stop that server and remove `.worktrees/tryout` when he's done.
+2. **The rest of M5.3** (`PLAN.md`), one session per item (`AGENTS.md`, Efficiency): W165 (a diagnostics log), W167 (session lineage), W168 (Clear and continue), W171 (a team's open request), W173 (a moved-past to-do), W174 (a working session's to-dos), W175 (a pitwall link in a new tab), W178 (ask the supervisor about a session) and W179 (the supervisor keeps its conversation short).
+3. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
 
 ## Open questions for Phil
 
