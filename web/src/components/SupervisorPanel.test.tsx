@@ -1,10 +1,11 @@
-// The supervisor's panel over the page (W177; docs/design-system.md, 4: Supervisor): ?supervisor added
-// beside ?session= or ?pr=, never in their place; the open view stays, and the panel stays open as the
-// selection, the open session or the root tab changes; a non-modal dialog with no focus trap, its
-// heading focused on open, focus back to what opened it on close, and Escape its first, wherever focus
-// is. From 1,200 px the session view beside it stays usable; below, the panel lies over the view over
-// the list, which is inert under it, and a session opened from the panel closes it, in the same entry.
-// Made-up sessions, ids and text only.
+// The supervisor's panel (W177, W187; docs/design-system.md, 4: Supervisor): ?supervisor added beside
+// ?session= or ?pr=, never in their place; the open view stays, and the panel stays open as the
+// selection, the open session or the root tab changes; its heading focused on open, focus back to what
+// opened it on close, and Escape its first, wherever focus is. From 1,200 px it's a column of its own,
+// a complementary landmark, which pushes the others left and covers nothing, folding the repo list into
+// the header's Repos drawer below 1,520 px (W187); below 1,200 px, a non-modal dialog with no focus
+// trap over the view over the list, which is inert under it, and a session opened from the panel
+// closes it, in the same entry. Made-up sessions, ids and text only.
 
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -17,6 +18,7 @@ import { fakeHistory } from '../test/history.js';
 import stylesCss from '../styles.css?raw';
 import { tokens, withoutComments } from '../test/css.js';
 import { Dashboard } from './Dashboard.js';
+import { PANEL_KEEPS_REPOS, panelMax, panelMin, supervisorColumn } from '../panelWidth.js';
 
 const ROOT = '/Users/example/code';
 const OSS = '/Users/example/oss';
@@ -76,6 +78,9 @@ afterEach(() => {
 });
 
 const repoList = () => screen.getByRole('navigation', { name: 'Repos' });
+/** The repo list as a column, not in the drawer. */
+const repoColumn = () => document.querySelector('.columns > .repo-list') ?? undefined;
+const reposButton = () => screen.queryByRole('button', { name: 'Repos' }) ?? undefined;
 /** The header's Supervisor button (W182), which opens the panel. */
 const item = () => document.querySelector<HTMLButtonElement>('header button[data-supervisor-button]')!;
 const groupItem = (label: string) => [...repoList().querySelectorAll<HTMLAnchorElement>('a[data-repo-item]')].find((link) => link.querySelector('.repo-item-label')?.textContent === label)!;
@@ -106,10 +111,13 @@ describe('from 1,200 px: beside the open session, which stays', () => {
     expect(panel()).toBeDefined();
     expect(pane().hasAttribute('data-panel-open')).toBe(true);
     expect(paneViews().inert).toBe(false);
-    // A non-modal dialog, named by its heading, which takes focus.
-    expect(panel()!.getAttribute('role')).toBe('dialog');
-    expect(panel()!.getAttribute('aria-modal')).toBe('false');
+    // A column beside the view, not over it (W187): a complementary landmark, named by its heading, which takes focus.
+    expect(panel()!.getAttribute('role')).toBe('complementary');
+    expect(panel()!.hasAttribute('aria-modal')).toBe(false);
     expect(panel()!.getAttribute('aria-labelledby')).toBe(panelHeading().id);
+    expect(screen.getByRole('complementary', { name: 'Supervisor' })).toBe(panel());
+    // The header's button opens no dialog here: a disclosure, expanded, controlling the panel.
+    expect([item().getAttribute('aria-haspopup'), item().getAttribute('aria-expanded'), item().getAttribute('aria-controls')]).toEqual([null, 'true', 'supervisor-view']);
     expect(document.activeElement).toBe(panelHeading());
     // The session view isn't a dialog in the third column, and comes before the panel in the page.
     expect(sessionView()!.getAttribute('role')).toBeNull();
@@ -117,7 +125,7 @@ describe('from 1,200 px: beside the open session, which stays', () => {
   });
 
   it('stays open as another session opens beside it, and as the selection changes', async () => {
-    setWidth(1440);
+    setWidth(1920);
     const { history } = renderDashboard(snap(), '?view=all&supervisor');
     await settle();
     await click(row(alpha.name));
@@ -188,6 +196,115 @@ describe('from 1,200 px: beside the open session, which stays', () => {
   });
 });
 
+
+describe('from 1,200 px, a column of its own (W187): the others give way, the repo list folding below 1,520 px', () => {
+  it('works out the same room as styles.css: the panel 560 px, then down to 360 px, and the repo list folded below 1,520 px', () => {
+    expect(PANEL_KEEPS_REPOS).toBe(1520);
+    expect(supervisorColumn(1920)).toEqual({ repos: 240, panel: 560 });
+    expect(supervisorColumn(1720)).toEqual({ repos: 240, panel: 560 });
+    expect(supervisorColumn(1600)).toEqual({ repos: 240, panel: 440 });
+    expect(supervisorColumn(1520)).toEqual({ repos: 240, panel: 360 });
+    expect(supervisorColumn(1440)).toEqual({ repos: 0, panel: 520 });
+    expect(supervisorColumn(1200)).toEqual({ repos: 0, panel: 360 });
+    // What's left for the view: 760 px at 1,920, 560 px from 1,280 up, and 480 px at 1,200.
+    expect([1920, 1600, 1520, 1440, 1280, 1200].map((width) => panelMax(width, true))).toEqual([760, 560, 560, 560, 560, 480]);
+    expect([panelMin(1440, true), panelMin(1200, true), panelMin(1200)]).toEqual([560, 480, 560]);
+    // Without the panel, as before.
+    expect(panelMax(1440)).toBe(840);
+  });
+
+  it('at 1,440 px folds the repo list into the header’s Repos drawer while it’s open, and gives it back as it closes', async () => {
+    setWidth(1440);
+    const { history } = renderDashboard(snap());
+    await click(row(beta.name));
+    expect([repoColumn() !== undefined, reposButton()]).toEqual([true, undefined]);
+    await click(item());
+    expect(document.querySelector('.app')!.getAttribute('data-repos')).toBe('folded');
+    expect([repoColumn(), reposButton() !== undefined]).toEqual([undefined, true]);
+    // Nothing is covered, so nothing is inert.
+    expect(paneViews().inert).toBe(false);
+    expect(document.querySelector('.session-list')!.closest('[inert]')).toBeNull();
+    // The drawer opens from the header, and choosing in it keeps the panel open.
+    await click(reposButton()!);
+    await click(groupItem('docs'));
+    expect(history.location.search).toBe(`?repo=${ROOT}/docs&session=${beta.sessionId}&supervisor`);
+    expect(panel()).toBeDefined();
+    expect(document.querySelector('.repo-drawer')).toBeNull();
+    await click(item());
+    expect(panel()).toBeUndefined();
+    expect([repoColumn() !== undefined, reposButton(), document.querySelector('.app')!.hasAttribute('data-repos')]).toEqual([true, undefined, false]);
+  });
+
+  it('keeps the repo list from 1,520 px', async () => {
+    setWidth(1520);
+    renderDashboard(snap(), '?view=all&supervisor');
+    await settle();
+    expect([panel() !== undefined, repoColumn() !== undefined, reposButton()]).toEqual([true, true, undefined]);
+  });
+
+  it('moves focus from the repo list to its heading as the back button folds the list away', async () => {
+    setWidth(1440);
+    const { history } = renderDashboard(snap());
+    await click(item());
+    await click(item());
+    expect(panel()).toBeUndefined();
+    groupItem('docs').focus();
+    history.back();
+    await settle();
+    expect(panel()).toBeDefined();
+    expect(repoColumn()).toBeUndefined();
+    expect(document.activeElement).toBe(panelHeading());
+  });
+
+  it('the divider’s limits are what the column leaves, and what it sets is kept once the panel closes', async () => {
+    setWidth(1920);
+    renderDashboard(snap(), `?view=all&session=${beta.sessionId}`);
+    await settle();
+    const divider = () => screen.getByRole('separator', { name: 'Resize the session view' });
+    expect([divider().getAttribute('aria-valuemin'), divider().getAttribute('aria-valuemax'), divider().getAttribute('aria-valuenow')]).toEqual(['560', '1320', '760']);
+    await click(item());
+    expect([divider().getAttribute('aria-valuemin'), divider().getAttribute('aria-valuemax'), divider().getAttribute('aria-valuenow')]).toEqual(['560', '760', '760']);
+    fireEvent.keyDown(divider(), { key: 'ArrowRight' });
+    await settle();
+    expect(divider().getAttribute('aria-valuenow')).toBe('744');
+    await click(item());
+    expect([divider().getAttribute('aria-valuemax'), divider().getAttribute('aria-valuenow')]).toEqual(['1320', '744']);
+  });
+
+  it('a plain click on the divider, with no move, saves nothing: a wider width asked for stays once the panel closes', async () => {
+    setWidth(1920);
+    const writes: [string, string][] = [];
+    const history = fakeHistory(`?view=all&session=${beta.sessionId}`);
+    const api = createApiClient({ apiKey: 'k'.repeat(43), fetch: withoutSubagents(fakeServer()) });
+    const values = new Map([[BACKGROUND_TAB_KEY, 'conversation'], ['pitwall.panel-width.v1', '1000']]);
+    const storage: StorageSource = () => ({ getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { writes.push([key, value]); values.set(key, value); } });
+    render(
+      <ApiContext.Provider value={api}>
+        <Dashboard view={{ state: 'live', snapshot: snap() }} navigation={history.navigation} storage={storage} />
+      </ApiContext.Provider>,
+    );
+    await settle();
+    const divider = () => screen.getByRole('separator', { name: 'Resize the session view' });
+    expect(divider().getAttribute('aria-valuenow')).toBe('1000');
+    await click(item());
+    expect(divider().getAttribute('aria-valuenow')).toBe('760');
+    fireEvent.pointerDown(divider(), { button: 0, clientX: 900, pointerId: 1 });
+    fireEvent.pointerMove(divider(), { clientX: 900, pointerId: 1 });
+    fireEvent.pointerUp(divider(), { clientX: 900, pointerId: 1 });
+    await settle();
+    expect(writes.filter(([key]) => key === 'pitwall.panel-width.v1')).toEqual([]);
+    await click(item());
+    expect(divider().getAttribute('aria-valuenow')).toBe('1000');
+    // A drag that moves does save, the width shown then.
+    await click(item());
+    fireEvent.pointerDown(divider(), { button: 0, clientX: 900, pointerId: 1 });
+    fireEvent.pointerMove(divider(), { clientX: 932, pointerId: 1 });
+    fireEvent.pointerUp(divider(), { clientX: 932, pointerId: 1 });
+    await settle();
+    expect(writes.filter(([key]) => key === 'pitwall.panel-width.v1')).toEqual([['pitwall.panel-width.v1', '728']]);
+  });
+});
+
 describe('below 1,200 px: over the view over the list', () => {
   it('covers the session view, which is inert under it, and Close gives it back', async () => {
     setWidth(1024);
@@ -198,6 +315,8 @@ describe('below 1,200 px: over the view over the list', () => {
     expect(history.location.search).toBe(`?view=all&session=${beta.sessionId}&supervisor`);
     expect(paneViews().inert).toBe(true);
     expect(panel()!.classList.contains('overlay')).toBe(true);
+    // Over the page here: a non-modal dialog, which the header's button says it opens.
+    expect([panel()!.getAttribute('role'), panel()!.getAttribute('aria-modal'), item().getAttribute('aria-haspopup')]).toEqual(['dialog', 'false', 'dialog']);
     expect(document.activeElement).toBe(panelHeading());
     await click(within(panel()!).getByRole('button', { name: 'Close' }));
     await nextFrame();
@@ -262,10 +381,14 @@ describe('below 1,200 px: over the view over the list', () => {
 });
 
 describe('its place in the design system', () => {
-  it('sits at --pw-z-supervisor, above the view over the list and below menus, and from 1,200 px covers the right of a widened third column', () => {
+  it('below 1,200 px sits at --pw-z-supervisor, above the view over the list and below menus; from 1,200 px it is a column beside the view, over nothing (W187)', () => {
     const css = withoutComments(stylesCss);
-    expect(css).toMatch(/\.session-view\.view-panel\s*\{\s*z-index:\s*var\(--pw-z-supervisor\);/);
-    expect(css).toMatch(/\.session-pane\[data-panel-open\]\s*\{\s*width:\s*calc\(var\(--pw-view-w\) \+ var\(--pw-supervisor-w\)\);/);
+    expect(css).toMatch(/\.session-view\.overlay\.view-panel\s*\{\s*z-index:\s*var\(--pw-z-supervisor\);/);
+    expect(css).toMatch(/\.session-pane\[data-panel-open\]\s*\{\s*width:\s*calc\(var\(--pw-view-w\) \+ var\(--pw-supervisor-col\)\);/);
+    const column = /\.app\[data-layout='three-columns'\] \.session-pane > \.session-view\.view-panel\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    expect(column).toMatch(/flex:\s*none;/);
+    expect(column).toMatch(/width:\s*var\(--pw-supervisor-col\);/);
+    expect(column).not.toMatch(/position:\s*absolute|z-index|box-shadow/);
     const z = (name: string) => Number(new RegExp(`--pw-z-${name}:\\s*(\\d+);`).exec(tokens)?.[1]);
     expect(z('panel')).toBeLessThan(z('supervisor'));
     expect(z('supervisor')).toBeLessThan(z('dropdown'));

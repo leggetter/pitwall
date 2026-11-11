@@ -9,9 +9,11 @@
 // - Its status, a badge after its name while it works, starts, is held or has failed, as the item had
 //   it; nothing for idle or off. Then its drafts that wait on you, a solid count, as Needs you's is.
 //   Both are in its name too, "Supervisor, working, 2 drafts need you", never the colour alone.
-// - A disclosure toggle, as the Repos button is: `aria-haspopup="dialog"` and `aria-expanded`, with
-//   the selected look while the panel is open, and `aria-controls` then. Pressed again, it closes it,
-//   and focus stays on it.
+// - A disclosure toggle: `aria-expanded`, with the selected look while the panel is open, and
+//   `aria-controls` then. Below 1,200 px, where the panel is a dialog over the page, `aria-haspopup=
+//   "dialog"` too, as the Repos button has; from 1,200 px the panel is a column beside the others, a
+//   complementary landmark, not a dialog, so it has none (W187). Pressed again, it closes it, and
+//   focus stays on it.
 // - Below 1,000 px its label is visually hidden, so its name stays "Supervisor" and its tooltip says
 //   it; the icon, the edge and the badges stay. At 600 px and narrower it's on the header's top line,
 //   at its right (styles.css).
@@ -29,6 +31,8 @@ export interface HeaderSupervisor {
   approvals: number;
   /** Whether its panel is open. */
   open: boolean;
+  /** Whether its panel is a dialog over the page, below 1,200 px, rather than a column beside the others (W187). */
+  dialog?: boolean;
   /** Opens its panel, or closes it while it's open. */
   onToggle: () => void;
   /** The button, which takes focus back when the panel closes. */
@@ -40,7 +44,7 @@ export interface SupervisorButtonProps extends HeaderSupervisor {
   narrow?: boolean;
 }
 
-export function SupervisorButton({ status, approvals, open, onToggle, ref, narrow = false }: SupervisorButtonProps) {
+export function SupervisorButton({ status, approvals, open, dialog = true, onToggle, ref, narrow = false }: SupervisorButtonProps) {
   const statusText = itemStatusText(status);
   const look = STATUS_LOOKS[status];
   return (
@@ -50,7 +54,7 @@ export function SupervisorButton({ status, approvals, open, onToggle, ref, narro
         ref={ref}
         icon="supervisor"
         className="supervisor-button"
-        aria-haspopup="dialog"
+        aria-haspopup={dialog ? 'dialog' : undefined}
         aria-expanded={open}
         aria-controls={open ? SUPERVISOR_VIEW_ID : undefined}
         data-supervisor-button={status}

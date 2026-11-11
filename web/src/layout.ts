@@ -5,10 +5,11 @@
 // The CSS reads the result from data-layout on the app, so the two can't disagree. The header's
 // compact rule, which only moves things around, is a container query in styles.css; the session view
 // also needs it in its markup, for Back in place of Close, so it's measured here too. So is where the
-// session view over the list starts to cover the repo list, which is inert from there (Dashboard.tsx).
+// session view over the list starts to cover the repo list, which is inert from there (Dashboard.tsx),
+// and, in three columns, where the supervisor's column folds the repo list into its drawer (W187).
 
 import { useLayoutEffect, useState, type RefObject } from 'react';
-import { PANEL_DEFAULT, SIDEBAR_WIDTH } from './panelWidth.js';
+import { PANEL_DEFAULT, PANEL_KEEPS_REPOS, SIDEBAR_WIDTH } from './panelWidth.js';
 
 /** The session view is the third column from here. Below it, it overlays the session list. */
 export const THREE_COLUMNS_MIN = 1200;
@@ -32,6 +33,11 @@ export interface AppLayout {
   compact: boolean;
   /** In the sidebar layout, narrower than OVERLAY_CLEARS_SIDEBAR: the session view over the list covers part of the repo list. */
   overlayCoversRepos: boolean;
+  /**
+   * In three columns, narrower than PANEL_KEEPS_REPOS (1,520 px): while the supervisor's panel is open
+   * as a column of its own, the repo list folds into the header's Repos drawer to make room (W187).
+   */
+  panelFoldsRepos: boolean;
 }
 
 export function layoutFor(width: number): Layout {
@@ -54,10 +60,16 @@ export function widthOf(element: HTMLElement | null): number {
 
 function appLayoutFor(width: number): AppLayout {
   const layout = layoutFor(width);
-  return { layout, compact: width <= COMPACT_MAX, overlayCoversRepos: layout === 'sidebar' && width < OVERLAY_CLEARS_SIDEBAR };
+  return {
+    layout,
+    compact: width <= COMPACT_MAX,
+    overlayCoversRepos: layout === 'sidebar' && width < OVERLAY_CLEARS_SIDEBAR,
+    panelFoldsRepos: layout === 'three-columns' && Math.floor(width) < PANEL_KEEPS_REPOS,
+  };
 }
 
-const sameLayout = (a: AppLayout, b: AppLayout) => a.layout === b.layout && a.compact === b.compact && a.overlayCoversRepos === b.overlayCoversRepos;
+const sameLayout = (a: AppLayout, b: AppLayout) =>
+  a.layout === b.layout && a.compact === b.compact && a.overlayCoversRepos === b.overlayCoversRepos && a.panelFoldsRepos === b.panelFoldsRepos;
 
 /**
  * The layout for `ref`'s width, kept up to date as it's resized. It changes only at the breakpoints,

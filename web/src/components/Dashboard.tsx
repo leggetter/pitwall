@@ -104,11 +104,12 @@
 // and PRs' alike, and show each in the view while one is open.
 //
 // The supervisor (M5, W114, supervisor.ts): while pitwall runs one, the header's Supervisor button,
-// last on its right (W182), opens its panel over the page (SupervisorView.tsx, W177), as ?supervisor,
-// beside the open session's or PR's view, which stays, in one pushed history entry. It stays open as
-// the selection, the open session or the root tab changes, until it's closed. From 1,200 px it covers
-// the right of the third column, which widens for it while the session list keeps its 360 px; below,
-// it lies over the view over the list, which is inert under it.
+// last on its right (W182), opens its panel (SupervisorView.tsx, W177), as ?supervisor, beside the
+// open session's or PR's view, which stays, in one pushed history entry. It stays open as the
+// selection, the open session or the root tab changes, until it's closed. From 1,200 px it's a column
+// of its own that pushes the other columns left, covering none of them, and below 1,520 px folds the
+// repo list into the header's Repos drawer while it's open (W187); below 1,200 px it's over the page,
+// over the view over the list, which is inert under it.
 // Nothing starts it but its Start and a message you send it: not opening the view, the URL or a
 // reload. Its drafts that wait on you count in Needs you's badge, in every root tab, and in the page
 // title; Needs you says they're there, with a way to open the view. While it's held or has failed, the
@@ -344,7 +345,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const source = view.lastPoll?.source ?? snapshot?.source;
   const toasts = useToastStack();
   const app = useRef<HTMLDivElement>(null);
-  const { layout, compact, overlayCoversRepos } = useLayout(app);
+  const { layout, compact, overlayCoversRepos, panelFoldsRepos } = useLayout(app);
   // The session view's width as the third column: the divider and the actions menu's width items change it.
   const [panelWidth] = useState(() => createPanelWidthStore(storage));
   // Group sessions by, from Preferences (W42, W59): the snapshot's groups, grouped again for the mode.
@@ -621,6 +622,12 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // Below 1,200 px the supervisor's panel lies over the session's or PR's view over the list, as wide
   // as it, which is inert under it while it's open (W177). From 1,200 px the view beside it stays usable.
   const viewCovered = layout !== 'three-columns' && supervisorOpen;
+  // From 1,200 px the supervisor's panel is a column of its own, which pushes the others left rather
+  // than covering them (W187). Below 1,520 px that would leave the session view under its 560 px, so
+  // the repo list folds into the header's Repos drawer, its form below 900 px, while the panel is open.
+  const panelColumn = layout === 'three-columns' && supervisorOpen;
+  const reposFolded = panelColumn && panelFoldsRepos;
+  const reposInDrawer = layout === 'drawer' || reposFolded;
   /** Whether closing what lies over the list would lose a draft: the open session's, or the supervisor panel's. */
   const overlayHolds = () => overlaid && (hasDraft() || (supervisorOpen && hasDraft(SUPERVISOR_DRAFT_ID)));
   // The New session dialog, and the session it started, selected once it's listed (W63). Opened in
@@ -1166,10 +1173,28 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     if (lost) focusQuietly(app.current?.querySelector<HTMLElement>('.root-tab[aria-selected="true"]'));
   }, [tab]);
 
-  // The drawer only exists below the sidebar breakpoint: widening the window closes it.
+  // The drawer only exists below the sidebar breakpoint, or while the supervisor's column folds the
+  // repo list into it (W187): widening the window, or closing the panel, closes it.
   useEffect(() => {
-    if (layout !== 'drawer') setDrawerOpen(false);
-  }, [layout]);
+    if (!reposInDrawer) setDrawerOpen(false);
+  }, [reposInDrawer]);
+  // Focus in the repo list as the supervisor's column folds it away, as when the back button opens the
+  // panel, would be lost with it: it moves to the panel's heading, as focus in what the panel covers
+  // does below 1,200 px. Tracked as it moves, since the list has gone by the time this runs.
+  const focusInRepos = useRef(false);
+  useEffect(() => {
+    const onFocusIn = (event: FocusEvent) => {
+      focusInRepos.current = event.target instanceof Element && event.target.closest('.columns > .repo-list') !== null;
+    };
+    document.addEventListener('focusin', onFocusIn);
+    return () => document.removeEventListener('focusin', onFocusIn);
+  }, []);
+  useLayoutEffect(() => {
+    if (!reposFolded || !focusInRepos.current) return;
+    focusInRepos.current = false;
+    const active = document.activeElement;
+    if (active === null || active === document.body || !active.isConnected) supervisorHeading.current?.focus();
+  }, [reposFolded]);
 
   const closeDrawer = () => {
     setDrawerOpen(false);
@@ -2020,21 +2045,21 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     <ToastContext.Provider value={toasts.show}>
     {/* The run rate for the supervisor's cards too (W160), so they show the header's figures and ask for none. */}
     <RunRateContext.Provider value={runRate}>
-    <div className="app" ref={app} data-layout={layout}>
+    <div className="app" ref={app} data-layout={layout} data-repos={reposFolded ? 'folded' : undefined}>
       <AppStrips relayOff={relayOff} onRelayDetails={relayAlert ? showRelayAlert : undefined} recaps={snapshot?.recaps} supervisor={supervisor} onSupervisor={openSupervisor} />
       <Header
         state={state}
         roots={snapshot?.roots}
         updatedAt={snapshot ? updatedAt : undefined}
         onNewSession={snapshot ? openNewSessionDialog : undefined}
-        onRepos={layout === 'drawer' ? () => setDrawerOpen(true) : undefined}
+        onRepos={reposInDrawer ? () => setDrawerOpen(true) : undefined}
         reposOpen={drawerOpen}
         reposRef={reposButton}
         onShortcuts={() => setShortcutsOpen(true)}
         onPreferences={() => setPreferencesOpen(true)}
         onUsage={() => usageUrl.show()}
         runRate={runRate}
-        supervisor={supervisor && { status: supervisor.status, approvals, open: supervisorOpen, onToggle: toggleSupervisor, ref: supervisorButton }}
+        supervisor={supervisor && { status: supervisor.status, approvals, open: supervisorOpen, dialog: layout !== 'three-columns', onToggle: toggleSupervisor, ref: supervisorButton }}
         narrow={layout === 'drawer' || overlayCoversRepos}
         tabs={
           tab === undefined
@@ -2045,7 +2070,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
 
       {/* With root tabs, the columns are the open tab's panel, named by it. */}
       <div className="columns" {...(tab === undefined ? {} : { role: 'tabpanel', id: panelId, 'aria-labelledby': tabId(tab) })}>
-        {layout !== 'drawer' && repoList('list')}
+        {!reposInDrawer && repoList('list')}
         {/* The Pull requests view is the session list too, with its own filters, notices and foot (W106). */}
         <HighlightContext.Provider value={filterNeedle(prsSelected ? prFilter : filters.text)}>
           <SessionList
@@ -2106,7 +2131,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         {/* The third column from 1,200 px; below that, display: contents, and the view overlays the list.
             The supervisor's panel is last, over the views, which are inert under it below 1,200 px (W177). */}
         <div className="session-pane" {...(supervisorPanel === undefined ? {} : { 'data-panel-open': '' })}>
-          {layout === 'three-columns' && <Divider store={panelWidth} />}
+          {layout === 'three-columns' && <Divider store={panelWidth} beside={supervisorPanel !== undefined} />}
           <div className="pane-views" inert={viewCovered || undefined}>
             {paneViews}
           </div>
@@ -2114,7 +2139,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         </div>
       </div>
 
-      {layout === 'drawer' && drawerOpen && <RepoDrawer onClose={closeDrawer}>{repoList('drawer')}</RepoDrawer>}
+      {reposInDrawer && drawerOpen && <RepoDrawer onClose={closeDrawer}>{repoList('drawer')}</RepoDrawer>}
 
       {prStart?.step === 'clone' && (
         <CloneDialog

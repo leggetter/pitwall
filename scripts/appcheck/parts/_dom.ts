@@ -65,19 +65,26 @@ export const focused = `(() => {
 
 export const toasts = `[...document.querySelectorAll('.toasts .toast:not(.leaving) .toast-message')].map((el) => el.textContent)`;
 
-/** Opens the repo drawer below 900 px; nothing to do from 900 px, where the list is a column. */
+/** Whether the repo list is in the drawer: below 900 px, or folded by the supervisor's column from 1,200 to 1,519 px (W187). */
+const REPOS_IN_DRAWER = `!document.querySelector('.columns > .repo-list')`;
+
+/**
+ * Opens the repo drawer below 900 px, or while the supervisor's column has folded the repo list into
+ * it (W187); nothing to do where the list is a column.
+ */
 export async function openRepoList(t: Case): Promise<void> {
-  if (t.layout !== 'drawer' || (await t.page.evaluate<boolean>(`!!document.querySelector('.repo-drawer')`))) return;
+  if (!(await t.page.evaluate<boolean>(REPOS_IN_DRAWER)) || (await t.page.evaluate<boolean>(`!!document.querySelector('.repo-drawer')`))) return;
   await t.page.click('Repos', headerButton('Repos'));
   await t.page.waitFor('the repo drawer', `!!document.querySelector('.repo-drawer nav[aria-label="Repos"]')`);
 }
 
 /** Chooses a repo list item, through the drawer below 900 px, which closes as the item is chosen. */
 export async function chooseInRepoList(t: Case, label: string): Promise<void> {
+  const inDrawer = await t.page.evaluate<boolean>(REPOS_IN_DRAWER);
   await openRepoList(t);
   await t.page.click(label, repoItem(label));
   await t.page.waitFor(`${label} as the list's heading`, `${listHeading} === ${q(label)}`);
-  if (t.layout === 'drawer') await t.page.waitFor('the drawer to close', `!document.querySelector('.repo-drawer')`);
+  if (inDrawer) await t.page.waitFor('the drawer to close', `!document.querySelector('.repo-drawer')`);
 }
 
 /** Opens a session from its row, as a click does, and waits for its view. */
