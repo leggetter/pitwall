@@ -11,7 +11,8 @@
 //                               POST /api/prs/refresh asks it for a fetch, at most one a minute,
 //                               else 429, and 409 with --no-prs; POST /api/prs/clone, clone.ts,
 //                               clones a not-cloned PR's repo into its root, one at a time and
-//                               at most 3 a minute, else 429 (W107)
+//                               at most 3 a minute, else 429 (W107); POST /api/prs/dismiss and
+//                               /api/prs/undismiss, prDismissals.ts, Not for me and its Undo (W188)
 //   POST /api/attachments      then attachments.ts: the one body that isn't JSON, the file's bytes
 //                               with its own Content-Type, at most 10 MiB, its type checked; DELETE
 //                               /api/attachments/:id removes one no spawn has used
@@ -105,6 +106,7 @@ import { registerEndSession, type EndOptions } from './end.js';
 import type { RunningServer, ServerOptions } from './index.js';
 import { registerMcp } from './mcp.js';
 import { createSupervisorTools } from './mcpTools.js';
+import { PrDismissalStore, registerPrDismissals, withDismissals } from './prDismissals.js';
 import { registerPrs } from './prs.js';
 import { registerRecaps } from './recapRoutes.js';
 import { createSnapshotView, type SnapshotView } from './snapshotLinks.js';
@@ -266,8 +268,11 @@ export async function startServerWithInternals(
   const attachments = new AttachmentStore({ ...internals.attachments, home: options.pitwallHome });
   // The model and effort for each kind of work (W119): the CLI's store, or pitwall's own defaults.
   const work = options.work ?? createWorkStore();
-  // Your open PRs (M4): the CLI's poller, or off. Started once listening, stopped on close().
-  const prs = options.prs ?? prsOff();
+  // Your open PRs (M4): the CLI's poller, or off. Started once listening, stopped on close(). With
+  // Not for me (W188): each PR you dismissed carries `dismissed` until something new happens, in every
+  // list the page, the supervisor and recaps read.
+  const prDismissals = new PrDismissalStore(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
+  const prs = withDismissals(options.prs ?? prsOff(), prDismissals);
   // Per-session recaps (M5, W110), or off. Started once listening, closed on close().
   const recaps = options.recaps;
   // With recaps, each session's recap, its title and Needs you's 'recap' reason, under W105's view.
@@ -369,6 +374,7 @@ export async function startServerWithInternals(
   const routes = (app: Hono) => {
     registerDirectories(app, indexer, internals.directories);
     registerPrs(app, prs);
+    registerPrDismissals(app, { prs, store: prDismissals });
     clone.register(app);
     registerAttachments(app, attachments);
     registerActions(app, indexer, { ...actionOptions, spawner, resumer });

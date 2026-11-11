@@ -380,3 +380,101 @@ describe('byUpdatedNewestFirst', () => {
     expect([a, d, c, b].sort(byUpdatedNewestFirst).map((pr) => pr.number)).toEqual([2, 3, 4, 1]);
   });
 });
+
+describe('stateHashOf: when a dismissed PR comes back (W188)', () => {
+  const OID_A = 'a'.repeat(40);
+  const OID_B = 'b'.repeat(40);
+  const review = (id: string, login: string | null = 'pitwall-test-reviewer') => ({ id, author: login === null ? null : { login } });
+  const requested = (at: string, reviewer: Record<string, unknown> | null = { __typename: 'User', login: VIEWER }) => ({ __typename: 'ReviewRequestedEvent', createdAt: at, requestedReviewer: reviewer });
+  const mentioned = (at: string, login = VIEWER) => ({ __typename: 'MentionedEvent', createdAt: at, actor: { login } });
+  /** Your own PR, with its reviews and head commit. */
+  const own = (overrides: Record<string, unknown> = {}, reviews: unknown[] = [review('R1')], oid = OID_A, checks?: Record<string, unknown>) =>
+    prNode({ reviews: { nodes: reviews }, commits: { nodes: [{ commit: { oid, statusCheckRollup: checks ?? null } }] }, ...overrides });
+  /** Someone else's PR, with its timeline. */
+  const theirs = (events: unknown[], overrides: Record<string, unknown> = {}) => prNode({ timelineItems: { nodes: events }, reviewRequests: reviewRequests({ user: VIEWER }), ...overrides });
+  const hash = (node: unknown, relation: 'authored' | 'review-requested' | 'mentioned' = 'authored', viewer: string | null = VIEWER) => parsePullRequest(node, relation, viewer ?? undefined)?.stateHash;
+
+  it('is 16 hex digits, and the same on a refresh with nothing new: a new title, update time, branch or conflicts', () => {
+    const before = hash(own());
+    expect(before).toMatch(/^[0-9a-f]{16}$/);
+    expect(hash(own({ title: 'Renamed', updatedAt: '2026-10-21T09:00:00Z', headRefName: 'other', mergeable: 'CONFLICTING' }))).toBe(before);
+    const theirsBefore = hash(theirs([requested('2026-10-01T09:00:00Z')]), 'review-requested');
+    expect(theirsBefore).toMatch(/^[0-9a-f]{16}$/);
+    expect(hash(theirs([requested('2026-10-01T09:00:00Z')], { title: 'Renamed', updatedAt: '2026-10-22T09:00:00Z', checks: rollup('FAILURE') }), 'review-requested')).toBe(theirsBefore);
+  });
+
+  describe('your own PR', () => {
+    it('comes back on a new review by someone else, a changes request included', () => {
+      const before = hash(own());
+      expect(hash(own({}, [review('R1'), review('R2')]))).not.toBe(before);
+      expect(hash(own({ reviewDecision: 'CHANGES_REQUESTED' }, [review('R1'), review('R2', 'pitwall-test-other')]))).not.toBe(before);
+    });
+
+    it('comes back when GitHub says changes are requested, even with no review it can read as new', () => {
+      expect(hash(own({ reviewDecision: 'CHANGES_REQUESTED' }))).not.toBe(hash(own()));
+    });
+
+    it('stays when you reply in a review thread: your own reviews never bring it back', () => {
+      expect(hash(own({}, [review('R1'), review('R2', VIEWER), review('R3', VIEWER.toUpperCase())]))).toBe(hash(own()));
+    });
+
+    it('a deleted account’s review is someone else’s', () => {
+      expect(hash(own({}, [review('R1'), review('R2', null)]))).not.toBe(hash(own()));
+    });
+
+    it('comes back when CI goes red, and when it goes red again on a new push; a push alone, with CI pending, doesn’t', () => {
+      const green = hash(own({}, undefined, OID_A, rollup('SUCCESS')));
+      const red = hash(own({}, undefined, OID_A, rollup('FAILURE')));
+      expect(red).not.toBe(green);
+      expect(hash(own({}, undefined, OID_B, rollup('PENDING')))).toBe(green);
+      expect(hash(own({}, undefined, OID_B, rollup('FAILURE')))).not.toBe(red);
+      expect(hash(own({}, undefined, OID_A, rollup('ERROR')))).toBe(red);
+    });
+
+    it('has none when its reviews, the oid of a red head, or your login can’t be read', () => {
+      expect(hash(prNode())).toBeUndefined();
+      expect(hash(own({}, [{ id: 'bad id!' }]))).toBeUndefined();
+      expect(hash(own({}, [{ id: 'R1', author: 'not-a-record' }]))).toBeUndefined();
+      expect(hash(own({}, undefined, 'not-an-oid', rollup('FAILURE')))).toBeUndefined();
+      expect(hash(own({}, undefined, 'not-an-oid', rollup('SUCCESS')))).toMatch(/^[0-9a-f]{16}$/);
+      expect(hash(own(), 'authored', null)).toBeUndefined();
+    });
+  });
+
+  describe('a PR that asks your review or mentions you', () => {
+    const first = '2026-10-01T09:00:00Z';
+    const later = '2026-10-05T09:00:00Z';
+
+    it('comes back on a new review request of you, a re-request included, and of a team', () => {
+      const before = hash(theirs([requested(first)]), 'review-requested');
+      expect(hash(theirs([requested(first), requested(later)]), 'review-requested')).not.toBe(before);
+      expect(hash(theirs([requested(first), requested(later, { __typename: 'Team', combinedSlug: 'example/reviewers' })]), 'review-requested')).not.toBe(before);
+    });
+
+    it('stays on a request of someone else, or one GitHub won’t show', () => {
+      const before = hash(theirs([requested(first)]), 'review-requested');
+      expect(hash(theirs([requested(first), requested(later, { __typename: 'User', login: 'pitwall-test-other' })]), 'review-requested')).toBe(before);
+      expect(hash(theirs([requested(first), requested(later, null)]), 'review-requested')).toBe(before);
+    });
+
+    it('comes back on a new mention of you, and stays on a mention of someone else', () => {
+      const before = hash(theirs([requested(first)]), 'review-requested');
+      expect(hash(theirs([requested(first), mentioned(later)]), 'review-requested')).not.toBe(before);
+      expect(hash(theirs([requested(first), mentioned(later, 'pitwall-test-other')]), 'review-requested')).toBe(before);
+      const mention = hash(theirs([mentioned(first)]), 'mentioned');
+      expect(hash(theirs([mentioned(first), mentioned(later)]), 'mentioned')).not.toBe(mention);
+    });
+
+    it('comes back when one that mentioned you asks your review', () => {
+      expect(hash(theirs([mentioned(first)]), 'review-requested')).not.toBe(hash(theirs([mentioned(first)]), 'mentioned'));
+    });
+
+    it('has none when its timeline, an event or your login can’t be read', () => {
+      expect(hash(prNode({ reviewRequests: reviewRequests({ user: VIEWER }) }), 'review-requested')).toBeUndefined();
+      expect(hash(theirs(['not-a-record']), 'review-requested')).toBeUndefined();
+      expect(hash(theirs([{ __typename: 'MentionedEvent', createdAt: 'yesterday', actor: { login: VIEWER } }]), 'mentioned')).toBeUndefined();
+      expect(hash(theirs([{ __typename: 'SomethingNew', createdAt: first }]), 'mentioned')).toBeUndefined();
+      expect(hash(theirs([requested(first)]), 'mentioned', null)).toBeUndefined();
+    });
+  });
+});

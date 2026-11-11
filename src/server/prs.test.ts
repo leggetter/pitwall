@@ -12,6 +12,8 @@ import type { FetchResult } from '../prs/fetch.js';
 import { parsePullRequest } from '../prs/parse.js';
 import { createPrPoller, prsOff, PRS_OFF_ERROR, type PrSource } from '../prs/poller.js';
 import {
+  PR_DISMISS_PATH,
+  PR_UNDISMISS_PATH,
   PRS_PATH,
   PRS_POLL_INTERVAL_MS,
   PRS_REFRESH_MIN_MS,
@@ -503,5 +505,54 @@ describe('the snapshot carries only the links to open PRs (D14, W105’s review)
     const client = await authedClient(server.port);
     await waitFor(() => client.messages.length >= 2);
     expect(linksOf(sent(client)[0])).toBeUndefined();
+  });
+});
+
+describe('Not for me (W188) through the server', () => {
+  /** A POST with a JSON body. */
+  function post(port: number, path: string, body: unknown, headers: Record<string, string>): Promise<HttpResult> {
+    return new Promise((resolve, reject) => {
+      const req = httpRequest({ host: '127.0.0.1', port, path, method: 'POST', headers: { 'content-type': 'application/json', ...headers }, agent: false }, (res) => {
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => (text += chunk));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: text }));
+      });
+      req.on('error', reject);
+      req.end(JSON.stringify(body));
+    });
+  }
+  const hashed = (): PullRequestSummary => ({ ...pr(5), relation: 'review-requested', stateHash: '0123456789abcdef' });
+
+  it('dismisses with the apiKey and this Origin, and the list every client gets says so; Undo takes it off', async () => {
+    const started = await start();
+    await started.fetch.finish(ok([hashed()]));
+    const client = await authedClient(started.server.port);
+    const asPage = (path: string, body: unknown) => post(started.server.port, path, body, { authorization: `Bearer ${client.apiKey}`, origin: origin(started.server.port) });
+    const res = await asPage(PR_DISMISS_PATH, { repo: 'example/demo-app', number: 5, seen: '0123456789abcdef' });
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ ok: true, dismissed: { at: expect.any(String) } });
+    await waitFor(() => prsMessages(client).some((list) => list.prs[0]?.dismissed !== undefined));
+    const got = await request(started.server.port, PRS_PATH, 'GET', { authorization: `Bearer ${TOKEN}` });
+    expect((JSON.parse(got.body) as PullRequestList).prs[0]!.dismissed).toEqual({ at: expect.any(String) });
+    expect((await asPage(PR_UNDISMISS_PATH, { repo: 'example/demo-app', number: 5 })).status).toBe(200);
+    await waitFor(() => prsMessages(client).at(-1)?.prs[0]?.dismissed === undefined);
+    client.ws.close();
+  });
+
+  it('refuses the raw token, the apiKey from another Origin or none, and no credential', async () => {
+    const started = await start();
+    await started.fetch.finish(ok([hashed()]));
+    const { apiKey, ws } = await authedClient(started.server.port);
+    ws.close();
+    const body = { repo: 'example/demo-app', number: 5, seen: '0123456789abcdef' };
+    const port = started.server.port;
+    expect((await post(port, PR_DISMISS_PATH, body, { authorization: `Bearer ${TOKEN}`, origin: origin(port) })).status).toBe(403);
+    expect((await post(port, PR_DISMISS_PATH, body, { authorization: `Bearer ${apiKey}`, origin: 'http://evil.example' })).status).toBe(403);
+    expect((await post(port, PR_DISMISS_PATH, body, { authorization: `Bearer ${apiKey}` })).status).toBe(403);
+    expect((await post(port, PR_DISMISS_PATH, body, { origin: origin(port) })).status).toBe(401);
+    expect((await post(port, PR_UNDISMISS_PATH, { repo: 'example/demo-app', number: 5 }, { authorization: `Bearer ${TOKEN}`, origin: origin(port) })).status).toBe(403);
+    const got = await request(port, PRS_PATH, 'GET', { authorization: `Bearer ${TOKEN}` });
+    expect((JSON.parse(got.body) as PullRequestList).prs[0]!.dismissed).toBeUndefined();
   });
 });

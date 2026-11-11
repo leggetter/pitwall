@@ -438,6 +438,21 @@ describe('list_prs', () => {
     expect(((await call(made.list_prs!, { needsYou: true })).json.prs as unknown[]).length).toBe(2);
   });
 
+  it('says which PRs the user dismissed, Not for me, which never need them, and has no tool to dismiss one (W188, D4)', async () => {
+    const at = new Date(NOW - 5_000).toISOString();
+    const made = tools({
+      prs: { fetchedAt: new Date(NOW - 60_000).toISOString(), prs: [pr(1, { relation: 'review-requested', dismissed: { at } }), pr(2, { relation: 'review-requested' })] },
+    });
+    const { json } = await call(made.list_prs!);
+    const prs = json.prs as Record<string, unknown>[];
+    expect(prs.find((each) => each.number === 1)).toMatchObject({ needsYou: false, dismissed: { at } });
+    expect(prs.find((each) => each.number === 2)).toMatchObject({ needsYou: true });
+    expect(prs.find((each) => each.number === 2)?.dismissed).toBeUndefined();
+    expect(((await call(made.list_prs!, { needsYou: true })).json.prs as Record<string, unknown>[]).map((each) => each.number)).toEqual([2]);
+    expect(made.list_prs!.description).toContain('Not for me');
+    expect(Object.keys(made).some((name) => /dismiss/i.test(name))).toBe(false);
+  });
+
   it('leaves out an older PR no session owns, counts it, and never says it needs you, as the web UI does (W125)', async () => {
     const day = 24 * 60 * 60 * 1000;
     const fetchedAt = NOW - 60_000;
