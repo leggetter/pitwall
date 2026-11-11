@@ -1,8 +1,9 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { SPAWN_PROMPT_MAX, SPIN_OFF_FOLDER_MAX, SPIN_OFF_NAME_MAX } from '../shared/protocol.js';
 import { detectSpinOff } from './spinOff.js';
 
-// Made-up messages only, in the shape the spin-off skill (skills/spin-off/SKILL.md) asks for.
+// Made-up messages only, in the shape the pitwall plugin's skill (plugin/skills/pitwall/SKILL.md, W176) asks for.
 
 const HOME = '/home/dev';
 const lines = (...parts: string[]) => parts.join('\n');
@@ -139,5 +140,21 @@ describe('detectSpinOff', () => {
     read(`${'`'.repeat(65_000)} a b`);
     read(`${' '.repeat(65_000)}x`);
     expect(performance.now() - started).toBeLessThan(500);
+  });
+});
+
+describe('the pitwall plugin’s skill (W176)', () => {
+  it('teaches a block this parser reads: its own example, ending a message, is a proposal', () => {
+    const skill = readFileSync(new URL('../../plugin/skills/pitwall/SKILL.md', import.meta.url), 'utf8');
+    expect(skill).toMatch(/^---\nname: pitwall\n/);
+    const example = /^```spin-off\n[\s\S]*?\n```$/m.exec(skill)?.[0];
+    expect(example).toBeDefined();
+    expect(read(lines('A separate fix, so a new session.', '', example as string))).toEqual({
+      kind: 'proposal',
+      key: expect.stringMatching(/^[0-9a-f]{16}$/),
+      folder: '/home/dev/code/demo-app',
+      name: 'fix-export-test',
+      prompt: expect.stringMatching(/^Fix the flaky export test[\s\S]*tell me what the cause was\.$/),
+    });
   });
 });

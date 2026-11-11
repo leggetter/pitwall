@@ -1289,7 +1289,7 @@ A session in Needs you that doesn't need you can be flagged (W153; Phil, 2026-11
 
 ### Spin-off proposals
 
-A session proposes a new session (W163, spin-off proposals' first piece): it ends its turn with a `spin-off` block, from the skill in `skills/spin-off/`, which the index reads as `SessionSummary.spinOff`. You start it; nothing starts without your click.
+A session proposes a new session (W163, spin-off proposals' first piece): it ends its turn with a `spin-off` block, from the pitwall plugin's `pitwall` skill (`plugin/skills/pitwall/`, W176), which the index reads as `SessionSummary.spinOff`. You start it; nothing starts without your click.
 
 - **Where:** cards over Needs you's rows, in its notices, under a "Proposed sessions (*n*)" heading, newest first, before the supervisor's notice. Only in Needs you: the proposing session's row is as it was, and the session itself doesn't need you for it.
 - **The card:** `SpinOffCards` (`web/src/components/SpinOffCards.tsx`), drawn as the supervisor's [draft cards](#draft-cards) are, with their classes and the needs-you bar. Its heading names the session that asked, "*session* proposes a new session"; then when, "Proposed 9m ago"; what Start does; the folder, whole, never shortened to `~`, and the name, in mono; and "First prompt", the whole prompt as text in `<bdi>`, never markdown, each character that wouldn't show as itself drawn as its code, with the notes a typed prompt gets for a leading `/` or an `@` path. The prompt shows up to eight lines, four on a short window, then scrolls (`SpinOffCards.css`).

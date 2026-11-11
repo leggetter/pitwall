@@ -1,6 +1,6 @@
 // Spin-off proposals (W163): a session ends its turn with a fenced block that proposes a new session,
-// which you start from a card in Needs you. Sessions learn the block from the `spin-off` skill
-// (skills/spin-off/SKILL.md in pitwall's repo). Read from the newest assistant message's text, behind
+// which you start from a card in Needs you. Sessions learn the block from the pitwall plugin's
+// `pitwall` skill (plugin/skills/pitwall/SKILL.md in pitwall's repo, W176). Read from the newest assistant message's text, behind
 // the transcript adapter (transcripts.ts), and pure: no file is read here.
 //
 // The block, the last thing in the message, with only blank lines after it:
