@@ -453,7 +453,7 @@ On `m5.3/integration`. The ten items split off M5.2 at W180 (Phil, 2026-11-10), 
     - **F3:** large results are cut, not saved: `ENABLE_MCP_LARGE_OUTPUT_FILES=0` and `MAX_MCP_OUTPUT_TOKENS=11000`.
     - **F4:** the stdio launcher uses `process.execve`.
     - **F5:** a `needs-auth` connector is skipped for the rest of the run.
-    - **F6:** URL-taking tools are marked `[takes a URL]` and never preselected.
+    - **F6:** a tool a server adds mid-turn (`tools/list_changed`) reaches `approve` and is denied: verified, docs only.
     - **F7:** matching value checks (a variable that is unset or holds `${` or a control character leaves the connector out).
     - **F8:** the sign-in runs with `--setting-sources ''`.
     - **N1 (verification, accepted):** a result of at most 11,000 tokens but over about 50,000 characters is never cut and Claude Code saves it whole to `tool-results/*.json`, in a 0700 folder. This is F3's residual (Security, "Size, and where a large result lands").
