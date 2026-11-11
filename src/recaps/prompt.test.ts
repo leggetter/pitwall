@@ -118,6 +118,10 @@ describe('RECAP_SYSTEM_PROMPT for a cold reader (W189)', () => {
     expect(RECAP_SYSTEM_PROMPT).toContain('Say who people are the first time you name them');
     expect(RECAP_SYSTEM_PROMPT).toContain('Say why as well as what');
     expect(RECAP_SYSTEM_PROMPT).toContain('Everything but the plan\'s items comes to at most 150 words');
+    // #251's review: the summary repeated the other fields.
+    expect(RECAP_SYSTEM_PROMPT).toContain("but don't restate what another field says");
+    expect(RECAP_SYSTEM_PROMPT).toContain("It is the headline only: leave out what's done, what's in progress and what's next");
+    expect(RECAP_SYSTEM_PROMPT).toContain("say only whether it's working, finished or waiting on whom");
   });
 
   it('asks for done, and for your to-dos as questions with the recommended answer', () => {

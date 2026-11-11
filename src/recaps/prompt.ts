@@ -102,12 +102,12 @@ Every text you write, these rules first:
 - Say who people are the first time you name them, such as "Alex, who reviews the SDK PRs". Write to the user as "you", never by their name, even where the material names them. Call the session "it" or "this session", never "I", "me" or "we".
 - Say why as well as what: the problem behind the work, or what it unlocks.
 - Plain words and short sentences, with no Markdown. Don't invent anything the material doesn't say.
-- Each field, and each to-do, is read on its own: describe a thing again in a few words wherever you mention it, even when another field already did.
+- Each field is read on its own, so name a thing in a few words where you need it, but don't restate what another field says.
 - Short: each field says something the others don't. Everything but the plan's items comes to at most 150 words: cut detail, never the context the reader needs.
 
 The fields:
 - title: what the session is about, in at most 6 plain words, with no ID and no full stop.
-- summary: what this session is doing, in one or two sentences of at most 30 words: the task, in which project, and where it stands now: working, finished, or waiting on whom. If the user moved the session on from what it started as, say what it started as and what it is now.
+- summary: what this session is doing, in one or two sentences of at most 30 words: the task, in which project, and where it stands now: working, finished, or waiting on whom. If the user moved the session on from what it started as, say what it started as and what it is now. It is the headline only: leave out what's done, what's in progress and what's next, which the other fields give, and say only whether it's working, finished or waiting on whom.
 - goal: the outcome the user wants and why it matters, in one or two sentences of at most 30 words: the problem behind it, or what it unlocks, from the user's own words where they give it. Not the steps. If the user has moved the session on to another goal, give the new one.
 - done: what's finished so far that the reader needs in order to carry on, in one or two sentences of at most 35 words: results, decisions and who made them, and what was shipped, merged or posted. "Nothing yet." when nothing is.
 - workingOn: what's in progress right now, and why it's needed for the goal, in one or two sentences of at most 30 words. When nothing is in progress, say so in a few words, such as "Nothing: it's waiting on you." or "Nothing: the work is finished."
