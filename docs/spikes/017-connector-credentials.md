@@ -4,6 +4,8 @@ Run on 2026-11-11 against Claude Code 2.1.322 on macOS, for W185 (Slack, Notion 
 
 **No Slack or Notion data was read.** No route was signed in to, so no call reached either service past its "authentication required" answer, and nothing was posted, edited or created. The spike stops where a route needs Phil to sign in or make a token, and the [Needs Phil](#needs-phil) section says exactly what he would run and what it grants. No token was made, printed or written anywhere.
 
+**Correction (2026-11-12): finding 2 didn't reproduce.** From a folder outside pitwall, `claude mcp list` on the same machine showed claude.ai Slack, Notion and Gmail connected, with no policy message. Inside pitwall's checkout they're absent, because pitwall's `.claude/settings.json` sets `disableClaudeAiConnectors`. Where the spike's "blocked by the organization's managed policy" came from wasn't found. W191 (the supervisor reads through the connectors your sessions already have) follows from this.
+
 Each run was `claude -p "Reply with OK." --model haiku --max-turns 1 --no-session-persistence --output-format stream-json --verbose --tools "" --setting-sources "" --strict-mcp-config --mcp-config <file> --permission-mode default`, as spike 016 (read-only connectors under the strict command line) ran, and the result is the `system/init` message's `mcp_servers` and tool list, plus `--debug-file` where it says so. About 12 runs on Haiku, a few cents in all. The credential runs used a throwaway server, [`017-connector-credentials/probe-mcp.mjs`](017-connector-credentials/probe-mcp.mjs), on loopback or stdio, with a made-up value; it logs only whether the value arrived, and the names of the environment variables it was given.
 
 ## Questions

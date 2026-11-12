@@ -530,6 +530,18 @@ On `m5.3/integration`. The ten items split off M5.2 at W180 (Phil, 2026-11-10), 
   - Status: Planned (Phil, 2026-11-12, "plan item now").
     - **The guard keeps the title only while none of your messages comes in** (proposed): alternative, keep the first recap's title for the session's life, which never drifts but goes stale when you move the session on to another goal.
 
+- **W191, The supervisor reads through the connectors your sessions already have** (`m5.3/session-connectors`, M; a spike first). Revises W184's (the supervisor's connectors) route, not D28's rule (read-only, tools you choose).
+  - Phil, 2026-11-12: "My Claude session running on this machine is already authenticated and connected to use Notion and Slack. Pitwall is a single-user tool, so it has access to whatever your Claude sessions do. I'm not quite sure why we're going down this road." On Slack's scope: "it should read whatever permissions the Claude session has unless there's a reason to override it. Provide some Pitwall-level restrictions."
+  - Why: spike 017's finding 2 (a managed policy blocks the claude.ai Slack and Notion connectors) didn't reproduce on 2026-11-12. From a folder outside pitwall, `claude mcp list` shows claude.ai Slack, Notion, Gmail, Google Drive and Calendar connected. Inside pitwall's checkout they're absent, since `.claude/settings.json` sets `disableClaudeAiConnectors`. So W184's routes (sign in to each hosted server again, a token in a header, or a stdio server) duplicate a sign-in Phil already has.
+  - What blocks it now: the supervisor runs with `--strict-mcp-config` and `--setting-sources ""`, which leave the claude.ai connectors out (spike 017, finding 1). The one entry type that passes one in, `claudeai-proxy`, is internal.
+  - Spike first, on throwaway runs with no connector data read:
+    - Without `--strict-mcp-config`, which servers load under the supervisor's other flags: the claude.ai connectors, `~/.claude.json`'s user servers, plugins' servers?
+    - Do `--allowed-tools` and `--disallowed-tools` hold every other tool out, including one a server adds mid-turn (W186's F6)?
+    - Do the connectors' tools carry MCP's `readOnlyHint`, so pitwall can propose the read-only set itself?
+    - Is a documented way to name just some connectors there, or is `claudeai-proxy` the only one?
+  - Pitwall-level restrictions (proposed): only read-only tools, never a write; every other tool disallowed; a connector only when the config names it, with `--connector-tools` listing its tools; `--no-connectors` turns all of it off; results stay untrusted data (W184's prompt and size cap).
+  - Status: Planned (Phil, 2026-11-12). W185's spike 017 Slack scope question is replaced by this one: the scope is the connector's own grant, narrowed by pitwall's tool list.
+
 ## Open questions
 
 - **Profiles set the sub-agent model as a default, or force it?** A default (Phil, 2026-11-06, W155): since Claude Code v2.1.251, an Agent call's own `model` beats `CLAUDE_CODE_SUBAGENT_MODEL`, and forcing it with `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` would quietly put a security review on Sonnet and a Haiku agent up to Sonnet. 11-02's sub-agents named no model, so a default covers them. Revisit if W158 shows Build sessions' sub-agents still mostly on Opus.
