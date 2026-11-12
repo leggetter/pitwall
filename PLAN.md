@@ -247,7 +247,7 @@ In the order they'll be built. Each starts when the one before it has merged int
 
 ### M5.3 - After M5.2 (next)
 
-On `m5.3/integration`, branched from `main` once M5.2 has merged. What was left of M5.2 at the split at W180: W176 (a pitwall plugin) first, from spike 015's design (Phil, 2026-11-10), then W165 (diagnostics log), W167 (session lineage), W168 (Clear and continue), W171 (a team's open request), W173 and W174 (to-dos), W175 (a pitwall link in a new tab) and W178 and W179 (the supervisor about a session, and a short conversation). Their text is in "M5.3 work breakdown". Added 2026-11-10: W183 to W186, the supervisor's read-only connectors (D28).
+On `m5.3/integration`, branched from `main` once M5.2 has merged. What was left of M5.2 at the split at W180: W176 (a pitwall plugin) first, from spike 015's design (Phil, 2026-11-10), then W165 (diagnostics log), W167 (session lineage), W168 (Clear and continue), W171 (a team's open request), W173 and W174 (to-dos), W175 (a pitwall link in a new tab) and W178 and W179 (the supervisor about a session, and a short conversation). Their text is in "M5.3 work breakdown". Added 2026-11-10: W183 to W186, the supervisor's read-only connectors (D28). Added 2026-11-12: W190 (a session's title stays on what the session is about).
 
 ### M6 - Triage
 
@@ -514,6 +514,21 @@ On `m5.3/integration`. The ten items split off M5.2 at W180 (Phil, 2026-11-10), 
     - **The cadence stays** (after a turn ends and the session is idle, 5 minutes for a first recap and 15 for an update): alternative, only when the view opens or on Refresh, which would cut the calls but lose Needs you's 'recap' reason for sessions you haven't opened (W132's reasoning).
     - **The strip shows everyone's to-dos again**, under Next: alternative, W150's yours only.
     - **The length:** the prompt asks for 150 words and gets up to 280; alternative, cut a field, such as Working on when it says nothing more than the summary.
+- **W190, A session's title stays on what the session is about** (`m5.3/recap-title-steady`, S). Independent of the rest of M5.3; builds on W189's (recaps a cold reader can act on) `<your-messages>`.
+  - Phil, 2026-11-12: "The title of this session changed after a single question, which completely flipped the suggested focus. I think the title should be reflective of either the initial prompt or the initial prompt plus a summary of the whole conversation, unless it's been specifically set by the user. This is an example where the title is effectively wrong because it was just the last question to see whether another session was working on a related piece of functionality."
+  - Diagnosis, from that session (its transcript and stored recap read locally, never committed):
+    - **Claude Code's title held.** Its `ai-title` and `agent-name` entries were written after the first prompt and didn't change over the next three days.
+    - **pitwall's title moved.** A recap's title replaces Claude Code's in the row and the session view whenever the two differ (`decorate()` in `src/recaps/engine.ts`, `titleSource: 'pitwall'`). The recap ran a minute after a message from another session asked whether this one owned related work, and the new title led with the other session's subject.
+    - **Nothing keeps it steady.** The prompt's only title rule is "what the session is about, in at most 6 plain words". The update rules keep the goal, the plan, its items and the to-dos steady but don't mention the title, so every update writes it again with the newest turns in front of the model.
+    - **The old title is gone.** `recap-store` keeps only the newest recap, so what the title said before can't be shown.
+  - What:
+    - **The prompt** (`src/recaps/prompt.ts`): the title names what the session is about as a whole, from the first prompt and your later messages, as the goal does, never from the newest turn alone. On an update, keep the previous title word for word unless your messages changed the goal. A message from another session, a task notification, a side question or the session's own turns never change it.
+    - **A guard in code** (`src/recaps/engine.ts`): an update whose turns since the previous recap hold none of your messages keeps the previous title, whatever the model answers. `promptTextOf()` already leaves out cross-session messages, peers and task notifications, so the check doesn't depend on the model, and it covers the session above.
+    - **A name you set wins** (as now, pinned by a test): a name from `--name` or `/rename` shows as the row's name, and no recap replaces it.
+    - **The hint** (`TITLE_HINTS` in `web/src/components/SessionRow.tsx`): "pitwall's title, from the session's recent turns" becomes "pitwall's title, from your prompts in this session", so it says what the title now is.
+  - Checks: `src/recaps/` prompt and engine tests: an update with only a message from another session keeps the title, and one with your message that moves the goal may change it; `SessionRow`'s hint test; the app check only for a part that shows the hint.
+  - Status: Planned (Phil, 2026-11-12, "plan item now").
+    - **The guard keeps the title only while none of your messages comes in** (proposed): alternative, keep the first recap's title for the session's life, which never drifts but goes stale when you move the session on to another goal.
 
 ## Open questions
 
