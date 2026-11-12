@@ -3,9 +3,11 @@
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
 
-Last updated: 2026-11-11, on `docs/handoff-batch-done`: the first M5.3 batch is merged into `m5.3/integration` and nothing is in flight. Before it, 2026-11-10: M5.2 merged into `main` ([#234](https://github.com/leggetter/pitwall/pull/234)) and `m5.3/integration` branched from it. The next free W number is W190.
+Last updated: 2026-11-12, on `docs/now-coordinator-recovery`: the coordinating session ("NOW.md", job 5277166f) ended at 23:29 on 11-11, after its hand-off, and wasn't restarted with the other background sessions at 23:30; Phil made a new session the coordinator (see "Housekeeping" below). Before it, 2026-11-11: the first M5.3 batch is merged into `m5.3/integration` and nothing is in flight. Before that, 2026-11-10: M5.2 merged into `main` ([#234](https://github.com/leggetter/pitwall/pull/234)) and `m5.3/integration` branched from it. The next free W number is W190.
 
 **Servers:** 4518 runs `main` at f4458a7. A try-out on 4519 runs `m5.3/integration` at 1c07eb9 (before #244), from `.worktrees/tryout`, with its own home (`.worktrees/tryout/scratch/home`) and recaps on; Phil is trying it. Stop it and remove the worktree when he's done.
+
+**Housekeeping** (found 2026-11-12, waiting for Phil's yes): stop the "pitwall-slack-notion-access" session (9443332c, in `.worktrees/connectors`), restarted at 00:49 on 11-12 although its work (#237, D28 and spike 016) is merged. Then remove three worktrees whose PRs are merged: `.worktrees/connectors` (#237), `.claude/worktrees/fix-badges-overlap-activity` (#206, a row's badges over its time) and `.claude/worktrees/fix-pr-open-unknown` (#236, list_sessions' prOpen; locked by pid 72124, which has exited).
 
 ## Current milestone
 
