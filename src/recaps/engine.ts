@@ -49,7 +49,8 @@
 // on) the session's name, its group's label and your messages through it; a previous recap without
 // W189's done makes the call a first recap too.
 //
-// A steady title (W190): an update whose transcript holds none of your messages since the previous
+// A steady title (W190): an update, or a first recap redone over a previous one (after a compaction,
+// say), whose transcript holds none of your messages since the previous
 // recap's `throughAt` keeps the previous title, whatever the model answered (keepsTitle()), so a
 // message from another session, a task notification or the session's own turns can't move it. The
 // prompt asks the model to keep it too, unless your messages moved the goal.
@@ -683,7 +684,8 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     if (result.repaired !== undefined && result.repaired.length > 0) log(`a recap answer was repaired (${result.repaired.join(', ')}).`);
     const at = now();
     // The previous title stays unless one of your messages has come in since the previous recap (W190).
-    const steady = update && previous.title !== '' && keepsTitle(read.prompts, previous.throughAt);
+    // A first recap redone over a previous one, after a compaction for example, keeps it the same way.
+    const steady = previous !== undefined && previous.title !== '' && keepsTitle(read.prompts, previous.throughAt);
     keep(job.sessionId, {
       ...result.answer,
       ...(steady ? { title: previous.title } : {}),

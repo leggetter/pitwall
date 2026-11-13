@@ -1376,6 +1376,25 @@ describe("a session's title stays on what the session is about (W190)", () => {
     expect(h.engine.decorate(a).recap).toMatchObject({ title: 'Fix the nightly export' });
   });
 
+  it('keeps the title on a first recap redone after a compaction, when none of your messages came in', async () => {
+    const h = harness();
+    h.start();
+    let a = h.add('a');
+    h.sources.set('/made-up/projects/a.jsonl', { firstPrompt: 'Fix a.', prompts: [{ text: 'Fix a.', at: FIRST }] });
+    await h.poll([a]);
+    await h.reply(h.calls[0], envelope(answer()));
+    const newer = new Date(h.clock.now + MINUTE).toISOString();
+    h.pages.get('a')!.push({ kind: 'assistant', text: 'Compacted, carrying on.', at: newer } as ConversationEntry);
+    h.sources.set('/made-up/projects/a.jsonl', { firstPrompt: 'Fix a.', prompts: [{ text: 'Fix a.', at: FIRST }], compaction: { text: '1. Primary Request and Intent:\nFix a.', at: newer } });
+    h.clock.now += 16 * MINUTE;
+    a = { ...a, lastActivityAt: newer };
+    await h.poll([a]);
+    expect(h.calls).toHaveLength(2);
+    expect(h.calls[1]!.input).not.toContain('<previous-recap>');
+    await h.reply(h.calls[1], envelope(answer({ title: 'Is another session on retries' })));
+    expect(h.engine.decorate(a)).toMatchObject({ title: 'Fix the nightly export' });
+  });
+
   it("keeps the title when the only newer turns are the session's own", async () => {
     const { h, a } = await updated({ kind: 'assistant', text: 'Done: the retries are in.' }, {});
     expect(h.engine.decorate(a)).toMatchObject({ title: 'Fix the nightly export' });
