@@ -175,6 +175,12 @@ export interface ConversationReadOptions {
    * message from one get its id and description as ConversationEntry.subagent.
    */
   subagents?: SubagentLabels;
+  /**
+   * Shows an MCP tool call's arguments, as JSON on one line, in its summary (W192's G2): for the
+   * supervisor's own conversation, so a connector search it runs without a click shows what it
+   * searched (W191, Phil's option B). Other sessions' MCP calls show by name only.
+   */
+  mcpArguments?: boolean;
 }
 
 const NO_FOLLOW_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
@@ -312,7 +318,7 @@ async function readBackwards(
 ): Promise<{ builder: PageBuilder; stop?: Stop; bytesRead: number }> {
   const chunkBytes = Math.max(1, options.chunkBytes ?? CHUNK_BYTES);
   const budget = Math.max(chunkBytes, options.readBudget ?? PAGE_READ_BUDGET);
-  const builder = new PageBuilder(pending, options.pageEntries ?? PAGE_ENTRIES, options.relay?.name, options.sidechain === true, options.subagents, options.supervisor?.name);
+  const builder = new PageBuilder(pending, options.pageEntries ?? PAGE_ENTRIES, options.relay?.name, options.sidechain === true, options.subagents, options.supervisor?.name, options.mcpArguments === true);
   let lo = end;
   let hi = end;
   let buf: Buffer = EMPTY;
@@ -796,6 +802,7 @@ class PageBuilder {
     private readonly sidechain = false,
     private readonly subagents?: SubagentLabels,
     private readonly supervisorName?: string,
+    private readonly mcpArguments = false,
   ) {}
 
   /**
@@ -803,7 +810,7 @@ class PageBuilder {
    * the page is full and the line belongs to the older page.
    */
   offer(line: string, offset: number, end: number): 'taken' | 'full' {
-    const items = itemsOfLine(line, this.sidechain);
+    const items = itemsOfLine(line, this.sidechain, this.mcpArguments);
     if (items.length === 0) return 'taken';
     this.noteTurn(items);
     const added = this.newEntries(items);
@@ -1152,7 +1159,7 @@ function questionWithinBudget(entry: ConversationEntry, questions: AskedQuestion
  * What a transcript line contributes. Lines that don't parse, sidechains (unless `sidechain`, for a
  * sub-agent's own transcript) and other entry types give nothing.
  */
-export function itemsOfLine(line: string, sidechain = false): Item[] {
+export function itemsOfLine(line: string, sidechain = false, mcpArguments = false): Item[] {
   // Cheap pre-filter: every line this reads names one of these. Not "system":
   // Claude Code's internal api-request lines carry a system prompt, and they
   // can be most of a transcript's bytes. Nor "attachment": Claude Code writes
@@ -1174,7 +1181,7 @@ export function itemsOfLine(line: string, sidechain = false): Item[] {
     return [];
   }
   if (!isRecord(entry) || (entry.isSidechain === true && !sidechain)) return [];
-  const items = entryItems(entry, timestampOf(entry));
+  const items = entryItems(entry, timestampOf(entry), mcpArguments);
   // What the line says of the session's turn (W102). Never a sidechain's, so a sub-agent's page has none.
   const signal = turnSignalOf(entry);
   if (signal !== undefined) items.push({ kind: 'turn', signal });
@@ -1182,10 +1189,10 @@ export function itemsOfLine(line: string, sidechain = false): Item[] {
 }
 
 /** The entries, tool calls and results a parsed line contributes, by its type. */
-function entryItems(entry: Record<string, unknown>, at: string | undefined): Item[] {
+function entryItems(entry: Record<string, unknown>, at: string | undefined, mcpArguments = false): Item[] {
   switch (entry.type) {
     case 'assistant':
-      return assistantItems(entry, at);
+      return assistantItems(entry, at, mcpArguments);
     case 'user':
       return userItems(entry, at);
     case 'system':
@@ -1210,7 +1217,7 @@ function timestampOf(entry: Record<string, unknown>): string | undefined {
 }
 
 /** Text blocks, tool calls and, for Claude Code's own API error messages, a notice. Thinking is left out. */
-function assistantItems(entry: Record<string, unknown>, at: string | undefined): Item[] {
+function assistantItems(entry: Record<string, unknown>, at: string | undefined, mcpArguments = false): Item[] {
   const message = entry.message;
   if (!isRecord(message)) return [];
   const messageId = typeof message.id === 'string' ? message.id : undefined;
@@ -1234,7 +1241,7 @@ function assistantItems(entry: Record<string, unknown>, at: string | undefined):
     } else if (block.type === 'tool_use') {
       const name = typeof block.name === 'string' && block.name !== '' ? block.name : 'tool';
       const id = typeof block.id === 'string' ? block.id : undefined;
-      const item: Extract<Item, { kind: 'tool' }> = { kind: 'tool', id, name, summary: toolSummary(name, block.input), at };
+      const item: Extract<Item, { kind: 'tool' }> = { kind: 'tool', id, name, summary: toolSummary(name, block.input, mcpArguments), at };
       const send = name === SEND_MESSAGE ? sendCall(block.input) : undefined;
       if (send !== undefined) item.send = send;
       const to = name === SEND_MESSAGE ? recipientOf(block.input) : undefined;
@@ -1551,10 +1558,11 @@ function withAt(entry: ConversationEntry, at: string | undefined): ConversationE
 /**
  * A tool call on one line: `Bash: <the command's first line>`, `Read`,
  * `Edit` or `Write: <file_path>`, `Grep` or `Glob: <pattern>`, `WebFetch:
- * <url>`, `WebSearch: <query>`, `Agent: <description>`, otherwise the tool's
- * name. At most 200 characters. The input is never shown beyond that.
+ * <url>`, `WebSearch: <query>`, `Agent: <description>`, with `mcpArguments`
+ * an MCP tool's `mcp__<server>__<tool>: <its arguments as JSON>`, otherwise the
+ * tool's name. At most 200 characters. The input is never shown beyond that.
  */
-export function toolSummary(name: string, input: unknown): string {
+export function toolSummary(name: string, input: unknown, mcpArguments = false): string {
   const field = (key: string) => (isRecord(input) && typeof input[key] === 'string' ? input[key] : undefined);
   let detail: string | undefined;
   switch (name) {
@@ -1590,10 +1598,21 @@ export function toolSummary(name: string, input: unknown): string {
     case 'Task':
       detail = field('description');
       break;
+    default:
+      if (mcpArguments && name.startsWith('mcp__') && isRecord(input) && Object.keys(input).length > 0) detail = jsonLine(input);
   }
   const label = oneLine(name, TOOL_SUMMARY_MAX);
   const shown = detail === undefined ? '' : oneLine(detail, TOOL_SUMMARY_MAX);
   return shown === '' ? label : truncate(`${label}: ${shown}`, TOOL_SUMMARY_MAX);
+}
+
+/** `input` as JSON, or '' when it can't be written so. */
+function jsonLine(input: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(input) ?? '';
+  } catch {
+    return '';
+  }
 }
 
 /** On one line, trimmed, at most `max` characters. Capped before collapsing, so a huge value isn't scanned in full. */
