@@ -246,6 +246,14 @@ describe('the file', () => {
     expect(parseStoredRecap(storedText(A, recap({ at: old })), A, NOW)).toEqual(recap({ at: old }));
   });
 
+  it('says an older version’s file is expired by the same age, and ignores it until then (W192, G1)', () => {
+    const old = new Date(NOW - RECAP_KEEP_MS - 1000).toISOString();
+    const versionOne = (at: string) => JSON.stringify({ ...JSON.parse(storedText(A, recap({ at, throughAt: at }))), version: 1 });
+    expect(parseStoredRecap(versionOne(old), A, NOW)).toBe('expired');
+    expect(parseStoredRecap(versionOne(new Date(NOW - 1000).toISOString()), A, NOW)).toBeUndefined();
+    expect(parseStoredRecap(versionOne(old), B, NOW)).toBeUndefined();
+  });
+
   it('keeps only a UUID session id', () => {
     expect(parseStoredRecap(storedText('../a', recap()), '../a', NOW)).toBeUndefined();
     const store = memoryRecapStore();

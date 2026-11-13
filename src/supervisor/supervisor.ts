@@ -1101,7 +1101,8 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
       if (file === undefined) return undefined;
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          return (await readConversationPage(file, id, before))?.page;
+          // Each MCP call with its arguments: a connector search shows what it searched (W192's G2).
+          return (await readConversationPage(file, id, before, { mcpArguments: true }))?.page;
         } catch (error) {
           // A cursor that can't be used is the route's to answer; the file shrinking while read is tried again once.
           if (error instanceof ConversationCursorError) throw error;

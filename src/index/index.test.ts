@@ -312,6 +312,26 @@ describe('createIndexer', () => {
     }
   });
 
+  it("shows a listed session's MCP call by its name only, never its arguments (W192's G2)", async () => {
+    vi.useRealTimers();
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-index-mcp-'));
+    try {
+      const { state, deps } = harness();
+      const file = path.join(dir, 'in.jsonl');
+      const at = new Date(NOW).toISOString();
+      const call = { type: 'assistant', timestamp: at, message: { id: 'msg_1', content: [{ type: 'tool_use', id: 'toolu_1', name: 'mcp__example__search', input: { query: 'release notes' } }] } };
+      await writeFile(file, `${JSON.stringify(call)}\n`);
+      state.files.set('in', file);
+      state.result = { ok: true, rows: [row('in', '/work/repo/a')] };
+      const indexer = createIndexer({ roots: ['/work'], intervalMs: 60_000 }, deps);
+      await new Promise<IndexSnapshot>((resolve) => indexer.subscribe(resolve));
+      expect((await indexer.conversation('in'))?.entries).toEqual([{ kind: 'tool', at, text: 'mcp__example__search', toolName: 'mcp__example__search' }]);
+      indexer.stop();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('notifies after every completed poll, changed or not, with a fresh generatedAt', async () => {
     const { state, deps } = harness();
     state.result = { ok: true, rows: [row('a', '/work/repo/a')] };

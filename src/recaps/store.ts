@@ -175,7 +175,8 @@ function storedTime(raw: unknown, nowMs: number): number {
 
 /**
  * A kept recap read from `text`, the file for `sessionId`, checked as above: the recap, 'expired'
- * once both its times are older than RECAP_KEEP_MS at `nowMs`, or undefined for anything else.
+ * once both its times are older than RECAP_KEEP_MS at `nowMs` (whatever the file's version, so an
+ * older pitwall's files still age out), or undefined for anything else.
  */
 export function parseStoredRecap(text: string, sessionId: string, nowMs: number, { ignoreAge = false } = {}): SessionRecap | 'expired' | undefined {
   if (!isSessionUuid(sessionId)) return undefined;
@@ -185,11 +186,14 @@ export function parseStoredRecap(text: string, sessionId: string, nowMs: number,
   } catch {
     return undefined;
   }
-  if (!isRecord(parsed) || !hasExactly(parsed, FILE_KEYS)) return undefined;
-  if (parsed.version !== RECAP_STORE_VERSION || parsed.sessionId !== sessionId) return undefined;
+  if (!isRecord(parsed) || parsed.sessionId !== sessionId) return undefined;
   const atMs = storedTime(parsed.at, nowMs);
   const throughMs = storedTime(parsed.throughAt, nowMs);
   if (Number.isNaN(atMs) || Number.isNaN(throughMs)) return undefined;
+  // Age first, whatever the file's version (W192's G1): a file from an older pitwall is never read,
+  // but it is still removed once both its times are older than RECAP_KEEP_MS.
+  if (!ignoreAge && nowMs - Math.max(atMs, throughMs) > RECAP_KEEP_MS) return 'expired';
+  if (!hasExactly(parsed, FILE_KEYS) || parsed.version !== RECAP_STORE_VERSION) return undefined;
   const raw = parsed.recap;
   if (!isRecord(raw) || !Array.isArray(raw.todos)) return undefined;
   // The check a model's answer gets, and it must take the recap back exactly: one pitwall wrote was
@@ -215,7 +219,6 @@ export function parseStoredRecap(text: string, sessionId: string, nowMs: number,
     const kept = raw.todos[i] as Record<string, unknown>;
     if (answer.todos[i]!.text !== kept.text || answer.todos[i]!.owner !== kept.owner || answer.todos[i]!.after !== kept.after) return undefined;
   }
-  if (!ignoreAge && nowMs - Math.max(atMs, throughMs) > RECAP_KEEP_MS) return 'expired';
   return { ...answer, at: parsed.at as string, throughAt: parsed.throughAt as string, source: 'pitwall' };
 }
 
