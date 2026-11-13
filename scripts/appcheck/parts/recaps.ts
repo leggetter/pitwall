@@ -33,12 +33,12 @@ const strip = `(() => {
     const each = line(name);
     return each && !each.closest('[hidden]') ? each.querySelector('.recap-line-text')?.textContent ?? null : null;
   };
-  const working = line('working-on')?.querySelector('.recap-line-text');
   return {
     picture: strip.dataset.picture !== undefined,
     goal: lineText('goal'),
+    done: lineText('done'),
     workingOn: lineText('working-on'),
-    workingOnOneLine: working ? working.getBoundingClientRect().height <= 21 : null,
+    nextLabel: line('next')?.querySelector('.recap-label')?.textContent ?? null,
     plan: (() => {
       const section = strip.querySelector('.recap-plan');
       return section && !section.closest('[hidden]') ? section.querySelector('.recap-plan-line')?.textContent ?? null : null;
@@ -70,8 +70,9 @@ const strip = `(() => {
 type Strip = {
   picture: boolean;
   goal: string | null;
+  done: string | null;
   workingOn: string | null;
-  workingOnOneLine: boolean | null;
+  nextLabel: string | null;
   plan: string | null;
   planSection: boolean;
   forYouLabel: string | null;
@@ -175,13 +176,15 @@ const part: Part = {
       return page.waitFor<Strip>(`its recap strip, ${kind}`, `(() => { const s = ${strip}; return s && s.kind === ${JSON.stringify(kind)} ? s : null; })()`);
     };
 
-    await t.step('the strip: the picture, the goal, what it is working on, the plan and only your to-dos, between the header and the tabs (W150)', async () => {
+    await t.step('the strip: the summary, then the goal, what is done, what it is working on, the plan, your to-dos and the rest, between the header and the tabs (W150, W189)', async () => {
       await t.fresh({ search: '?view=all', recaps: 'ok' });
       const shown = await open(NAMES.conversation);
       t.expectEqual(shown.title, 'Recap', 'its title');
       t.expectEqual(shown.refreshAfterAge, true, 'line 1: Refresh right after the age');
       t.expectEqual(shown.picture, true, 'the picture');
-      t.expectEqual(shown.goal, RECAP_PICTURE.goal, 'Goal: why it was started');
+      t.expect(shown.summary?.startsWith('You asked it to add a made-up health route') ?? false, 'the summary first: what it is doing', shown.summary);
+      t.expectEqual(shown.goal, RECAP_PICTURE.goal, 'Goal: the outcome and why');
+      t.expectEqual(shown.done, RECAP_PICTURE.done, "Done: what's finished (W189)");
       t.expectEqual(shown.workingOn, RECAP_PICTURE.workingOn, 'Working on: the item and why');
       t.expectEqual(shown.plan, RECAP_PICTURE.plan, "Plan: the plan's line");
       t.expectEqual(shown.forYouLabel, 'For you (2):', 'For you, with how many');
@@ -190,10 +193,11 @@ const part: Part = {
         [
           ['Say whether to fix the lint errors on #51 now, or leave them for the made-up follow-up', ''],
           ['Say whether to mark #51 ready', ''],
+          ['Fix the lint errors, if you say now', 'Session'],
         ],
-        "only your to-dos, in order, with no tags; the session's own is the conversation's",
+        "your to-dos with no tags, then the session's under Next, tagged (W189)",
       );
-      t.expectEqual(shown.summary, null, 'no summary beside the picture');
+      t.expectEqual(shown.nextLabel, 'Next:', 'Next, before the rest');
       t.expectEqual(shown.waiting, null, 'no quiet line: it waits on you');
       t.expectEqual(shown.forYou, null, 'no count while it is open: the list shows them');
       t.expectEqual(shown.expanded, 'true', 'open, by default');
@@ -234,11 +238,15 @@ const part: Part = {
       await page.waitFor('the Plan section to collapse', `${plan}?.expanded === 'false'`);
     });
 
-    await t.step('collapsed, it keeps Working on’s first line and how many to-dos are yours, and stays collapsed after a reload', async () => {
+    await t.step('collapsed, it keeps the summary’s first line and how many to-dos are yours, and stays collapsed after a reload (W189)', async () => {
       await page.click('the Recap toggle', `${STRIP}?.querySelector('.recap-toggle')`);
       const collapsed = await page.waitFor<Strip>('the strip to collapse', `(() => { const s = ${strip}; return s && s.expanded === 'false' ? s : null; })()`);
-      t.expect(collapsed.bodyHidden === true && collapsed.goal === null && collapsed.plan === null && collapsed.workingOn === RECAP_PICTURE.workingOn, 'the goal, the plan and the to-dos hidden, Working on kept', collapsed);
-      t.expectEqual(collapsed.workingOnOneLine, true, 'Working on, on one line');
+      t.expect(
+        collapsed.bodyHidden === true && collapsed.goal === null && collapsed.done === null && collapsed.workingOn === null && collapsed.plan === null && collapsed.summary !== null,
+        'the goal, done, working on, the plan and the to-dos hidden, the summary kept',
+        collapsed,
+      );
+      t.expectEqual(collapsed.oneLine, true, 'the summary, on one line');
       t.expectEqual(collapsed.forYou, '2 for you', 'how many to-dos are yours');
       t.expectEqual(collapsed.forYouInside, true, 'the count inside the strip, however narrow');
       t.expectEqual(await page.evaluate(`localStorage.getItem('pitwall.recap-collapsed.v1')`), 'true', 'kept as a boolean');
@@ -275,7 +283,7 @@ const part: Part = {
       const shown = await open(RECAPPED.someoneElse);
       t.expectEqual(shown.planSection, false, 'no Plan section');
       t.expectEqual(shown.forYouLabel, null, 'nothing for you');
-      t.expectEqual(shown.todos, [], "someone else's to-do isn't shown");
+      t.expectEqual(shown.todos, [['Approve #19', 'Someone else']], "someone else's to-do under Next, tagged (W189)");
       t.expectEqual(shown.waiting, 'Waiting on someone else.', 'a quiet line says what it waits on');
       t.expect(shown.inside, 'inside the view', shown);
       await t.shot('picture-someone-else');

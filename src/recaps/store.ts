@@ -3,16 +3,17 @@
 // recap again. One file per session, in a 0700 folder of pitwall's own beside `recap/`, never in it:
 //
 //   $PITWALL_HOME/recap-store/<session uuid>.json   0600
-//   {"version":1,"sessionId":"<uuid>","at":"<ISO>","throughAt":"<ISO>",
-//    "recap":{"summary":"…","todos":[{"text":"…","owner":"you"}],"waitingOn":"you","title":"…",
-//             "goal":"…","workingOn":"…","plan":"…",
+//   {"version":2,"sessionId":"<uuid>","at":"<ISO>","throughAt":"<ISO>",
+//    "recap":{"summary":"…","todos":[{"text":"…","owner":"you","after":false}],"waitingOn":"you","title":"…",
+//             "goal":"…","done":"…","workingOn":"…","plan":"…",
 //             "items":[{"text":"…","state":"now"}],"changes":"…"}}
 //
 // What's kept is the recap as the page shows it and nothing more: its summary, to-dos, what it waits
 // on and its title, since W150 (the recap strip gives the picture) its goal, working on and plan, and
 // since W172 (the plan is part of the recap) the plan's items and how it changed, in the answer's own
-// keys, `items` and `changes` ("" for none), only when the plan isn't empty, as the model answered and
-// pitwall's strict reading kept them; when it was made;
+// keys, `items` and `changes` ("" for none, and [] and "" with an empty plan), and since W189 (recaps a
+// cold reader can act on) what's done, as the model answered and pitwall's strict reading kept them;
+// when it was made;
 // and `throughAt`, the newest transcript entry it covers, which says whether the session has moved on
 // since. No transcript excerpt, prompt, name, directory, token or cost.
 //
@@ -21,11 +22,11 @@
 // (ensureLaunchDir()), each file a regular file of this user's, not a link, not writable by group or
 // others, at most MAX_BYTES, with exactly these fields, this version, the session id its name says,
 // canonical times, and a recap that readRecapAnswer() (prompt.ts), the check a model's answer gets,
-// takes back unchanged. A recap kept before W150, without the three, still loads, at the same
-// version: a version 2 would gain nothing, since a pitwall from before W150 ignores a file with the
-// three either way, as it would one of another version, and makes that session's recap again. The
-// same holds for W172's two: one kept before it loads without them, and a pitwall from before it
-// ignores a file with them. Anything else is ignored and counted, never a crash, and never shown.
+// takes back unchanged. Version 2 since W189: a recap kept before it was written for a reader with the
+// transcript open, so it's ignored, as a file of any other version is, and that session is recapped
+// again, by itself once it's idle if its process runs, or when its view opens. A pitwall from before
+// W189 ignores a version 2 file the same way. Anything else is ignored and counted, never a crash, and
+// never shown.
 //
 // A file is removed when its session leaves the list for good (the engine's call, remove()), and at
 // load once both its times are older than RECAP_KEEP_MS. Writing fails soft: the recap in memory
@@ -42,8 +43,8 @@ import { readRecapAnswer, todoOf } from './prompt.js';
 /** The folder's name in pitwall's home. */
 export const RECAP_STORE_DIR_NAME = 'recap-store';
 
-/** The file format's version: a file with any other is ignored. */
-export const RECAP_STORE_VERSION = 1;
+/** The file format's version: a file with any other is ignored. 2 since W189 (recaps a cold reader can act on). */
+export const RECAP_STORE_VERSION = 2;
 
 /**
  * How long a recap is kept, from the newer of when it was made and the newest entry it covers:
@@ -59,7 +60,7 @@ export const RECAP_KEEP_MS = ENDED_LISTED_DAYS * 24 * 60 * 60 * 1000;
  * about 4,120 characters, 16.5 KB at 4 bytes a character, so W150's three fields raised it from 16 KiB.
  * W172's items, up to PLAN_ITEMS_MAX (15) of PLAN_ITEM_MAX (200) characters, and its changes, at most
  * 400, add 3,400 characters, 7,520 in all, about 30 KB at 4 bytes a character with the JSON around
- * them, so 40 KiB.
+ * them, so 40 KiB. W189's done, at most 400 more, brings it to 7,920, about 32 KB: still under it.
  */
 export const RECAP_STORE_MAX_BYTES = 40 * 1024;
 
@@ -129,20 +130,30 @@ export function memoryRecapStore(initial: ReadonlyMap<string, SessionRecap> = ne
 }
 
 /**
- * The file's text for a recap: these fields alone, in this order; the goal, working on and plan only
- * when it has all three (W150), and the plan's items and changes, as `items` and `changes`, only with
- * them and the items (W172).
+ * The file's text for a recap: these fields alone, in this order, every one of a model's answer since
+ * W189, so readRecapAnswer() takes it back; the plan's items and changes as `items` and `changes`, []
+ * and "" with an empty plan (W172). Every recap pitwall makes has them all; one without them (never
+ * pitwall's own) is written with them empty, which the read refuses, so it's ignored.
  */
 export function storedText(sessionId: string, recap: SessionRecap): string {
-  const { goal, workingOn, plan, planItems, planChanges } = recap;
-  const items = planItems === undefined ? {} : { items: planItems.map(({ text, state }) => ({ text, state })), changes: planChanges ?? '' };
-  const picture = goal === undefined || workingOn === undefined || plan === undefined ? {} : { goal, workingOn, plan, ...items };
+  const { planItems, planChanges } = recap;
   return `${JSON.stringify({
     version: RECAP_STORE_VERSION,
     sessionId,
     at: recap.at,
     throughAt: recap.throughAt,
-    recap: { summary: recap.summary, todos: recap.todos.map(todoOf), waitingOn: recap.waitingOn, title: recap.title, ...picture },
+    recap: {
+      summary: recap.summary,
+      todos: recap.todos.map(todoOf),
+      waitingOn: recap.waitingOn,
+      title: recap.title,
+      goal: recap.goal ?? '',
+      done: recap.done ?? '',
+      workingOn: recap.workingOn ?? '',
+      plan: recap.plan ?? '',
+      items: (planItems ?? []).map(({ text, state }) => ({ text, state })),
+      changes: planChanges ?? '',
+    },
   })}\n`;
 }
 
@@ -164,7 +175,8 @@ function storedTime(raw: unknown, nowMs: number): number {
 
 /**
  * A kept recap read from `text`, the file for `sessionId`, checked as above: the recap, 'expired'
- * once both its times are older than RECAP_KEEP_MS at `nowMs`, or undefined for anything else.
+ * once both its times are older than RECAP_KEEP_MS at `nowMs` (whatever the file's version, so an
+ * older pitwall's files still age out), or undefined for anything else.
  */
 export function parseStoredRecap(text: string, sessionId: string, nowMs: number, { ignoreAge = false } = {}): SessionRecap | 'expired' | undefined {
   if (!isSessionUuid(sessionId)) return undefined;
@@ -174,11 +186,14 @@ export function parseStoredRecap(text: string, sessionId: string, nowMs: number,
   } catch {
     return undefined;
   }
-  if (!isRecord(parsed) || !hasExactly(parsed, FILE_KEYS)) return undefined;
-  if (parsed.version !== RECAP_STORE_VERSION || parsed.sessionId !== sessionId) return undefined;
+  if (!isRecord(parsed) || parsed.sessionId !== sessionId) return undefined;
   const atMs = storedTime(parsed.at, nowMs);
   const throughMs = storedTime(parsed.throughAt, nowMs);
   if (Number.isNaN(atMs) || Number.isNaN(throughMs)) return undefined;
+  // Age first, whatever the file's version (W192's G1): a file from an older pitwall is never read,
+  // but it is still removed once both its times are older than RECAP_KEEP_MS.
+  if (!ignoreAge && nowMs - Math.max(atMs, throughMs) > RECAP_KEEP_MS) return 'expired';
+  if (!hasExactly(parsed, FILE_KEYS) || parsed.version !== RECAP_STORE_VERSION) return undefined;
   const raw = parsed.recap;
   if (!isRecord(raw) || !Array.isArray(raw.todos)) return undefined;
   // The check a model's answer gets, and it must take the recap back exactly: one pitwall wrote was
@@ -187,10 +202,12 @@ export function parseStoredRecap(text: string, sessionId: string, nowMs: number,
   if (!reading.ok || reading.repaired.length > 0) return undefined;
   const { answer } = reading;
   if (answer.summary !== raw.summary || answer.title !== raw.title || answer.waitingOn !== raw.waitingOn) return undefined;
-  if (answer.goal !== raw.goal || answer.workingOn !== raw.workingOn || answer.plan !== raw.plan) return undefined;
+  if (answer.goal !== raw.goal || answer.done !== raw.done || answer.workingOn !== raw.workingOn || answer.plan !== raw.plan) return undefined;
   if (answer.todos.length !== raw.todos.length) return undefined;
-  // The plan's items (W172): kept only with a plan, and then exactly as written, changes "" for none.
-  if (Object.hasOwn(raw, 'items')) {
+  // The plan's items (W172): exactly as written, changes "" for none; with an empty plan, none at all.
+  if (answer.plan === '') {
+    if (!Array.isArray(raw.items) || raw.items.length !== 0 || raw.changes !== '') return undefined;
+  } else {
     if (answer.planItems === undefined || !Array.isArray(raw.items) || answer.planItems.length !== raw.items.length) return undefined;
     if ((answer.planChanges ?? '') !== raw.changes) return undefined;
     for (let i = 0; i < answer.planItems.length; i++) {
@@ -202,7 +219,6 @@ export function parseStoredRecap(text: string, sessionId: string, nowMs: number,
     const kept = raw.todos[i] as Record<string, unknown>;
     if (answer.todos[i]!.text !== kept.text || answer.todos[i]!.owner !== kept.owner || answer.todos[i]!.after !== kept.after) return undefined;
   }
-  if (!ignoreAge && nowMs - Math.max(atMs, throughMs) > RECAP_KEEP_MS) return 'expired';
   return { ...answer, at: parsed.at as string, throughAt: parsed.throughAt as string, source: 'pitwall' };
 }
 

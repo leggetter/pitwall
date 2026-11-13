@@ -25,6 +25,7 @@
     "allowJs": true,
     "checkJs": true
   },
-  // .claude/hooks/ is the hand-off hook (W133) and its test.
-  "include": ["src/**/*.ts", "src/**/*.mjs", ".claude/hooks/*.ts", ".claude/hooks/*.mjs", "scripts/**/*.ts", "vite.config.ts", "vitest.config.ts"]
+  // .claude/hooks/ is the hand-off hook (W133) and its test; plugin/hooks/ the pitwall plugin's hook (W176),
+  // whose test is src/plugin/sessionNote.test.ts, so nothing but the plugin ships in plugin/.
+  "include": ["src/**/*.ts", "src/**/*.mjs", ".claude/hooks/*.ts", ".claude/hooks/*.mjs", "plugin/hooks/*.mjs", "scripts/**/*.ts", "vite.config.ts", "vitest.config.ts"]
 }

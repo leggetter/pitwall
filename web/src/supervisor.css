@@ -205,24 +205,26 @@
   font-weight: var(--pw-weight-medium);
 }
 
+/*
+ * The state, when and Open: one group on the right, which wraps under the name as a whole; only when
+ * the group alone is wider than the row, a long badge with "Open the copy", do its own items wrap.
+ */
+.supervisor-handoff-meta {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--pw-space-1) var(--pw-space-2);
+  max-width: 100%;
+  margin-inline-start: auto;
+}
+
 .supervisor-handoff-starting,
 .supervisor-handoff-at {
   color: var(--pw-text-subtle);
   font-size: var(--pw-text-s);
-}
-
-.supervisor-handoff-open {
-  margin-inline-start: auto;
-  max-width: 100%;
-}
-
-.supervisor-handoff-open bdi {
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 16rem;
-  display: inline-block;
-  vertical-align: bottom;
 }
 
 .supervisor-handoff-needs {

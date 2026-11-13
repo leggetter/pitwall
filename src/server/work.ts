@@ -29,6 +29,7 @@ import {
   isEffortLevel,
   RECAP_EFFORT_LEVELS,
   isWorkModel,
+  RECAP_EFFORT,
   RECAP_MODEL,
   SUPERVISOR_MODEL,
   WORK_DEFAULT,
@@ -49,7 +50,8 @@ export const BUILT_IN_WORK: Readonly<WorkChoices> = Object.freeze({
   session: {},
   subagents: {},
   supervisor: { model: SUPERVISOR_MODEL },
-  recaps: { model: RECAP_MODEL },
+  // Low effort since W189 (recaps a cold reader can act on): RECAP_EFFORT.
+  recaps: { model: RECAP_MODEL, effort: RECAP_EFFORT },
   relay: { model: RELAY_MODEL },
 });
 
@@ -75,7 +77,7 @@ export function modelProblem(kind: WorkKind): string {
 export const EFFORT_PROBLEM = `must be low, medium, high, xhigh or max, or "${WORK_DEFAULT}" for Claude Code's own`;
 
 /** Why recaps take at most `high` (RECAP_EFFORT_LEVELS). */
-export const RECAP_EFFORT_PROBLEM = `must be low, medium or high, or "${WORK_DEFAULT}" for Claude Code's own: a recap may write at most 4,096 tokens, thinking included, and xhigh or max could use them up before the answer`;
+export const RECAP_EFFORT_PROBLEM = `must be low, medium or high, or "${WORK_DEFAULT}" for Claude Code's own: a recap may write at most 8,192 tokens, thinking included, and xhigh or max could use them up before the answer`;
 
 /**
  * One kind's `{ model?, effort? }`, checked: `key` is where it is, such as `work.recaps`, for

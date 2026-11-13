@@ -61,7 +61,7 @@ export function finishedAskedHint(session: SessionSummary): string {
 }
 const TITLE_HINTS: Record<NonNullable<SessionSummary['titleSource']>, string> = {
   'claude-code': "Claude Code's title, from the session's first prompt",
-  pitwall: "pitwall's title, from the session's recent turns",
+  pitwall: "pitwall's title, from your prompts in this session",
 };
 
 /** Line 2's label for what a recap says you need to do (W111), as "Asked:" and "Needs:" are. */

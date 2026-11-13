@@ -23,6 +23,9 @@
 //   when its PR does. Both count wherever Needs you counts, the Pull requests item's badge too. A busy
 //   session's PR keeps its badge on the row, and the session is back in Needs you when it stops, if
 //   the PR still needs you. A flag (W153) or a snooze (W154) is for what the session needs, never for its PRs.
+// - Not for me (W188): a PR you dismissed needs you nowhere (prNeedsAttention()), and its row, when it
+//   has one, moves out of the list to a Dismissed section at its end, in every view that lists PR
+//   rows but Needs you, which never lists it. A session that owns one keeps its row, without the need.
 
 import { prNeedsAttention, prOwner, type PullRequestRelation, type PullRequestSummary, type SessionGroup, type SessionSummary } from '../../src/shared/protocol.js';
 import { plainText } from './format.js';
@@ -272,6 +275,9 @@ export type ListRow = Listed | ListedPr;
 
 export const isPrRow = (row: ListRow): row is ListedPr => 'pr' in row;
 
+/** A PR row whose PR you dismissed, Not for me (W188): listed in the Dismissed section, not with the rest. */
+export const isDismissedRow = (row: ListRow): row is ListedPr => isPrRow(row) && row.pr.dismissed !== undefined;
+
 /** A row's identity on the page: its session's id, or `pr:` and its PR's key, which no session id starts with. */
 export const rowKey = (row: ListRow): string => (isPrRow(row) ? prRowKey(prKey(row.pr)) : row.session.sessionId);
 
@@ -339,6 +345,8 @@ export function rowOrder(order: SortOrder, work: Work): (a: ListRow, b: ListRow)
  * - Pull requests: every row with an open PR, the sessions that own one and the PR rows, with no
  *   Finished section, since a session that owns an open PR is never finished work. Always by
  *   Urgency, as W95's list was: it has no Sort.
+ * In a group, All sessions and Pull requests, the PR rows you dismissed (W188) are `dismissed`, the
+ * most recently dismissed first, not in `current`.
  */
 export function listWork(
   groups: readonly ListGroup[],
@@ -346,9 +354,11 @@ export function listWork(
   order: SortOrder,
   home: ReadonlyMap<string, SessionGroup> | undefined,
   work: Work,
-): { current: ListRow[]; finished: Listed[] } {
+): { current: ListRow[]; finished: Listed[]; dismissed: ListedPr[] } {
   const sessions: Listed[] = scope.kind === 'group' ? scope.group.sessions.map((session) => ({ session, group: scope.group })) : listedOnce(groups, home);
-  const prs: ListedPr[] = scope.kind === 'group' ? (scope.group.prs ?? []).map((pr) => ({ pr, group: scope.group })) : prRowsIn(groups);
+  const every: ListedPr[] = scope.kind === 'group' ? (scope.group.prs ?? []).map((pr) => ({ pr, group: scope.group })) : prRowsIn(groups);
+  const prs = every.filter((row) => !isDismissedRow(row));
+  const dismissed = every.filter(isDismissedRow).sort((a, b) => Date.parse(b.pr.dismissed?.at ?? '') - Date.parse(a.pr.dismissed?.at ?? '') || compareKeys(a, b));
   const sorted = (rows: ListRow[], by: SortOrder = order) => rows.sort(rowOrder(by, work));
   const done = (rows: Listed[]) => {
     const compare = sessionOrder(order, true);
@@ -356,15 +366,15 @@ export function listWork(
   };
   switch (scope.kind) {
     case 'needs-you':
-      return { current: sorted([...sessions, ...prs].filter((row) => rowNeedsYou(row, work))), finished: [] };
+      return { current: sorted([...sessions, ...prs].filter((row) => rowNeedsYou(row, work))), finished: [], dismissed: [] };
     case 'prs':
-      return { current: sorted([...sessions.filter(({ session }) => ownsPr(session, work)), ...prs], 'urgency'), finished: [] };
+      return { current: sorted([...sessions.filter(({ session }) => ownsPr(session, work)), ...prs], 'urgency'), finished: [], dismissed };
     case 'starred': {
       const starred = sessions.filter(({ session }) => scope.ids.has(session.sessionId));
-      return { current: sorted(starred.filter(({ session }) => !isDone(session, work))), finished: done(starred) };
+      return { current: sorted(starred.filter(({ session }) => !isDone(session, work))), finished: done(starred), dismissed: [] };
     }
     default:
-      return { current: sorted([...sessions.filter(({ session }) => !isDone(session, work)), ...prs]), finished: done(sessions) };
+      return { current: sorted([...sessions.filter(({ session }) => !isDone(session, work)), ...prs]), finished: done(sessions), dismissed };
   }
 }
 

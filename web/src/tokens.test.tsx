@@ -110,7 +110,8 @@ describe('every token', () => {
     [/^--pw-code-/, "the code palette, for code blocks (2.4)"],
   ];
   /** Mirrored by a constant in code rather than read by name, and why. */
-  const MIRRORED: Record<string, string> = { '--pw-panel-min-w': "panelWidth.ts's PANEL_MIN, which the divider and the menu clamp to" };
+  // --pw-panel-min-w, mirrored in panelWidth.ts's PANEL_MIN, is used since W187 by --pw-supervisor-col.
+  const MIRRORED: Record<string, string> = {};
 
   it('is used, by a stylesheet, another token or the code that reads it, unless it belongs to a set or is mirrored in code (W31)', () => {
     const used = new Set([

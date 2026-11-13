@@ -668,9 +668,10 @@ describe('loading and failing', () => {
   });
 });
 
-describe('the picture (W150)', () => {
+describe('the picture (W150, W189)', () => {
   const PICTURE = {
     goal: 'Make the made-up export work on files over 2 GB.',
+    done: 'The reader fix is merged, and the size field fix is open as a draft PR (#42).',
     workingOn: '#42: the 32-bit size field fix, which the large-file goal needs before the archive job can reuse it.',
     plan: 'The made-up export plan: #42, then the archive job, on #42 now',
   };
@@ -687,33 +688,45 @@ describe('the picture (W150)', () => {
     { text: '#40: the reader', state: 'done' as const },
   ];
 
-  it('shows the goal, what it is working on, the Plan section, and only your to-dos, with no tags and no summary', async () => {
+  it('leads with the summary, then the goal, what is done, what it is working on, the Plan section, your to-dos and the rest, each tagged (W189)', async () => {
     const recap = pictured();
     renderStrip({ session: target(recap) }, fakeApi({ recap }).api);
     await settle();
     expect(strip()?.dataset.picture).toBe('');
+    expect(summaryText()).toBe(SUMMARY);
     expect(text('goal')).toBe(`Goal: ${PICTURE.goal}`);
+    expect(text('done')).toBe(`Done: ${PICTURE.done}`);
     expect(text('working-on')).toBe(`Working on: ${PICTURE.workingOn}`);
-    // A recap stored before W172: the plan's line under a plain heading, nothing to open.
+    // A plan's line with no items: under a plain heading, nothing to open.
     expect(line('plan')?.querySelector('h4')?.textContent).toBe('Plan');
     expect(planLine()).toBe(PICTURE.plan);
     expect(planToggle()).toBeNull();
     expect(document.querySelector('.recap-plan-items')).toBeNull();
     expect(line('for-you')?.querySelector('.recap-label')?.textContent).toBe('For you (2):');
+    expect(screen.getByRole('list', { name: 'For you' }).tagName).toBe('OL');
+    // Yours with no tags; everyone else's under Next, in order, each tagged with who acts (W189).
+    expect(line('next')?.querySelector('.recap-label')?.textContent).toBe('Next:');
+    expect(screen.getByRole('list', { name: 'Next' }).tagName).toBe('OL');
     expect(todos()).toEqual([
       ['Say whether to mark #42 ready', undefined],
       ['Say whether to close #40', undefined],
+      ['Open a backport PR, if you say yes', 'Session'],
+      ['Finish the checks on #42', 'CI'],
+      ['Review #42', 'Someone else'],
     ]);
-    expect(screen.getByRole('list', { name: 'For you' }).tagName).toBe('OL');
-    // The session's, CI's and someone else's to-dos are the conversation's, and the summary is for recaps without the picture.
-    expect(strip()?.textContent).not.toContain('Open a backport PR');
-    expect(strip()?.textContent).not.toContain('Review #42');
-    expect(summaryText()).toBeUndefined();
-    // In order: goal, working on, plan, for you.
+    // In order: goal, done, working on, plan, for you, next.
     const order = [...document.querySelectorAll('[data-line]')].map((each) => (each as HTMLElement).dataset.line);
-    expect(order).toEqual(['goal', 'working-on', 'plan', 'for-you']);
+    expect(order).toEqual(['goal', 'done', 'working-on', 'plan', 'for-you', 'next']);
     // Waiting on you: no quiet line, the to-dos say it.
     expect(document.querySelector('.recap-waiting')).toBeNull();
+  });
+
+  it('has no Done line for a recap made before W189', async () => {
+    const recap = pictured({ done: undefined });
+    renderStrip({ session: target(recap) }, fakeApi({ recap }).api);
+    await settle();
+    expect(line('done')).toBeNull();
+    expect(text('goal')).toBe(`Goal: ${PICTURE.goal}`);
   });
 
   it('says quietly what else it waits on, says when nothing is left, and has no Plan section when the recap names no plan', async () => {
@@ -723,6 +736,7 @@ describe('the picture (W150)', () => {
     expect(document.querySelector('.recap-waiting')?.textContent).toBe('Waiting on CI.');
     expect(line('for-you')).toBeNull();
     expect(note()).toBe('Waiting on CI.');
+    expect(todos()).toEqual([['Finish the checks on #42', 'CI']]);
     expect(line('plan')).toBeNull();
     expect(strip()?.textContent).not.toContain('Plan');
     view.unmount();
@@ -733,7 +747,7 @@ describe('the picture (W150)', () => {
     expect(document.querySelector('.recap-waiting')).toBeNull();
   });
 
-  it('collapsed, keeps Working on, on one line, and how many to-dos are yours; the goal and the rest are hidden', async () => {
+  it('collapsed, keeps the summary, on one line, and how many to-dos are yours; the rest is hidden (W189)', async () => {
     window.localStorage.setItem(RECAP_COLLAPSED_KEY, 'true');
     const recap = pictured();
     renderStrip({ session: target(recap) }, fakeApi({ recap }).api);
@@ -741,14 +755,14 @@ describe('the picture (W150)', () => {
     const button = toggle()!;
     expect(button.getAttribute('aria-expanded')).toBe('false');
     const controlled = button.getAttribute('aria-controls')!.split(' ').map((id) => document.getElementById(id));
-    expect(controlled).toHaveLength(2);
-    expect(controlled.every((each) => each?.hidden === true)).toBe(true);
-    expect(controlled[0]).toBe(line('goal'));
-    expect(line('working-on')?.hidden).toBe(false);
-    expect(line('working-on')?.querySelector('.recap-for-you')?.textContent).toBe('2 for you');
+    expect(controlled).toHaveLength(1);
+    expect(controlled[0]?.hidden).toBe(true);
+    for (const name of ['goal', 'done', 'working-on', 'for-you', 'next']) expect(controlled[0]?.contains(line(name)), name).toBe(true);
+    expect(summaryText()).toBe(SUMMARY);
+    expect(document.querySelector('.recap-summary .recap-for-you')?.textContent).toBe('2 for you');
     fireEvent.click(button);
-    expect(controlled.every((each) => each?.hidden === false)).toBe(true);
-    expect(line('working-on')?.querySelector('.recap-for-you')).toBeNull();
+    expect(controlled[0]?.hidden).toBe(false);
+    expect(document.querySelector('.recap-summary .recap-for-you')).toBeNull();
   });
 
   it("shows the plan's line beside its toggle, collapsed by default, and opens to the items, each tagged, with no Changes when there are none (W172)", async () => {
@@ -837,6 +851,11 @@ describe('the picture (W150)', () => {
     expect(parseRecap({ ...body, plan: undefined })).not.toHaveProperty('goal');
     expect(parseRecap({ ...body, goal: 3 })).toBeUndefined();
     expect(parseRecap({ ...body, workingOn: 'x'.repeat(500) })?.workingOn?.length).toBeLessThanOrEqual(400);
+    // W189's done: kept with the picture, cut the same way; not text, no recap.
+    expect(parseRecap({ ...body, done: 'd'.repeat(500) })?.done?.length).toBeLessThanOrEqual(400);
+    expect(parseRecap({ ...body, done: 3 })).toBeUndefined();
+    expect(parseRecap({ ...body, done: undefined })).not.toHaveProperty('done');
+    expect(parseRecap({ ...body, plan: undefined })).not.toHaveProperty('done');
   });
 
   it("reads the plan's items and changes defensively (W172)", () => {

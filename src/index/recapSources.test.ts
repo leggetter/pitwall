@@ -5,7 +5,7 @@ import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { compactionOf, createRecapSourceReader, SOURCE_TEXT_MAX } from './recapSources.js';
+import { compactionOf, createRecapSourceReader, PROMPT_KEPT_MAX, PROMPTS_KEPT, SOURCE_TEXT_MAX } from './recapSources.js';
 
 let tmp: string;
 let n = 0;
@@ -44,7 +44,10 @@ describe('createRecapSourceReader', () => {
       assistant('On it.'),
       user('a later prompt'),
     );
-    expect(await createRecapSourceReader().read(file)).toEqual({ firstPrompt: 'Fix the nightly export.' });
+    const read = await createRecapSourceReader().read(file);
+    expect(read.firstPrompt).toBe('Fix the nightly export.');
+    // Your messages (W189): the same rule, every one.
+    expect(read.prompts?.map((prompt) => prompt.text)).toEqual(['Fix the nightly export.', 'a later prompt']);
   });
 
   it('takes a prompt queued mid-turn as the first (W99)', async () => {
@@ -95,7 +98,7 @@ describe('createRecapSourceReader', () => {
 
   it('looks back only so far for the newest entries, and forward only so far for the first prompt', async () => {
     const file = await transcript(filler(5000), user('late first prompt'), away('far back'), filler(5000));
-    const read = await createRecapSourceReader({ newestBudget: 2000, firstPromptBudget: 2000, chunkBytes: 512 }).read(file);
+    const read = await createRecapSourceReader({ newestBudget: 2000, firstPromptBudget: 2000, promptsBudget: 2000, chunkBytes: 512 }).read(file);
     expect(read).toEqual({});
     expect(await createRecapSourceReader({ chunkBytes: 512 }).read(file)).toMatchObject({ firstPrompt: 'late first prompt', awaySummary: { text: 'far back' } });
   });
@@ -105,6 +108,34 @@ describe('createRecapSourceReader', () => {
     for (const chunkBytes of [1, 7, 100, 4096]) {
       expect(await createRecapSourceReader({ chunkBytes }).read(file), String(chunkBytes)).toMatchObject({ firstPrompt: 'p', awaySummary: { text: 'on the first line' } });
     }
+  });
+
+  it("keeps your messages with their times, reads only what's appended, and keeps the newest PROMPTS_KEPT, each cut to PROMPT_KEPT_MAX (W189)", async () => {
+    const file = await transcript(user('Fix the export.'), assistant('On it.'), user('a reminder', { isMeta: true }), user('Why does it fail?'));
+    const reader = createRecapSourceReader({ chunkBytes: 64 });
+    const first = await reader.read(file);
+    expect(first.prompts).toEqual([
+      { text: 'Fix the export.', at: expect.stringMatching(/^2026-10-28T/) as unknown as string },
+      { text: 'Why does it fail?', at: expect.stringMatching(/^2026-10-28T/) as unknown as string },
+    ]);
+    const long = `START ${'y'.repeat(PROMPT_KEPT_MAX * 2)} END`;
+    await appendFile(file, user(long) + Array.from({ length: PROMPTS_KEPT }, (_, i) => user(`prompt ${i}`)).join(''));
+    const later = await reader.read(file);
+    expect(later.prompts).toHaveLength(PROMPTS_KEPT);
+    expect(later.prompts![0]!.text).toBe('prompt 0');
+    expect(later.prompts!.at(-1)!.text).toBe(`prompt ${PROMPTS_KEPT - 1}`);
+    // A long one is cut, its start and end kept.
+    const cut = (await createRecapSourceReader().read(await transcript(user(long)))).prompts![0]!.text;
+    expect(cut.length).toBeLessThanOrEqual(PROMPT_KEPT_MAX);
+    expect(cut.startsWith('START')).toBe(true);
+    expect(cut.endsWith('END')).toBe(true);
+  });
+
+  it('reads your messages from PROMPTS_BUDGET before the end of a long file, past a line cut there (W189)', async () => {
+    const file = await transcript(user('early'), filler(5000), user('late'));
+    const read = await createRecapSourceReader({ promptsBudget: 2000, chunkBytes: 256 }).read(file);
+    expect(read.prompts?.map((prompt) => prompt.text)).toEqual(['late']);
+    expect(read.firstPrompt).toBe('early');
   });
 
   it('fails soft: a missing file, a directory, or lines that are not JSON give nothing', async () => {

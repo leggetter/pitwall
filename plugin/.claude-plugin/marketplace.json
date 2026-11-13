@@ -1,0 +1,12 @@
+{
+  "name": "pitwall-local",
+  "owner": { "name": "Phil Leggetter" },
+  "description": "pitwall's plugin, from a pitwall clone: add this folder as a marketplace, then install pitwall@pitwall-local.",
+  "plugins": [
+    {
+      "name": "pitwall",
+      "source": "./",
+      "description": "While pitwall runs, every session knows it's watched, links sessions in pitwall, and can propose a new one."
+    }
+  ]
+}

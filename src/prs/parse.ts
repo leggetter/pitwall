@@ -22,8 +22,11 @@
 //                 reviewed already: GitHub's search index lags, so a PR you've just reviewed can
 //                 still come back from `review-requested:@me` while its own requests have moved on
 //                 (W101's review). The page counts it (`skipped`), so it isn't taken as malformed
+//   state hash    W188's stateHash and redHash, what a dismissal (Not for me) is compared with: see
+//                 stateHashOf() and redHashOf()
 //
 // Nothing here logs: a title from a private repo is as sensitive as session data.
+import { createHash } from 'node:crypto';
 import { hasUnsafeCharacters, isNonEmptyString, isRecord } from '../index/guards.js';
 import { plainLine } from '../index/text.js';
 import {
@@ -194,7 +197,131 @@ function readPullRequest(node: unknown, relation: PullRequestRelation, viewer: s
     if (request === 'none') return 'reviewed';
     if (request !== undefined) pr.reviewRequest = request;
   }
+  const stateHash = stateHashOf(node, pr, viewer);
+  if (stateHash !== undefined) {
+    pr.stateHash = stateHash;
+    const redHash = redHashOf(node, pr);
+    if (redHash !== undefined) pr.redHash = redHash;
+  }
   return pr;
+}
+
+/** A commit's oid: 40 hex digits, or 64 in a SHA-256 repo. */
+const OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+/** A review's node id, as GitHub gives it: short, letters, digits, `_`, `-` and `=`. */
+const NODE_ID = /^[A-Za-z0-9_=-]{1,100}$/;
+
+/**
+ * What W188's state hash is made of, for one PR, or undefined when an input its relation needs can't
+ * be read. Each is a marker that only changes when something new happens, so a refresh with nothing
+ * new gives the same inputs, and so the same hash:
+ *
+ * - `relation`: a PR that mentioned you and now asks your review has something new.
+ * - For your own PR (`authored`):
+ *   - `review`: the newest review by someone else, by its id, any state but pending, so a new
+ *     review, a changes request included, changes it. Your own replies in a review's thread are
+ *     reviews too, which is why they're left out: answering one doesn't bring it back.
+ *   - `changes`: GitHub's decision is changes requested, for one asked with no review it can read.
+ *   - Not its CI, which redHashOf() hashes on its own, so CI pending or passing, as on a re-run or a
+ *     push, leaves this hash as it was.
+ * - For one that isn't yours, from its timeline:
+ *   - `request`: when your review was last requested, of you by name or of a team, so a new request
+ *     or a re-request changes it. A request of someone else doesn't.
+ *   - `mention`: when you were last mentioned. GitHub's MentionedEvent's actor is the person
+ *     mentioned.
+ *   Not its checks, reviews or pushes: they're its author's to act on.
+ *
+ * Merge conflicts aren't an input: GitHub says 'unknown' for a while after each push, so they come
+ * and go with nothing new (PullRequestMergeable).
+ */
+export function stateInputsOf(node: Record<string, unknown>, pr: Pick<PullRequestSummary, 'relation' | 'checks' | 'review'>, viewer: string | undefined): Record<string, unknown> | undefined {
+  const me = viewer?.toLowerCase();
+  if (me === undefined) return undefined;
+  if (pr.relation === 'authored') {
+    const review = newestReviewOf(node.reviews, me);
+    if (review === undefined) return undefined;
+    // A failing head whose oid can't be read leaves no way to tell a new red from an old one.
+    if (pr.checks === 'failing' && headOidOf(node.commits) === undefined) return undefined;
+    return { v: 2, relation: pr.relation, review, changes: pr.review === 'changes-requested' };
+  }
+  const timeline = newestOfYou(node.timelineItems, me);
+  if (timeline === undefined) return undefined;
+  return { v: 2, relation: pr.relation, ...timeline };
+}
+
+/** W188's stateHash: 64 bits of the SHA-256 of stateInputsOf(), as 16 hex digits, or undefined with no inputs. */
+export function stateHashOf(node: Record<string, unknown>, pr: Pick<PullRequestSummary, 'relation' | 'checks' | 'review'>, viewer: string | undefined): string | undefined {
+  const inputs = stateInputsOf(node, pr, viewer);
+  if (inputs === undefined) return undefined;
+  return createHash('sha256').update(JSON.stringify(inputs)).digest('hex').slice(0, 16);
+}
+
+/**
+ * W188's redHash, for your own PR while its CI fails: 64 bits of the SHA-256 of the head commit's
+ * oid, so a dismissal ends when a head that wasn't red at it goes red, on a new push or after it was
+ * green when you dismissed it. Undefined while CI is pending, passing or has no checks, as on a
+ * re-run or just after a push, when nothing new has happened yet; a dismissal holds through that.
+ * Undefined for a PR that isn't yours, whose CI is its author's.
+ */
+export function redHashOf(node: Record<string, unknown>, pr: Pick<PullRequestSummary, 'relation' | 'checks'>): string | undefined {
+  if (pr.relation !== 'authored' || pr.checks !== 'failing') return undefined;
+  const oid = headOidOf(node.commits);
+  return oid === undefined ? undefined : createHash('sha256').update(`red:${oid}`).digest('hex').slice(0, 16);
+}
+
+/** The id of the newest review not by `me`, null when there's none, or undefined when one can't be read. */
+function newestReviewOf(reviews: unknown, me: string): string | null | undefined {
+  if (!isRecord(reviews) || !Array.isArray(reviews.nodes)) return undefined;
+  let newest: string | null = null;
+  for (const node of reviews.nodes) {
+    if (!isRecord(node) || typeof node.id !== 'string' || !NODE_ID.test(node.id)) return undefined;
+    // A deleted account's review has no author: someone else's.
+    const author = isRecord(node.author) && typeof node.author.login === 'string' ? node.author.login.toLowerCase() : undefined;
+    if (node.author !== null && author === undefined) return undefined;
+    if (author !== me) newest = node.id;
+  }
+  return newest;
+}
+
+/** The head commit's oid, or undefined when it can't be read. */
+function headOidOf(commits: unknown): string | undefined {
+  const nodes = isRecord(commits) && Array.isArray(commits.nodes) ? commits.nodes : [];
+  const last: unknown = nodes[nodes.length - 1];
+  const commit = isRecord(last) ? last.commit : undefined;
+  const oid = isRecord(commit) ? commit.oid : undefined;
+  return typeof oid === 'string' && OID.test(oid) ? oid : undefined;
+}
+
+/**
+ * When your review was last requested, of you or of a team, and when you were last mentioned, each
+ * null when the events read have none; undefined when an event can't be read.
+ */
+function newestOfYou(timeline: unknown, me: string): { request: string | null; mention: string | null } | undefined {
+  if (!isRecord(timeline) || !Array.isArray(timeline.nodes)) return undefined;
+  let request: string | null = null;
+  let mention: string | null = null;
+  const later = (a: string | null, b: string) => (a === null || Date.parse(b) > Date.parse(a) ? b : a);
+  for (const node of timeline.nodes) {
+    if (!isRecord(node)) return undefined;
+    if (node.__typename === 'ReviewRequestedEvent') {
+      const at = isoTime(node.createdAt);
+      if (at === undefined) return undefined;
+      const reviewer = node.requestedReviewer;
+      // null: a reviewer GitHub won't show, such as a team you can't see. Not of you.
+      if (reviewer === null) continue;
+      if (!isRecord(reviewer)) return undefined;
+      const ofYou = (reviewer.__typename === 'User' && typeof reviewer.login === 'string' && reviewer.login.toLowerCase() === me) || reviewer.__typename === 'Team';
+      if (ofYou) request = later(request, at);
+    } else if (node.__typename === 'MentionedEvent') {
+      const at = isoTime(node.createdAt);
+      if (at === undefined) return undefined;
+      const actor = isRecord(node.actor) && typeof node.actor.login === 'string' ? node.actor.login.toLowerCase() : undefined;
+      if (actor === me) mention = later(mention, at);
+    } else {
+      return undefined;
+    }
+  }
+  return { request, mention };
 }
 
 /**

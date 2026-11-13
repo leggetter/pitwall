@@ -28,6 +28,7 @@ import { startIndexer } from './index/index.js';
 import { createPrPoller, prsOff } from './prs/index.js';
 import { createRecapEngine } from './recaps/engine.js';
 import { createSupervisor } from './supervisor/supervisor.js';
+import { formatToolListing, listConnectorTools, listingNotice, listsThroughClaude, listToolsThroughClaude, signInInstructions } from './supervisor/connectorTools.js';
 import { childEnvironment } from './server/command.js';
 import { createRelayManager, DEFAULT_PORT, PortInUseError, startServer } from './server/index.js';
 import { createClaudeDefaultsReader } from './server/claudeDefaults.js';
@@ -35,6 +36,7 @@ import { createWorkStore } from './server/work.js';
 import { isPitwallOwn } from './server/own.js';
 import { createUsageSource } from './usage/service.js';
 import { type DirCheckContext, LaunchDirError, pitwallHome, prepareLaunchDir, removeWhenUsed, writeLaunchFile } from './server/launch.js';
+import { type ServerFileHandle, claimServerFile } from './server/serverFile.js';
 import { RELAY_NAME } from './server/relayPrompt.js';
 import { SUPERVISOR_NAME } from './supervisor/prompt.js';
 import { DEFAULT_POLL_INTERVAL_MS, PRS_POLL_INTERVAL_MS, RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, RECAP_MODEL, RECAP_UPDATE_DEBOUNCE_MS, SUPERVISOR_MODEL } from './shared/protocol.js';
@@ -51,7 +53,8 @@ export const INTERVAL_MAX_SECONDS = 300;
 export const TOKEN_MIN_DIFFERENT = 8;
 
 export const USAGE = `Usage: pitwall [root...] [--config <path>] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs] [--no-recaps] [--no-supervisor]
-              [--no-usage]
+              [--no-connectors] [--no-usage]
+       pitwall --connector-tools <name> [--config <path>]
 
 Lists the Claude Code sessions running under each root, in a local web UI.
 The roots default to the config file's, then to the current directory.
@@ -87,6 +90,21 @@ Options:
                         sessions and PRs, and reads a session's latest turns
                         when you ask about it. It messages a session or starts
                         one only after you approve its draft in the page.
+  --no-connectors       Give the supervisor none of the connectors in the
+                        config file, and never start one. Without it, each
+                        connector in supervisor.connectors starts with the
+                        supervisor, and the supervisor may call the tools you
+                        chose as read-only, which send its queries to that
+                        service and its results to the model.
+  --connector-tools <name>
+                        Run the connector's command, or call its URL, once, to
+                        list its server's tools, print them with the ones its
+                        server says are read-only preselected, and exit. Put
+                        the lists it prints in the connector's "tools" and
+                        "otherTools". For one you sign in to with OAuth (a URL
+                        and no headers), it lists them through claude -p on
+                        Haiku, with Claude Code's sign-in, or says how to sign
+                        in.
   --no-usage            Don't read your plan's usage percentages, and never run
                         claude's /usage. Without it, while a pitwall page is
                         open and visible, pitwall runs /usage with claude -p at
@@ -130,6 +148,19 @@ Config file:
                         Code's defaults, the supervisor ${SUPERVISOR_MODEL},
                         recaps ${RECAP_MODEL} and the relay haiku. Preferences
                         can change them for a run, without writing the file.
+  supervisor.connectors The supervisor's read-only connectors, each
+                        { "name", "server", "tools", "otherTools" }. "server"
+                        is { "command", "args", "env" }, where "env" names the
+                        variables it gets from pitwall's environment, or
+                        { "url", "headers" }, https only, where Authorization,
+                        the one header that may carry a credential, takes a
+                        variable as \${NAME}, or { "url", "oauth" } for one
+                        you sign in to through Claude Code. Never a value in
+                        the file.
+                        "tools" are the tools you chose as read-only, the only
+                        ones the supervisor may call; "otherTools" the rest,
+                        kept from it. pitwall --connector-tools <name> lists
+                        them. A tool in neither stops the supervisor.
 
   A flag wins over an environment variable, which wins over the file. Roots
   given as arguments replace the file's, and each keeps its "github" settings
@@ -199,6 +230,8 @@ export function currentDirectory(readCwd: () => string = () => process.cwd()): s
 export type CliCommand =
   | { kind: 'help' }
   | { kind: 'version' }
+  /** `--connector-tools <name>` (W184): list a connector's tools and exit. */
+  | { kind: 'connector-tools'; name: string; config?: string }
   | {
       kind: 'run';
       /** As given, not yet resolved. Empty means the config file's roots, else the current directory. */
@@ -216,6 +249,8 @@ export type CliCommand =
       recaps: boolean;
       /** False with `--no-supervisor`: pitwall never runs the supervisor. */
       supervisor: boolean;
+      /** False with `--no-connectors` (W184): the supervisor gets none, and pitwall never starts one. */
+      connectors: boolean;
       /** False with `--no-usage`: pitwall never runs `/usage` (W159). */
       usage: boolean;
     };
@@ -235,6 +270,8 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
         'no-prs': { type: 'boolean' },
         'no-recaps': { type: 'boolean' },
         'no-supervisor': { type: 'boolean' },
+        'no-connectors': { type: 'boolean' },
+        'connector-tools': { type: 'string' },
         'no-usage': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'v' },
@@ -248,6 +285,12 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
   if (values.version) return { kind: 'version' };
 
   if (values.config === '') throw new UsageError('--config needs a path');
+  const connectorTools = values['connector-tools'];
+  if (connectorTools !== undefined) {
+    if (connectorTools === '') throw new UsageError('--connector-tools needs a connector\'s name');
+    if (positionals.length > 0) throw new UsageError('--connector-tools takes no roots');
+    return { kind: 'connector-tools', name: connectorTools, ...(values.config === undefined ? {} : { config: values.config }) };
+  }
   return {
     kind: 'run',
     roots: positionals,
@@ -258,6 +301,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     prs: !values['no-prs'],
     recaps: !values['no-recaps'],
     supervisor: !values['no-supervisor'],
+    connectors: !values['no-connectors'],
     usage: !values['no-usage'],
   };
 }
@@ -515,6 +559,31 @@ export function claimOpenMarker(marker: string): boolean {
   }
 }
 
+/**
+ * `pitwall --connector-tools <name>` (W184): says what it will run, asks the connector's server for
+ * its tools, prints them and the lists for the config file, and exits: 0 when listed, 1 when not.
+ */
+async function printConnectorTools(name: string, config: LoadedConfig): Promise<number> {
+  const connector = config.supervisor?.connectors.find((entry) => entry.name === name);
+  if (connector === undefined) {
+    const names = config.supervisor?.connectors.map((entry) => entry.name) ?? [];
+    console.error(`pitwall: ${config.file} has no connector named ${JSON.stringify(name.slice(0, 40))} in supervisor.connectors${names.length === 0 ? '' : `; it has ${names.join(', ')}`}.`);
+    return 1;
+  }
+  console.error(`pitwall: ${listingNotice(connector)}`);
+  const listing = listsThroughClaude(connector.server) ? await listToolsThroughClaude(connector.name, connector.server) : await listConnectorTools(connector.server, { version: readVersion() });
+  if (!listing.ok && 'needsAuth' in listing && listsThroughClaude(connector.server)) {
+    console.error(signInInstructions(connector.name, connector.server));
+    return 1;
+  }
+  if (!listing.ok) {
+    console.error(`pitwall: couldn't list the connector ${connector.name}'s tools: ${listing.error}`);
+    return 1;
+  }
+  process.stdout.write(formatToolListing(connector, listing));
+  return 0;
+}
+
 function readVersion(): string {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
   return pkg.version;
@@ -557,6 +626,7 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
     // The config file (W103, D24), before the roots, which can come from it.
     config = loadConfig({ ...(command.config === undefined ? {} : { file: command.config }), cwd });
     for (const warning of config.warnings) console.error(`pitwall: ${warning}`);
+    if (command.kind === 'connector-tools') return await printConnectorTools(command.name, config);
     roots = effectiveRoots(command.roots, config, cwd);
     token = resolveToken();
   } catch (error) {
@@ -613,7 +683,12 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   const recaps = command.recaps ? createRecapEngine({ relay: { name: RELAY_NAME, sent: (msgId) => relay.sentByRelay(msgId) }, work: () => work.choice('recaps') }) : undefined;
   // The supervisor (M5, W113): started only when the page asks. The index leaves it out, as it does the relay.
   // With --no-supervisor, there's none, and pitwall never runs it.
-  const supervisor = command.supervisor ? createSupervisor({ work: () => work.choice('supervisor') }) : undefined;
+  // Its connectors (W184, D28): the config file's, none with --no-connectors, started only with it.
+  const connectors = command.connectors ? (config.supervisor?.connectors ?? []) : [];
+  if (command.supervisor && connectors.length > 0) {
+    console.error(`pitwall: the supervisor's connectors, read-only: ${connectors.map((connector) => connector.name).join(', ')}. --no-connectors turns them off.`);
+  }
+  const supervisor = command.supervisor ? createSupervisor({ work: () => work.choice('supervisor'), connectors }) : undefined;
   // The Usage view's source (W158): reads the transcripts and the plan's week from `/usage` (W157) only
   // when the view asks, and the header's run rate (W159) when a visible page asks, against the config
   // file's weekend reserve. The index leaves its `/usage` call out, as it does a recap call. With
@@ -678,9 +753,12 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   // handler yet would kill the process outright, skipping the exit hook that
   // deletes the launch file. SIGHUP comes when the terminal closes.
   let stopping = false;
+  // Set once the signal handlers are in: where this run listens, for the plugin's SessionStart hook (W176).
+  let serverFile: ServerFileHandle | undefined;
   const shutdown = () => {
     if (stopping) return;
     stopping = true;
+    serverFile?.close();
     // tsx watch and terminals can deliver the same signal twice; the second is ignored.
     setTimeout(() => process.exit(1), 3000).unref();
     server
@@ -700,6 +778,10 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
   process.on('SIGHUP', shutdown);
+  // The URL and pid only, never the token (W176). A run under npm run dev, which sets the marker,
+  // doesn't replace a live CLI run's file. Deleted on close, and on exit, only while it's still this run's.
+  serverFile = claimServerFile({ home: pitwallHome(), url: server.url, dev: marker !== undefined });
+  process.once('exit', () => serverFile?.close());
 
   // The launch file always has the token: it's the one place a fixed token is written (D7).
   const url = `${server.url}/#token=${token}`;

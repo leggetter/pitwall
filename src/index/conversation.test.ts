@@ -455,9 +455,17 @@ describe('toolSummary', () => {
 
   it('falls back to the tool name, and never shows other input', () => {
     expect(toolSummary('mcp__example__do_thing', { secret: 'value' })).toBe('mcp__example__do_thing');
+    expect(toolSummary('mcp__example__do_thing', { secret: 'value' }, false)).toBe('mcp__example__do_thing');
     expect(toolSummary('Bash', { command: 42 })).toBe('Bash');
     expect(toolSummary('Read', 'not an object')).toBe('Read');
     expect(toolSummary('Bash', { command: '   ' })).toBe('Bash');
+  });
+
+  it('shows an MCP call’s arguments only when asked, for the supervisor’s panel (W192, G2)', () => {
+    expect(toolSummary('mcp__slack__search', { query: 'release\nnotes', limit: 5 }, true)).toBe('mcp__slack__search: {"query":"release\\nnotes","limit":5}');
+    expect(toolSummary('mcp__slack__search', {}, true)).toBe('mcp__slack__search');
+    expect(toolSummary('Read', { file_path: '/w/a.ts', limit: 3 }, true)).toBe('Read: /w/a.ts');
+    expect(toolSummary('mcp__notion__fetch', { q: 'x'.repeat(1000) }, true).length).toBeLessThanOrEqual(200);
   });
 
   it('keeps the summary to 200 characters on one line', () => {

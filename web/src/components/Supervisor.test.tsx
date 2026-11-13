@@ -1116,7 +1116,7 @@ describe('what it sent and started (W124)', () => {
     expect(region()).toBeDefined();
     const rows = within(region()).getAllByRole('listitem');
     expect(rows.map((row) => row.querySelector('.supervisor-handoff-what')?.textContent)).toEqual(['Started pitwall-test-asking', 'Message approved for pitwall-test-beta', 'Started pitwall-test-started']);
-    expect(rows[0]!.querySelector('[data-handoff-needs]')?.textContent).toBe('pitwall-test-asking needs you: Pick a migration name');
+    expect(rows[0]!.querySelector('[data-handoff-needs]')?.textContent).toBe('Pick a migration name');
     expect(rows[1]!.querySelector('[data-handoff-needs]')).toBeNull();
     expect(within(rows[2]!).getByText('Busy')).toBeDefined();
     fireEvent.click(within(rows[2]!).getByRole('button', { name: 'Open pitwall-test-started' }));

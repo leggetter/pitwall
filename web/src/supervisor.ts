@@ -5,8 +5,9 @@
 // page never starts it by itself, only when you press Start or send it a message.
 //
 // - The panel's place: `?supervisor`, with no value, last, after the selection and any ?session= or
-//   ?pr= (openSession.ts, openPr.ts). It opens over the page, beside the open session's or PR's view,
-//   which stays (W177): opening it keeps ?session= and ?pr=, and opening either keeps ?supervisor,
+//   ?pr= (openSession.ts, openPr.ts). It opens beside the open session's or PR's view, which stays
+//   (W177): from 1,200 px as a column of its own that pushes the other columns left (W187), below
+//   that over the page. Opening it keeps ?session= and ?pr=, and opening either keeps ?supervisor,
 //   each in one pushed history entry.
 // - The state is read defensively, as the 'prs' message is: an approval that isn't well formed is
 //   left out, and a state that isn't one at all is no supervisor, so the page shows no button for it.
@@ -319,7 +320,7 @@ export interface HandoffRow {
   handoff: SupervisorHandoff;
   /** The session it went to, or started, as the snapshot lists it: undefined until the index has it. */
   session?: SessionSummary;
-  /** "<name> needs you: <reason>", while pitwall's own Needs you says so. */
+  /** Why it needs you, while pitwall's own Needs you says so: the row's name and badge say the rest. */
   needs?: string;
 }
 
@@ -367,7 +368,7 @@ export function handoffRows(handoffs: readonly SupervisorHandoff[] | undefined, 
     const row: HandoffRow = { handoff: kept };
     if (session !== undefined) {
       row.session = session;
-      if (needsAttention(session)) row.needs = `${visibleString(session.name)} needs you: ${needsReason(session)}`;
+      if (needsAttention(session)) row.needs = needsReason(session);
     }
     byKey.set(key, { row, order, started });
   });

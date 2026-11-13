@@ -16,7 +16,7 @@ M3.1 was built on `m3.1/integration` ([PR #69](https://github.com/leggetter/pitw
 
 M4, Phil's open pull requests, was built on `m4/integration` (W92 to W117) and merged into `main` on 2026-11-02 in [PR #117](https://github.com/leggetter/pitwall/pull/117), after Phil's try-out and W108's security review.
 
-M5, the supervisor, was built on `m5/integration` (W109 to W129) and merged into `main` on 2026-11-02 in [PR #138](https://github.com/leggetter/pitwall/pull/138), after Phil's try-out, W116's security review and the re-review of W124 to W128: per-session recaps, pitwall's MCP server, the supervisor and its panel, approvals for messages, new sessions and resumes, New session from here (since taken out, W130, D27), and model and effort per kind of work. M5.1, the work after M5, was built on `m5.1/integration` (W130 to W164) and merged into `main` on 2026-11-09 in [PR #197](https://github.com/leggetter/pitwall/pull/197), after W164's security review: Needs you narrowed to sessions blocked on you now, with flag and snooze, recaps that give the picture, spin-off proposals' first piece, and fixes from daily use. M5.2, efficiency, was built on `m5.2/integration` (W155 to W160, W166, W169, W170, W172, W177, W180 to W182) and merged into `main` on 2026-11-10 (PR number to follow), after W180's security review: work profiles, the Usage view and run rate, the supervisor reading them, the supervisor over the page, and fixes from daily use. M5.3, the rest, starts with W176 (the pitwall plugin), on `m5.3/integration`. See `NOW.md`.
+M5, the supervisor, was built on `m5/integration` (W109 to W129) and merged into `main` on 2026-11-02 in [PR #138](https://github.com/leggetter/pitwall/pull/138), after Phil's try-out, W116's security review and the re-review of W124 to W128: per-session recaps, pitwall's MCP server, the supervisor and its panel, approvals for messages, new sessions and resumes, New session from here (since taken out, W130, D27), and model and effort per kind of work. M5.1, the work after M5, was built on `m5.1/integration` (W130 to W164) and merged into `main` on 2026-11-09 in [PR #197](https://github.com/leggetter/pitwall/pull/197), after W164's security review: Needs you narrowed to sessions blocked on you now, with flag and snooze, recaps that give the picture, spin-off proposals' first piece, and fixes from daily use. M5.2, efficiency, was built on `m5.2/integration` (W155 to W160, W166, W169, W170, W172, W177, W180 to W182) and merged into `main` on 2026-11-10 in [PR #234](https://github.com/leggetter/pitwall/pull/234), after W180's security review: work profiles, the Usage view and run rate, the supervisor reading them, the supervisor over the page, and fixes from daily use. M5.3, the rest, starts with W176 (the pitwall plugin), on `m5.3/integration`. See `NOW.md`.
 
 ## Rules
 
@@ -67,7 +67,9 @@ npm start -- [root...]   run the built CLI, node dist/cli.js. `--interval <secon
                          `--no-open` leaves the browser alone, `--no-prs` turns off your open
                          pull requests, so pitwall never runs gh, `--no-recaps` turns off recaps, so
                          pitwall never sends transcript excerpts to the model, `--no-supervisor` turns
-                         off the supervisor, so pitwall never runs it, `--no-usage` turns off the plan's
+                         off the supervisor, so pitwall never runs it, `--no-connectors` gives it none of
+                         the config file's connectors (W184), `--connector-tools <name>` lists one's tools and
+                         exits, `--no-usage` turns off the plan's
                          percentages, so pitwall never runs `/usage`, and `--config <path>`
                          reads that config file instead of ~/.pitwall/config.json (README's Configuration)
 npm run appcheck -- --out <dir>   the headless app check of the production build, after npm run build
@@ -84,16 +86,18 @@ NOW.md                   where the work stands and what is next; every session r
 PLAN.md                  the living design: architecture, security, open milestones, open questions
 docs/plan-archive.md     history: M0 to M5 work breakdowns, findings and decisions
 .claude/skills/handoff/  the handoff skill: update NOW.md, commit, /clear
-skills/spin-off/         the spin-off skill (W163), for the sessions pitwall watches, installed once as a personal
-                         skill (README): a session ends its turn with a `spin-off` block that proposes a new session.
-                         Outside .claude/, so it isn't one of this repo's project skills
+plugin/                  the pitwall plugin (W176), for the sessions pitwall watches, installed once (README): a
+                         SessionStart hook, hooks/sessionNote.mjs, that adds a short note while pitwall runs (found
+                         through $PITWALL_HOME/server.json, src/server/serverFile.ts), and the `pitwall` skill, W163's
+                         spin-off proposals. Outside .claude/, so it isn't one of this repo's project plugins. Its
+                         test is src/plugin/sessionNote.test.ts; typechecked, not built
 .claude/settings.json    pitwall's own project settings, checked in: the hand-off hook and disableClaudeAiConnectors.
                          .claude/settings.local.json, untracked, is a person's own (Efficiency)
 .claude/hooks/           handoffNudge.mjs, a Stop hook that tells a session past 200K tokens of context, and again
                          past 400K, to finish safely and use the handoff skill (W133, spike 012); fails soft, leaves
                          sub-agents alone. Its test sits beside it; typechecked and in npm test, not built
 README.md                for newcomers: what pitwall is, how to run it, how it works, the roadmap
-docs/decisions.md        settled decisions, D1 to D27, with their reasoning
+docs/decisions.md        settled decisions, D1 to D28, with their reasoning
 docs/design-system.md    the web UI's design system: tokens, layout, components, content, accessibility
 docs/images/             screenshots for README.md
 docs/spikes/             spike write-ups, one file per spike, with a script beside some
@@ -119,8 +123,10 @@ src/supervisor/          the supervisor (M5, W113, W115, D4): one claude -p sess
                          supervisorGateHook.mjs the deny-only recipient gate. Its MCP server is
                          src/server/mcp.ts (the route, by hand), mcpTools.ts (the read-only tools, W112) and
                          supervisorActions.ts (approve, spawn_session and the checks, W115); the snapshot's
-                         view and routes are src/server/snapshotSupervisor.ts and supervisorRoutes.ts. Off
-                         with --no-supervisor
+                         view and routes are src/server/snapshotSupervisor.ts and supervisorRoutes.ts. Its
+                         read-only connectors (W184, D28): connectors.ts the config and what a start adds,
+                         connectorServer.ts the credential routes, connectorLauncher.mjs a stdio connector's
+                         environment, connectorTools.ts `--connector-tools`. Off with --no-supervisor
 src/usage/               the usage report's reads and totals (M5.1, W131): scan.ts streams transcripts and keeps
                          numbers only, report.ts aggregates them by repo, model, day, hour and sub-agent,
                          prices.ts has the API list prices behind its stand-in cost, format.ts the text tables,
@@ -161,7 +167,7 @@ THIRD_PARTY_NOTICES.md   licences for the bundled fonts and icons
 .env.example             how to make a fixed PITWALL_TOKEN for npm run dev (D7), and PITWALL_DEV_RECAPS;
                          .env is gitignored
 CLAUDE.md                imports this file for Claude Code
-tsconfig.json            server typecheck: src/ with tests, .claude/hooks/, scripts/, config files
+tsconfig.json            server typecheck: src/ with tests, .claude/hooks/, plugin/hooks/, scripts/, config files
 tsconfig.build.json      server build: src/ to dist/, without tests
 web/tsconfig.json        web UI typecheck (DOM, react-jsx, bundler resolution)
 vite.config.ts           web UI build

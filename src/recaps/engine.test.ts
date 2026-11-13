@@ -9,9 +9,9 @@ import type { RecapSourceReader, RecapSources } from '../index/recapSources.js';
 import { PLAN_TURNS_CAP, RECAP_DAILY_BUDGET, RECAP_DEBOUNCE_MS, RECAP_TURNS_CAP, RECAP_UPDATE_DEBOUNCE_MS, type ConversationEntry, type ConversationPage, type IndexSnapshot, type PullRequestList, type PullRequestSummary, type SessionRecap, type SessionSummary, type WorkChoice } from '../shared/protocol.js';
 import { modelRejectedMessage } from '../server/work.js';
 import { memoryBudget } from './budget.js';
-import { memoryRecapStore } from './store.js';
+import { memoryRecapStore, type RecapStore } from './store.js';
 import type { RecapChildEvents, RecapSpawner } from './call.js';
-import { createRecapEngine, ownersNeedingYou, OWN_NAME_MS, PAUSE_AFTER_FAILURES, RETRY_AFTER_FAILURE_MS, secondsToMidnight, type RecapEngineOptions, type RecapIndex } from './engine.js';
+import { createRecapEngine, keepsTitle, ownersNeedingYou, OWN_NAME_MS, PAUSE_AFTER_FAILURES, RETRY_AFTER_FAILURE_MS, secondsToMidnight, type RecapEngineOptions, type RecapIndex } from './engine.js';
 import { CALL_FAILED, RECAP_REFUSALS, recapArgs, RECAP_NAME } from './prompt.js';
 
 const MINUTE = 60_000;
@@ -39,6 +39,7 @@ const answer = (overrides: Record<string, unknown> = {}) => ({
   waitingOn: 'you',
   title: 'Fix the nightly export',
   goal: 'Make the nightly export work on large files.',
+  done: 'Draft PR #42 with the fix, and CI passes on it.',
   workingOn: '#42: the fix, which the export needs.',
   plan: '',
   items: [],
@@ -224,6 +225,28 @@ function harness(options: Partial<RecapEngineOptions> = {}) {
 }
 
 describe('when a session is recapped', () => {
+  it('names the session, its repo and your messages in a first recap and an update (W189)', async () => {
+    const h = harness();
+    h.start();
+    let a = h.add('a');
+    h.sources.set('/made-up/projects/a.jsonl', { firstPrompt: 'Fix a.', prompts: [{ text: 'Fix a.' }, { text: 'Why is it slow?', at: '2026-10-29T10:00:00.000Z' }] });
+    h.clock.now += 6 * MINUTE;
+    await h.poll([a]);
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0]!.input).toContain('<session-info>\nName: pitwall-test-a\nRepo: repo\n</session-info>');
+    expect(h.calls[0]!.input).toContain('<your-messages>\n[10-29 10:00] Why is it slow?\n</your-messages>');
+    await h.reply(h.calls[0], envelope(answer()));
+    const newer = new Date(h.clock.now + MINUTE).toISOString();
+    h.pages.get('a')!.push({ kind: 'user', text: 'Carry on.', at: newer });
+    h.clock.now += 16 * MINUTE;
+    a = { ...a, lastActivityAt: newer };
+    await h.poll([a]);
+    expect(h.calls).toHaveLength(2);
+    expect(h.calls[1]!.input).toContain('<previous-recap>');
+    expect(h.calls[1]!.input).toContain('<session-info>\nName: pitwall-test-a\nRepo: repo\n</session-info>');
+    expect(h.calls[1]!.input).toContain('<your-messages>');
+  });
+
   it("recaps a running session once its turn has ended and it's been idle RECAP_DEBOUNCE_MS, with spike 010's call", async () => {
     const h = harness();
     h.start();
@@ -366,7 +389,7 @@ describe('when a session is recapped', () => {
     await h.poll([a]);
     expect(h.calls).toHaveLength(2);
     const input = h.calls[1]!.input!;
-    expect(input).toContain('<previous-recap>\n{"goal":"Make the nightly export work on large files.","workingOn":"#42: the fix, which the export needs.","plan":"","items":[],"changes":"","summary":"You asked it to fix the nightly export. It opened draft PR #42 with a fix, and CI passes.","todos":[{"text":"Open a backport PR for 1.x","owner":"session"}');
+    expect(input).toContain('<previous-recap>\n{"goal":"Make the nightly export work on large files.","done":"Draft PR #42 with the fix, and CI passes on it.","workingOn":"#42: the fix, which the export needs.","plan":"","items":[],"changes":"","summary":"You asked it to fix the nightly export. It opened draft PR #42 with a fix, and CI passes.","todos":[{"text":"Open a backport PR for 1.x","owner":"session"}');
     expect(input).toContain('<turns-since-previous-recap>');
     expect(input).toContain('User: Yes, open it.');
     expect(input).not.toContain('Please fix a.');
@@ -469,7 +492,7 @@ describe('kept across restarts (W132)', () => {
     expect(two.engine.recap(a)?.stale).toBe(true);
     await two.poll([a]);
     expect(two.calls).toHaveLength(1);
-    expect(two.calls[0]!.input).toContain('<previous-recap>\n{"goal":"Make the nightly export work on large files.","workingOn":"#42: the fix, which the export needs.","plan":"","items":[],"changes":"","summary":"You asked it to fix the nightly export.');
+    expect(two.calls[0]!.input).toContain('<previous-recap>\n{"goal":"Make the nightly export work on large files.","done":"Draft PR #42 with the fix, and CI passes on it.","workingOn":"#42: the fix, which the export needs.","plan":"","items":[],"changes":"","summary":"You asked it to fix the nightly export.');
     expect(two.calls[0]!.input).toContain('User: Yes, open it.');
     await two.reply(two.calls[0], envelope(answer({ summary: 'It opened #43.' })));
     expect(store.current().get(A)).toMatchObject({ summary: 'It opened #43.', throughAt: newer });
@@ -1144,16 +1167,20 @@ describe("the picture and the session's PRs (W150)", () => {
     expect(h.engine.recap(a)).toMatchObject({ goal: answer().goal, workingOn: answer().workingOn, plan: 'M2 of the export, on W2' });
   });
 
-  it('makes a first recap, not an update, after a recap without the picture, and after a compaction newer than the previous recap', async () => {
+  it('makes a first recap, not an update, after a recap without the picture or done, and after a compaction newer than the previous recap', async () => {
     const ID = '00000000-0000-4000-8000-0000000000c1';
-    for (const why of ['no picture', 'no plan items', 'compacted'] as const) {
+    for (const why of ['no picture', 'no plan items', 'no done', 'compacted'] as const) {
       const clock = Date.parse('2026-10-29T12:00:00.000Z');
-      const { goal: _goal, workingOn: _workingOn, plan: _plan, items: _items, changes: _changes, ...beforeW150 } = answer();
-      // A recap kept before W150, without the picture; one kept before W172, with a plan's line and
-      // none of its items (W172), so the list appears at its next activity; or one made now.
-      const fields = why === 'no picture' ? beforeW150 : why === 'no plan items' ? keptOf({ ...answer({ plan: 'M2 of the export, on W2' }), items: undefined }) : keptOf(answer());
+      const { goal: _goal, done: _done, workingOn: _workingOn, plan: _plan, items: _items, changes: _changes, ...beforeW150 } = answer();
+      // A recap without the picture (before W150); one with a plan's line and none of its items
+      // (before W172); one without done (before W189); or one made now. The store keeps none of the
+      // first three since W189 (its version 2), so a stub hands them over, as a store from before it would.
+      const { done: _w189, ...beforeW189 } = keptOf(answer());
+      const fields =
+        why === 'no picture' ? beforeW150 : why === 'no plan items' ? keptOf({ ...answer({ plan: 'M2 of the export, on W2' }), items: undefined }) : why === 'no done' ? beforeW189 : keptOf(answer());
       const kept: SessionRecap = { ...fields, at: new Date(clock).toISOString(), throughAt: new Date(clock - 6 * MINUTE).toISOString(), source: 'pitwall' } as SessionRecap;
-      const h = harness({ recapStore: memoryRecapStore(new Map([[ID, kept]])) });
+      const recapStore: RecapStore = { load: () => ({ recaps: new Map([[ID, kept]]), ignored: 0, expired: 0 }), save: () => undefined, remove: () => undefined };
+      const h = harness({ recapStore });
       h.start();
       let a = h.add(ID);
       expect(h.engine.recap(a), why).toMatchObject({ summary: kept.summary });
@@ -1316,5 +1343,112 @@ describe('an answer in a busy stretch (W152)', () => {
     const turns = /<turns-since-previous-recap>\n([\s\S]*)\n<\/turns-since-previous-recap>/.exec(h.calls[0]!.input!)![1]!;
     expect(turns.split('\n')[0]).toBe('[… older turns since the previous recap not read …]');
     expect(turns).not.toContain('40 a day is fine');
+  });
+});
+
+describe("a session's title stays on what the session is about (W190)", () => {
+  const FIRST = '2026-10-29T10:00:00.000Z';
+
+  /** A session with a first recap titled 'Fix the nightly export', then one more turn `entry` and an update answered with `reply`. */
+  async function updated(entry: ConversationEntry, reply: Record<string, unknown>, prompts?: RecapSources['prompts']) {
+    const h = harness();
+    h.start();
+    let a = h.add('a');
+    h.sources.set('/made-up/projects/a.jsonl', { firstPrompt: 'Fix a.', prompts: [{ text: 'Fix a.', at: FIRST }] });
+    await h.poll([a]);
+    await h.reply(h.calls[0], envelope(answer()));
+    const newer = new Date(h.clock.now + MINUTE).toISOString();
+    h.pages.get('a')!.push({ ...entry, at: newer });
+    if (prompts !== undefined) h.sources.set('/made-up/projects/a.jsonl', { firstPrompt: 'Fix a.', prompts: prompts.map((prompt) => (prompt.at === 'NEWER' ? { ...prompt, at: newer } : prompt)) });
+    h.clock.now += 16 * MINUTE;
+    a = { ...a, lastActivityAt: newer };
+    await h.poll([a]);
+    expect(h.calls).toHaveLength(2);
+    expect(h.calls[1]!.input).toContain('<previous-recap>');
+    await h.reply(h.calls[1], envelope(answer({ ...reply, title: 'Is another session on retries' })));
+    return { h, a };
+  }
+
+  it("keeps the title when only a message from another session came in, whatever the model answers", async () => {
+    const { h, a } = await updated({ kind: 'cross-session', text: 'Are you working on retries too?', from: 'peer-b' } as ConversationEntry, { summary: 'Another session asked whether it owns retries.' });
+    expect(h.engine.decorate(a)).toMatchObject({ title: 'Fix the nightly export', titleSource: 'pitwall' });
+    // The rest of the update is the model's.
+    expect(h.engine.decorate(a).recap).toMatchObject({ title: 'Fix the nightly export' });
+  });
+
+  it('keeps the title on a first recap redone after a compaction, when none of your messages came in', async () => {
+    const h = harness();
+    h.start();
+    let a = h.add('a');
+    h.sources.set('/made-up/projects/a.jsonl', { firstPrompt: 'Fix a.', prompts: [{ text: 'Fix a.', at: FIRST }] });
+    await h.poll([a]);
+    await h.reply(h.calls[0], envelope(answer()));
+    const newer = new Date(h.clock.now + MINUTE).toISOString();
+    h.pages.get('a')!.push({ kind: 'assistant', text: 'Compacted, carrying on.', at: newer } as ConversationEntry);
+    h.sources.set('/made-up/projects/a.jsonl', { firstPrompt: 'Fix a.', prompts: [{ text: 'Fix a.', at: FIRST }], compaction: { text: '1. Primary Request and Intent:\nFix a.', at: newer } });
+    h.clock.now += 16 * MINUTE;
+    a = { ...a, lastActivityAt: newer };
+    await h.poll([a]);
+    expect(h.calls).toHaveLength(2);
+    expect(h.calls[1]!.input).not.toContain('<previous-recap>');
+    await h.reply(h.calls[1], envelope(answer({ title: 'Is another session on retries' })));
+    expect(h.engine.decorate(a)).toMatchObject({ title: 'Fix the nightly export' });
+  });
+
+  it("keeps the title when the only newer turns are the session's own", async () => {
+    const { h, a } = await updated({ kind: 'assistant', text: 'Done: the retries are in.' }, {});
+    expect(h.engine.decorate(a)).toMatchObject({ title: 'Fix the nightly export' });
+  });
+
+  it('lets the model change the title once a message of yours has come in', async () => {
+    const { h, a } = await updated({ kind: 'user', text: 'Now rework the retries instead.' }, {}, [
+      { text: 'Fix a.', at: FIRST },
+      { text: 'Now rework the retries instead.', at: 'NEWER' },
+    ]);
+    expect(h.engine.decorate(a)).toMatchObject({ title: 'Is another session on retries', titleSource: 'pitwall' });
+  });
+
+  it("takes the model's title when the session's messages couldn't be read", async () => {
+    const h = harness();
+    h.start();
+    let a = h.add('a');
+    await h.poll([a]);
+    await h.reply(h.calls[0], envelope(answer()));
+    const newer = new Date(h.clock.now + MINUTE).toISOString();
+    h.pages.get('a')!.push({ kind: 'user', text: 'Carry on.', at: newer });
+    h.clock.now += 16 * MINUTE;
+    a = { ...a, lastActivityAt: newer };
+    await h.poll([a]);
+    await h.reply(h.calls[1], envelope(answer({ title: 'Carry on with retries' })));
+    expect(h.engine.decorate(a)).toMatchObject({ title: 'Carry on with retries' });
+  });
+
+  it('keepsTitle() reads your messages against the previous recap', () => {
+    const through = '2026-10-29T12:00:00.000Z';
+    expect(keepsTitle([{ text: 'Fix a.', at: FIRST }], through)).toBe(true);
+    expect(keepsTitle([{ text: 'Fix a.', at: FIRST }, { text: 'Later.', at: '2026-10-29T12:00:01.000Z' }], through)).toBe(false);
+    // At the same moment is the previous recap's own read; a message with no time can't be shown newer.
+    expect(keepsTitle([{ text: 'Same moment.', at: through }, { text: 'No time.' }], through)).toBe(true);
+    expect(keepsTitle([], through)).toBe(true);
+    expect(keepsTitle(undefined, through)).toBe(false);
+    expect(keepsTitle([{ text: 'Fix a.', at: FIRST }], 'not a time')).toBe(false);
+  });
+
+  it("never replaces a name you set with --name or /rename: the row keeps its name, and a title that only repeats it isn't shown", async () => {
+    const h = harness();
+    h.start();
+    const a = h.add('a', { name: 'my-chosen-name' });
+    await h.poll([a]);
+    await h.reply(h.calls[0], envelope(answer({ title: 'Fix the nightly export' })));
+    const decorated = h.engine.decorate(a);
+    expect(decorated.name).toBe('my-chosen-name');
+    expect(decorated).toMatchObject({ title: 'Fix the nightly export', titleSource: 'pitwall' });
+    const same = harness();
+    same.start();
+    const b = same.add('b', { name: 'my-chosen-name' });
+    await same.poll([b]);
+    await same.reply(same.calls[0], envelope(answer({ title: 'My-chosen-name' })));
+    expect(same.engine.decorate(b).name).toBe('my-chosen-name');
+    expect(same.engine.decorate(b)).not.toHaveProperty('title');
   });
 });

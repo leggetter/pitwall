@@ -122,7 +122,8 @@ const headingFocused = () => document.activeElement?.tagName === 'H2' && documen
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
-  setWidth(1300);
+  // Three columns, wide enough that the repo list stays beside the supervisor's column (W187).
+  setWidth(1520);
 });
 
 afterEach(() => {
