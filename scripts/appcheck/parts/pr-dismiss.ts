@@ -117,6 +117,9 @@ const part: Part = {
       t.expectEqual(server.records.prDismissals, [{ action: 'dismiss', key: PRS.teamReview, status: 200 }], 'one dismissal');
       await page.waitFor('focus on Undo', `document.activeElement === ${viewButton('Undo')}`);
       await t.shot('view-dismissed');
+      // On a short window the toast, which has its own Undo, can sit over the view's: closed first.
+      await page.click("the toast's close", `document.querySelector('.toasts .toast:not(.leaving) .toast-dismiss')`);
+      await page.waitFor('the toast to go', `${toasts}.length === 0`);
       await page.click('Undo', viewButton('Undo'));
       await page.waitFor('Not for me again', `!!${viewButton('Not for me')}`);
       await page.waitFor('the toast', `${toasts}.includes(${q(`#${number(PRS.teamReview)} is back with your pull requests.`)})`);

@@ -582,6 +582,7 @@ Small improvements that aren't needed now, gathered from reviews and try-outs so
   - **Other alerts with an action wrap only when the whole app is narrow:** the ones in the supervisor view (`web/src/SupervisorView.tsx`) and the PR list (`web/src/PrList.tsx`) sit in no `alerts` size container, so they use only the `pitwall` query, as Needs you's supervisor notice did before [#198](https://github.com/leggetter/pitwall/pull/198) (its review, 2026-11-09). Check whether a narrow column squeezes their text beside the button.
   - **Pin the narrow-column case in the app check's `supervisor` part:** assert that at 1440 the window is wider than 600 px and the notice is 600 px or narrower, so a change to the list column's width can't silently stop it testing #198's case (its review, 2026-11-09).
 - **Pull requests**
+  - **Not for me's toast covers the PR view's Undo on a short phone window** (375x540, M5.3's milestone app check): the toast has its own Undo, so nothing is lost, but the view's Undo is hidden until the toast goes. The PR view could skip the toast, since it already says it's dismissed, with Undo.
   - **Decline the review on GitHub** from Not for me (W188): it acts on GitHub, so a confirm step that says what it does, and the request it removes; W188 only keeps it out of pitwall's Needs you.
   - **Who asked for a review:** PR authors aren't fetched, so a row can't say (W101).
   - **Leave out team review requests,** a setting for when big teams make them noisy (W101).
