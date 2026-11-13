@@ -337,7 +337,8 @@ describe('its file', () => {
     expect(removed).toHaveLength(PR_DISMISSALS_HELD_MAX);
     expect(removed[0]!.key).toBe('example/demo-app#4');
     expect(statSync(file()).size).toBeLessThan(PR_DISMISSAL_FILE_MAX_BYTES);
-  });
+    // Two whole-file writes a PR, for every PR the list can hold: 5.4 s on a CI runner once (W190's CI).
+  }, 20_000);
 
   it('fails soft when it can’t write: the dismissal holds for this run', () => {
     const missing = join(home, 'missing', 'deeper');
