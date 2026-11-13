@@ -11,7 +11,7 @@ import { modelRejectedMessage } from '../server/work.js';
 import { memoryBudget } from './budget.js';
 import { memoryRecapStore, type RecapStore } from './store.js';
 import type { RecapChildEvents, RecapSpawner } from './call.js';
-import { createRecapEngine, ownersNeedingYou, OWN_NAME_MS, PAUSE_AFTER_FAILURES, RETRY_AFTER_FAILURE_MS, secondsToMidnight, type RecapEngineOptions, type RecapIndex } from './engine.js';
+import { createRecapEngine, keepsTitle, ownersNeedingYou, OWN_NAME_MS, PAUSE_AFTER_FAILURES, RETRY_AFTER_FAILURE_MS, secondsToMidnight, type RecapEngineOptions, type RecapIndex } from './engine.js';
 import { CALL_FAILED, RECAP_REFUSALS, recapArgs, RECAP_NAME } from './prompt.js';
 
 const MINUTE = 60_000;
@@ -1343,5 +1343,93 @@ describe('an answer in a busy stretch (W152)', () => {
     const turns = /<turns-since-previous-recap>\n([\s\S]*)\n<\/turns-since-previous-recap>/.exec(h.calls[0]!.input!)![1]!;
     expect(turns.split('\n')[0]).toBe('[… older turns since the previous recap not read …]');
     expect(turns).not.toContain('40 a day is fine');
+  });
+});
+
+describe("a session's title stays on what the session is about (W190)", () => {
+  const FIRST = '2026-10-29T10:00:00.000Z';
+
+  /** A session with a first recap titled 'Fix the nightly export', then one more turn `entry` and an update answered with `reply`. */
+  async function updated(entry: ConversationEntry, reply: Record<string, unknown>, prompts?: RecapSources['prompts']) {
+    const h = harness();
+    h.start();
+    let a = h.add('a');
+    h.sources.set('/made-up/projects/a.jsonl', { firstPrompt: 'Fix a.', prompts: [{ text: 'Fix a.', at: FIRST }] });
+    await h.poll([a]);
+    await h.reply(h.calls[0], envelope(answer()));
+    const newer = new Date(h.clock.now + MINUTE).toISOString();
+    h.pages.get('a')!.push({ ...entry, at: newer });
+    if (prompts !== undefined) h.sources.set('/made-up/projects/a.jsonl', { firstPrompt: 'Fix a.', prompts: prompts.map((prompt) => (prompt.at === 'NEWER' ? { ...prompt, at: newer } : prompt)) });
+    h.clock.now += 16 * MINUTE;
+    a = { ...a, lastActivityAt: newer };
+    await h.poll([a]);
+    expect(h.calls).toHaveLength(2);
+    expect(h.calls[1]!.input).toContain('<previous-recap>');
+    await h.reply(h.calls[1], envelope(answer({ ...reply, title: 'Is another session on retries' })));
+    return { h, a };
+  }
+
+  it("keeps the title when only a message from another session came in, whatever the model answers", async () => {
+    const { h, a } = await updated({ kind: 'cross-session', text: 'Are you working on retries too?', from: 'peer-b' } as ConversationEntry, { summary: 'Another session asked whether it owns retries.' });
+    expect(h.engine.decorate(a)).toMatchObject({ title: 'Fix the nightly export', titleSource: 'pitwall' });
+    // The rest of the update is the model's.
+    expect(h.engine.decorate(a).recap).toMatchObject({ title: 'Fix the nightly export' });
+  });
+
+  it("keeps the title when the only newer turns are the session's own", async () => {
+    const { h, a } = await updated({ kind: 'assistant', text: 'Done: the retries are in.' }, {});
+    expect(h.engine.decorate(a)).toMatchObject({ title: 'Fix the nightly export' });
+  });
+
+  it('lets the model change the title once a message of yours has come in', async () => {
+    const { h, a } = await updated({ kind: 'user', text: 'Now rework the retries instead.' }, {}, [
+      { text: 'Fix a.', at: FIRST },
+      { text: 'Now rework the retries instead.', at: 'NEWER' },
+    ]);
+    expect(h.engine.decorate(a)).toMatchObject({ title: 'Is another session on retries', titleSource: 'pitwall' });
+  });
+
+  it("takes the model's title when the session's messages couldn't be read", async () => {
+    const h = harness();
+    h.start();
+    let a = h.add('a');
+    await h.poll([a]);
+    await h.reply(h.calls[0], envelope(answer()));
+    const newer = new Date(h.clock.now + MINUTE).toISOString();
+    h.pages.get('a')!.push({ kind: 'user', text: 'Carry on.', at: newer });
+    h.clock.now += 16 * MINUTE;
+    a = { ...a, lastActivityAt: newer };
+    await h.poll([a]);
+    await h.reply(h.calls[1], envelope(answer({ title: 'Carry on with retries' })));
+    expect(h.engine.decorate(a)).toMatchObject({ title: 'Carry on with retries' });
+  });
+
+  it('keepsTitle() reads your messages against the previous recap', () => {
+    const through = '2026-10-29T12:00:00.000Z';
+    expect(keepsTitle([{ text: 'Fix a.', at: FIRST }], through)).toBe(true);
+    expect(keepsTitle([{ text: 'Fix a.', at: FIRST }, { text: 'Later.', at: '2026-10-29T12:00:01.000Z' }], through)).toBe(false);
+    // At the same moment is the previous recap's own read; a message with no time can't be shown newer.
+    expect(keepsTitle([{ text: 'Same moment.', at: through }, { text: 'No time.' }], through)).toBe(true);
+    expect(keepsTitle([], through)).toBe(true);
+    expect(keepsTitle(undefined, through)).toBe(false);
+    expect(keepsTitle([{ text: 'Fix a.', at: FIRST }], 'not a time')).toBe(false);
+  });
+
+  it("never replaces a name you set with --name or /rename: the row keeps its name, and a title that only repeats it isn't shown", async () => {
+    const h = harness();
+    h.start();
+    const a = h.add('a', { name: 'my-chosen-name' });
+    await h.poll([a]);
+    await h.reply(h.calls[0], envelope(answer({ title: 'Fix the nightly export' })));
+    const decorated = h.engine.decorate(a);
+    expect(decorated.name).toBe('my-chosen-name');
+    expect(decorated).toMatchObject({ title: 'Fix the nightly export', titleSource: 'pitwall' });
+    const same = harness();
+    same.start();
+    const b = same.add('b', { name: 'my-chosen-name' });
+    await same.poll([b]);
+    await same.reply(same.calls[0], envelope(answer({ title: 'My-chosen-name' })));
+    expect(same.engine.decorate(b).name).toBe('my-chosen-name');
+    expect(same.engine.decorate(b)).not.toHaveProperty('title');
   });
 });

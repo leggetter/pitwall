@@ -49,6 +49,11 @@
 // on) the session's name, its group's label and your messages through it; a previous recap without
 // W189's done makes the call a first recap too.
 //
+// A steady title (W190): an update whose transcript holds none of your messages since the previous
+// recap's `throughAt` keeps the previous title, whatever the model answered (keepsTitle()), so a
+// message from another session, a task notification or the session's own turns can't move it. The
+// prompt asks the model to keep it too, unless your messages moved the goal.
+//
 // The call runs from one fixed 0700 directory, `$PITWALL_HOME/recap`, with recapArgs() and
 // recapEnvironment() (prompt.ts), no shell and a timeout, once `claude --version` says it's at
 // least MIN_RECAP_CLAUDE_VERSION. While it runs, Claude Code lists it in `claude agents --json`
@@ -70,7 +75,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Indexer, SessionFacts } from '../index/index.js';
 import { runFile } from '../index/exec.js';
-import { createRecapSourceReader, type RecapSourceReader } from '../index/recapSources.js';
+import { createRecapSourceReader, type RecapPrompt, type RecapSourceReader } from '../index/recapSources.js';
 import { titleText } from '../index/transcripts.js';
 import {
   RECAP_DAILY_BUDGET,
@@ -255,6 +260,20 @@ export function secondsToMidnight(ms: number): number {
 function parseMs(at: string | undefined): number {
   const ms = at === undefined ? NaN : Date.parse(at);
   return Number.isFinite(ms) ? ms : NaN;
+}
+
+/**
+ * Whether an update keeps the previous recap's title (W190): your messages are known, and none came
+ * in after the previous recap's `throughAt`. `prompts` are the ones promptTextOf() accepts, so a
+ * message from another session, a peer or a task notification isn't one. A message with no time
+ * can't be shown to be newer, so it doesn't count; with no list of messages at all (the read
+ * failed) nothing is known, so the model's title stands.
+ */
+export function keepsTitle(prompts: readonly RecapPrompt[] | undefined, throughAt: string): boolean {
+  if (prompts === undefined) return false;
+  const through = parseMs(throughAt);
+  if (Number.isNaN(through)) return false;
+  return !prompts.some((prompt) => prompt.at !== undefined && parseMs(prompt.at) > through);
 }
 
 /** Whether a title says nothing the name doesn't, as the index judges Claude Code's (summaries.ts). */
@@ -663,8 +682,11 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     // What pitwall repaired in the answer rather than refuse it (W126): which repair, never the answer.
     if (result.repaired !== undefined && result.repaired.length > 0) log(`a recap answer was repaired (${result.repaired.join(', ')}).`);
     const at = now();
+    // The previous title stays unless one of your messages has come in since the previous recap (W190).
+    const steady = update && previous.title !== '' && keepsTitle(read.prompts, previous.throughAt);
     keep(job.sessionId, {
       ...result.answer,
+      ...(steady ? { title: previous.title } : {}),
       at: new Date(at).toISOString(),
       throughAt: new Date(throughMs).toISOString(),
       source: 'pitwall',

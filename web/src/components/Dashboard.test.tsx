@@ -1002,6 +1002,13 @@ describe('session titles', () => {
     expect(screen.getByRole('heading', { level: 3, name: 'git-a0' })).toBeTruthy();
   });
 
+  it("says pitwall's title comes from your prompts in the session (W190)", async () => {
+    renderDashboard(snapshot([group({ sessions: [session({ name: 'git-p0', title: 'Fix the nightly export', titleSource: 'pitwall' })] })]));
+
+    const title = within(row('git-p0')).getByText('Fix the nightly export');
+    expect(await tooltipText(title)).toBe("Fix the nightly export\npitwall's title, from your prompts in this session");
+  });
+
   it('shows nothing after the name when there is no title', () => {
     renderDashboard(snapshot([group({ sessions: [session({ name: 'untitled' })] })]));
 

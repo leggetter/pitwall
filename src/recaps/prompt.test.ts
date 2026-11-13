@@ -108,6 +108,18 @@ describe('RECAP_SYSTEM_PROMPT', () => {
   });
 });
 
+describe("RECAP_SYSTEM_PROMPT's title (W190)", () => {
+  it('takes the title from the first prompt and your messages, never the latest turns alone', () => {
+    expect(RECAP_SYSTEM_PROMPT).toContain("from the user's first prompt and later messages, as the goal does, never from the latest turns alone");
+    expect(RECAP_SYSTEM_PROMPT).toContain('a message from another session, a task notification, a side question and the session\'s own turns say nothing about it');
+  });
+
+  it('keeps the previous title word for word in an update unless your messages moved the goal', () => {
+    expect(RECAP_SYSTEM_PROMPT).toContain("Keep the title word for word unless the user's own messages, the first prompt and <your-messages>, have moved the session on to a different goal");
+    expect(RECAP_SYSTEM_PROMPT).toContain('a message from another session, a task notification, a side question or the session\'s own turns never change it');
+  });
+});
+
 describe('RECAP_SYSTEM_PROMPT for a cold reader (W189)', () => {
   it('writes for a reader with no context: self-contained, no bare ID, people named with their role, why as well as what', () => {
     expect(RECAP_SYSTEM_PROMPT).toContain('comes back to one with no memory of it');
