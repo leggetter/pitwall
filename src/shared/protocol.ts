@@ -124,8 +124,8 @@ export interface SessionSummary {
    * Where `title` came from.
    * - 'claude-code': the title Claude Code generated from the session's first
    *   prompt. It isn't updated as the session moves on.
-   * - 'pitwall': a title pitwall generated from the session's recent turns (M5): its recap's
-   *   `title`.
+   * - 'pitwall': a title pitwall generated from your prompts in the session (M5, W190): its
+   *   recap's `title`, which an update keeps until one of your messages comes in.
    */
   titleSource?: 'claude-code' | 'pitwall';
   kind: SessionKind;
