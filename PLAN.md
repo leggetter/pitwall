@@ -249,6 +249,8 @@ In the order they'll be built. Each starts when the one before it has merged int
 
 On `m5.3/integration`, branched from `main` once M5.2 has merged. What was left of M5.2 at the split at W180: W176 (a pitwall plugin) first, from spike 015's design (Phil, 2026-11-10), then W165 (diagnostics log), W167 (session lineage), W168 (Clear and continue), W171 (a team's open request), W173 and W174 (to-dos), W175 (a pitwall link in a new tab) and W178 and W179 (the supervisor about a session, and a short conversation). Their text is in "M5.3 work breakdown". Added 2026-11-10: W183 to W186, the supervisor's read-only connectors (D28). Added 2026-11-12: W190 (a session's title stays on what the session is about).
 
+**Split at W192** (Phil, 2026-11-13, "Go with your leans"): W190 is built first, then W192 (M5.3's security review) reviews `m5.3/integration` as it stands, and M5.3 merges into `main` without waiting for a try-out. The items not built by then move to M5.4, on `m5.4/integration`: W165, W167, W168, W171, W173, W174, W175, W178, W179 and W191.
+
 ### M6 - Triage
 
 Urgency ranking with reasons (time-sensitive, waiting on a decision, housekeeping, closeable), using the session index, the supervisor and M4's PR and CI state.
@@ -542,6 +544,11 @@ On `m5.3/integration`. The ten items split off M5.2 at W180 (Phil, 2026-11-10), 
   - **Reads run without a click, and each one shows** (Phil, 2026-11-12, option B of five; W186's F1): a supervisor turn starts only from your text in the panel (other sessions' messages to it are refused), but text it reads mid-turn can shape a call. With no write tool and no tool that fetches any URL, a read's arguments reach only your own Slack or Notion, so reads run freely. The panel shows each connector call with its arguments, so an odd search stands out; check whether the tool line already shows them and add them if not. Rejected: a click on every call, a click once per turn, and a click once the turn has read others' text (in practice nearly every call).
   - Pitwall-level restrictions: only read-only tools, never a write; every other tool disallowed; a connector only when the config names it, with `--connector-tools` listing its tools; `--no-connectors` turns all of it off; results stay untrusted data (W184's prompt and size cap).
   - Status: Planned (Phil, 2026-11-12). W185's spike 017 Slack scope question is replaced by this one: the scope is the connector's own grant, narrowed by pitwall's tool list.
+
+- **W192, Security review: M5.3 before `main`** (`m5.3/security-review`, S). After W190; a fresh reviewer at xhigh, as W180 (M5.2's security review) was.
+  - What: everything in `origin/main..m5.3/integration`: W176 (the pitwall plugin), W184 (the supervisor's connectors, with W186's fixes), W185 (spike 017), W187 (the supervisor pushes the other panels left), W188 (Not for me) and its follow-ups, W189 (recaps a cold reader can act on) and W190, against "Security" in this file. Items already reviewed (W176, W184 by W186) are checked for what changed since and for how they combine with the rest.
+  - Findings are fixed on `m5.3/integration` before the merge; Info findings may be left, listed in this item.
+  - Status: Planned (Phil, 2026-11-13).
 
 ## Open questions
 
