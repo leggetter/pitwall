@@ -628,6 +628,10 @@ const part: Part = {
       await page.click('New conversation', NEW);
       await page.waitFor('the confirmation, with focus on Cancel', `!!${CONFIRM_BOX} && document.activeElement === ${confirmButton('Cancel')}`);
       t.expectEqual(await page.evaluate(`${CONFIRM_BOX}.querySelector('.inline-confirm-question').textContent`), 'Start a new conversation?', 'what it asks');
+      const below = await page.evaluate<{ below: boolean; right: boolean }>(
+        `(() => { const box = ${CONFIRM_BOX}; const text = box.querySelector('.inline-confirm-text').getBoundingClientRect(); const buttons = box.querySelector('.inline-confirm-buttons').getBoundingClientRect(); return { below: buttons.top >= text.bottom - 0.5, right: Math.abs(buttons.right - text.right) <= 0.5 }; })()`,
+      );
+      t.expectEqual(below, { below: true, right: true }, 'the buttons under the text, at the right');
       await t.shot('new-confirm');
       await page.click('Cancel', confirmButton('Cancel'));
       await page.waitFor('the confirmation gone, focus back on the button', `!${CONFIRM_BOX} && document.activeElement === ${NEW}`);

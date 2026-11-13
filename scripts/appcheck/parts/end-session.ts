@@ -82,6 +82,10 @@ const part: Part = {
       t.expectEqual(await page.evaluate(`document.getElementById(${CONFIRM}.getAttribute('aria-describedby')).innerText`), consequence(NAMES.asked), 'its description reads as one sentence');
       t.expectEqual(await page.evaluate(`${CONFIRM}.getAttribute('role')`), 'group', 'a group');
       t.expectEqual(await page.evaluate(`[...${CONFIRM}.querySelectorAll('button')].map((b) => b.textContent.trim())`), ['Cancel', 'End session'], 'Cancel, then End session');
+      const below = await page.evaluate<{ below: boolean; right: boolean }>(
+        `(() => { const text = ${CONFIRM}.querySelector('.inline-confirm-text').getBoundingClientRect(); const buttons = ${CONFIRM}.querySelector('.inline-confirm-buttons').getBoundingClientRect(); return { below: buttons.top >= text.bottom - 0.5, right: Math.abs(buttons.right - text.right) <= 0.5 }; })()`,
+      );
+      t.expectEqual(below, { below: true, right: true }, 'the buttons under the text, at the right, at any width');
       t.expectEqual(await page.evaluate(focused), 'Cancel', 'Cancel has focus');
       await t.shot('asking');
     });

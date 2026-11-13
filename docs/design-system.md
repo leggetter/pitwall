@@ -2057,7 +2057,7 @@ For a destructive or surprising action in the session view, without a dialog.
 
 - **Component:** `InlineConfirm` (`web/src/components/InlineConfirm.tsx`).
 - **Box:** for Stop, Remove and End, directly under the header (above the tabs), with 8 px 16 px around it. For the restart, at the top of the Terminal tab's panel, under its bar, since that tab's attach is what waits for it. For a link that asks (W55), in the conversation, straight after the paragraph, heading or table the link is in, 8 px below it, as the next block would be (see [Markdown in messages](#markdown-in-messages)), in `--pw-text` even inside a quote. `--pw-surface-muted` fill, `inset 0 0 0 1px var(--pw-border-strong)`, a left bar `inset 3px 0 0 var(--pw-danger-fg)` (or `--pw-warning-indicator` for the restart and a link), each at least 3:1 on the fill (2.5), `--pw-radius-md`, padding 12 px.
-- **Content:** a question as the title (m 14/20, 500), the consequence (meta, `--pw-text-muted`), then the buttons at the right, wrapping under the text when there's no room: outline sm "Cancel", then the sm confirm button with its action's icon (`stop`, `remove`, `restart`, `external`), 8 px apart. A literal value in the consequence, such as a link's address, is in code style, and wraps anywhere.
+- **Content:** a question as the title (m 14/20, 500), the consequence (meta, `--pw-text-muted`), then the buttons under the text, at the right, at any width (Phil, 2026-11-13): outline sm "Cancel", then the sm confirm button with its action's icon (`stop`, `remove`, `restart`, `external`), 8 px apart. A literal value in the consequence, such as a link's address, is in code style, and wraps anywhere.
 
 | Action | Question | Consequence | Confirm button |
 |---|---|---|---|

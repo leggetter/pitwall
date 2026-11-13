@@ -2665,8 +2665,8 @@ mark.match {
 
 /*
  * Inline confirmations (section 4: Inline confirmation, and InlineConfirm.tsx): the question and its
- * consequence, then Cancel and the confirm button at the right, wrapping under them when there's no
- * room. A 3 px bar at the left: --pw-danger-fg, or --pw-warning-indicator for the restart, each at
+ * consequence, then Cancel and the confirm button under them, at the right, at any width (Phil,
+ * 2026-11-13: beside the text, they squeezed it in the supervisor's narrow panel). A 3 px bar at the left: --pw-danger-fg, or --pw-warning-indicator for the restart, each at
  * least 3:1 on the --pw-surface-muted fill, as an indicator needs (2.5).
  */
 .inline-confirm {
@@ -2688,7 +2688,7 @@ mark.match {
 }
 
 .inline-confirm-text {
-  flex: 1 1 16em;
+  flex: 1 1 100%;
   min-width: 0;
   overflow-wrap: anywhere;
 }
