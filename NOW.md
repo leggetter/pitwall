@@ -3,9 +3,9 @@
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
 
-Last updated: 2026-11-13, on `docs/w191-reads`: Phil chose option B for W191's connector reads (no click; each call shown). Before it, 2026-11-12, on `docs/w191-session-connectors`: Phil's answers on the connectors; W191 (the supervisor reads through the connectors your sessions already have) planned; the housekeeping is done. Before it, 2026-11-12, on `docs/now-w190`: W190 (a session's title stays on what the session is about) is planned, from Phil's report, in [#254](https://github.com/leggetter/pitwall/pull/254). Before it, 2026-11-12, on `docs/now-coordinator-recovery`: the coordinating session ("NOW.md", job 5277166f) ended at 23:29 on 11-11, after its hand-off, and wasn't restarted with the other background sessions at 23:30; Phil made a new session the coordinator (see "Housekeeping" below). Before it, 2026-11-11: the first M5.3 batch is merged into `m5.3/integration` and nothing is in flight. Before that, 2026-11-10: M5.2 merged into `main` ([#234](https://github.com/leggetter/pitwall/pull/234)) and `m5.3/integration` branched from it. The next free W number is W192.
+Last updated: 2026-11-13, on `docs/m5.3-split`: M5.3 splits at W192 (its security review), after W190; the rest moves to M5.4. Phil finished the 4519 try-out; it's stopped. Before it, 2026-11-13, on `docs/w191-reads`: Phil chose option B for W191's connector reads (no click; each call shown). Before it, 2026-11-12, on `docs/w191-session-connectors`: Phil's answers on the connectors; W191 (the supervisor reads through the connectors your sessions already have) planned; the housekeeping is done. Before it, 2026-11-12, on `docs/now-w190`: W190 (a session's title stays on what the session is about) is planned, from Phil's report, in [#254](https://github.com/leggetter/pitwall/pull/254). Before it, 2026-11-12, on `docs/now-coordinator-recovery`: the coordinating session ("NOW.md", job 5277166f) ended at 23:29 on 11-11, after its hand-off, and wasn't restarted with the other background sessions at 23:30; Phil made a new session the coordinator (see "Housekeeping" below). Before it, 2026-11-11: the first M5.3 batch is merged into `m5.3/integration` and nothing is in flight. Before that, 2026-11-10: M5.2 merged into `main` ([#234](https://github.com/leggetter/pitwall/pull/234)) and `m5.3/integration` branched from it. The next free W number is W193.
 
-**Servers:** 4518 runs `main` at f4458a7. A try-out on 4519 runs `m5.3/integration` at 1c07eb9 (before #244), from `.worktrees/tryout`, with its own home (`.worktrees/tryout/scratch/home`) and recaps on; Phil is trying it. Stop it and remove the worktree when he's done.
+**Servers:** 4518 runs `main` at f4458a7. The 4519 try-out is stopped and `.worktrees/tryout` removed (Phil, 2026-11-13: "It's fine and I've provided any feedback already").
 
 **Housekeeping done** (Phil's yes, 2026-11-12): "pitwall-slack-notion-access" (9443332c) had already finished; a85671eb, an empty session with the coordinator's name, is stopped; the worktrees of #237, #206 and #236 are removed, with their local branches. Only `.worktrees/tryout` is left.
 
@@ -20,7 +20,7 @@ Last updated: 2026-11-13, on `docs/w191-reads`: Phil chose option B for W191's c
 
 ## Open work
 
-**Nothing is in flight:** no sub-agents are running. Merged into `m5.3/integration` on 2026-11-11, each after a fresh review, its fixes and green CI (details in `PLAN.md`'s items):
+**In flight:** W190's builder, a sub-agent in `.worktrees/w190`, on `m5.3/recap-title-steady`. Merged into `m5.3/integration` on 2026-11-11, each after a fresh review, its fixes and green CI (details in `PLAN.md`'s items):
 
 - [#240](https://github.com/leggetter/pitwall/pull/240) and [#241](https://github.com/leggetter/pitwall/pull/241): NOW.md answers.
 - [#242](https://github.com/leggetter/pitwall/pull/242): W176 (the pitwall plugin), after an xhigh security review.
@@ -40,6 +40,7 @@ Still to do:
 | W178 (ask the supervisor about this session, and why it's in its state), W179 (the supervisor keeps its conversation short) | Planned (Phil, 2026-11-09); W178 uses W165's reasons |
 | W190 (a session's title stays on what the session is about: a recap update no longer moves the title off the subject) | Planned (Phil's report, 2026-11-12, [#254](https://github.com/leggetter/pitwall/pull/254)); independent of the rest of M5.3 |
 | W191 (the supervisor reads through the connectors your sessions already have, with pitwall's read-only limits) | Planned (Phil, 2026-11-12); a spike first; revises W184's route |
+| W192 (M5.3's security review, before `main`) | Planned (Phil, 2026-11-13); after W190 |
 | Left from W164 (M5.1's security review) | F5 (a snooze trusts the relay's name, not its msg_ids), I3's note on attached files, I4 (by design); in the archive's W164 item |
 | Left from M5's security notes (Info) | A look-alike name doesn't trigger the resume card's shared-name note; resume errors show a folder outside `untrusted`; the `claude` command list isn't checked against Claude Code 2.1.316's hidden commands |
 | Left from M5.1's items | Each item's "Left" is in its archive entry: for example W153's (flag) no retry of a failed ask, W154's (snooze) unseen scheduled wake-ups, W163's (spin-off proposals) overlap check, "Ask the supervisor" and the profile's model, with M6 |
@@ -50,9 +51,11 @@ Still to do:
 
 ## Next, in order
 
-1. **Phil's feedback from the 4519 try-out** (`m5.3/integration` at 1c07eb9, before #244): it becomes new work items. Stop that server and remove `.worktrees/tryout` when he's done.
-2. **The rest of M5.3** (`PLAN.md`), one session per item (`AGENTS.md`, Efficiency): W165 (a diagnostics log), W167 (session lineage), W168 (Clear and continue), W171 (a team's open request), W173 (a moved-past to-do), W174 (a working session's to-dos), W175 (a pitwall link in a new tab), W178 (ask the supervisor about a session), W179 (the supervisor keeps its conversation short), W190 (a session's title stays on its subject) and W191 (the supervisor uses your sessions' connectors).
-3. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
+1. **W190** (a session's title stays on what the session is about): built by a sub-agent, a fresh review, merged on green CI.
+2. **W192** (M5.3's security review, xhigh) over `m5.3/integration`, then its fixes.
+3. **M5.3 into `main`:** Phil approves the PR's text and the merge (anything into `main` is shown to him verbatim first). Then `m5.4/integration` branches from `main`.
+4. **M5.4, the rest** (`PLAN.md`, "M5.3", "Split at W192"), one session per item (`AGENTS.md`, Efficiency): W165 (a diagnostics log), W167 (session lineage), W168 (Clear and continue), W171 (a team's open request), W173 (a moved-past to-do), W174 (a working session's to-dos), W175 (a pitwall link in a new tab), W178 (ask the supervisor about a session), W179 (the supervisor keeps its conversation short) and W191 (the supervisor uses your sessions' connectors).
+5. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
 
 ## Open questions for Phil
 
