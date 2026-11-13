@@ -539,7 +539,8 @@ On `m5.3/integration`. The ten items split off M5.2 at W180 (Phil, 2026-11-10), 
     - Do `--allowed-tools` and `--disallowed-tools` hold every other tool out, including one a server adds mid-turn (W186's F6)?
     - Do the connectors' tools carry MCP's `readOnlyHint`, so pitwall can propose the read-only set itself?
     - Is a documented way to name just some connectors there, or is `claudeai-proxy` the only one?
-  - Pitwall-level restrictions (proposed): only read-only tools, never a write; every other tool disallowed; a connector only when the config names it, with `--connector-tools` listing its tools; `--no-connectors` turns all of it off; results stay untrusted data (W184's prompt and size cap).
+  - **Reads run without a click, and each one shows** (Phil, 2026-11-12, option B of five; W186's F1): a supervisor turn starts only from your text in the panel (other sessions' messages to it are refused), but text it reads mid-turn can shape a call. With no write tool and no tool that fetches any URL, a read's arguments reach only your own Slack or Notion, so reads run freely. The panel shows each connector call with its arguments, so an odd search stands out; check whether the tool line already shows them and add them if not. Rejected: a click on every call, a click once per turn, and a click once the turn has read others' text (in practice nearly every call).
+  - Pitwall-level restrictions: only read-only tools, never a write; every other tool disallowed; a connector only when the config names it, with `--connector-tools` listing its tools; `--no-connectors` turns all of it off; results stay untrusted data (W184's prompt and size cap).
   - Status: Planned (Phil, 2026-11-12). W185's spike 017 Slack scope question is replaced by this one: the scope is the connector's own grant, narrowed by pitwall's tool list.
 
 ## Open questions

@@ -3,7 +3,7 @@
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
 
-Last updated: 2026-11-12, on `docs/w191-session-connectors`: Phil's answers on the connectors; W191 (the supervisor reads through the connectors your sessions already have) planned; the housekeeping is done. Before it, 2026-11-12, on `docs/now-w190`: W190 (a session's title stays on what the session is about) is planned, from Phil's report, in [#254](https://github.com/leggetter/pitwall/pull/254). Before it, 2026-11-12, on `docs/now-coordinator-recovery`: the coordinating session ("NOW.md", job 5277166f) ended at 23:29 on 11-11, after its hand-off, and wasn't restarted with the other background sessions at 23:30; Phil made a new session the coordinator (see "Housekeeping" below). Before it, 2026-11-11: the first M5.3 batch is merged into `m5.3/integration` and nothing is in flight. Before that, 2026-11-10: M5.2 merged into `main` ([#234](https://github.com/leggetter/pitwall/pull/234)) and `m5.3/integration` branched from it. The next free W number is W192.
+Last updated: 2026-11-13, on `docs/w191-reads`: Phil chose option B for W191's connector reads (no click; each call shown). Before it, 2026-11-12, on `docs/w191-session-connectors`: Phil's answers on the connectors; W191 (the supervisor reads through the connectors your sessions already have) planned; the housekeeping is done. Before it, 2026-11-12, on `docs/now-w190`: W190 (a session's title stays on what the session is about) is planned, from Phil's report, in [#254](https://github.com/leggetter/pitwall/pull/254). Before it, 2026-11-12, on `docs/now-coordinator-recovery`: the coordinating session ("NOW.md", job 5277166f) ended at 23:29 on 11-11, after its hand-off, and wasn't restarted with the other background sessions at 23:30; Phil made a new session the coordinator (see "Housekeeping" below). Before it, 2026-11-11: the first M5.3 batch is merged into `m5.3/integration` and nothing is in flight. Before that, 2026-11-10: M5.2 merged into `main` ([#234](https://github.com/leggetter/pitwall/pull/234)) and `m5.3/integration` branched from it. The next free W number is W192.
 
 **Servers:** 4518 runs `main` at f4458a7. A try-out on 4519 runs `m5.3/integration` at 1c07eb9 (before #244), from `.worktrees/tryout`, with its own home (`.worktrees/tryout/scratch/home`) and recaps on; Phil is trying it. Stop it and remove the worktree when he's done.
 
@@ -56,7 +56,9 @@ Still to do:
 
 ## Open questions for Phil
 
-1. **Reads without a click (W186's F1, asked again in plain words):** a read tool still sends what the supervisor asks for, such as a Slack search's words or a page's URL. Text planted in a transcript or PR the supervisor reads could steer it to put something private into those words, and reads run without a card. Accept that, with tools that fetch any URL left off the list? Lean: yes.
+None open.
+
+Answered (Phil, 2026-11-12, "B, go with your recommendation"): connector reads run without a click, and the panel shows each call with what it searched (W191, option B; W186's F1).
 
 Answered (Phil, 2026-11-12): the hosted-connector policy question is dropped, since its premise didn't reproduce, and becomes W191; Slack's scope is the connector's own grant with pitwall's limits on top (W191); spike 017's keychain entries stay; the housekeeping goes ahead.
 
