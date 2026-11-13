@@ -40,7 +40,7 @@ import type {
   RunRateChart,
 } from '../../src/shared/protocol.js';
 import { createHash } from 'node:crypto';
-import { withSupervisorFooter } from '../../src/shared/protocol.js';
+import { USAGE_AMBER_PERCENT, withSupervisorFooter } from '../../src/shared/protocol.js';
 import { chartOf, DEFAULT_RUN_RATE_TARGET, levelOf, paceAt, project, WEEK_MS, type WeekReading } from '../../src/usage/runRate.js';
 import { REFUSED_TO_SUPERVISOR_NOTICE } from '../../src/index/conversation.js';
 
@@ -1194,8 +1194,10 @@ export class World {
     const readAt = this.#runRate === 'old' ? this.#now - 25 * MINUTE : this.#now - MINUTE;
     const line = paceAt(readAt, 0, resetsAt, DEFAULT_RUN_RATE_TARGET).line;
     const used = {
-      normal: Math.max(1, Math.round(line - 6)),
-      old: Math.max(1, Math.round(line - 6)),
+      // Under the line and under amber, whatever day the check runs: late in the week the line
+      // passes USAGE_AMBER_PERCENT, and 'normal' must stay neutral (W192's milestone app check, a Friday).
+      normal: Math.max(1, Math.min(USAGE_AMBER_PERCENT - 4, Math.round(line - 6))),
+      old: Math.max(1, Math.min(USAGE_AMBER_PERCENT - 4, Math.round(line - 6))),
       thin: Math.max(1, Math.round(line - 6)),
       ahead: Math.min(99, Math.round(line + 12)),
       burst: Math.max(1, Math.round(line - 4)),

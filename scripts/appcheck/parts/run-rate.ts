@@ -215,7 +215,10 @@ const part: Part = {
 
     await t.step('the chart ahead of pace', async () => {
       const found = await chartOf('ahead');
-      t.expect(found.labels.some((l) => /ahead/.test(l)), 'how far ahead, at now', found.labels);
+      // The chart leaves a label out where it has no room, as near the target's label at 375 px late in
+      // the week; the pace's sentences beside it still say how far ahead.
+      const beside = await page.evaluate<string>(`${DIALOG}.querySelector('.usage-pace')?.textContent ?? ''`);
+      t.expect(found.labels.some((l) => /ahead/.test(l)) || /\d+ points ahead of pace/.test(beside), 'how far ahead, at now or beside', { labels: found.labels, beside });
       await t.shot('chart-ahead');
     });
 

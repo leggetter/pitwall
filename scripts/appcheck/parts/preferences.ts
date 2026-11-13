@@ -104,7 +104,7 @@ const part: Part = {
       t.expectEqual(await first('Sessions', 'Model'), 'Default: Opus 5.5 (your Claude Code settings)', "sessions' model, Claude Code's, from made-up settings (W122)");
       t.expectEqual(await first('Sessions', 'Effort'), 'Default: high (the config file)', "sessions' effort, from the made-up config file");
       t.expectEqual(await first('Recaps', 'Model'), "Default: Haiku 5.5 (pitwall's default)", "recaps' own model");
-      t.expectEqual(await first('Recaps', 'Effort'), "Default: medium (the model's own)", "recaps' effort, Haiku 5.5's own");
+      t.expectEqual(await first('Recaps', 'Effort'), "Default: low (pitwall's default)", "recaps' effort, pitwall's low since W189");
       t.expectEqual(await first('Supervisor', 'Model'), "Default: Opus 5.5 (pitwall's default)", "the supervisor's own model");
       t.expect(!(await page.evaluate(`!!${workSelect("Sessions' sub-agents", 'Effort')}`)), 'sub-agents have no Effort');
       t.expect(/Today: \$[0-9.]+ for \d+ of \d+ calls, at API list prices\./.test(await page.evaluate<string>(`${DIALOG}.textContent`)), "recaps' cost today");
