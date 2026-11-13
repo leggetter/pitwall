@@ -172,6 +172,8 @@ function transcriptLines(): string {
   return [
     { type: 'user', isSidechain: false, timestamp: at(1), message: { role: 'user', content: 'Which of my sessions need me?' } },
     { type: 'assistant', isSidechain: false, timestamp: at(2), message: { id: 'msg_1', role: 'assistant', model: 'test-model', content: [{ type: 'text', text: 'Two of them do.' }] } },
+    // A connector search: the panel shows what it searched (W192's G2).
+    { type: 'assistant', isSidechain: false, timestamp: at(3), message: { id: 'msg_2', role: 'assistant', model: 'test-model', content: [{ type: 'tool_use', id: 'toolu_1', name: 'mcp__example__search', input: { query: 'release notes' } }] } },
   ]
     .map((line) => JSON.stringify(line))
     .join('\n')
@@ -788,6 +790,7 @@ describe('its conversation', () => {
     expect(page?.entries.map((entry) => [entry.kind, entry.text])).toEqual([
       ['user', 'Which of my sessions need me?'],
       ['assistant', 'Two of them do.'],
+      ['tool', 'mcp__example__search: {"query":"release notes"}'],
     ]);
   });
 });
