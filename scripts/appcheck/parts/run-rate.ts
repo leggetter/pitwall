@@ -218,7 +218,8 @@ const part: Part = {
       // The chart leaves a label out where it has no room, as near the target's label at 375 px late in
       // the week; the pace's sentences beside it still say how far ahead.
       const beside = await page.evaluate<string>(`${DIALOG}.querySelector('.usage-pace')?.textContent ?? ''`);
-      t.expect(found.labels.some((l) => /ahead/.test(l)) || /\d+ points ahead of pace/.test(beside), 'how far ahead, at now or beside', { labels: found.labels, beside });
+      const narrow = (await page.evaluate<number>('window.innerWidth')) <= 400;
+      t.expect(found.labels.some((l) => /ahead/.test(l)) || (narrow && /\d+ points ahead of pace/.test(beside)), 'how far ahead, at now, or beside on a narrow window', { labels: found.labels, beside, narrow });
       await t.shot('chart-ahead');
     });
 
