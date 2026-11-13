@@ -402,6 +402,13 @@ On `m5.4/integration`, branched from `main` at f667fef once M5.3 had merged ([#2
   - Pitwall-level restrictions: only read-only tools, never a write; every other tool disallowed; a connector only when the config names it, with `--connector-tools` listing its tools; `--no-connectors` turns all of it off; results stay untrusted data (W184's prompt and size cap).
   - Status: Planned (Phil, 2026-11-12). W185's spike 017 Slack scope question is replaced by this one: the scope is the connector's own grant, narrowed by pitwall's tool list.
 
+- **W193, Links in the attached terminal can be clicked** (`m5.4/attach-hyperlinks`, S). Independent.
+  - Phil, 2026-11-13: in a session's Terminal view, the PR and issue links Claude wrote showed but couldn't be clicked.
+  - Found (Claude Code 2.1.323): Claude Code writes a markdown link as an OSC 8 hyperlink only when it thinks the terminal supports one, and for `claude attach` the attaching process decides, from `FORCE_HYPERLINK`, then `TERM_PROGRAM` and a few others. pitwall's own environment names none, so a link arrived as `text (url)`, and the web UI's xterm.js opens only OSC 8 links (`web/src/links.ts`), not a URL in plain text.
+  - What: the PTY's environment is the scrubbed one plus `FORCE_HYPERLINK=1` (`attachEnvironment()`, `src/server/attach.ts`), whatever pitwall was started with, since the terminal is always the web UI's xterm.js. A link still opens only through `web/src/links.ts`' rule: http: and https: only, a confirmation that shows the full URL, a new tab with no opener or referrer.
+  - Checked on a throwaway `pitwall-test-*` session: without it the reply was `example link (https://example.com/w193)` as text; with it, an OSC 8 link to that URL.
+  - Status: Built (2026-11-13), in its PR into `m5.4/integration`.
+
 ## Open questions
 
 - **Profiles set the sub-agent model as a default, or force it?** A default (Phil, 2026-11-06, W155): since Claude Code v2.1.251, an Agent call's own `model` beats `CLAUDE_CODE_SUBAGENT_MODEL`, and forcing it with `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` would quietly put a security review on Sonnet and a Haiku agent up to Sonnet. 11-02's sub-agents named no model, so a default covers them. Revisit if W158 shows Build sessions' sub-agents still mostly on Opus.
