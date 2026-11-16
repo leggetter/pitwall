@@ -629,7 +629,8 @@ export const PROTOCOL_VERSION = 3;
  * - 'link-confirmed' / 'link-denied' (W175): the answer to a signed-in client's
  *   `link-confirm`. `code` is the one-time code whose SHA-256 `hash` the client
  *   sent, returned once and only if this server issued it and hasn't seen it
- *   used (src/server/linkCodes.ts).
+ *   used (src/server/linkCodes.ts). `mac` is linkConfirmMac(): HMAC-SHA256 under the token over the
+ *   hash, the code and the server's origin, which the tab checks before it uses the code.
  */
 export type ServerMessage =
   | { type: 'challenge'; version: number; nonce: string }
@@ -638,7 +639,7 @@ export type ServerMessage =
   | { type: 'heartbeat'; generatedAt: string; source: SourceHealth }
   | { type: 'prs'; prs: PullRequestList }
   | { type: 'error'; error: string }
-  | { type: 'link-confirmed'; hash: string; code: string }
+  | { type: 'link-confirmed'; hash: string; code: string; mac: string }
   | { type: 'link-denied'; hash: string };
 
 /**

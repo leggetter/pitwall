@@ -35,6 +35,8 @@ const INIT_SCRIPT = `(() => {
   const records = { csp: [], opened: [], clicks: [] };
   Object.defineProperty(window, '__appcheck', { value: records });
   document.addEventListener('securitypolicyviolation', (e) => records.csp.push(e.violatedDirective + ' ' + e.blockedURI));
+  // The real one, for a part that needs a window it can read (W175's link-new-tab).
+  Object.defineProperty(window, '__realOpen', { value: window.open.bind(window) });
   window.open = function (url, target, features) {
     records.opened.push({ url: String(url), target: String(target ?? ''), features: String(features ?? '') });
     return null;
@@ -195,11 +197,12 @@ export class Page {
   }
 
   /** The expression's value in the page. Throws, with the page's message, when it throws. */
-  async evaluate<T = unknown>(expression: string): Promise<T> {
+  async evaluate<T = unknown>(expression: string, options: { userGesture?: boolean } = {}): Promise<T> {
     const { result, exceptionDetails } = await this.send<{ result: { value?: T }; exceptionDetails?: { text: string; exception?: { description?: string } } }>('Runtime.evaluate', {
       expression,
       returnByValue: true,
       awaitPromise: true,
+      ...(options.userGesture ? { userGesture: true } : {}),
     });
     if (exceptionDetails) throw new Error(`in the page: ${exceptionDetails.exception?.description?.split('\n')[0] ?? exceptionDetails.text}`);
     return result.value as T;

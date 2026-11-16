@@ -150,8 +150,8 @@ export function parseServerMessage(data: unknown): ServerMessage | undefined {
     return prs ? { type: 'prs', prs } : undefined;
   }
   if (candidate.type === 'link-confirmed') {
-    if (typeof candidate.hash === 'string' && typeof candidate.code === 'string') {
-      return { type: 'link-confirmed', hash: candidate.hash, code: candidate.code };
+    if (typeof candidate.hash === 'string' && typeof candidate.code === 'string' && typeof candidate.mac === 'string') {
+      return { type: 'link-confirmed', hash: candidate.hash, code: candidate.code, mac: candidate.mac };
     }
     return undefined;
   }

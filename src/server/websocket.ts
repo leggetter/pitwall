@@ -15,6 +15,7 @@ import type { PrSource } from '../prs/index.js';
 import type { IndexSnapshot, PullRequestList, ServerMessage } from '../shared/protocol.js';
 import { DEFAULT_AUTH_TIMEOUT_MS, parseJsonObject, startHandshake, type HandshakeSlots } from './handshake.js';
 import { ConfirmLimit, isLinkCodeHash, type LinkCodes } from './linkCodes.js';
+import { linkConfirmMac } from './security.js';
 
 export { DEFAULT_AUTH_TIMEOUT_MS };
 
@@ -94,7 +95,10 @@ export function handleClient(ws: WebSocket, context: ClientContext): void {
     const hash = message.hash;
     const code = limit.allow() ? context.linkCodes?.redeem(hash) : undefined;
     if (ws.readyState !== ws.OPEN) return;
-    sendMessage(ws, code === undefined ? { type: 'link-denied', hash } : { type: 'link-confirmed', hash, code });
+    sendMessage(
+      ws,
+      code === undefined ? { type: 'link-denied', hash } : { type: 'link-confirmed', hash, code, mac: linkConfirmMac(context.token, hash, code, context.origin) },
+    );
   };
 
   startHandshake(ws, {

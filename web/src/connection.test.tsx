@@ -132,8 +132,8 @@ describe('link confirmations (W175)', () => {
     socket.receive({ type: 'authenticated', apiKey: KEY_A });
     const asked = links.confirm(hash);
     expect(JSON.parse(socket.sent.at(-1)!)).toEqual({ type: 'link-confirm', hash });
-    socket.receive({ type: 'link-confirmed', hash, code: 'the-code' });
-    expect(await asked).toBe('the-code');
+    socket.receive({ type: 'link-confirmed', hash, code: 'the-code', mac: 'the-mac' });
+    expect(await asked).toEqual({ code: 'the-code', mac: 'the-mac' });
 
     const lost = links.confirm(hash);
     socket.serverClose(1006);
@@ -147,15 +147,16 @@ describe('link confirmations (W175)', () => {
     const { challenge } = start({ links });
 
     const socket = await challenge();
-    socket.receive({ type: 'link-confirmed', hash: 'h'.repeat(43), code: 'x' });
+    socket.receive({ type: 'link-confirmed', hash: 'h'.repeat(43), code: 'x', mac: 'm' });
 
     expect(spy).not.toHaveBeenCalled();
   });
 
   it('parses the two replies, and refuses ones that are not shaped right', () => {
-    expect(parseServerMessage(JSON.stringify({ type: 'link-confirmed', hash: 'h', code: 'c' }))).toEqual({ type: 'link-confirmed', hash: 'h', code: 'c' });
+    expect(parseServerMessage(JSON.stringify({ type: 'link-confirmed', hash: 'h', code: 'c', mac: 'm' }))).toEqual({ type: 'link-confirmed', hash: 'h', code: 'c', mac: 'm' });
     expect(parseServerMessage(JSON.stringify({ type: 'link-denied', hash: 'h' }))).toEqual({ type: 'link-denied', hash: 'h' });
     expect(parseServerMessage(JSON.stringify({ type: 'link-confirmed', hash: 'h' }))).toBeUndefined();
+    expect(parseServerMessage(JSON.stringify({ type: 'link-confirmed', hash: 'h', code: 'c' }))).toBeUndefined();
     expect(parseServerMessage(JSON.stringify({ type: 'link-denied' }))).toBeUndefined();
   });
 });

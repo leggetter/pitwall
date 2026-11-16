@@ -286,6 +286,9 @@ const SUPERVISOR_MESSAGE_BODY_BYTES = 800 * 1024;
 /** The real server's handshake limit (DEFAULT_AUTH_TIMEOUT_MS). */
 const AUTH_TIMEOUT_MS = 5000;
 
+/** A page the fake serves as another process's stale page (W175's app check part, link-new-tab). */
+export const STALE_PAGE_PATH = '/__stale.html';
+
 export async function startFakeServer(options: FakeServerOptions): Promise<FakeServer> {
   const { port, webRoot, token, built } = options;
   const { security, protocol } = built;
@@ -346,6 +349,13 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (path.startsWith('/api/')) return void api(req, res).catch(() => end(res, 500));
     if (path === protocol.WS_PATH || path === protocol.ATTACH_PATH) return end(res, 426);
     if (req.method !== 'GET' && req.method !== 'HEAD') return end(res, 405);
+    // Only in this fake (W175's check): a stale page another process served on this origin, which sends the
+    // opener policy itself so a window it opens onto pitwall keeps its handle. The real server has no such path.
+    if (path === STALE_PAGE_PATH) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+      return void res.end('<!doctype html><title>stale</title>');
+    }
     void serveStatic(req, res).catch(() => end(res, 500));
   });
 
@@ -1021,7 +1031,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
         if (!isRecord(message) || message.type !== 'link-confirm' || !built.linkCodes.isLinkCodeHash(message.hash)) return;
         const code = codes.redeem(message.hash);
         records.linkConfirms.push({ hash: message.hash, confirmed: code !== undefined });
-        ws.send(JSON.stringify(code === undefined ? { type: 'link-denied', hash: message.hash } : { type: 'link-confirmed', hash: message.hash, code }));
+        ws.send(JSON.stringify(code === undefined ? { type: 'link-denied', hash: message.hash } : { type: 'link-confirmed', hash: message.hash, code, mac: security.linkConfirmMac(token, message.hash, code, origin) }));
       },
     );
   }

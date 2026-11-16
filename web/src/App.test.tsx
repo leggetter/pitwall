@@ -7,6 +7,7 @@ import { computeProof } from './connection.js';
 import { fakeSockets, group, minutesAgo, mixedSnapshot, session, snapshot, withEditorList, withoutSubagents, type FakeSocket } from './test/fixtures.js';
 import { TOKEN_STORAGE_KEY } from './token.js';
 import { LinkCodes } from '../../src/server/linkCodes.js';
+import { linkConfirmMac } from '../../src/server/security.js';
 import { answerLinkRequests, type ChannelLike } from './tokenLink.js';
 
 const SESSION_ID = '00000000-0000-4000-8000-0000000000b1';
@@ -84,7 +85,12 @@ describe('App', () => {
       return self;
     };
     const codes = new LinkCodes();
-    const stop = answerLinkRequests({ token: 'token-from-the-other-tab', confirmer: { confirm: async (hash) => codes.redeem(hash) }, channel });
+    const stop = answerLinkRequests({ token: 'token-from-the-other-tab', confirmer: {
+        confirm: async (hash) => {
+          const code = codes.redeem(hash);
+          return code === undefined ? undefined : { code, mac: linkConfirmMac('token-from-the-other-tab', hash, code, location.origin) };
+        },
+      }, channel });
     const meta = document.createElement('meta');
     meta.name = 'pitwall-link';
     meta.content = codes.issue();

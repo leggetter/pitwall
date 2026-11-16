@@ -3,8 +3,9 @@
 // page on this origin can read, so nothing secret goes on it in the clear:
 //
 //   1. The server put a one-time code in this page when the browser loaded it (the <meta name="pitwall-link">
-//      tag; src/server/linkCodes.ts). Only a page loaded by a navigation gets one. The tab sends the channel
-//      the code's SHA-256, never the code.
+//      tag; src/server/linkCodes.ts). Only a navigation no page started gets one (Sec-Fetch-Site: none).
+//      The page blanks the tag once it has read the code. The tab sends the channel the code's SHA-256,
+//      never the code.
 //   2. A tab that has the token, and a WebSocket signed in to the server that served it, sends that hash to
 //      the server. The server returns the code once, if it issued it, hasn't seen it used and it hasn't
 //      expired (LinkConfirmer, below).
@@ -53,6 +54,11 @@ export function pageLinkCode(doc: Pick<Document, 'querySelector'> = document): s
   return content && /^[A-Za-z0-9_-]{43}$/.test(content) ? content : null;
 }
 
+/** Blanks the tag, so a script that runs later in this page, or a window that reads it, finds no code. */
+export function clearPageLinkCode(doc: Pick<Document, 'querySelector'> = document): void {
+  doc.querySelector(`meta[name="${LINK_META}"]`)?.setAttribute('content', '');
+}
+
 function toBase64Url(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -64,6 +70,37 @@ function fromBase64Url(text: string): Uint8Array<ArrayBuffer> {
   const bytes = new Uint8Array(new ArrayBuffer(binary.length));
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return bytes;
+}
+
+/**
+ * base64url(HMAC-SHA256(key = the token, message = "link-confirmed", hash, code, origin, each on its own
+ * line)): what the server (linkConfirmMac(), src/server/security.ts) sends with a code. Computed over this
+ * page's own origin, so only the server that served it can have made it.
+ */
+export async function linkConfirmMac(
+  token: string,
+  hash: string,
+  code: string,
+  origin: string = location.origin,
+  subtle: SubtleCrypto = crypto.subtle,
+): Promise<string> {
+  const encoder = new TextEncoder();
+  const key = await subtle.importKey('raw', encoder.encode(token), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return toBase64Url(new Uint8Array(await subtle.sign('HMAC', key, encoder.encode(`link-confirmed\n${hash}\n${code}\n${origin}`))));
+}
+
+/** Constant-time-ish comparison of two MAC strings; they are public-length, and the check is not a secret's. */
+async function macMatches(token: string, presented: string, hash: string, code: string, origin: string, subtle: SubtleCrypto): Promise<boolean> {
+  if (typeof presented !== 'string') return false;
+  const encoder = new TextEncoder();
+  const key = await subtle.importKey('raw', encoder.encode(token), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+  let given: Uint8Array<ArrayBuffer>;
+  try {
+    given = fromBase64Url(presented);
+  } catch {
+    return false;
+  }
+  return subtle.verify('HMAC', key, given, encoder.encode(`link-confirmed\n${hash}\n${code}\n${origin}`));
 }
 
 /** base64url(SHA-256(code as UTF-8)): what the server computes for the code it issued. */
@@ -176,9 +213,14 @@ type LinkSend = (message: { type: 'link-confirm'; hash: string }) => void;
  * Asks the server, over a signed-in WebSocket, whether it issued the code with this hash and hasn't seen
  * it used. There is no socket to ask on while the connection isn't signed in, and then the answer is no.
  */
+export interface Confirmed {
+  code: string;
+  mac: string;
+}
+
 export class LinkConfirmer {
   #send: LinkSend | undefined;
-  readonly #pending = new Map<string, Array<(code: string | undefined) => void>>();
+  readonly #pending = new Map<string, Array<(confirmed: Confirmed | undefined) => void>>();
 
   constructor(private readonly timeoutMs: number = LINK_CONFIRM_TIMEOUT_MS) {}
 
@@ -196,18 +238,18 @@ export class LinkConfirmer {
     }
   }
 
-  confirm(hash: string): Promise<string | undefined> {
+  confirm(hash: string): Promise<Confirmed | undefined> {
     const send = this.#send;
     if (!send) return Promise.resolve(undefined);
     return new Promise((resolve) => {
       const waiters = this.#pending.get(hash) ?? [];
       const timer = setTimeout(() => settle(undefined), this.timeoutMs);
-      const settle = (code: string | undefined) => {
+      const settle = (confirmed: Confirmed | undefined) => {
         clearTimeout(timer);
         const rest = (this.#pending.get(hash) ?? []).filter((each) => each !== settle);
         if (rest.length === 0) this.#pending.delete(hash);
         else this.#pending.set(hash, rest);
-        resolve(code);
+        resolve(confirmed);
       };
       waiters.push(settle);
       this.#pending.set(hash, waiters);
@@ -220,11 +262,11 @@ export class LinkConfirmer {
   }
 
   /** The server's reply, `link-confirmed` or `link-denied`, from the signed-in socket. */
-  handle(message: { type: 'link-confirmed'; hash: string; code: string } | { type: 'link-denied'; hash: string }): void {
+  handle(message: { type: 'link-confirmed'; hash: string; code: string; mac: string } | { type: 'link-denied'; hash: string }): void {
     const waiters = this.#pending.get(message.hash);
     if (!waiters) return;
     this.#pending.delete(message.hash);
-    for (const resolve of waiters) resolve(message.type === 'link-confirmed' ? message.code : undefined);
+    for (const resolve of waiters) resolve(message.type === 'link-confirmed' ? { code: message.code, mac: message.mac } : undefined);
   }
 }
 
@@ -234,6 +276,8 @@ export interface AnswerOptions {
   channel?: ChannelFactory | undefined;
   subtle?: SubtleCrypto;
   now?: () => number;
+  /** The origin the MAC is bound to. Default: this page's own. */
+  origin?: string;
 }
 
 /**
@@ -273,9 +317,12 @@ export function answerLinkRequests(options: AnswerOptions): () => void {
 
     void (async () => {
       try {
-        const code = await options.confirmer.confirm(hash);
-        if (code === undefined) return;
-        channel.postMessage(await sealToken(options.token, code, hash, subtle));
+        const confirmed = await options.confirmer.confirm(hash);
+        if (confirmed === undefined) return;
+        // The server proves it knows the token: a process that took the port after pitwall stopped, and
+        // said "authenticated" without it, can't make a MAC, so the token is never sealed under its code.
+        if (!(await macMatches(options.token, confirmed.mac, hash, confirmed.code, options.origin ?? location.origin, subtle))) return;
+        channel.postMessage(await sealToken(options.token, confirmed.code, hash, subtle));
       } catch {
         // Nothing is sent.
       }
@@ -289,6 +336,7 @@ export function answerLinkRequests(options: AnswerOptions): () => void {
 }
 
 const requests = new Map<string, Promise<string | null>>();
+let lastPageCode: string | null = null;
 
 /**
  * Asks for the token once when this page has none and the server gave it a link code. `asking` is true
@@ -305,7 +353,11 @@ export function useLinkedToken(needed: boolean, channel: ChannelFactory | undefi
     let cancelled = false;
     // One request per code, however many times React runs this effect: a second request with the same
     // hash is ignored by the tabs that answer, and the code is spent after the first.
-    const code = pageLinkCode();
+    // The tag is blanked as soon as it's read; React may run this effect twice, and the second run
+    // finds the code the first one took.
+    const code = pageLinkCode() ?? lastPageCode;
+    lastPageCode = code;
+    clearPageLinkCode();
     let asked = code === null ? undefined : requests.get(code);
     if (asked === undefined) {
       asked = askForToken({ channel, code });

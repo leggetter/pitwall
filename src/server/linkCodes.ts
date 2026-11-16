@@ -7,17 +7,24 @@
 // is still open, shares it. So the tab must prove which server served it, and the answer must be
 // readable by that tab alone.
 //
-// - Every navigation to the app's index.html is given a fresh code, in a <meta> tag of the page. It
-//   goes only to a real navigation (Sec-Fetch-Dest: document and Sec-Fetch-Mode: navigate, headers
-//   a page's script can't set). A script on a stale same-origin page can fetch() the index but is
-//   given no code, can't frame it (frame-ancestors 'none'), and can't read a window it opens onto it
-//   (Cross-Origin-Opener-Policy: same-origin, security.ts).
+// - A code goes only to a navigation that no page started: Sec-Fetch-Dest: document, Sec-Fetch-Mode:
+//   navigate and Sec-Fetch-Site: none (typed, bookmarked, or opened from outside the browser, such as a
+//   terminal link), with no Sec-Purpose (prefetch, prerender). window.open, location.reload(),
+//   location.href= and history.go(0) arrive as same-origin, so a stale page on this origin can't open
+//   pitwall and read the code from its tag. Page scripts can't set these headers. The page blanks the
+//   tag once it has read the code (tokenLink.ts). The cost: a link clicked inside pitwall or on a web
+//   page shows the sign-in notice, as before W175.
+// - Cross-Origin-Opener-Policy: same-origin (security.ts) is defence in depth only. A stale page can send
+//   the same header itself and keep its handle on a window it opens, so it is not what protects the code.
 // - The tab sends the channel only the code's hash. A tab that has the token, and a signed-in
 //   WebSocket, sends that hash to the server over the socket. The server returns the code once, if it
-//   issued it, hasn't seen it used and it hasn't expired; the tab encrypts the token under it and
-//   broadcasts the ciphertext. Only the page with the code in its <meta> can read the answer, so a
-//   listener on the channel learns nothing, and a request replayed with the hash is answered with
-//   nothing, since the code is spent.
+//   issued it, hasn't seen it used and it hasn't expired, with a MAC under the token (security.ts,
+//   linkConfirmMac()) that the tab checks before it uses the code, so a process that took the port after
+//   pitwall stopped can't pick the code. The tab encrypts the token under the code and broadcasts the
+//   ciphertext. Only the page with the code can read the answer, so a listener on the channel learns
+//   nothing, and a request replayed with the hash is answered with nothing, since the code is spent.
+// - Open (F2, W175's review): a stale page from another account plus a local process of that account
+//   that forges Fetch Metadata can obtain a code and so the token; Phil is deciding the fix.
 //
 // This file is the server's side: the codes, and putting one in the page.
 import { createHash, randomBytes } from 'node:crypto';
@@ -96,9 +103,19 @@ export class LinkCodes {
   }
 }
 
-/** Whether the request is the browser loading a page, as a person or a link does, and not a script's fetch, frame or fetch-like request. */
+/**
+ * Whether the request is a navigation no page started: the browser loading a page for a typed or
+ * bookmarked address or a link from outside the browser (Sec-Fetch-Site: none), and not a prefetch or
+ * prerender (Sec-Purpose). A script's fetch, a frame, and a navigation a page made (window.open,
+ * location.reload() and the like, which are same-origin) all fail it.
+ */
 export function isDocumentNavigation(header: (name: string) => string | undefined): boolean {
-  return header('sec-fetch-dest') === 'document' && header('sec-fetch-mode') === 'navigate';
+  return (
+    header('sec-fetch-dest') === 'document' &&
+    header('sec-fetch-mode') === 'navigate' &&
+    header('sec-fetch-site') === 'none' &&
+    header('sec-purpose') === undefined
+  );
 }
 
 const LINK_META = /(<meta\s+name="pitwall-link"\s+content=")(")/;

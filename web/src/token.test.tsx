@@ -1,6 +1,7 @@
 import { renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { LinkCodes } from '../../src/server/linkCodes.js';
+import { linkConfirmMac } from '../../src/server/security.js';
 import {
   answerLinkRequests,
   askForToken,
@@ -124,9 +125,12 @@ describe('a pitwall link in a new tab (W175)', () => {
   }
 
   /** The server's side: the codes it issued, as a signed-in tab's confirm reaches them. */
-  function server() {
+  function server(mac: (hash: string, code: string) => string = (hash, code) => linkConfirmMac(TOKEN, hash, code, location.origin)) {
     const codes = new LinkCodes();
-    const confirm = vi.fn(async (hash: string) => codes.redeem(hash));
+    const confirm = vi.fn(async (hash: string) => {
+      const code = codes.redeem(hash);
+      return code === undefined ? undefined : { code, mac: mac(hash, code) };
+    });
     return { codes, confirm, confirmer: { confirm } };
   }
 
@@ -147,6 +151,20 @@ describe('a pitwall link in a new tab (W175)', () => {
     stop();
   });
 
+  it('seals nothing, and broadcasts nothing, when the confirmation has no MAC, or one from a server that does not know the token', async () => {
+    for (const mac of [() => '', () => linkConfirmMac('a-token-it-guessed', 'x', 'y', location.origin), (hash: string, code: string) => linkConfirmMac(TOKEN, hash, code, 'http://127.0.0.1:1')]) {
+      const { make, log } = bus();
+      const { codes, confirm, confirmer } = server(mac);
+      const stop = answerLinkRequests({ token: TOKEN, confirmer, channel: make });
+
+      expect(await askForToken({ code: codes.issue(), channel: make, timeoutMs: 60 })).toBeNull();
+
+      expect(confirm).toHaveBeenCalledTimes(1);
+      expect(log.filter((message) => (message as { type?: string }).type === 'link-answer')).toEqual([]);
+      stop();
+    }
+  });
+
   it('shows the sign-in notice when no tab answers in time', async () => {
     const { make } = bus();
     const { codes } = server();
@@ -159,6 +177,25 @@ describe('a pitwall link in a new tab (W175)', () => {
     expect(await askForToken({ code: null, channel: make, timeoutMs: 20 })).toBeNull();
     expect(await askForToken({ code: server().codes.issue(), channel: undefined, timeoutMs: 20 })).toBeNull();
     expect(log).toEqual([]);
+  });
+
+  it('blanks the page tag once it has read the code, and still asks once', async () => {
+    const { make, log } = bus();
+    const { codes } = server();
+    const meta = document.createElement('meta');
+    meta.name = 'pitwall-link';
+    meta.content = codes.issue();
+    document.head.append(meta);
+    try {
+      const { result } = renderHook(() => useLinkedToken(true, make));
+      expect(result.current.asking).toBe(true);
+      await tick();
+      expect(meta.getAttribute('content')).toBe('');
+      expect(pageLinkCode()).toBeNull();
+      expect(log.filter((message) => (message as { type?: string }).type === 'link-request')).toHaveLength(1);
+    } finally {
+      meta.remove();
+    }
   });
 
   it('does not ask when the tab has a token', () => {
@@ -281,9 +318,9 @@ describe('LinkConfirmer', () => {
 
     const asked = confirmer.confirm('h');
     expect(sent).toEqual([{ type: 'link-confirm', hash: 'h' }]);
-    confirmer.handle({ type: 'link-confirmed', hash: 'h', code: 'c' });
+    confirmer.handle({ type: 'link-confirmed', hash: 'h', code: 'c', mac: 'm' });
 
-    expect(await asked).toBe('c');
+    expect(await asked).toEqual({ code: 'c', mac: 'm' });
   });
 
   it('resolves undefined when the server denies, the socket closes, or it never answers', async () => {
@@ -307,7 +344,7 @@ describe('LinkConfirmer', () => {
 
   it('ignores a reply nobody asked for', () => {
     const confirmer = new LinkConfirmer();
-    expect(() => confirmer.handle({ type: 'link-confirmed', hash: 'x', code: 'y' })).not.toThrow();
+    expect(() => confirmer.handle({ type: 'link-confirmed', hash: 'x', code: 'y', mac: 'm' })).not.toThrow();
   });
 });
 

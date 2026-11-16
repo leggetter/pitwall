@@ -8,8 +8,11 @@
 //   server  what the socket is for: 'authenticated' on WS_PATH, 'ready' on ATTACH_PATH
 //
 // The raw token never crosses the socket, so a process squatting on the port
-// learns nothing it can reuse: a proof is good for one nonce, and each nonce
-// belongs to one connection. The proof is also bound to the page's origin,
+// learns no token from the handshake: a proof is good for one nonce, and each
+// nonce belongs to one connection. A squatter does learn that a tab holding the
+// token is open, and can say 'authenticated' to it without knowing the token, so
+// what a tab does after 'authenticated' must not rely on it: the link-confirmed
+// reply carries a MAC under the token that the tab checks (linkConfirmMac()). The proof is also bound to the page's origin,
 // and the server checks it against its own, http://127.0.0.1:<port>, so a
 // squatter on another port can't pass a challenge to a real pitwall page and
 // relay back the proof. Each connection gets one attempt. A wrong proof, a

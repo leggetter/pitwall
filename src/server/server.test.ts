@@ -29,6 +29,7 @@ import { MAX_CONVERSATION_READS, STALE_CURSOR_STATUS, startServerWithInternals, 
 import { DIAGNOSTICS_LOG_NAME, DiagnosticsLog, readDiagnosticsLog } from './diagnostics.js';
 import { MAX_PENDING_HANDSHAKES, WS_CLOSE_TRY_AGAIN } from './handshake.js';
 import { linkCodeHash } from './linkCodes.js';
+import { linkConfirmMac } from './security.js';
 import { DEFAULT_AUTH_TIMEOUT_MS } from './websocket.js';
 import { pitwallOrigin, proofFor as contractProof, version2ProofFor } from '../test/proof.js';
 
@@ -1741,6 +1742,17 @@ describe('link codes', () => {
     expect(codeIn((await get(server.port, '/', NAVIGATION, 'HEAD')).body)).toBe('');
   });
 
+  it('gives no code to a navigation a page started, or a prefetch', async () => {
+    const server = await startWithTag();
+    for (const site of ['same-origin', 'same-site', 'cross-site']) {
+      expect(codeIn((await get(server.port, '/', { ...NAVIGATION, 'sec-fetch-site': site })).body)).toBe('');
+    }
+    expect(codeIn((await get(server.port, '/', { ...NAVIGATION, 'sec-purpose': 'prefetch' })).body)).toBe('');
+    expect(codeIn((await get(server.port, '/', { ...NAVIGATION, 'sec-purpose': 'prefetch;prerender' })).body)).toBe('');
+    expect(codeIn((await get(server.port, '/', { 'sec-fetch-dest': 'document', 'sec-fetch-mode': 'navigate' })).body)).toBe('');
+    expect(codeIn((await get(server.port, '/', NAVIGATION)).body)).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  });
+
   it('sends the page uncached, with the opener policy that stops a window opened by another page reading it', async () => {
     const server = await startWithTag();
     const res = await get(server.port, '/', NAVIGATION);
@@ -1764,7 +1776,7 @@ describe('link codes', () => {
     const hash = linkCodeHash(code);
     const client = await authedClient(server.port);
 
-    expect(await confirm(client, hash)).toEqual({ type: 'link-confirmed', hash, code });
+    expect(await confirm(client, hash)).toEqual({ type: 'link-confirmed', hash, code, mac: linkConfirmMac(TOKEN, hash, code, `http://127.0.0.1:${server.port}`) });
     expect(await confirm(client, hash)).toEqual({ type: 'link-denied', hash });
   });
 

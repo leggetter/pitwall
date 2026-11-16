@@ -54,7 +54,12 @@ describe('isDocumentNavigation', () => {
   const headers = (values: Record<string, string>) => (name: string) => values[name];
 
   it('is true only for a navigation that loads a document', () => {
-    expect(isDocumentNavigation(headers({ 'sec-fetch-dest': 'document', 'sec-fetch-mode': 'navigate' }))).toBe(true);
+    const typed = { 'sec-fetch-dest': 'document', 'sec-fetch-mode': 'navigate', 'sec-fetch-site': 'none' };
+    expect(isDocumentNavigation(headers(typed))).toBe(true);
+    // A navigation a page started (window.open, reload, location.href) is same-origin, and others are not none.
+    for (const site of ['same-origin', 'same-site', 'cross-site']) expect(isDocumentNavigation(headers({ ...typed, 'sec-fetch-site': site }))).toBe(false);
+    expect(isDocumentNavigation(headers({ 'sec-fetch-dest': 'document', 'sec-fetch-mode': 'navigate' }))).toBe(false);
+    expect(isDocumentNavigation(headers({ ...typed, 'sec-purpose': 'prefetch' }))).toBe(false);
     // A script's fetch, a frame, a popup's opener check and a client that sends nothing.
     expect(isDocumentNavigation(headers({ 'sec-fetch-dest': 'empty', 'sec-fetch-mode': 'cors' }))).toBe(false);
     expect(isDocumentNavigation(headers({ 'sec-fetch-dest': 'iframe', 'sec-fetch-mode': 'navigate' }))).toBe(false);

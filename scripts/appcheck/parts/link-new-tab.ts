@@ -9,6 +9,7 @@
 
 import { NAMES } from '../fixtures.js';
 import type { Part } from '../runner.js';
+import { STALE_PAGE_PATH } from '../server.js';
 import { viewName } from './_dom.js';
 
 const q = JSON.stringify;
@@ -30,7 +31,7 @@ const part: Part = {
       // by no navigation to this server's index, so it holds no code. A static file stands in for it.
       const stale = await page.sibling(view, t.theme);
       try {
-        await stale.navigate('/theme-init.js');
+        await stale.navigate(STALE_PAGE_PATH);
         const fetched = await stale.evaluate<string>(`fetch('/').then((r) => r.text()).then((html) => /name="pitwall-link" content="([^"]*)"/.exec(html)?.[1] ?? 'no tag')`);
         t.expectEqual(fetched, '', "a script's fetch of the page is given no code");
         const answered = await stale.evaluate<boolean>(`new Promise((resolve) => {
@@ -43,6 +44,32 @@ const part: Part = {
         t.expect(!answered, 'no answer came on the channel');
         t.expectEqual(server.records.linkConfirms, [{ hash: 'F'.repeat(43), confirmed: false }], 'the signed-in tab asked the server, which had not issued it');
         t.expect(!(await stale.evaluate<boolean>(`sessionStorage.getItem(${q(TOKEN_KEY)}) !== null`)), 'it holds no token');
+      } finally {
+        await stale.close();
+      }
+    });
+
+    await t.step('a stale page that sends its own opener policy, and opens pitwall, finds no code in the window it opened', async () => {
+      server.clearRecords();
+      const stale = await page.sibling(view, t.theme);
+      try {
+        await stale.navigate(STALE_PAGE_PATH);
+        // window.open arrives as Sec-Fetch-Site: same-origin, so the page it loads has an empty tag. The stale
+        // page's COOP matches pitwall's, so it keeps its handle and can read the window, as an attacker's would.
+        const seen = await stale.evaluate<string>(`new Promise((resolve) => {
+          const w = window.__realOpen('/?view=all');
+          setTimeout(() => {
+            try {
+              const tag = w.document.querySelector('meta[name=pitwall-link]');
+              resolve(JSON.stringify({ tag: tag ? tag.getAttribute('content') : 'no tag', token: w.sessionStorage.getItem(${q(TOKEN_KEY)}) }));
+            } catch (error) { resolve(JSON.stringify({ error: String(error) })); }
+            try { w.close(); } catch {}
+          }, 2500);
+        })`, { userGesture: true });
+        const result = JSON.parse(seen) as { tag?: string; token?: string | null; error?: string };
+        t.expectEqual(result.tag, '', 'the window it opened (still readable by it) held an empty link tag: ' + seen);
+        t.expect(!result.token, 'and no token');
+        t.expectEqual(server.records.linkConfirms, [], 'the server was asked to confirm nothing');
       } finally {
         await stale.close();
       }

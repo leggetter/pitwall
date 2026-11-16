@@ -29,8 +29,9 @@ export function securityHeaders(port: number): Readonly<Record<string, string>> 
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
     'Cross-Origin-Resource-Policy': 'same-origin',
-    // A page that opens pitwall in a window gets no reference to it (W175): the link code in the page is
-    // for that page alone, and the opener is script that could be any page on the origin.
+    // Defence in depth only (W175): a page that opens pitwall in a window gets no reference to it. A stale
+    // page can send this header itself and keep its handle, so the link code is protected by
+    // Sec-Fetch-Site: none (linkCodes.ts), not by this.
     'Cross-Origin-Opener-Policy': 'same-origin',
   };
 }
@@ -94,6 +95,18 @@ export function randomSecret(): string {
  */
 export function challengeProof(token: string, nonce: string, origin: string): string {
   return createHmac('sha256', Buffer.from(token, 'utf8')).update(`${nonce}\n${origin}`, 'utf8').digest('base64url');
+}
+
+/**
+ * The MAC on a `link-confirmed` reply (W175): base64url(HMAC-SHA256(key = the token as UTF-8, message =
+ * "link-confirmed", a line feed, the hash, a line feed, the code, a line feed, then the origin)). The tab
+ * that holds the token checks it before it seals the token under `code`, so a process that took the port
+ * after pitwall stopped, and says "authenticated" to a tab without knowing the token, can't pick a code
+ * and be answered with the token. The label keeps it apart from a challenge proof; the hash and the code
+ * tie it to this one request and answer; the origin ties it to the server the tab was served by.
+ */
+export function linkConfirmMac(token: string, hash: string, code: string, origin: string): string {
+  return createHmac('sha256', Buffer.from(token, 'utf8')).update(`link-confirmed\n${hash}\n${code}\n${origin}`, 'utf8').digest('base64url');
 }
 
 /** Constant-time check of a presented proof against the one this token, nonce and origin call for. */
