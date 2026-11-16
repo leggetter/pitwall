@@ -156,6 +156,10 @@ scripts/usage-report.ts  npx tsx scripts/usage-report.ts [--days 14] [--json]: a
                          repo's transcripts, read-only, totals only, to test the efficiency rules (W131)
 scripts/flag-report.ts   npx tsx scripts/flag-report.ts [--days 30] [--json]: counts and texts from the flag log,
                          ~/.pitwall/flags.jsonl (W153), read-only; the texts are session content, so it stays local
+scripts/diagnostics-report.ts
+                         npx tsx scripts/diagnostics-report.ts [--days 7] [--session <id>] [--json]: why sessions were in
+                         Needs you and for how long, from ~/.pitwall/diagnostics.jsonl (W165, written by
+                         src/server/diagnostics.ts; ids and reasons only), read-only
 scripts/extract-icons.ts regenerates web/src/icons/paths.ts from a pinned Material Symbols commit
 scripts/readme-screenshot.ts
                          writes <outDir>/hero-<theme>.png from made-up sessions on the app check's fake

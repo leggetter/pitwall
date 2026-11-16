@@ -26,6 +26,7 @@ import { parseArgs } from 'node:util';
 import { ConfigError, loadConfig, ownersByRoot, type LoadedConfig } from './config.js';
 import { startIndexer } from './index/index.js';
 import { createPrPoller, prsOff } from './prs/index.js';
+import { DiagnosticsLog } from './server/diagnostics.js';
 import { createRecapEngine } from './recaps/engine.js';
 import { createSupervisor } from './supervisor/supervisor.js';
 import { formatToolListing, listConnectorTools, listingNotice, listsThroughClaude, listToolsThroughClaude, signInInstructions } from './supervisor/connectorTools.js';
@@ -694,6 +695,8 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   // file's weekend reserve. The index leaves its `/usage` call out, as it does a recap call. With
   // --no-usage, no `/usage` call: the view's transcript totals still work.
   const usage = createUsageSource({ pitwallHome: pitwallHome(), planReads: command.usage, ...(config.runRate === undefined ? {} : { target: config.runRate }) });
+  // The diagnostics log (W165): why a row is in Needs you, and what the PR poller found. No off switch; ids and reasons only.
+  const diagnostics = new DiagnosticsLog({ home: pitwallHome() });
   const indexer = startIndexer({
     roots,
     intervalMs,
@@ -725,10 +728,11 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
       webRoot: resolveWebRoot(),
       // Attachments for New session's first prompt go in its attachments folder (W79), made on the first upload.
       pitwallHome: pitwallHome(),
+      diagnostics,
       // Your open PRs (M4), which the server starts fetching once it's listening. With --no-prs, never gh.
       // With the index, each PR is placed under the clone of its repo, or the root that claims its
       // owner, with each configured root's `github.owners` by real path (W105, W103).
-      prs: command.prs ? createPrPoller({ index: indexer, ownersByRoot: ownersByRoot(config, roots) }) : prsOff(),
+      prs: command.prs ? createPrPoller({ index: indexer, ownersByRoot: ownersByRoot(config, roots), onPoll: (outcome) => diagnostics.poll(outcome) }) : prsOff(),
       ...(recaps === undefined ? {} : { recaps }),
       ...(supervisor === undefined ? {} : { supervisor }),
       usage,

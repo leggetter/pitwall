@@ -28,6 +28,7 @@
 //   rows but Needs you, which never lists it. A session that owns one keeps its row, without the need.
 
 import { prNeedsAttention, prOwner, type PullRequestRelation, type PullRequestSummary, type SessionGroup, type SessionSummary } from '../../src/shared/protocol.js';
+import { prNeedOf } from '../../src/shared/needsYou.js';
 import { plainText } from './format.js';
 import { comparePrs, filterPrs, isOlderPr, prKey, prUpdatedMs } from './prs.js';
 import {
@@ -36,7 +37,6 @@ import {
   filterNeedle,
   groupId,
   groupLabel,
-  isBusy,
   listedOnce,
   needsAttention,
   sessionOrder,
@@ -154,14 +154,7 @@ export function prNeeding(session: SessionSummary, work: Work): PullRequestSumma
   return prNeedOf(session, work.owned.get(session.sessionId));
 }
 
-/**
- * The most urgent of `owned` that needs attention, or undefined while the session is busy (W161,
- * isBusy()): Phil, 2026-11-06, saw a session at work on the PR that asks his review listed in Needs
- * you for that review, which said nothing of what the session needed.
- */
-export function prNeedOf(session: SessionSummary, owned: readonly PullRequestSummary[] | undefined): PullRequestSummary | undefined {
-  return isBusy(session) ? undefined : owned?.find(prNeedsAttention);
-}
+export { prNeedOf };
 
 /**
  * Whether a session's row needs you (W106): the session does (needsAttention(), without what's flagged or
