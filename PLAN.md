@@ -407,7 +407,7 @@ On `m5.4/integration`, branched from `main` at f667fef once M5.3 had merged ([#2
   - Found (Claude Code 2.1.323): Claude Code writes a markdown link as an OSC 8 hyperlink only when it thinks the terminal supports one, and for `claude attach` the attaching process decides, from `FORCE_HYPERLINK`, then `TERM_PROGRAM` and a few others. pitwall's own environment names none, so a link arrived as `text (url)`, and the web UI's xterm.js opens only OSC 8 links (`web/src/links.ts`), not a URL in plain text.
   - What: the PTY's environment is the scrubbed one plus `FORCE_HYPERLINK=1` (`attachEnvironment()`, `src/server/attach.ts`), whatever pitwall was started with, since the terminal is always the web UI's xterm.js. A link still opens only through `web/src/links.ts`' rule: http: and https: only, a confirmation that shows the full URL, a new tab with no opener or referrer.
   - Checked on a throwaway `pitwall-test-*` session: without it the reply was `example link (https://example.com/w193)` as text; with it, an OSC 8 link to that URL.
-  - Status: Built (2026-11-13), in its PR into `m5.4/integration`.
+  - Status: Done. Merged into `m5.4/integration` in [#269](https://github.com/leggetter/pitwall/pull/269) (2026-11-13) and into `main` in [#270](https://github.com/leggetter/pitwall/pull/270) (2026-11-16).
 
 ## Open questions
 
