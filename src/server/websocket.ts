@@ -7,12 +7,15 @@
 // then the snapshot. Right after the client's first snapshot, the latest PR
 // list as a 'prs' message (M4, W93), and then each new one the PR poller
 // makes, on its own timer, never with the session poll. There are no client
-// messages after auth, so anything an authenticated client sends is ignored.
-import type { WebSocket } from 'ws';
+// messages after auth but one, `link-confirm` (W175, linkCodes.ts), so anything
+// else an authenticated client sends is ignored.
+import type { RawData, WebSocket } from 'ws';
 import type { Indexer } from '../index/index.js';
 import type { PrSource } from '../prs/index.js';
 import type { IndexSnapshot, PullRequestList, ServerMessage } from '../shared/protocol.js';
-import { DEFAULT_AUTH_TIMEOUT_MS, startHandshake, type HandshakeSlots } from './handshake.js';
+import { DEFAULT_AUTH_TIMEOUT_MS, parseJsonObject, startHandshake, type HandshakeSlots } from './handshake.js';
+import { ConfirmLimit, isLinkCodeHash, type LinkCodes } from './linkCodes.js';
+import { linkConfirmMac } from './security.js';
 
 export { DEFAULT_AUTH_TIMEOUT_MS };
 
@@ -34,6 +37,8 @@ export interface ClientContext {
   slots?: HandshakeSlots;
   /** Your open PRs (M4), sent after the first snapshot. The server always passes one, prsOff() for --no-prs; without it, no 'prs' is sent. */
   prs?: PrSource;
+  /** The link codes this server issued (W175). Without them, every `link-confirm` is denied. */
+  linkCodes?: Pick<LinkCodes, 'redeem'>;
 }
 
 export function handleClient(ws: WebSocket, context: ClientContext): void {
@@ -80,6 +85,22 @@ export function handleClient(ws: WebSocket, context: ClientContext): void {
     unsubscribePrs = undefined;
   });
 
+  // A signed-in tab asking whether a request on the channel carries a code this server issued (W175).
+  // The code comes back once, so a second ask with the same hash, or one the server never issued, is denied.
+  const limit = new ConfirmLimit();
+  const onConfirm = (data: RawData, isBinary: boolean) => {
+    if (isBinary) return;
+    const message = parseJsonObject(data);
+    if (message === undefined || message.type !== 'link-confirm' || Object.keys(message).length !== 2 || !isLinkCodeHash(message.hash)) return;
+    const hash = message.hash;
+    const code = limit.allow() ? context.linkCodes?.redeem(hash) : undefined;
+    if (ws.readyState !== ws.OPEN) return;
+    sendMessage(
+      ws,
+      code === undefined ? { type: 'link-denied', hash } : { type: 'link-confirmed', hash, code, mac: linkConfirmMac(context.token, hash, code, context.origin) },
+    );
+  };
+
   startHandshake(ws, {
     token: context.token,
     origin: context.origin,
@@ -94,6 +115,7 @@ export function handleClient(ws: WebSocket, context: ClientContext): void {
       const current = context.indexer.latest();
       if (current) send(current);
       unsubscribe = context.indexer.subscribe(send);
+      ws.on('message', onConfirm);
     },
   });
 }

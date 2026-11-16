@@ -1,11 +1,12 @@
-import { lazy, useMemo } from 'react';
+import { lazy, useEffect, useMemo } from 'react';
 import { ApiContext, createApiClient, defaultFetch, type FetchLike } from './api.js';
 import { AttachContext, type AttachEnv } from './attach.js';
 import { Dashboard } from './components/Dashboard.js';
-import { NoTokenNotice, TokenRejectedNotice } from './components/Notice.js';
+import { AskingNotice, NoTokenNotice, TokenRejectedNotice } from './components/Notice.js';
 import { defaultSocketFactory, useConnection, type SocketFactory } from './connection.js';
 import { EditorsContext, useEditorList } from './editors.js';
 import { useToken } from './token.js';
+import { answerLinkRequests, defaultChannel, LinkConfirmer, useLinkedToken, type ChannelFactory } from './tokenLink.js';
 import { UikitRoute } from './uikit/route.js';
 
 export interface AppProps {
@@ -13,6 +14,8 @@ export interface AppProps {
   createSocket?: SocketFactory;
   /** Makes API requests. Tests pass a fake; the browser's `fetch` otherwise. */
   fetch?: FetchLike;
+  /** The BroadcastChannel for links opened in new tabs (W175). Tests pass a fake, or undefined for none; the browser's otherwise. */
+  linkChannel?: ChannelFactory | undefined;
 }
 
 /**
@@ -24,11 +27,15 @@ export interface AppProps {
 const Gallery =
   import.meta.env.MODE === 'development' || import.meta.env.MODE === 'test' ? lazy(() => import('./uikit/Gallery.js')) : null;
 
-function Connected({ token, createSocket, fetch }: { token: string; createSocket: SocketFactory; fetch: FetchLike }) {
+function Connected({ token, createSocket, fetch, linkChannel }: { token: string; createSocket: SocketFactory; fetch: FetchLike; linkChannel: ChannelFactory | undefined }) {
   // One API client per token. It holds the apiKey in memory only, and the
   // connection hands it a fresh key on every handshake.
   const api = useMemo(() => createApiClient({ fetch }), [fetch]);
-  const view = useConnection(token, { createSocket, keys: api.keys });
+  // Answers other tabs' requests for the token (W175), but only after this server confirms their code
+  // over this tab's signed-in socket.
+  const links = useMemo(() => new LinkConfirmer(), []);
+  const view = useConnection(token, { createSocket, keys: api.keys, links });
+  useEffect(() => answerLinkRequests({ token, confirmer: links, channel: linkChannel }), [token, links, linkChannel]);
   // The editors pitwall's server found (W72), fetched once, as soon as the connection has an apiKey.
   const editors = useEditorList(api);
   // Attach sockets answer their own challenge with the same token (W10).
@@ -48,11 +55,15 @@ function Connected({ token, createSocket, fetch }: { token: string; createSocket
   );
 }
 
-function Main({ createSocket = defaultSocketFactory, fetch = defaultFetch }: AppProps) {
-  const token = useToken();
-  if (!token) return <NoTokenNotice />;
+function Main({ createSocket = defaultSocketFactory, fetch = defaultFetch, ...rest }: AppProps) {
+  const linkChannel = 'linkChannel' in rest ? rest.linkChannel : defaultChannel;
+  const fragmentToken = useToken();
+  // A tab with no token asks the open pitwall tabs for it (W175), once, before it shows the notice.
+  const linked = useLinkedToken(fragmentToken === null, linkChannel);
+  const token = fragmentToken ?? linked.token;
+  if (!token) return linked.asking ? <AskingNotice /> : <NoTokenNotice />;
   // Keyed by the token, so a new one starts afresh: a new connection and a new API client.
-  return <Connected key={token} token={token} createSocket={createSocket} fetch={fetch} />;
+  return <Connected key={token} token={token} createSocket={createSocket} fetch={fetch} linkChannel={linkChannel} />;
 }
 
 export function App(props: AppProps) {

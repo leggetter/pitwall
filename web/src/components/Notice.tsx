@@ -36,6 +36,11 @@ function WaysBack() {
   );
 }
 
+/** A tab with no token is asking the pitwall tabs already open for it (W175), for the moment that takes. */
+export function AskingNotice() {
+  return <Notice lead="Asking the open pitwall tabs to sign this one in…" />;
+}
+
 /** The page was opened without a token, or its tab lost it, as a browser restart can. */
 export function NoTokenNotice() {
   return (
@@ -43,7 +48,8 @@ export function NoTokenNotice() {
       lead="This tab has no token for pitwall."
       detail={
         <>
-          <WaysBack /> On a single-user machine, a fixed <code>PITWALL_TOKEN</code> keeps a pinned tab working when pitwall restarts.
+          <WaysBack /> A link to a session opens signed in when another pitwall tab is open, so keep one open for links to work. On a
+          single-user machine, a fixed <code>PITWALL_TOKEN</code> keeps a pinned tab working when pitwall restarts.
         </>
       }
     />

@@ -626,6 +626,11 @@ export const PROTOCOL_VERSION = 3;
  * - 'prs' (M4): your open pull requests, sent right after the first
  *   'snapshot', and again whenever anything in the list changes, `refreshing`
  *   included. Its own poller sends it, never the session poll.
+ * - 'link-confirmed' / 'link-denied' (W175): the answer to a signed-in client's
+ *   `link-confirm`. `code` is the one-time code whose SHA-256 `hash` the client
+ *   sent, returned once and only if this server issued it and hasn't seen it
+ *   used (src/server/linkCodes.ts). `mac` is linkConfirmMac(): HMAC-SHA256 under the token over the
+ *   hash, the code and the server's origin, which the tab checks before it uses the code.
  */
 export type ServerMessage =
   | { type: 'challenge'; version: number; nonce: string }
@@ -633,7 +638,9 @@ export type ServerMessage =
   | { type: 'snapshot'; snapshot: IndexSnapshot }
   | { type: 'heartbeat'; generatedAt: string; source: SourceHealth }
   | { type: 'prs'; prs: PullRequestList }
-  | { type: 'error'; error: string };
+  | { type: 'error'; error: string }
+  | { type: 'link-confirmed'; hash: string; code: string; mac: string }
+  | { type: 'link-denied'; hash: string };
 
 /**
  * Client → server WebSocket messages. The client's first message must be
@@ -645,8 +652,12 @@ export type ServerMessage =
  * origin is `location.origin`, such as `http://127.0.0.1:4517`; the server uses
  * the one origin it allows. The browser computes the proof with WebCrypto.
  * The server compares it in constant time, and accepts each nonce only once.
+ *
+ * After 'authenticated', `link-confirm` (W175) is the one message the server
+ * reads: `hash` is base64url(SHA-256(a link code)), 43 characters; anything
+ * else, and any other message, is ignored.
  */
-export type ClientMessage = { type: 'auth'; proof: string };
+export type ClientMessage = { type: 'auth'; proof: string } | { type: 'link-confirm'; hash: string };
 
 /**
  * WebSocket close code for a missing or wrong proof, an expired challenge, or
