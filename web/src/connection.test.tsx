@@ -11,6 +11,7 @@ import {
   type ConnectionView,
 } from './connection.js';
 import { fakeSockets, mixedSnapshot, type FakeSocket } from './test/fixtures.js';
+import { LinkConfirmer } from './tokenLink.js';
 
 const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
 const KEY_A = 'a'.repeat(43);
@@ -115,6 +116,47 @@ describe('computeProof', () => {
     expect(location.origin).toBe(here!.origin);
     expect(await computeProof(here!.token, here!.nonce)).toBe(here!.proof);
     expect(await computeProof(here!.token, here!.nonce)).not.toBe(elsewhere!.proof);
+  });
+});
+
+describe('link confirmations (W175)', () => {
+  it('can be sent only once the socket is signed in, are answered from that socket, and go when it closes', async () => {
+    const links = new LinkConfirmer(1000);
+    const { challenge, fake } = start({ links });
+    const hash = 'h'.repeat(43);
+
+    // Not signed in yet: the proof has gone out, but the server hasn't accepted it.
+    const socket = await challenge();
+    expect(await links.confirm(hash)).toBeUndefined();
+
+    socket.receive({ type: 'authenticated', apiKey: KEY_A });
+    const asked = links.confirm(hash);
+    expect(JSON.parse(socket.sent.at(-1)!)).toEqual({ type: 'link-confirm', hash });
+    socket.receive({ type: 'link-confirmed', hash, code: 'the-code' });
+    expect(await asked).toBe('the-code');
+
+    const lost = links.confirm(hash);
+    socket.serverClose(1006);
+    expect(await lost).toBeUndefined();
+    expect(fake.sockets).toHaveLength(1);
+  });
+
+  it('ignores a confirmation reply on a socket that has not signed in', async () => {
+    const links = new LinkConfirmer(1000);
+    const spy = vi.spyOn(links, 'handle');
+    const { challenge } = start({ links });
+
+    const socket = await challenge();
+    socket.receive({ type: 'link-confirmed', hash: 'h'.repeat(43), code: 'x' });
+
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('parses the two replies, and refuses ones that are not shaped right', () => {
+    expect(parseServerMessage(JSON.stringify({ type: 'link-confirmed', hash: 'h', code: 'c' }))).toEqual({ type: 'link-confirmed', hash: 'h', code: 'c' });
+    expect(parseServerMessage(JSON.stringify({ type: 'link-denied', hash: 'h' }))).toEqual({ type: 'link-denied', hash: 'h' });
+    expect(parseServerMessage(JSON.stringify({ type: 'link-confirmed', hash: 'h' }))).toBeUndefined();
+    expect(parseServerMessage(JSON.stringify({ type: 'link-denied' }))).toBeUndefined();
   });
 });
 

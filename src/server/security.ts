@@ -29,6 +29,9 @@ export function securityHeaders(port: number): Readonly<Record<string, string>> 
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
     'Cross-Origin-Resource-Policy': 'same-origin',
+    // A page that opens pitwall in a window gets no reference to it (W175): the link code in the page is
+    // for that page alone, and the opener is script that could be any page on the origin.
+    'Cross-Origin-Opener-Policy': 'same-origin',
   };
 }
 

@@ -60,6 +60,7 @@ type Static = typeof import('../../src/server/static.js');
 type Protocol = typeof import('../../src/shared/protocol.js');
 type Work = typeof import('../../src/server/work.js');
 type ClaudeDefaultsModule = typeof import('../../src/server/claudeDefaults.js');
+type LinkCodesModule = typeof import('../../src/server/linkCodes.js');
 
 /** pitwall's own modules, from the build. */
 export interface Built {
@@ -70,19 +71,22 @@ export interface Built {
   work: Work;
   /** Claude Code's defaults (W122), worked out from made-up settings files, never this machine's. */
   claudeDefaults: ClaudeDefaultsModule;
+  /** The one-time codes for a pitwall link opened in a new tab (W175), so the fake issues and redeems them as the real server does. */
+  linkCodes: LinkCodesModule;
 }
 
 /** Imports the five modules the fake server uses from a server build, such as dist. */
 export async function importBuilt(dist: string): Promise<Built> {
   const load = (path: string) => import(pathToFileURL(join(dist, path)).href);
-  const [security, staticFiles, protocol, work, claudeDefaults] = await Promise.all([
+  const [security, staticFiles, protocol, work, claudeDefaults, linkCodes] = await Promise.all([
     load('server/security.js'),
     load('server/static.js'),
     load('shared/protocol.js'),
     load('server/work.js'),
     load('server/claudeDefaults.js'),
+    load('server/linkCodes.js'),
   ]);
-  return { security: security as Security, static: staticFiles as Static, protocol: protocol as Protocol, work: work as Work, claudeDefaults: claudeDefaults as ClaudeDefaultsModule };
+  return { security: security as Security, static: staticFiles as Static, protocol: protocol as Protocol, work: work as Work, claudeDefaults: claudeDefaults as ClaudeDefaultsModule, linkCodes: linkCodes as LinkCodesModule };
 }
 
 export interface Records {
@@ -146,6 +150,8 @@ export interface Records {
   decisions: Array<{ id: string; decision: string; length?: number; profile?: string | null; status: number }>;
   /** Every HTTP request and upgrade, as `METHOD /path status`. */
   requests: string[];
+  /** Every `link-confirm` a signed-in tab sent (W175), and whether this server had issued that code and not seen it used. */
+  linkConfirms: Array<{ hash: string; confirmed: boolean }>;
 }
 
 const emptyRecords = (): Records => ({
@@ -175,6 +181,7 @@ const emptyRecords = (): Records => ({
   uploads: [],
   deletes: [],
   requests: [],
+  linkConfirms: [],
 });
 
 /** How long a made-up clone takes, so Clone shows it's busy (W107). */
@@ -282,6 +289,7 @@ const AUTH_TIMEOUT_MS = 5000;
 export async function startFakeServer(options: FakeServerOptions): Promise<FakeServer> {
   const { port, webRoot, token, built } = options;
   const { security, protocol } = built;
+  const codes = new built.linkCodes.LinkCodes();
   const origin = security.serverOrigin(port);
   const apiKey = security.randomSecret();
   const headers = Object.entries(security.securityHeaders(port));
@@ -346,6 +354,12 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (result.kind !== 'file') return end(res, 404);
     res.setHeader('Content-Type', result.contentType);
     if (result.isIndex) res.setHeader('Cache-Control', 'no-store');
+    // As the real server: a page loaded by a navigation, and no other request, is given a link code (W175).
+    const { linkCodes } = built;
+    if (result.isIndex && req.method === 'GET' && linkCodes.isDocumentNavigation((name) => [req.headers[name]].flat()[0])) {
+      const html = result.body.toString('utf8');
+      if (linkCodes.hasLinkTag(html)) return void res.end(linkCodes.withLinkCode(html, codes.issue()));
+    }
     res.end(result.body);
   }
 
@@ -1002,7 +1016,13 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
         ws.send(JSON.stringify({ type: 'prs', prs: world.prList() }));
         indexSockets.add(ws);
       },
-      () => {},
+      (message) => {
+        // A signed-in tab asking whether a link code is one this server issued (W175), as websocket.ts answers.
+        if (!isRecord(message) || message.type !== 'link-confirm' || !built.linkCodes.isLinkCodeHash(message.hash)) return;
+        const code = codes.redeem(message.hash);
+        records.linkConfirms.push({ hash: message.hash, confirmed: code !== undefined });
+        ws.send(JSON.stringify(code === undefined ? { type: 'link-denied', hash: message.hash } : { type: 'link-confirmed', hash: message.hash, code }));
+      },
     );
   }
 

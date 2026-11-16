@@ -372,6 +372,23 @@ export class Page {
     await loaded;
   }
 
+  /**
+   * A second tab in the same browser, as a link clicked in a terminal opens one (W175): the window and
+   * theme set, nothing else, so it has no token and shares no storage with this tab but the origin's
+   * localStorage. The caller loads it (navigate) and closes it.
+   */
+  async sibling(viewport: Viewport, theme: Theme): Promise<Page> {
+    const other = await Page.open(this.#cdp, this.#server, this.#token, { keys: this.#keys });
+    await other.send('Emulation.setDeviceMetricsOverride', { width: viewport.width, height: viewport.height, deviceScaleFactor: 1, mobile: false });
+    await other.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }, { name: 'prefers-reduced-motion', value: 'reduce' }] });
+    return other;
+  }
+
+  /** Leaves the app for a blank page, so the tab holds no signed-in pitwall socket, and keeps its storage. */
+  async leave(): Promise<void> {
+    await this.#blank();
+  }
+
   async close(): Promise<void> {
     for (const off of this.#off) off();
     await this.#cdp.send('Target.closeTarget', { targetId: this.#targetId }).catch(() => {});

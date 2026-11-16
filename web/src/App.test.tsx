@@ -6,6 +6,8 @@ import { App } from './App.js';
 import { computeProof } from './connection.js';
 import { fakeSockets, group, minutesAgo, mixedSnapshot, session, snapshot, withEditorList, withoutSubagents, type FakeSocket } from './test/fixtures.js';
 import { TOKEN_STORAGE_KEY } from './token.js';
+import { LinkCodes } from '../../src/server/linkCodes.js';
+import { answerLinkRequests, type ChannelLike } from './tokenLink.js';
 
 const SESSION_ID = '00000000-0000-4000-8000-0000000000b1';
 const SESSION_NAME = 'pitwall-test-conversation';
@@ -62,10 +64,49 @@ describe('App', () => {
     expect(screen.getByText('This tab has no token for pitwall.')).toBeTruthy();
     // Right for either kind of token: a per-run one is in the printed link, a fixed one never is (W51).
     expect(container.querySelector('.notice-detail')?.textContent).toBe(
-      'In this tab, open the link pitwall printed when it started, or, if PITWALL_TOKEN is set, add #token= and that token to the address. On a single-user machine, a fixed PITWALL_TOKEN keeps a pinned tab working when pitwall restarts.',
+      'In this tab, open the link pitwall printed when it started, or, if PITWALL_TOKEN is set, add #token= and that token to the address. A link to a session opens signed in when another pitwall tab is open, so keep one open for links to work. On a single-user machine, a fixed PITWALL_TOKEN keeps a pinned tab working when pitwall restarts.',
     );
     expect([...container.querySelectorAll('.notice-detail code')].map((code) => code.textContent)).toEqual(['PITWALL_TOKEN', '#token=', 'PITWALL_TOKEN']);
     expect(fake.sockets).toHaveLength(0);
+  });
+
+  it('with a link code in the page, gets the token from a tab that has it, then signs in with a proof of it (W175)', async () => {
+    const listeners = new Set<{ onmessage: ((event: { data: unknown }) => void) | null }>();
+    const channel = (): ChannelLike => {
+      const self: ChannelLike = {
+        onmessage: null,
+        postMessage: (message) => {
+          for (const other of listeners) if (other !== self) setTimeout(() => other.onmessage?.({ data: JSON.parse(JSON.stringify(message)) }), 0);
+        },
+        close: () => void listeners.delete(self),
+      };
+      listeners.add(self);
+      return self;
+    };
+    const codes = new LinkCodes();
+    const stop = answerLinkRequests({ token: 'token-from-the-other-tab', confirmer: { confirm: async (hash) => codes.redeem(hash) }, channel });
+    const meta = document.createElement('meta');
+    meta.name = 'pitwall-link';
+    meta.content = codes.issue();
+    document.head.append(meta);
+
+    try {
+      const fake = fakeSockets();
+      render(<App createSocket={fake.factory} linkChannel={channel} />);
+      await waitFor(() => expect(fake.sockets).toHaveLength(1));
+      act(() => {
+        fake.last.open();
+        fake.last.receive({ type: 'challenge', version: PROTOCOL_VERSION, nonce: nonce() });
+      });
+      await waitFor(() => expect(fake.last.sent).toHaveLength(1));
+
+      const proof = (JSON.parse(fake.last.sent[0] as string) as { proof: string }).proof;
+      expect(proof).toBe(await computeProof('token-from-the-other-tab', nonce()));
+      expect(window.sessionStorage.getItem(TOKEN_STORAGE_KEY)).toBe('token-from-the-other-tab');
+    } finally {
+      meta.remove();
+      stop();
+    }
   });
 
   it('takes the token from the URL, cleans the address bar, and answers the challenge with a proof, not the token', async () => {

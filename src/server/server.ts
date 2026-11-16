@@ -137,6 +137,7 @@ import {
 import { spawnPty } from './pty.js';
 import { RecentSpawns } from './recentSpawns.js';
 import { resolveSession } from './sessions.js';
+import { hasLinkTag, isDocumentNavigation, LinkCodes, withLinkCode } from './linkCodes.js';
 import { BUILDING_PAGE, BUILDING_SCRIPT, BUILDING_SCRIPT_PATH, resolveStaticFile } from './static.js';
 import { HandshakeSlots } from './handshake.js';
 import { DEFAULT_AUTH_TIMEOUT_MS, handleClient, MAX_PAYLOAD_BYTES } from './websocket.js';
@@ -252,6 +253,8 @@ export async function startServerWithInternals(
   // server process, so it dies with the process, and a page that reconnects
   // to a restarted server gets the new one from a fresh handshake.
   const apiKey = randomSecret();
+  // The one-time codes that let a tab opened at a pitwall link get the token from a tab that has it (W175).
+  const linkCodes = new LinkCodes();
 
   // Set once the server is listening. Until then, nothing is allowed.
   let port: number | undefined;
@@ -420,7 +423,7 @@ export async function startServerWithInternals(
     });
     internals.routes?.(app);
   };
-  const app = createApp({ snapshots, indexer, token, apiKey, webRoot, port: () => port ?? -1, routes, ...(supervisor === undefined ? {} : { supervisor }) });
+  const app = createApp({ snapshots, indexer, token, apiKey, linkCodes, webRoot, port: () => port ?? -1, routes, ...(supervisor === undefined ? {} : { supervisor }) });
   const honoListener = getRequestListener(app.fetch);
 
   const server = createServer((req, res) => {
@@ -469,7 +472,7 @@ export async function startServerWithInternals(
     if (!isAllowedOrigin(req.headers.origin, port!)) return rejectUpgrade(socket, 403);
     if (path === ATTACH_PATH) return attach.handleUpgrade(req, socket, head);
     wss.handleUpgrade(req, socket, head, (ws) =>
-      handleClient(ws, { indexer: snapshots, token, origin: serverOrigin(port!), apiKey, authTimeoutMs, onAuthenticated, slots, prs }),
+      handleClient(ws, { indexer: snapshots, token, origin: serverOrigin(port!), apiKey, authTimeoutMs, onAuthenticated, slots, prs, linkCodes }),
     );
   });
 
@@ -547,6 +550,7 @@ interface AppContext {
   indexer: Indexer;
   token: string;
   apiKey: string;
+  linkCodes: LinkCodes;
   webRoot: string;
   port(): number;
   routes: ServerInternals['routes'];
@@ -554,7 +558,7 @@ interface AppContext {
   supervisor?: Pick<Supervisor, 'conversation'>;
 }
 
-function createApp({ snapshots, indexer, token, apiKey, webRoot, port, routes, supervisor }: AppContext): Hono {
+function createApp({ snapshots, indexer, token, apiKey, linkCodes, webRoot, port, routes, supervisor }: AppContext): Hono {
   const app = new Hono();
   // Conversation pages being read now.
   let conversationReads = 0;
@@ -681,6 +685,11 @@ function createApp({ snapshots, indexer, token, apiKey, webRoot, port, routes, s
       case 'file':
         c.header('Content-Type', result.contentType);
         if (result.isIndex) c.header('Cache-Control', 'no-store');
+        // A page loaded by a navigation is given a link code (W175), and no other request is.
+        if (result.isIndex && c.req.method === 'GET' && isDocumentNavigation((name) => c.req.header(name))) {
+          const html = result.body.toString('utf8');
+          if (hasLinkTag(html)) return c.body(withLinkCode(html, linkCodes.issue()));
+        }
         return c.body(new Uint8Array(result.body));
       case 'building':
         c.header('Cache-Control', 'no-store');
