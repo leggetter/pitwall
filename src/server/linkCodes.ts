@@ -23,8 +23,13 @@
 //   pitwall stopped can't pick the code. The tab encrypts the token under the code and broadcasts the
 //   ciphertext. Only the page with the code can read the answer, so a listener on the channel learns
 //   nothing, and a request replayed with the hash is answered with nothing, since the code is spent.
-// - Open (F2, W175's review): a stale page from another account plus a local process of that account
-//   that forges Fetch Metadata can obtain a code and so the token; Phil is deciding the fix.
+// - F2 (W175's review; Phil chose the fix on 2026-11-16): a stale page from another account plus a local
+//   process of that account that forges Fetch Metadata could have obtained a code. So a code is issued only
+//   when the TCP peer of the request's socket is a process owned by pitwall's own uid (peerUid.ts). A process
+//   of the same user is out of scope: it can read ~/.pitwall/ and the launch file anyway. macOS asks lsof,
+//   Linux reads /proc/net/tcp and tcp6; any other platform, an error, a timeout or output it can't read fails
+//   closed, and the page shows the sign-in notice. Residual: a small race between the check and the request,
+//   and a process of another account that can inject into one of this user's processes is out of scope.
 //
 // This file is the server's side: the codes, and putting one in the page.
 import { createHash, randomBytes } from 'node:crypto';

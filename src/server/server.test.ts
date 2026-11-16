@@ -1713,7 +1713,7 @@ describe('link codes', () => {
     const root = join(tmp, 'web-with-tag');
     await mkdir(root, { recursive: true });
     await writeFile(join(root, 'index.html'), TAG_PAGE);
-    return start(fakeIndexer(), { webRoot: root });
+    return start(fakeIndexer(), { webRoot: root }, { peerCheck: async () => true });
   }
 
   const codeIn = (body: string) => /name="pitwall-link" content="([^"]*)"/.exec(body)?.[1] ?? '';
@@ -1740,6 +1740,24 @@ describe('link codes', () => {
     expect(codeIn((await get(server.port, '/', { 'sec-fetch-dest': 'iframe', 'sec-fetch-mode': 'navigate' })).body)).toBe('');
     expect(codeIn((await get(server.port, '/')).body)).toBe('');
     expect(codeIn((await get(server.port, '/', NAVIGATION, 'HEAD')).body)).toBe('');
+  });
+
+  it('gives no code, and the sign-in page as before, when the check says the client is not this user’s', async () => {
+    const root = join(tmp, 'web-with-tag-refused');
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, 'index.html'), TAG_PAGE);
+    const seen: Array<number | undefined> = [];
+    const server = await start(fakeIndexer(), { webRoot: root }, { peerCheck: async (socket) => (seen.push(socket.remotePort), false) });
+    const res = await get(server.port, '/', NAVIGATION);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toContain('name="pitwall-link"');
+    expect(codeIn(res.body)).toBe('');
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBeGreaterThan(0);
+    // A request that isn't a navigation never reaches the check.
+    await get(server.port, '/', { 'sec-fetch-dest': 'empty' });
+    expect(seen).toHaveLength(1);
   });
 
   it('gives no code to a navigation a page started, or a prefetch', async () => {
