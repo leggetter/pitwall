@@ -1005,6 +1005,17 @@ describe('what the snapshot shows', () => {
       expect(someone.h.engine.decorate(someone.a).needsYou).toEqual({ reason: 'recap', text: 'Rebase #43' });
     });
 
+    it('never needs you for an optional to-do of yours (W173), and keeps the hand-off steps', async () => {
+      const offered = { text: 'Look over the diff first?', owner: 'you', after: false, optional: true };
+      const only = await recapped({ todos: [offered], waitingOn: 'you' });
+      expect(only.h.engine.decorate(only.a)).not.toHaveProperty('needsYou');
+      expect(only.h.engine.decorate(only.a).recap).toMatchObject({ forYou: 1 });
+      const done = await recapped({ todos: [handoff[0], offered], waitingOn: 'CI' });
+      expect(done.h.engine.decorate(done.a)).not.toHaveProperty('needsYou');
+      const both = await recapped({ todos: [handoff[0], offered, handoff[1]], waitingOn: 'CI' });
+      expect(both.h.engine.decorate(both.a).needsYou).toEqual({ reason: 'recap', text: 'Push the hand-off commit' });
+    });
+
     it("skips a step of yours that follows another's, so W146's case stays out", async () => {
       const todos = [
         { text: 'Merge #42', owner: 'someone else', after: false },

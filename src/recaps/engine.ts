@@ -796,7 +796,9 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
    * on another session, whose message would start its next turn, nor from a recap made before W166,
    * which doesn't say which to-dos follow others.
    */
-  function yourNext(session: SessionSummary, recap: SessionRecap): string | undefined {
+  function yourNext(session: SessionSummary, full: SessionRecap): string | undefined {
+    // W173: a to-do the session only offered never puts it here.
+    const recap = { ...full, todos: full.todos.filter((todo) => todo.optional !== true) };
     const lead = leadTodo(recap.todos);
     if (lead?.owner === 'you' && recap.waitingOn === 'you') return lead.text;
     if (!jobDone(session) || recap.waitingOn === 'another session') return undefined;

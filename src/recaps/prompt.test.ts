@@ -89,7 +89,7 @@ describe('RECAP_SYSTEM_PROMPT', () => {
   });
 
   it('asks for a summary and to-dos (W121): what it is doing, a goal that moved on, and to-dos in order, each owned', () => {
-    expect(RECAP_SYSTEM_PROMPT).toContain('{"title": "...", "summary": "...", "goal": "...", "done": "...", "workingOn": "...", "todos": [{"text": "...", "owner": "...", "after": false}], "waitingOn": "...", "plan": "...", "items": [{"text": "...", "state": "..."}], "changes": "..."}');
+    expect(RECAP_SYSTEM_PROMPT).toContain('{"title": "...", "summary": "...", "goal": "...", "done": "...", "workingOn": "...", "todos": [{"text": "...", "owner": "...", "after": false, "optional": false}], "waitingOn": "...", "plan": "...", "items": [{"text": "...", "state": "..."}], "changes": "..."}');
     expect(RECAP_SYSTEM_PROMPT).toContain('exactly these ten keys and no others');
     expect(RECAP_SYSTEM_PROMPT).toContain('- summary: what this session is doing');
     expect(RECAP_SYSTEM_PROMPT).toContain('If the user moved the session on from what it started as, say what it started as and what it is now.');
@@ -284,6 +284,25 @@ describe('parseRecapAnswer', () => {
     expect(readRecapAnswer(answer({ todos: [{ text: 'a', owner: 'you', after: true, due: 'now' }] }))).toEqual({ ok: false, refusal: 'todos' });
     expect(todoOf({ text: 'a', owner: 'you' })).toEqual({ text: 'a', owner: 'you' });
     expect(todoOf({ text: 'a', owner: 'you', after: false })).toEqual({ text: 'a', owner: 'you', after: false });
+  });
+
+  it("keeps each to-do's `optional`, strictly, with or without `after` (W173)", () => {
+    const todos = [{ text: 'Look at the diff?', owner: 'you', optional: true }, { text: 'Merge #42', owner: 'you', after: false, optional: false }];
+    expect(parseRecapAnswer(answer({ todos, waitingOn: 'you' }))?.todos).toEqual(todos);
+    expect(parseRecapAnswer(answer({ todos: [{ text: 'a', owner: 'you', after: true }] }))?.todos[0]).toEqual({ text: 'a', owner: 'you', after: true });
+    for (const optional of ['true', 1, null, {}]) {
+      expect(readRecapAnswer(answer({ todos: [{ text: 'a', owner: 'you', optional }] })), String(optional)).toEqual({ ok: false, refusal: 'todos' });
+    }
+    expect(readRecapAnswer(answer({ todos: [{ text: 'a', owner: 'you', optional: true, due: 'now' }] }))).toEqual({ ok: false, refusal: 'todos' });
+    expect(todoOf({ text: 'a', owner: 'you', after: false, optional: true })).toEqual({ text: 'a', owner: 'you', after: false, optional: true });
+    expect(todoOf({ text: 'a', owner: 'you', optional: true })).toEqual({ text: 'a', owner: 'you', optional: true });
+  });
+
+  it('asks the model for optional, and to drop a to-do the user has moved past, without dropping a hand-off step (W173)', () => {
+    expect(RECAP_SYSTEM_PROMPT).toContain('"optional": false');
+    expect(RECAP_SYSTEM_PROMPT).toContain('- optional: true when the session only offered it');
+    expect(RECAP_SYSTEM_PROMPT).toContain('moved past');
+    expect(RECAP_SYSTEM_PROMPT).toContain('pushing a hand-off commit or running /clear, is still due');
   });
 
   it('asks the model which to-dos follow an earlier one (W166)', () => {

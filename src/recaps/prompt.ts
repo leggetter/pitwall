@@ -65,6 +65,9 @@ export const RECAP_SETTINGS = JSON.stringify({ crossSessionInbound: 'refuse', au
  * now puts a session under Needs you (W146; Phil, 2026-11-05: questions "should be carried forward
  * unless they have been explicitly ignored").
  *
+ * W173: a to-do of yours that you've moved past is left out, and one the session only offered is marked
+ * `optional`, which never puts the session in Needs you.
+ *
  * W166: each to-do says whether it only follows an earlier one (`after`), so a finished background
  * job's step of yours that doesn't, such as "Run /clear, then …", isn't hidden behind a CI check
  * nothing is left to watch (Phil, 2026-11-09: a hand-off "marked as Done, but I actually need to run
@@ -100,7 +103,7 @@ You get material from one session: its name and repo, the user's first prompt, t
 
 Answer with one JSON object with exactly these ten keys and no others, and nothing else: no code fence, no text before or after it.
 
-{"title": "...", "summary": "...", "goal": "...", "done": "...", "workingOn": "...", "todos": [{"text": "...", "owner": "...", "after": false}], "waitingOn": "...", "plan": "...", "items": [{"text": "...", "state": "..."}], "changes": "..."}
+{"title": "...", "summary": "...", "goal": "...", "done": "...", "workingOn": "...", "todos": [{"text": "...", "owner": "...", "after": false, "optional": false}], "waitingOn": "...", "plan": "...", "items": [{"text": "...", "state": "..."}], "changes": "..."}
 
 Every text you write, these rules first:
 - Self-contained. The reader has never seen this session, its repo or its project's vocabulary. Never "as discussed", "the above", "q1", "option B", "the fix" or "the PR" without saying which.
@@ -125,6 +128,8 @@ The fields:
     - "CI": checks, a build or a deploy.
     - "someone else": another person, such as a reviewer or an author, or another Claude Code session. Say who in the text.
   - after: true when it can only happen once an earlier to-do in the list is done, such as a release after a merge, or a step that needs an answer the user hasn't given yet; false when it can be done now, whatever comes before it in the list.
+  - optional: true when the session only offered it, such as "if you want", "worth a look" or "you could check", and nothing needs it to carry on; false when the work needs it done.
+  - Leave out a to-do of the user's (owner "you") that a later message from the user has moved past: they approved what it was checking, or told the session to go ahead without it, such as "just merge it". Leave it out too when the work it was about has since merged or been removed and the session hasn't raised it again. A to-do the user has not moved past stays, even when the work is finished: a step of theirs to run, such as pushing a hand-off commit or running /clear, is still due.
 - waitingOn: what the session is waiting on right now, exactly one of "you", "another session", "CI", "someone else", "nothing".
   - "you": the user has a question still to answer, from the latest turn or an earlier one, or a decision, approval or action due now, not only after something else happens. Then the first to-do that isn't the session's is the user's.
   - "another session": it's waiting for a reply or a result from another Claude Code session.
@@ -260,6 +265,9 @@ const ANSWER_KEYS = ['summary', 'todos', 'waitingOn', 'title', 'goal', 'done', '
 const TODO_KEYS = ['text', 'owner'] as const;
 /** A to-do's keys since W166: `after` too. A to-do has these or TODO_KEYS, exactly. */
 const TODO_KEYS_AFTER = ['text', 'owner', 'after'] as const;
+/** A to-do's keys since W173: `optional` too, with or without `after`. */
+const TODO_KEYS_OPTIONAL = ['text', 'owner', 'optional'] as const;
+const TODO_KEYS_AFTER_OPTIONAL = ['text', 'owner', 'after', 'optional'] as const;
 /** A plan item's keys (W172), exactly. */
 const PLAN_ITEM_KEYS = ['text', 'state'] as const;
 
@@ -399,14 +407,16 @@ export function readRecapAnswer(text: string, { stored = false }: { stored?: boo
   if ('refusal' in title) return { ok: false, refusal: title.refusal };
   const todos: RecapTodo[] = [];
   for (const raw of rawTodos.slice(0, RECAP_TODOS_MAX)) {
-    if (!isRecord(raw) || !(hasExactly(raw, TODO_KEYS) || hasExactly(raw, TODO_KEYS_AFTER))) return { ok: false, refusal: 'todos' };
+    if (!isRecord(raw) || !(hasExactly(raw, TODO_KEYS) || hasExactly(raw, TODO_KEYS_AFTER) || hasExactly(raw, TODO_KEYS_OPTIONAL) || hasExactly(raw, TODO_KEYS_AFTER_OPTIONAL))) return { ok: false, refusal: 'todos' };
     const owner = raw.owner;
     if (typeof owner !== 'string' || !(RECAP_TODO_OWNERS as readonly string[]).includes(owner)) return { ok: false, refusal: 'owner' };
     if ('after' in raw && typeof raw.after !== 'boolean') return { ok: false, refusal: 'todos' };
+    if ('optional' in raw && typeof raw.optional !== 'boolean') return { ok: false, refusal: 'todos' };
     const todoText = answerText(raw.text, (each) => plainField(each));
     if ('refusal' in todoText) return { ok: false, refusal: todoText.refusal };
     const todo: RecapTodo = { text: todoText.text, owner: owner as RecapTodoOwner };
     if (typeof raw.after === 'boolean') todo.after = raw.after;
+    if (typeof raw.optional === 'boolean') todo.optional = raw.optional;
     todos.push(todo);
   }
   // The picture (W150): why it was started, what's done (W189), what it's on and why, and the plan's
@@ -510,9 +520,14 @@ export function leadTodo<T extends { owner: RecapTodoOwner }>(todos: readonly T[
   return todos.find((todo) => todo.owner !== 'session');
 }
 
-/** A to-do as the recap has it: text, owner and, since W166, whether it follows an earlier one. */
-export function todoOf({ text, owner, after }: RecapTodo): RecapTodo {
-  return after === undefined ? { text, owner } : { text, owner, after };
+/** A to-do as the recap has it: text, owner and, since W166, whether it follows an earlier one and, since W173, whether it's optional. */
+export function todoOf({ text, owner, after, optional }: RecapTodo): RecapTodo {
+  return {
+    text,
+    owner,
+    ...(after === undefined ? {} : { after }),
+    ...(optional === undefined ? {} : { optional }),
+  };
 }
 
 /** readRecapAnswer() without the reason: the answer, or undefined. */

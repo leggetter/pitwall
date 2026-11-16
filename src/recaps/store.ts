@@ -217,7 +217,7 @@ export function parseStoredRecap(text: string, sessionId: string, nowMs: number,
   }
   for (let i = 0; i < answer.todos.length; i++) {
     const kept = raw.todos[i] as Record<string, unknown>;
-    if (answer.todos[i]!.text !== kept.text || answer.todos[i]!.owner !== kept.owner || answer.todos[i]!.after !== kept.after) return undefined;
+    if (answer.todos[i]!.text !== kept.text || answer.todos[i]!.owner !== kept.owner || answer.todos[i]!.after !== kept.after || answer.todos[i]!.optional !== kept.optional) return undefined;
   }
   return { ...answer, at: parsed.at as string, throughAt: parsed.throughAt as string, source: 'pitwall' };
 }
