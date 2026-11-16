@@ -192,6 +192,8 @@ describe('in the app', () => {
   }
 
   it('asks for the run rate only when the snapshot says it’s on, and shows it on the button', async () => {
+    // On the fixtures' clock: on the real one, the week resets at RESETS and the button shows no figure.
+    vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
     const off = app(false);
     await act(async () => {});
     expect(off.mock.calls.filter(([url]) => url === RUN_RATE_PATH)).toHaveLength(0);

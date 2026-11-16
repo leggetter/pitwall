@@ -24,7 +24,8 @@
 // is resolved with resolveSession(), and the command is built from the
 // resolved summary's shortId, never from the client's id. The PTY gets the
 // server's environment through childEnvironment() (command.ts), the scrubber
-// every child of pitwall goes through.
+// every child of pitwall goes through, plus FORCE_HYPERLINK=1 (W193): see
+// attachEnvironment().
 //
 // Closing the socket kills the PTY, which ends `claude attach` and detaches:
 // the session keeps running (spike S3). close() does the same for every PTY.
@@ -55,6 +56,20 @@ import { resolveSession } from './sessions.js';
  * large paste arrives as several `input` messages.
  */
 export const ATTACH_MAX_PAYLOAD_BYTES = 64 * 1024;
+
+/**
+ * The PTY's environment (W193): the scrubbed one, with FORCE_HYPERLINK=1.
+ * Claude Code writes a markdown link as an OSC 8 hyperlink only when it thinks
+ * the terminal supports one, and for `claude attach` the attaching process
+ * decides, from FORCE_HYPERLINK, then TERM_PROGRAM and a few others (Claude
+ * Code 2.1.323). The terminal here is the web UI's xterm.js, which opens OSC 8
+ * links through its own rule (web/src/links.ts), whatever terminal pitwall was
+ * started from, and pitwall's own environment usually names none: without it,
+ * a link arrives as `text (url)`, plain text no one can click.
+ */
+export function attachEnvironment(env: NodeJS.ProcessEnv, token: string): Record<string, string> {
+  return { ...childEnvironment(env, token), FORCE_HYPERLINK: '1' };
+}
 
 /** The terminal sizes `open` and `resize` accept, inclusive. */
 export const COLS_RANGE = { min: 2, max: 500 } as const;
@@ -269,7 +284,7 @@ export function createAttachServer(options: AttachOptions): AttachServer {
           cols: message.cols,
           rows: message.rows,
           cwd: session.cwdMissing || !existsSync(session.cwd) ? homedir() : session.cwd,
-          env: childEnvironment(options.env ?? process.env, token),
+          env: attachEnvironment(options.env ?? process.env, token),
           name: 'xterm-256color',
         });
       } catch (error) {

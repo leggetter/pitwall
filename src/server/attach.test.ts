@@ -1026,8 +1026,15 @@ describe('the attach socket', () => {
       const { server, spawner } = await start({ env });
       await attached(server.port);
       const childEnv = spawner.last.options.env;
-      expect(childEnv).toEqual(ENV);
+      expect(childEnv).toEqual({ ...ENV, FORCE_HYPERLINK: '1' });
       expect(JSON.stringify(childEnv)).not.toContain(TOKEN);
+    });
+
+    // W193: the web UI's xterm.js opens OSC 8 links, so Claude Code should write them.
+    it('asks Claude Code for hyperlinks, whatever the server was started with', async () => {
+      const { server, spawner } = await start({ env: { ...ENV, FORCE_HYPERLINK: '0', TERM_PROGRAM: 'Apple_Terminal' } });
+      await attached(server.port);
+      expect(spawner.last.options.env.FORCE_HYPERLINK).toBe('1');
     });
   });
 });
