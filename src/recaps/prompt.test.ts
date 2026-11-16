@@ -98,7 +98,7 @@ describe('RECAP_SYSTEM_PROMPT', () => {
     // The strip tags each owner and line 2 says "Next:", so a to-do has no lead-in of its own (W111's review).
     expect(RECAP_SYSTEM_PROMPT).toContain('with no lead-in such as "Next," or "You need to"');
     expect(RECAP_SYSTEM_PROMPT).toContain('Each question the user still has to answer is its own to-do.');
-    expect(RECAP_SYSTEM_PROMPT).toContain('Always "nothing" when todos is empty.');
+    expect(RECAP_SYSTEM_PROMPT).toContain('Always "nothing" when todos is empty, and when every to-do left is the user\'s and optional.');
     // #123's review: an answered question is a finished to-do; W189: so is one handed to someone else.
     expect(RECAP_SYSTEM_PROMPT).toContain('A question the newer turns show you answered, explicitly dismissed or handed to someone else is no longer yours');
     // An update revises, keeping the summary steady.
