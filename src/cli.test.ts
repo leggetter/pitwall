@@ -923,7 +923,8 @@ describe('pitwall (the process)', () => {
     const { code, stderr } = await result;
     expect(code).toBe(0);
     expect(stderr).not.toContain('recaps:');
-    expect((await readdir(home)).sort()).toEqual(['recap-store']);
+    // The diagnostics log (W165) has no off switch, so it may be there: it holds ids and reasons, never a recap.
+    expect((await readdir(home)).filter((name) => name !== 'diagnostics.jsonl').sort()).toEqual(['recap-store']);
     expect(await readdir(join(home, 'recap-store'))).toEqual([]);
   }, 30_000);
 

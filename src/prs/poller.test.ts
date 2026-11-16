@@ -410,6 +410,34 @@ describe('createPrPoller: with the real fetch and a fake runFile', () => {
   });
 });
 
+describe('createPrPoller: onPoll (W165)', () => {
+  it('tells the diagnostics log each fetch\'s counts per search, and a failed search as failed, and survives a callback that throws', async () => {
+    const clock = fakeClock();
+    const fetch = fakeFetch();
+    const outcomes: unknown[] = [];
+    const poller = createPrPoller({
+      fetch: fetch.fetch,
+      now: clock.now,
+      monotonicNow: clock.monotonic,
+      timers: clock.timers,
+      onPoll: (outcome) => {
+        outcomes.push(outcome);
+        throw new Error('a callback that fails');
+      },
+    });
+    poller.start();
+    const worked = fetched([pr(1), pr(2, { updatedAt: '2026-10-28T11:00:00Z' })]);
+    await fetch.finish({ ...worked, 'review-requested': { ok: true, prs: [], truncated: false, skipped: 3 }, mentioned: { ok: false, reason: 'error', error: FETCH_ERRORS.timeout } });
+    expect(outcomes).toEqual([
+      { authored: { listed: 2, skipped: 0, failed: false }, 'review-requested': { listed: 0, skipped: 3, failed: false }, mentioned: { listed: 0, skipped: 0, failed: true } },
+    ]);
+    // Still polling.
+    clock.advance(PRS_POLL_INTERVAL_MS);
+    expect(fetch.calls()).toBe(2);
+    poller.stop();
+  });
+});
+
 describe('prsOff', () => {
   it("is the 'off' list, refuses refresh, and never fetches", () => {
     const off = prsOff();

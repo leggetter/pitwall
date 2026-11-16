@@ -226,7 +226,7 @@ export const GH_EXIT_AUTH = 4;
 
 /** One search's result: its PRs, or why it couldn't be fetched. */
 export type SearchResult =
-  | { ok: true; prs: PullRequestSummary[]; truncated: boolean }
+  | { ok: true; prs: PullRequestSummary[]; truncated: boolean; /** Review-requested PRs left out as already reviewed (W101), for the diagnostics log (W165). Absent when none. */ skipped?: number }
   | { ok: false; reason: Exclude<Extract<PullRequestSource, { ok: false }>['reason'], 'off'>; error: string };
 
 /** One fetch: each search's result, on its own, so one that failed leaves the others (W101). */
@@ -425,7 +425,7 @@ function resultOf(pages: readonly SearchPage[]): SearchResult {
   if (prs.length === 0 && (malformedOrKept > 0 || (total > 0 && skipped === 0))) return { ok: false, reason: 'error', error: FETCH_ERRORS.unreadable };
   const more = pages.at(-1)?.hasNextPage === true;
   const truncated = more || total > PRS_MAX || prs.length > PRS_MAX;
-  return { ok: true, prs: prs.slice(0, PRS_MAX), truncated };
+  return { ok: true, prs: prs.slice(0, PRS_MAX), truncated, ...(skipped > 0 ? { skipped } : {}) };
 }
 
 /**

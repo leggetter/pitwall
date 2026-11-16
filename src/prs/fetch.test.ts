@@ -637,10 +637,11 @@ describe('fetchPullRequests: three searches, one call each (W101)', () => {
     const someoneElse = node('example/demo-app', 8, 6, { reviewRequests: reviewRequests({ user: 'someone-else' }) });
     const still = node('example/demo-app', 9, 4, { reviewRequests: reviewRequests({ user: VIEWER }) });
     const { runFile } = bySearch({ 'review-requested': [searchPage([reviewed, someoneElse, still])] });
-    expect((await fetchPullRequests({ runFile }))['review-requested']).toEqual({ ok: true, prs: [parsePullRequest(still, 'review-requested', VIEWER)], truncated: false });
+    // Two were left out as reviewed already, and the count says so, for the diagnostics log (W165).
+    expect((await fetchPullRequests({ runFile }))['review-requested']).toEqual({ ok: true, prs: [parsePullRequest(still, 'review-requested', VIEWER)], truncated: false, skipped: 2 });
     // Every one moved on: an empty list, not unreadable, so the last list doesn't stay.
     const all = bySearch({ 'review-requested': [searchPage([reviewed, someoneElse], { total: 2 })] });
-    expect((await fetchPullRequests({ runFile: all.runFile }))['review-requested']).toEqual({ ok: true, prs: [], truncated: false });
+    expect((await fetchPullRequests({ runFile: all.runFile }))['review-requested']).toEqual({ ok: true, prs: [], truncated: false, skipped: 2 });
     // One that can't be read is still a change in shape.
     const broken = bySearch({ 'review-requested': [searchPage([reviewed, { changed: true }])] });
     expect((await fetchPullRequests({ runFile: broken.runFile }))['review-requested']).toEqual({ ok: false, reason: 'error', error: FETCH_ERRORS.unreadable });

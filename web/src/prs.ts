@@ -38,6 +38,7 @@ import {
   type RootOwners,
   type SessionSummary,
 } from '../../src/shared/protocol.js';
+import { comparePrs } from '../../src/shared/needsYou.js';
 import { plainText } from './format.js';
 import type { BadgeLook } from './sessions.js';
 
@@ -306,12 +307,8 @@ const time = (iso: string) => {
 /** When a PR was last updated, in ms; 0 when that doesn't parse. */
 export const prUpdatedMs = (pr: Pick<PullRequestSummary, 'updatedAt'>): number => time(pr.updatedAt);
 
-/** The most urgent first: the PRs that need attention, then the newest updated, then the highest number. */
-export function comparePrs(a: PullRequestSummary, b: PullRequestSummary): number {
-  const attention = Number(prNeedsAttention(b)) - Number(prNeedsAttention(a));
-  if (attention !== 0) return attention;
-  return time(b.updatedAt) - time(a.updatedAt) || b.number - a.number;
-}
+// comparePrs() lives in src/shared/needsYou.ts (W165): the server's diagnostics log orders a session's PRs as the page does.
+export { comparePrs };
 
 /**
  * The PRs that match the filter's text, in the order given: case-insensitively, on the trimmed text,

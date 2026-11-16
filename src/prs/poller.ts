@@ -20,7 +20,8 @@
 //                (placed.ts): from the repos under the snapshot's roots, found again every 5 minutes,
 //                and `ownersByRoot` from the config file (W103). Without it, neither is set
 //
-// Never logs: a title from a private repo is as sensitive as session data.
+// Never logs a title or a name: a title from a private repo is as sensitive as session data. The one
+// thing it reports is each poll's counts, to onPoll, for the diagnostics log (W165).
 import { runFile as realRunFile, type RunFile } from '../index/exec.js';
 import type { Indexer } from '../index/index.js';
 import type { RepoDiscovery } from '../index/repos.js';
@@ -73,7 +74,12 @@ export interface PrTimers {
   clearTimeout(handle: unknown): void;
 }
 
+/** What one poll found, per search, for the diagnostics log (W165): counts only. */
+export type PrPollOutcome = Partial<Record<PullRequestRelation, { listed: number; skipped: number; failed: boolean }>>;
+
 export interface PrPollerOptions {
+  /** Told after each fetch with its per-search counts (W165). A callback that throws is ignored. */
+  onPoll?: (outcome: PrPollOutcome) => void;
   /** One fetch. Default fetchPullRequests() through `runFile`. */
   fetch?: () => Promise<FetchResult>;
   /** For the default fetch. Default the real runFile. */
@@ -225,6 +231,18 @@ function createUnplacedPoller(options: PrPollerOptions): PrSource {
         failure ??= each;
         const kept = good.get(relation);
         searches[relation] = { ...(kept ? { fetchedAt: kept.fetchedAt } : {}), failed: { reason: each.reason, error: each.error } };
+      }
+    }
+    if (options.onPoll !== undefined) {
+      const outcome: PrPollOutcome = {};
+      for (const relation of PR_RELATIONS) {
+        const each = result?.[relation] ?? FETCH_FAILED;
+        outcome[relation] = each.ok ? { listed: each.prs.length, skipped: each.skipped ?? 0, failed: false } : { listed: 0, skipped: 0, failed: true };
+      }
+      try {
+        options.onPoll(outcome);
+      } catch {
+        // Diagnostics never stop the poller.
       }
     }
     if (worked) {

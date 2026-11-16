@@ -117,6 +117,7 @@ import { registerSupervisor } from './supervisorRoutes.js';
 import type { Supervisor } from '../supervisor/supervisor.js';
 import { createRelayManager } from './relay.js';
 import { registerRelay } from './relayRoute.js';
+import { DIAGNOSTICS_INTERVAL_MS, DiagnosticsLog, NeedsYouRecorder } from './diagnostics.js';
 import { createFlagView, FlagStore, registerFlags } from './flags.js';
 import { createSnoozeView, registerSnoozes, SnoozeStore } from './snoozes.js';
 import { SessionLaunches } from './sessionLaunches.js';
@@ -306,6 +307,19 @@ export async function startServerWithInternals(
   const supervised = supervisor === undefined ? undefined : createSupervisorView(snoozed, supervisor);
   // The snapshot clients get: each session's PR links cut to those matching a PR in the list (D14, W105).
   const snapshots = createSnapshotView(supervised ?? snoozed, prs);
+  // The diagnostics log (W165): why each row is in Needs you, from the snapshot the page gets and the PR list, with no off switch.
+  // Written every DIAGNOSTICS_INTERVAL_MS, and on a PR list change, flag and snooze, and only when a session's state changes.
+  const diagnostics = options.diagnostics ?? new DiagnosticsLog(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
+  const recorder = new NeedsYouRecorder(diagnostics);
+  const record = () => {
+    const snapshot = snapshots.latest();
+    if (snapshot !== undefined) recorder.observe(snapshot, prs.latest());
+  };
+  // Not a subscription to the snapshot, which would be one more listener on the index (its clients are its listeners); a timer at the index's
+  // own pace, with the PR list, flags and snoozes telling it sooner.
+  const recordTimer = setInterval(record, DIAGNOSTICS_INTERVAL_MS);
+  recordTimer.unref();
+  const offDiagnostics = [() => clearInterval(recordTimer), prs.subscribe(record), flags.subscribe(record), snoozes.subscribe(record)];
   // Every session this pitwall started or resumed, for its run: only those resume with the defaults for sessions (W119's review).
   const started = new Set<string>();
   // New sessions, from the spawn route and the supervisor's spawn_session (W115): one set of limits.
@@ -482,6 +496,7 @@ export async function startServerWithInternals(
       supervisor?.approvals().cancelAll("pitwall is closing, so this wasn't sent.");
       offRecipients?.();
       // No more fetches, and no more 'prs' messages to clients that are closing.
+      for (const off of offDiagnostics) off();
       prs.stop();
       snapshots.stop();
       supervised?.stop();
