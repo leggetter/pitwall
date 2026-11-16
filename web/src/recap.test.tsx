@@ -83,6 +83,8 @@ describe('parseRecap', () => {
     expect(parseRecap({ ...RECAP, todos: [], waitingOn: 'nothing' })?.todos).toEqual([]);
     // W166's `after` is read and dropped: the page has no use for it.
     expect(parseRecap({ ...RECAP, todos: [{ text: 'a', owner: 'you', after: true }] })?.todos).toEqual([{ text: 'a', owner: 'you' }]);
+    expect(parseRecap({ ...RECAP, todos: [{ text: 'a', owner: 'you', after: false, optional: true }] })?.todos).toEqual([{ text: 'a', owner: 'you' }]);
+    expect(parseRecap({ ...RECAP, todos: [{ text: 'a', owner: 'you', optional: 'yes' }] })).toBeUndefined();
   });
 
   it('refuses anything that isn’t one', () => {

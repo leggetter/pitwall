@@ -781,8 +781,9 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   function summaryOf(session: SessionSummary, recap: SessionRecap): RecapSummary {
     const yours = recap.todos.filter((todo) => todo.owner === 'you');
     const summary: RecapSummary = { waitingOn: recap.waitingOn, title: recap.title, forYou: yours.length, at: recap.at, source: recap.source };
-    // Your step that's due, as Needs you says it (W166), else your first.
-    const next = yourNext(session, recap) ?? yours[0]?.text;
+    // Your step that's due, as Needs you says it (W166), else your first one the session didn't only
+    // offer (W173's review), else your first.
+    const next = yourNext(session, recap) ?? (yours.find((todo) => todo.optional !== true) ?? yours[0])?.text;
     if (next !== undefined) summary.next = next;
     if (recap.stale === true) summary.stale = true;
     return summary;
@@ -796,7 +797,10 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
    * on another session, whose message would start its next turn, nor from a recap made before W166,
    * which doesn't say which to-dos follow others.
    */
-  function yourNext(session: SessionSummary, recap: SessionRecap): string | undefined {
+  function yourNext(session: SessionSummary, full: SessionRecap): string | undefined {
+    // W173: a to-do of yours the session only offered never puts it here. Only yours: an offered step
+    // of someone else's ahead of yours still keeps yours behind it, as before (W173's review).
+    const recap = { ...full, todos: full.todos.filter((todo) => todo.owner !== 'you' || todo.optional !== true) };
     const lead = leadTodo(recap.todos);
     if (lead?.owner === 'you' && recap.waitingOn === 'you') return lead.text;
     if (!jobDone(session) || recap.waitingOn === 'another session') return undefined;

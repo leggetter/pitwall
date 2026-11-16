@@ -1968,6 +1968,12 @@ export interface RecapTodo {
    * W146's rule alone (needsYouOf(), src/recaps/engine.ts).
    */
   after?: boolean;
+  /**
+   * W173: true when the session only offered it ("if you want", "worth a look") and nothing needs it
+   * to carry on. It never puts the session in Needs you (needsYouOf(), src/recaps/engine.ts); the
+   * row may still show it. Absent from a recap made before W173.
+   */
+  optional?: boolean;
 }
 
 /** The most to-dos a recap keeps: the first ones, in order. */
