@@ -60,6 +60,11 @@ describe('isDocumentNavigation', () => {
     for (const site of ['same-origin', 'same-site', 'cross-site']) expect(isDocumentNavigation(headers({ ...typed, 'sec-fetch-site': site }))).toBe(false);
     expect(isDocumentNavigation(headers({ 'sec-fetch-dest': 'document', 'sec-fetch-mode': 'navigate' }))).toBe(false);
     expect(isDocumentNavigation(headers({ ...typed, 'sec-purpose': 'prefetch' }))).toBe(false);
+    // A reload, or a restored tab, may be one an old page holds a handle to (W175's re-review, G2).
+    expect(isDocumentNavigation(headers({ ...typed, 'cache-control': 'max-age=0' }))).toBe(false);
+    expect(isDocumentNavigation(headers({ ...typed, 'cache-control': 'no-cache' }))).toBe(false);
+    expect(isDocumentNavigation(headers({ ...typed, pragma: 'no-cache' }))).toBe(false);
+    expect(isDocumentNavigation(headers({ ...typed, 'cache-control': 'max-age=3600' }))).toBe(true);
     // A script's fetch, a frame, a popup's opener check and a client that sends nothing.
     expect(isDocumentNavigation(headers({ 'sec-fetch-dest': 'empty', 'sec-fetch-mode': 'cors' }))).toBe(false);
     expect(isDocumentNavigation(headers({ 'sec-fetch-dest': 'iframe', 'sec-fetch-mode': 'navigate' }))).toBe(false);

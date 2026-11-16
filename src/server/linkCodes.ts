@@ -30,6 +30,10 @@
 //   Linux reads /proc/net/tcp and tcp6; any other platform, an error, a timeout or output it can't read fails
 //   closed, and the page shows the sign-in notice. Residual: a small race between the check and the request,
 //   and a process of another account that can inject into one of this user's processes is out of scope.
+//   peerUid.ts matches the connection's exact addresses, not only its ports (W175's re-review, finding 1).
+// - G2 (W175's re-review): a reload or restored tab (Cache-Control: max-age=0 or no-cache, or Pragma) gets no
+//   code, since an old page may hold a window handle to that tab. Accepted residual: a URL typed into a
+//   window an old page holds still gets one; the server can't tell it from a link opened from outside.
 //
 // This file is the server's side: the codes, and putting one in the page.
 import { createHash, randomBytes } from 'node:crypto';
@@ -119,7 +123,11 @@ export function isDocumentNavigation(header: (name: string) => string | undefine
     header('sec-fetch-dest') === 'document' &&
     header('sec-fetch-mode') === 'navigate' &&
     header('sec-fetch-site') === 'none' &&
-    header('sec-purpose') === undefined
+    header('sec-purpose') === undefined &&
+    // Not a reload (W175's re-review, G2): a reloaded or restored tab may be one an old page holds a
+    // window handle to. Browsers send these on a reload and not on a link opened from outside.
+    !/\b(?:max-age=0|no-cache)\b/i.test(header('cache-control') ?? '') &&
+    header('pragma') === undefined
   );
 }
 

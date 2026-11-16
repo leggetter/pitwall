@@ -6,11 +6,16 @@
 // code. So a code goes only to a client whose process is owned by pitwall's own uid. A process running as
 // the same user is out of scope: it can read ~/.pitwall/ and the launch file anyway.
 //
-// - macOS: `lsof -nP -F pufn -iTCP:<peer port>` (absolute path, no shell). The entry whose local port is the
-//   peer's and whose remote port is ours is the client end. Pitwall's own pid is ignored (it holds the
+// - macOS: `lsof -nP -F pufn -iTCP:<peer port>` (absolute path, no shell). The entry whose name is exactly
+//   this connection, `<client address>:<client port>-><server address>:<server port>`, is the client end:
+//   the addresses as well as the ports, so a socket of the same user's browser on the other address family
+//   with the same port numbers (a decoy, `[::1]:P->[::1]:Q` beside another account's `127.0.0.1:P`) never
+//   counts (W175's re-review). Pitwall's own pid is ignored (it holds the
 //   server end). Every process holding the client end must have our uid. lsof run by an ordinary user lists
 //   only that user's processes, so another account's process is not found, which also says no.
-// - Linux: the uid column of the /proc/net/tcp and /proc/net/tcp6 rows for that connection, no subprocess.
+// - Linux: the uid column of the /proc/net/tcp and /proc/net/tcp6 rows whose addresses and ports are exactly
+//   that connection's, in any state, so a half-closed socket of another account still counts; at least one
+//   must be ESTABLISHED. No subprocess.
 // - Anything else, an error, a timeout, output that can't be read, or no match: false. Callers show the
 //   sign-in notice, as before W175. It never throws.
 //
@@ -28,7 +33,16 @@ export const MAX_PEER_CHECKS = 4;
 export interface PeerSocket {
   remoteAddress?: string | undefined;
   remotePort?: number | undefined;
+  localAddress?: string | undefined;
   localPort?: number | undefined;
+}
+
+/** One loopback TCP connection, seen from its client end. Addresses are '127.0.0.1' or '::1'. */
+export interface Connection {
+  clientAddress: string;
+  clientPort: number;
+  serverAddress: string;
+  serverPort: number;
 }
 
 /** Whether the process at the other end of this socket is the server's own user's. */
@@ -48,7 +62,17 @@ export interface PeerCheckOptions {
   maxConcurrent?: number;
 }
 
-const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+/** A loopback address as lsof and /proc name it: an IPv4-mapped one is plain IPv4. Undefined otherwise. */
+function loopback(address: string | undefined): string | undefined {
+  if (address === '127.0.0.1' || address === '::ffff:127.0.0.1') return '127.0.0.1';
+  if (address === '::1') return '::1';
+  return undefined;
+}
+
+/** `address:port` as lsof's `n` field writes it: IPv6 in brackets. */
+function lsofEndpoint(address: string, port: number): string {
+  return address.includes(':') ? `[${address}]:${port}` : `${address}:${port}`;
+}
 
 function defaultRunLsof(args: string[], timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -61,16 +85,12 @@ function defaultRunLsof(args: string[], timeoutMs: number): Promise<string> {
   });
 }
 
-function portOf(endpoint: string): number {
-  const match = /:(\d{1,5})$/.exec(endpoint);
-  return match === null ? -1 : Number(match[1]);
-}
-
 /**
- * The uids of the processes holding the client end (local port `peerPort`, remote port `serverPort`) in
+ * The uids of the processes holding the client end of `connection`, its exact addresses and ports, in
  * `lsof -F pufn` output, leaving out `ownPid`. Undefined when the output isn't lsof field output.
  */
-export function parseLsofClientUids(output: string, peerPort: number, serverPort: number, ownPid: number): number[] | undefined {
+export function parseLsofClientUids(output: string, connection: Connection, ownPid: number): number[] | undefined {
+  const name = `${lsofEndpoint(connection.clientAddress, connection.clientPort)}->${lsofEndpoint(connection.serverAddress, connection.serverPort)}`;
   const uids: number[] = [];
   let pid = -1;
   let uid = -1;
@@ -89,9 +109,7 @@ export function parseLsofClientUids(output: string, peerPort: number, serverPort
       uid = Number(value);
     } else if (tag === 'n') {
       if (!sawProcess) return undefined;
-      const arrow = value.indexOf('->');
-      if (arrow < 0) continue;
-      if (portOf(value.slice(0, arrow)) !== peerPort || portOf(value.slice(arrow + 2).replace(/\s*\(.*\)$/, '')) !== serverPort) continue;
+      if (value.replace(/\s*\(.*\)$/, '') !== name) continue;
       if (pid === ownPid) continue;
       // A process with no readable uid is a candidate with an unknown owner: -1 never equals ours.
       uids.push(uid);
@@ -103,23 +121,32 @@ export function parseLsofClientUids(output: string, peerPort: number, serverPort
   return sawProcess ? uids : undefined;
 }
 
-/** Hex-encoded `address:port` from /proc/net/tcp; the port alone is read. */
-function hexPort(endpoint: string): number {
-  const match = /:([0-9A-Fa-f]{4})$/.exec(endpoint);
-  return match === null ? -1 : parseInt(match[1]!, 16);
+/** How /proc/net/tcp (IPv4) and tcp6 (IPv6, IPv4-mapped too) write a loopback address, in hex. */
+const PROC_ADDRESSES: Record<string, string[]> = {
+  '127.0.0.1': ['0100007F', '0000000000000000FFFF00000100007F'],
+  '::1': ['00000000000000000000000001000000'],
+};
+
+function procEndpoints(address: string, port: number): Set<string> {
+  const hexPort = port.toString(16).toUpperCase().padStart(4, '0');
+  return new Set((PROC_ADDRESSES[address] ?? []).map((hex) => `${hex}:${hexPort}`));
 }
 
-/** The uids of the ESTABLISHED rows of a /proc/net/tcp or tcp6 table for this connection's client end. */
-export function parseProcNetUids(table: string, peerPort: number, serverPort: number): number[] {
-  const uids: number[] = [];
+/**
+ * The rows of a /proc/net/tcp or tcp6 table for `connection`'s client end, its exact addresses and ports,
+ * in any state: each one's uid and whether it's ESTABLISHED.
+ */
+export function parseProcNetUids(table: string, connection: Connection): { uid: number; established: boolean }[] {
+  const locals = procEndpoints(connection.clientAddress, connection.clientPort);
+  const remotes = procEndpoints(connection.serverAddress, connection.serverPort);
+  const rows: { uid: number; established: boolean }[] = [];
   for (const line of table.split('\n').slice(1)) {
     const fields = line.trim().split(/\s+/);
     if (fields.length < 8) continue;
-    if (fields[3] !== '01') continue;
-    if (hexPort(fields[1]!) !== peerPort || hexPort(fields[2]!) !== serverPort) continue;
-    uids.push(/^\d+$/.test(fields[7]!) ? Number(fields[7]) : -1);
+    if (!locals.has(fields[1]!.toUpperCase()) || !remotes.has(fields[2]!.toUpperCase())) continue;
+    rows.push({ uid: /^\d+$/.test(fields[7]!) ? Number(fields[7]) : -1, established: fields[3] === '01' });
   }
-  return uids;
+  return rows;
 }
 
 export function createPeerCheck(options: PeerCheckOptions = {}): PeerCheck {
@@ -134,14 +161,15 @@ export function createPeerCheck(options: PeerCheckOptions = {}): PeerCheck {
 
   const all = (uids: number[] | undefined): boolean => uids !== undefined && uids.length > 0 && uids.every((found) => found === uid);
 
-  async function check(peerPort: number, serverPort: number): Promise<boolean> {
+  async function check(connection: Connection): Promise<boolean> {
     if (platform === 'darwin') {
-      const out = await runLsof(['-nP', '-F', 'pufn', `-iTCP:${peerPort}`], timeoutMs);
-      return all(parseLsofClientUids(out, peerPort, serverPort, pid));
+      const out = await runLsof(['-nP', '-F', 'pufn', `-iTCP:${connection.clientPort}`], timeoutMs);
+      return all(parseLsofClientUids(out, connection, pid));
     }
     if (platform === 'linux') {
       const tables = await Promise.all(['/proc/net/tcp', '/proc/net/tcp6'].map((file) => readProc(file).catch(() => '')));
-      return all(tables.flatMap((table) => parseProcNetUids(table, peerPort, serverPort)));
+      const rows = tables.flatMap((table) => parseProcNetUids(table, connection));
+      return rows.some((row) => row.established) && all(rows.map((row) => row.uid));
     }
     return false;
   }
@@ -149,13 +177,15 @@ export function createPeerCheck(options: PeerCheckOptions = {}): PeerCheck {
   return async (socket) => {
     try {
       if (uid === undefined) return false;
-      const { remoteAddress, remotePort, localPort } = socket;
-      if (remoteAddress === undefined || !LOOPBACK.has(remoteAddress)) return false;
+      const { remotePort, localPort } = socket;
+      const clientAddress = loopback(socket.remoteAddress);
+      const serverAddress = loopback(socket.localAddress);
+      if (clientAddress === undefined || serverAddress === undefined) return false;
       if (!Number.isInteger(remotePort) || !Number.isInteger(localPort) || remotePort! <= 0 || localPort! <= 0) return false;
       if (running >= maxConcurrent) return false;
       running += 1;
       try {
-        return await check(remotePort!, localPort!);
+        return await check({ clientAddress, clientPort: remotePort!, serverAddress, serverPort: localPort! });
       } finally {
         running -= 1;
       }
