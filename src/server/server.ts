@@ -197,6 +197,8 @@ export class PortInUseError extends Error {
 /** Knobs for tests. Not part of ServerOptions, so the public contract stays as declared. */
 export interface ServerInternals {
   authTimeoutMs?: number;
+  /** How often the diagnostics log (W165) looks for a change in Needs you. Default DIAGNOSTICS_INTERVAL_MS; tests make it short. */
+  diagnosticsIntervalMs?: number;
   /** The port tried when options.port is undefined. Default 4517. */
   defaultPort?: number;
   /**
@@ -312,12 +314,16 @@ export async function startServerWithInternals(
   const diagnostics = options.diagnostics ?? new DiagnosticsLog(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
   const recorder = new NeedsYouRecorder(diagnostics);
   const record = () => {
-    const snapshot = snapshots.latest();
-    if (snapshot !== undefined) recorder.observe(snapshot, prs.latest());
+    try {
+      const snapshot = snapshots.latest();
+      if (snapshot !== undefined) recorder.observe(snapshot, prs.latest());
+    } catch {
+      // Diagnostics never break the timer, a flag or a snooze.
+    }
   };
   // Not a subscription to the snapshot, which would be one more listener on the index (its clients are its listeners); a timer at the index's
   // own pace, with the PR list, flags and snoozes telling it sooner.
-  const recordTimer = setInterval(record, DIAGNOSTICS_INTERVAL_MS);
+  const recordTimer = setInterval(record, internals.diagnosticsIntervalMs ?? DIAGNOSTICS_INTERVAL_MS);
   recordTimer.unref();
   const offDiagnostics = [() => clearInterval(recordTimer), prs.subscribe(record), flags.subscribe(record), snoozes.subscribe(record)];
   // Every session this pitwall started or resumed, for its run: only those resume with the defaults for sessions (W119's review).

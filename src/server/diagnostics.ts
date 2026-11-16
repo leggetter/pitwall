@@ -11,13 +11,17 @@
 //                              only: a state that doesn't change never writes a line. The reason is
 //                              the page's own (needsYouReason(), src/shared/needsYou.ts), so the two
 //                              can't disagree. W178's why_state tool reads the same function.
+//     start                    the recorder's first look after pitwall started, so the report can
+//                              close what was open when pitwall stopped instead of counting the gap.
 //     poll                     the PR poller's outcome, per search: PRs listed, skipped as reviewed
 //                              already (W101), and whether the search failed. Only when the counts
 //                              change from the poll before, so a steady list doesn't fill the log.
 //
 //   Ids and fixed words only: never a transcript, a session's name or title, a recap, a PR's title,
 //   a branch, a path or a token. Every field is an enum, a number, a time, a session id or a
-//   repo#number, and parseLine() drops anything else, so the file can be read as untrusted.
+//   repo#number. Every line goes through parseDiagnosticsLine() before it's written, and again when
+//   it's read, so a field that isn't one of those shapes is never written and the file can be read
+//   as untrusted.
 //
 // No off switch (Phil, 2026-11-09): it holds ids and reasons only, and a log that can be turned off is
 // missing when it's needed. Writing fails soft: a failed write is dropped, never thrown. Past
@@ -33,7 +37,7 @@ import { ensureLaunchDir } from './launch.js';
 
 /** The log's name in pitwall's home. */
 export const DIAGNOSTICS_LOG_NAME = 'diagnostics.jsonl';
-/** Past this, a write keeps the newest half. About 10,000 lines at their longest. */
+/** Past this, a write keeps the newest half: about 10,000 typical lines (about 210 bytes), 4,500 at their longest. */
 export const DIAGNOSTICS_LOG_MAX_BYTES = 2 * 1024 * 1024;
 /** How often the server looks for a change in who is in Needs you, as often as the index polls by default. */
 export const DIAGNOSTICS_INTERVAL_MS = 5000;
@@ -46,6 +50,8 @@ const SET_ASIDE = ['flagged', 'snoozed'] as const;
 const OVERS = ['finished', 'ended', 'stale'] as const;
 const WONS = ['own', 'pr'] as const;
 const VIAS = ['direct', 'team'] as const;
+/** A session id as the index gives it, with a length cap the index's check doesn't have. */
+const SESSION_ID_MAX = 128;
 const PR_REF = /^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}#[0-9]{1,9}$/;
 
 export type SessionTransition = 'enter' | 'change' | 'leave';
@@ -89,7 +95,14 @@ export interface PollLine {
   searches: Partial<Record<PullRequestRelation, PollCounts>>;
 }
 
-export type DiagnosticsLine = SessionStateLine | PollLine;
+/** The recorder's first look after pitwall started. */
+export interface StartLine {
+  v: 1;
+  kind: 'start';
+  at: string;
+}
+
+export type DiagnosticsLine = SessionStateLine | PollLine | StartLine;
 
 export interface DiagnosticsLogOptions {
   /** pitwall's home. Without one nothing is written. */
@@ -110,8 +123,9 @@ export class DiagnosticsLog {
     this.#now = options.now ?? (() => new Date());
   }
 
-  now(): Date {
-    return this.#now();
+  /** Writes that pitwall's recorder has started. */
+  start(): void {
+    this.#append({ v: 1, kind: 'start', at: this.#now().toISOString() });
   }
 
   /** Writes a session's transition. */
@@ -127,12 +141,19 @@ export class DiagnosticsLog {
     this.#append({ v: 1, kind: 'poll', at: this.#now().toISOString(), searches });
   }
 
-  /** Appends `line`; past DIAGNOSTICS_LOG_MAX_BYTES, rewrites the log with its newest half first. Fails soft. */
+  /**
+   * Appends `line`, as parseDiagnosticsLine() reads it back: a field that isn't one of the fixed shapes
+   * is left out, and a line that doesn't check out is dropped, so only ids, fixed words and counts are
+   * ever written, whatever a caller passes. Past DIAGNOSTICS_LOG_MAX_BYTES, rewrites the log with its
+   * newest half first. Fails soft.
+   */
   #append(line: DiagnosticsLine): void {
     if (this.#file === undefined || this.#home === undefined) return;
     let fd: number | undefined;
     try {
-      const text = `${JSON.stringify(line)}\n`;
+      const checked = parseDiagnosticsLine(JSON.stringify(line));
+      if (checked === undefined) return;
+      const text = `${JSON.stringify(checked)}\n`;
       ensureLaunchDir(this.#home);
       fd = openSync(this.#file, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
       const stat = fstatSync(fd);
@@ -199,20 +220,31 @@ export class NeedsYouRecorder {
   readonly #log: DiagnosticsLog;
   /** Each session's last key, or undefined while it is out of Needs you. */
   readonly #state = new Map<string, string | undefined>();
-  #first = true;
+  #started = false;
+  /** Until the first snapshot that worked and listed a session: an enter then was in Needs you before pitwall started. */
+  #sessionsAtStart = true;
+  /** Until the first PR list that a fetch made: an enter for a PR's need then was there before pitwall started. */
+  #prsAtStart = true;
 
   constructor(log: DiagnosticsLog) {
     this.#log = log;
   }
 
   /** Records the transitions between the last state and `snapshot` with `prs`. Never throws. */
-  observe(snapshot: IndexSnapshot, prs: Pick<PullRequestList, 'prs'>): void {
+  observe(snapshot: IndexSnapshot, prs: Pick<PullRequestList, 'prs'> & Partial<Pick<PullRequestList, 'fetchedAt' | 'searches'>>): void {
     try {
+      if (!this.#started) {
+        this.#started = true;
+        this.#log.start();
+      }
       const sessions = new Map<string, SessionSummary>();
       for (const group of snapshot.groups) for (const session of group.sessions) if (!sessions.has(session.sessionId)) sessions.set(session.sessionId, session);
       const owned = ownedPrsBySession([...sessions.values()], prs.prs);
-      const atStart = this.#first;
-      this.#first = false;
+      // A failed or empty first snapshot (claude agents not answering yet) doesn't use up the at-start mark.
+      const sessionsAtStart = this.#sessionsAtStart;
+      if (snapshot.source.ok && sessions.size > 0) this.#sessionsAtStart = false;
+      const prsAtStart = this.#prsAtStart;
+      if (prs.fetchedAt !== undefined || prs.searches !== undefined) this.#prsAtStart = false;
       for (const session of sessions.values()) {
         if (!isSafeSessionId(session.sessionId)) continue;
         const reason = needsYouReason(session, owned.get(session.sessionId));
@@ -232,7 +264,7 @@ export class NeedsYouRecorder {
           ...(reason.pr === undefined ? {} : { prNeed: reason.pr.need, ...(PR_REF.test(reason.pr.ref) ? { prRef: reason.pr.ref } : {}), ...(reason.pr.via === undefined ? {} : { prVia: reason.pr.via }) }),
           ...(reason.won === undefined ? {} : { won: reason.won }),
           ...(kind === 'leave' ? overOf(session) : {}),
-          ...(kind === 'enter' && atStart ? { atStart: true as const } : {}),
+          ...(kind === 'enter' && (sessionsAtStart || (prsAtStart && reason.won === 'pr')) ? { atStart: true as const } : {}),
         });
       }
     } catch {
@@ -294,6 +326,7 @@ export function parseDiagnosticsLine(raw: string): DiagnosticsLine | undefined {
     return undefined;
   }
   if (!isRecord(value) || value.v !== 1 || !isTime(value.at)) return undefined;
+  if (value.kind === 'start') return { v: 1, kind: 'start', at: value.at };
   if (value.kind === 'poll') {
     if (!isRecord(value.searches)) return undefined;
     const searches: PollLine['searches'] = {};
@@ -306,7 +339,7 @@ export function parseDiagnosticsLine(raw: string): DiagnosticsLine | undefined {
     return { v: 1, kind: 'poll', at: value.at, searches };
   }
   if (!oneOf(['enter', 'change', 'leave'] as const, value.kind)) return undefined;
-  if (typeof value.sessionId !== 'string' || !isSafeSessionId(value.sessionId)) return undefined;
+  if (typeof value.sessionId !== 'string' || value.sessionId.length > SESSION_ID_MAX || !isSafeSessionId(value.sessionId)) return undefined;
   const line: SessionStateLine = { v: 1, kind: value.kind, at: value.at, sessionId: value.sessionId };
   if (oneOf(OWN_REASONS, value.own)) line.own = value.own;
   if (oneOf(SET_ASIDE, value.setAside)) line.setAside = value.setAside;

@@ -56,7 +56,8 @@ beforeEach(() => {
 afterEach(() => rmSync(home, { recursive: true, force: true }));
 
 const logOf = () => new DiagnosticsLog({ home, now: () => new Date((clockMs += 1000)) });
-const lines = () => readDiagnosticsLog(file);
+/** The log's lines, less the recorder's `start` line, which its own test checks. */
+const lines = () => readDiagnosticsLog(file).filter((line) => line.kind !== 'start');
 
 describe('NeedsYouRecorder', () => {
   it("writes a line when a session enters Needs you and when it leaves, and nothing for an unchanged state", () => {
@@ -71,6 +72,28 @@ describe('NeedsYouRecorder', () => {
     recorder.observe(snapshotOf(session()), NO_PRS);
     recorder.observe(snapshotOf(session()), NO_PRS);
     expect(lines().map((line) => line.kind)).toEqual(['enter', 'leave']);
+  });
+
+  it('writes a start line on its first look, once, so the report can close what was open when pitwall stopped', () => {
+    const recorder = new NeedsYouRecorder(logOf());
+    recorder.observe(snapshotOf(), NO_PRS);
+    recorder.observe(snapshotOf(session({ needsYou: { reason: 'asked' } })), NO_PRS);
+    expect(readDiagnosticsLog(file).map((line) => line.kind)).toEqual(['start', 'enter']);
+  });
+
+  it("keeps the at-start mark through a failed or empty first snapshot, and for a PR's need until the first PR list a fetch made", () => {
+    const recorder = new NeedsYouRecorder(logOf());
+    recorder.observe({ ...snapshotOf(), source: { ok: false, error: 'claude agents failed' } }, NO_PRS);
+    recorder.observe(snapshotOf(), NO_PRS);
+    recorder.observe(snapshotOf(session({ needsYou: { reason: 'asked' } }), session({ sessionId: OTHER, ...ownsPr() })), NO_PRS);
+    expect(lines()).toMatchObject([{ kind: 'enter', sessionId: ID, atStart: true }]);
+    // The PR list arrives after the first snapshot: OTHER's PR need was there before pitwall started.
+    recorder.observe(snapshotOf(session({ needsYou: { reason: 'asked' } }), session({ sessionId: OTHER, ...ownsPr() })), { prs: [reviewPr()], fetchedAt: '2026-11-06T10:00:30.000Z' });
+    expect(lines().at(-1)).toMatchObject({ kind: 'enter', sessionId: OTHER, won: 'pr', atStart: true });
+    // After it, a new PR need is an ordinary enter.
+    const third = '44444444-4444-4444-8444-444444444444';
+    recorder.observe(snapshotOf(session({ sessionId: third, ...ownsPr(8) })), { prs: [reviewPr(), reviewPr(8)], fetchedAt: '2026-11-06T10:01:00.000Z' });
+    expect((lines().at(-1) as { atStart?: true }).atStart).toBeUndefined();
   });
 
   it('marks the sessions already in Needs you at the first snapshot, once', () => {
@@ -147,6 +170,35 @@ describe('NeedsYouRecorder', () => {
     for (const raw of text.trim().split('\n')) expect(parseDiagnosticsLine(raw)).toEqual(JSON.parse(raw));
     const allowed = new Set(['v', 'kind', 'at', 'sessionId', 'own', 'setAside', 'prNeed', 'prRef', 'prVia', 'won', 'over', 'atStart', 'searches']);
     for (const line of lines()) for (const key of Object.keys(line)) expect(allowed.has(key), key).toBe(true);
+  });
+
+  it('writes only the fixed shapes, whatever a caller passes: a field out of type is left out, a line without a good session id is dropped', () => {
+    const secret = 'SECRET-REASON-TEXT';
+    const log = logOf();
+    log.session({
+      kind: 'enter',
+      sessionId: ID,
+      own: `${secret} me@example.com` as never,
+      prNeed: secret as never,
+      prRef: `${secret}/x#1 more`,
+      prVia: secret as never,
+      won: secret as never,
+      setAside: secret as never,
+      over: secret as never,
+      atStart: secret as never,
+      ...({ text: secret } as object),
+    });
+    log.session({ kind: 'enter', sessionId: 'a'.repeat(5000) });
+    log.session({ kind: 'enter', sessionId: `${secret} ../x` });
+    log.session({ kind: secret as never, sessionId: ID });
+    log.poll({ authored: { listed: secret as never, skipped: 0, failed: false }, ...({ [secret]: { listed: 1, skipped: 0, failed: false } } as object) });
+    const text = readFileSync(file, 'utf8');
+    expect(text).not.toContain(secret);
+    expect(text).not.toContain('aaaaaaaaaa');
+    expect(readDiagnosticsLog(file)).toEqual([
+      { v: 1, kind: 'enter', at: expect.any(String), sessionId: ID },
+      { v: 1, kind: 'poll', at: expect.any(String), searches: {} },
+    ]);
   });
 
   it('drops a line field that is not one of the fixed shapes when reading, so the file can be read as untrusted', () => {

@@ -7,7 +7,8 @@
 // of a session's own reason and a PR's the row explained, and what the PR poller found (counts).
 // `--session` takes a full session id or its first 8 characters or more and prints that session's
 // timeline. The log holds ids and fixed words only (src/server/diagnostics.ts), so the report has
-// no session content in it.
+// no session content in it. It does print a PR as owner/repo#123, so a private repo's name is in it:
+// check before pasting a report somewhere public.
 import path from 'node:path';
 import { DIAGNOSTICS_LOG_NAME, readDiagnosticsLog } from '../src/server/diagnostics.js';
 import { buildReport, formatReport } from '../src/server/diagnosticsReport.js';

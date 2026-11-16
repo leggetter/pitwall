@@ -55,6 +55,47 @@ describe('buildReport', () => {
   });
 });
 
+describe('buildReport, across restarts and two writers', () => {
+  it("closes a stretch open when pitwall stopped at the last line before the start, as restart, and doesn't count the gap or the at-start enter", () => {
+    const report = buildReport(
+      [
+        { v: 1, kind: 'start', at: at(0) },
+        { v: 1, kind: 'enter', at: at(1), sessionId: ID, own: 'asked', won: 'own' },
+        { v: 1, kind: 'enter', at: at(20), sessionId: OTHER, own: 'recap', won: 'own' },
+        // pitwall stops here and starts again 49 hours later; ID left Needs you while it was off.
+        { v: 1, kind: 'start', at: at(49 * 60) },
+        { v: 1, kind: 'enter', at: at(49 * 60), sessionId: OTHER, own: 'recap', won: 'own', atStart: true },
+      ],
+      { days: 7, now: Date.parse(at(50 * 60)) },
+    );
+    expect(report.restarts).toBe(2);
+    expect(report.enters).toBe(2);
+    expect(report.entersAtStart).toBe(1);
+    expect(report.open).toBe(1);
+    expect(report.segments.filter((each) => each.sessionId === ID)).toEqual([{ sessionId: ID, from: at(1), to: at(20), ms: 19 * 60_000, reason: 'asked', over: 'restart' }]);
+    expect(report.byReason.recap).toEqual({ stretches: 2, totalMs: 0 + 60 * 60_000, longestMs: 60 * 60_000 });
+    expect(formatReport(report)).toContain('pitwall started 2 times; 1 sessions were already in Needs you then');
+  });
+
+  it('reads two pitwalls writing the same transitions to one home as one stretch, and a repeated poll once', () => {
+    const poll = { authored: { listed: 2, skipped: 0, failed: false } };
+    const report = buildReport(
+      [
+        { v: 1, kind: 'enter', at: at(0), sessionId: ID, own: 'asked', won: 'own' },
+        { v: 1, kind: 'enter', at: at(0), sessionId: ID, own: 'asked', won: 'own' },
+        { v: 1, kind: 'poll', at: at(1), searches: poll },
+        { v: 1, kind: 'poll', at: at(1), searches: poll },
+        { v: 1, kind: 'leave', at: at(10), sessionId: ID },
+        { v: 1, kind: 'leave', at: at(10), sessionId: ID },
+      ],
+      { days: 7, now },
+    );
+    expect(report.enters).toBe(1);
+    expect(report.segments).toEqual([{ sessionId: ID, from: at(0), to: at(10), ms: 10 * 60_000, reason: 'asked' }]);
+    expect(report.polls.logged).toBe(1);
+  });
+});
+
 describe('duration', () => {
   it('reads as seconds, minutes, hours and days', () => {
     expect([20_000, 45 * 60_000, 200 * 60_000, 60 * 60 * 60_000].map(duration)).toEqual(['20s', '45m', '3h 20m', '2d 12h']);

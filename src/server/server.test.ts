@@ -26,6 +26,7 @@ import { DEFAULT_PORT, PortInUseError, startServer, type RunningServer } from '.
 import { securityHeaders } from './security.js';
 import { BUILDING_SCRIPT, BUILDING_SCRIPT_PATH } from './static.js';
 import { MAX_CONVERSATION_READS, STALE_CURSOR_STATUS, startServerWithInternals, type ServerInternals } from './server.js';
+import { DIAGNOSTICS_LOG_NAME, DiagnosticsLog, readDiagnosticsLog } from './diagnostics.js';
 import { MAX_PENDING_HANDSHAKES, WS_CLOSE_TRY_AGAIN } from './handshake.js';
 import { DEFAULT_AUTH_TIMEOUT_MS } from './websocket.js';
 import { pitwallOrigin, proofFor as contractProof, version2ProofFor } from '../test/proof.js';
@@ -1672,5 +1673,30 @@ describe('startServer', () => {
       await Promise.all([server.close(), server.close()]);
       await server.close();
     });
+  });
+});
+
+describe('the diagnostics log (W165)', () => {
+  it('writes when a session enters Needs you, on its own timer, and stops writing on close()', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'pitwall-test-diag-server-'));
+    try {
+      const file = join(home, DIAGNOSTICS_LOG_NAME);
+      const needing = withSession('2026-10-16T00:00:00.000Z');
+      needing.groups[0]!.sessions[0]!.needsYou = { reason: 'asked' };
+      const indexer = fakeIndexer(needing);
+      const server = await startServerWithInternals(
+        { indexer, token: TOKEN, webRoot, port: 0, diagnostics: new DiagnosticsLog({ home }) },
+        { diagnosticsIntervalMs: 10 },
+      );
+      running.push(server);
+      await waitFor(() => readDiagnosticsLog(file).some((line) => line.kind === 'enter'));
+      expect(readDiagnosticsLog(file)).toMatchObject([{ kind: 'start' }, { kind: 'enter', sessionId: '99999999-9999-4999-8999-999999999999', own: 'asked', won: 'own' }]);
+      await server.close();
+      indexer.push(withSession('2026-10-16T00:01:00.000Z'));
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(readDiagnosticsLog(file).map((line) => line.kind)).toEqual(['start', 'enter']);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });
