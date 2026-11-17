@@ -5,7 +5,7 @@
 //                      file name comes from the id, never from a path in any file. Tries the
 //                      directory the cwd encodes to, then every project folder, as the transcript
 //                      reader's locate() does.
-//   readOpening()      the first KiB of a transcript, only to answer "does it open with /clear?" and
+//   readOpening()      the first 64 KiB of a transcript, only to answer "does it open with /clear?" and
 //                      to take its cwd and branch. A cleared session's transcript opens with a user
 //                      entry holding `<command-name>/clear</command-name>` (checked on Claude Code
 //                      2.1.325); one of the first OPENING_ENTRIES user or system entries is enough,
@@ -17,6 +17,7 @@
 import { constants } from 'node:fs';
 import { open, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { hiddenCharacter } from '../shared/hiddenText.js';
 import { isRecord } from './guards.js';
 import { plainLine } from './text.js';
 import { defaultConfigDir, encodeProjectDir, isSessionUuid } from './transcripts.js';
@@ -81,7 +82,8 @@ const UNSAFE = /[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁠-⁩﻿]/;
 
 /** A working directory from an entry: absolute, clean and short enough, or undefined. */
 export function cleanCwd(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length <= CWD_MAX && path.isAbsolute(value) && !UNSAFE.test(value) ? value : undefined;
+  // hiddenCharacter() as well: tag characters, a soft hyphen and other invisibles aren't in UNSAFE (W167's review, F5).
+  return typeof value === 'string' && value.length <= CWD_MAX && path.isAbsolute(value) && !UNSAFE.test(value) && hiddenCharacter(value) === undefined ? value : undefined;
 }
 
 /** A branch name from an entry: one clean line, or undefined. */

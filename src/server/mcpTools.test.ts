@@ -561,14 +561,21 @@ describe('session_lineage (W167)', () => {
   const link = (from: string, to: string, extra: Partial<LineageLine> = {}): LineageLine => ({ v: 1, at: '2026-11-17T10:00:00.000Z', from, to, how: 'clear', ...extra });
 
   it('gives the chain both ways, ids and fixed words with the names and paths untrusted', async () => {
-    const lineage = { chain: () => ({ back: [link('a', 'b', { job: 'abc123', cwd: '/tmp/pitwall-test-root/repo', branch: INJECTION })], forward: [link('b', 'c', { how: 'continue', inferred: true })] }) };
+    const lineage = {
+      chain: () => ({
+        back: [link('a', 'b', { job: 'abc123', cwd: '/tmp/pitwall-test-root/repo', branch: 'feat/b' })],
+        forward: [link('b', 'c', { how: 'continue', inferred: true, cwd: '/tmp/pitwall-test-root/repo', branch: INJECTION })],
+      }),
+    };
     const made = tools({ sessions: [session('b'), session('a')], lineage });
     const { json } = await call(made.session_lineage!, { id: 'b' });
     expect(json).toMatchObject({
       id: 'b',
-      back: [{ id: 'a', how: 'clear', listed: true, job: 'abc123', untrusted: { cwd: '/tmp/pitwall-test-root/repo', branch: INJECTION } }],
-      forward: [{ id: 'c', how: 'continue', inferred: true, listed: false }],
+      back: [{ id: 'a', how: 'clear', listed: true, job: 'abc123' }],
+      forward: [{ id: 'c', how: 'continue', inferred: true, listed: false, untrusted: { cwd: '/tmp/pitwall-test-root/repo', branch: INJECTION } }],
     });
+    // A back step's directory and branch are the later session's, so they aren't shown against the earlier one.
+    expect((json as { back: { untrusted: object }[] }).back[0]!.untrusted).toEqual({ name: expect.any(String) });
     // The injected branch name is only ever under `untrusted`.
     expect(trustedStrings(json).join('\n')).not.toContain(INJECTION);
   });

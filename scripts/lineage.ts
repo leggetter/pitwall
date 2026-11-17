@@ -57,8 +57,9 @@ async function step(id: string, line: LineageLine): Promise<Step> {
     at: line.at,
     inferred: line.inferred === true,
     ...(line.job === undefined ? {} : { job: line.job }),
-    ...(line.cwd === undefined ? {} : { cwd: line.cwd }),
-    ...(line.branch === undefined ? {} : { branch: line.branch }),
+    // A line's directory and branch are its later session's: shown for forward steps only (W167's review, F6).
+    ...(id !== line.to || line.cwd === undefined ? {} : { cwd: line.cwd }),
+    ...(id !== line.to || line.branch === undefined ? {} : { branch: line.branch }),
     transcript,
   };
 }

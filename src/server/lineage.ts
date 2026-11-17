@@ -18,8 +18,11 @@
 //
 // Sources (record() takes all three):
 //   observe()    live: between two polls of `claude agents --json --all` (documented), the same
-//                background job id, or for an interactive session the same pid, lists a new
-//                sessionId and the old one isn't listed. A row that's gone isn't a clear.
+//                background job id lists a new sessionId with a live worker (a pid), and the old one
+//                isn't listed. A row that's gone isn't a clear, and nor is a row with no worker: a
+//                finished or stopped job lists its first session id again, not its latest (W167's
+//                review, F1). Interactive sessions aren't diffed: a pid listing a new id could as well
+//                be an in-process /resume to an older conversation (F2).
 //   backfill()   inferred: what happened while pitwall wasn't running. A job whose state.json
 //                (internal, behind src/index/jobs.ts) names a first and a latest session id, when the
 //                latest one's transcript opens with /clear (src/index/lineageSources.ts).
@@ -34,7 +37,7 @@ import { listedSessionIds, type AgentRow, type AgentsResult } from '../index/age
 import { isRecord } from '../index/guards.js';
 import { readJobSessionIds, type JobSessionIds } from '../index/jobs.js';
 import { cleanBranch, cleanCwd, findTranscript, readOpening, type TranscriptOpening } from '../index/lineageSources.js';
-import { isSafeSessionId } from '../index/transcripts.js';
+import { isSessionUuid } from '../index/transcripts.js';
 import type { IndexSnapshot, SessionLineageLinks } from '../shared/protocol.js';
 import { ensureLaunchDir } from './launch.js';
 import { createDecoratedView } from './snapshotRecaps.js';
@@ -42,15 +45,16 @@ import type { SnapshotView } from './snapshotLinks.js';
 
 /** The log's name in pitwall's home. */
 export const LINEAGE_LOG_NAME = 'lineage.jsonl';
-/** Past this, a write keeps the newest half. About 4,000 links at their longest. */
+/** Past this, a write keeps the newest half: about 4,000 typical links, fewer with long paths. */
 export const LINEAGE_LOG_MAX_BYTES = 1024 * 1024;
 /** The most links held in memory; past it the oldest goes. */
 export const LINKS_HELD_MAX = 5000;
 /** The longest chain walked either way. */
 export const CHAIN_MAX = 50;
-/** A session id as the index gives it, with a length cap the index's check doesn't have. */
-const SESSION_ID_MAX = 128;
-const SAFE_SHORT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+/** A background job's short id, as Claude Code names its folder in ~/.claude/jobs. */
+const SAFE_SHORT_ID = /^[0-9a-f]{8}$/;
+/** A time as toISOString() writes it, so no free text rides in `at` (review F3). */
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 export const HOWS = ['clear', 'continue'] as const;
 export type LineageHow = (typeof HOWS)[number];
@@ -76,8 +80,9 @@ export interface LineageLine {
 /** What record() takes: a line without its version and time. */
 export type NewLink = Omit<LineageLine, 'v' | 'at'>;
 
-const isTime = (value: unknown): value is string => typeof value === 'string' && value.length <= 40 && !Number.isNaN(Date.parse(value));
-const isId = (value: unknown): value is string => typeof value === 'string' && value.length <= SESSION_ID_MAX && isSafeSessionId(value);
+const isTime = (value: unknown): value is string => typeof value === 'string' && ISO_TIME.test(value) && !Number.isNaN(Date.parse(value));
+/** Real session ids are UUIDs; anything looser could carry words into the supervisor's fields (review F4). */
+const isId = (value: unknown): value is string => typeof value === 'string' && isSessionUuid(value);
 
 /** One line of the log, checked field by field, or undefined. Unknown fields are dropped. */
 export function parseLine(raw: string): LineageLine | undefined {
@@ -215,9 +220,8 @@ export class LineageStore {
   readonly #listeners = new Set<() => void>();
   #version = 0;
   #indexed: { version: number; index: LineIndex } | undefined;
-  /** The last listing's background rows by job short id, and interactive rows by pid. */
+  /** The last listing's background rows by job short id. */
   #jobs = new Map<string, Seen>();
-  #pids = new Map<number, Seen>();
   /** Jobs backfilled this run, by short id and the session id the listing gave. */
   readonly #backfilled = new Set<string>();
   #backfilling = false;
@@ -256,12 +260,14 @@ export class LineageStore {
   }
 
   /**
-   * Records that `to` carries on from `from`, unless that pair is held already or isn't two
-   * different, valid session ids. Writes one line. Returns whether it did. Never throws.
+   * Records that `to` carries on from `from`, unless that pair is held already, isn't two
+   * different, valid session ids, or would close a loop: `from` already carries on from `to`,
+   * directly or along the chain (review F1). Writes one line. Returns whether it did. Never throws.
    */
   record(link: NewLink): boolean {
-    const line = parseLine(JSON.stringify({ v: 1, at: this.#now().toISOString(), ...link }));
+    const line = parseLine(JSON.stringify({ ...link, v: 1, at: this.#now().toISOString() }));
     if (line === undefined || this.#pairs.has(pairKey(line))) return false;
+    if (this.chain(line.to).forward.some((step) => step.to === line.from)) return false;
     this.#hold(line);
     this.#append(line);
     for (const listener of [...this.#listeners]) listener();
@@ -269,40 +275,37 @@ export class LineageStore {
   }
 
   /**
-   * Live `clear`s from a successful listing of `claude agents --json --all`: a row whose job id
-   * (background) or pid (interactive) was listed last time with another session id that is no longer
-   * listed. The first listing only remembers. Never throws.
+   * Live `clear`s from a successful listing of `claude agents --json --all`: a background row with a
+   * live worker whose job id was listed last time with another session id that is no longer listed.
+   * A row with no worker keeps what was remembered for its job, since a finished job lists its first
+   * session id, not its latest. The first listing only remembers. Never throws.
    */
   observe(result: Extract<AgentsResult, { ok: true }>): void {
     try {
       const listed = listedSessionIds(result);
       const jobs = new Map<string, Seen>();
-      const pids = new Map<number, Seen>();
-      // A job id or pid that more than one row names is ambiguous: neither a clear nor remembered.
+      // A job id that more than one row names is ambiguous: neither a clear nor remembered.
       const count = new Map<string, number>();
-      for (const row of result.rows) for (const key of [row.shortId, row.pid === undefined ? undefined : `pid:${row.pid}`]) if (key !== undefined) count.set(key, (count.get(key) ?? 0) + 1);
+      for (const row of result.rows) if (row.shortId !== undefined) count.set(row.shortId, (count.get(row.shortId) ?? 0) + 1);
       for (const row of result.rows) {
-        const seen = { sessionId: row.sessionId, cwd: row.cwd };
-        if ((row.shortId !== undefined && count.get(row.shortId)! > 1) || (row.pid !== undefined && count.get(`pid:${row.pid}`)! > 1)) continue;
-        if (row.kind === 'background' && row.shortId !== undefined && SAFE_SHORT_ID.test(row.shortId)) {
-          const before = this.#jobs.get(row.shortId);
-          if (before !== undefined && before.sessionId !== row.sessionId && !listed.has(before.sessionId)) this.#clear(before, row, row.shortId);
-          jobs.set(row.shortId, seen);
-        } else if (row.kind === 'interactive' && row.pid !== undefined) {
-          const before = this.#pids.get(row.pid);
-          if (before !== undefined && before.sessionId !== row.sessionId && !listed.has(before.sessionId)) this.#clear(before, row);
-          pids.set(row.pid, seen);
+        if (row.kind !== 'background' || row.shortId === undefined || !SAFE_SHORT_ID.test(row.shortId) || count.get(row.shortId)! > 1) continue;
+        const before = this.#jobs.get(row.shortId);
+        if (before !== undefined && before.sessionId !== row.sessionId && row.pid === undefined) {
+          // No worker: the listing has fallen back to the job's first id. Keep the latest one seen.
+          jobs.set(row.shortId, before);
+          continue;
         }
+        if (before !== undefined && before.sessionId !== row.sessionId && !listed.has(before.sessionId)) this.#clear(before, row, row.shortId);
+        jobs.set(row.shortId, { sessionId: row.sessionId, cwd: row.cwd });
       }
       this.#jobs = jobs;
-      this.#pids = pids;
     } catch {
       // Lineage never breaks a poll.
     }
   }
 
-  #clear(before: Seen, row: AgentRow, job?: string): void {
-    this.record({ from: before.sessionId, to: row.sessionId, how: 'clear', ...(job === undefined ? {} : { job }), cwd: row.cwd });
+  #clear(before: Seen, row: AgentRow, job: string): void {
+    this.record({ from: before.sessionId, to: row.sessionId, how: 'clear', job, cwd: row.cwd });
   }
 
   /**
