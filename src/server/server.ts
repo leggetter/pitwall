@@ -119,6 +119,7 @@ import { createRelayManager } from './relay.js';
 import { registerRelay } from './relayRoute.js';
 import { DIAGNOSTICS_INTERVAL_MS, DiagnosticsLog, NeedsYouRecorder } from './diagnostics.js';
 import { createFlagView, FlagStore, registerFlags } from './flags.js';
+import { createLineageView, LineageStore } from './lineage.js';
 import { createSnoozeView, registerSnoozes, SnoozeStore } from './snoozes.js';
 import { SessionLaunches } from './sessionLaunches.js';
 import { registerSpinOffs } from './spinOffRoutes.js';
@@ -310,12 +311,15 @@ export async function startServerWithInternals(
   // Snoozes (W154): each snoozed session's `snoozed`, and why one came back, over flags. Ended by time or a wake.
   const snoozes = new SnoozeStore(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
   const snoozed = createSnoozeView(flagged, snoozes);
+  // Session lineage (W167): each session's `lineage`, the ids of the session it continues and the one that continues it.
+  const lineage = options.lineage ?? new LineageStore(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
+  const lineaged = createLineageView(snoozed, lineage);
   // The supervisor (M5, W113), or off. Started only when the page asks, stopped on close().
   const supervisor = options.supervisor;
   // With it, the snapshot carries its state, under W105's view.
-  const supervised = supervisor === undefined ? undefined : createSupervisorView(snoozed, supervisor);
+  const supervised = supervisor === undefined ? undefined : createSupervisorView(lineaged, supervisor);
   // The snapshot clients get: each session's PR links cut to those matching a PR in the list (D14, W105).
-  const snapshots = createSnapshotView(supervised ?? snoozed, prs);
+  const snapshots = createSnapshotView(supervised ?? lineaged, prs);
   // The diagnostics log (W165): why each row is in Needs you, from the snapshot the page gets and the PR list, with no off switch.
   // Written every DIAGNOSTICS_INTERVAL_MS, and on a PR list change, flag and snooze, and only when a session's state changes.
   const diagnostics = options.diagnostics ?? new DiagnosticsLog(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
@@ -374,6 +378,8 @@ export async function startServerWithInternals(
               conversation: (sessionId, before) => indexer.conversation(sessionId, before),
               ...(recaps === undefined ? {} : { recaps }),
               prs,
+              // session_lineage (W167): the chain of sessions around one.
+              lineage,
               // get_usage (W160): the usage source's one report, through its reader's cache.
               ...(options.usage === undefined ? {} : { usage: options.usage }),
               ownSessionIds: () => supervisor.ownSessionIds(),

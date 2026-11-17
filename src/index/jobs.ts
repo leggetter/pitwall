@@ -37,7 +37,7 @@ import { PERMISSION_MODES, type JobPr, type PermissionModeName, type SavedPermis
 import { isRecord } from './guards.js';
 import { prRefOfUrl } from './prLinks.js';
 import { plainLine } from './text.js';
-import { defaultConfigDir } from './transcripts.js';
+import { defaultConfigDir, isSessionUuid } from './transcripts.js';
 
 /** What a job's file says it needs, and the one PR it links, if it links just one (W170). */
 export type JobNeeds =
@@ -140,6 +140,38 @@ export function parseSavedPermission(text: string, sessionId: string): SavedPerm
 export async function readSavedPermission(shortId: string, sessionId: string, options: Pick<JobReaderOptions, 'jobsDir'> = {}): Promise<SavedPermission> {
   const text = await readJobFile(options.jobsDir ?? path.join(defaultConfigDir(), 'jobs'), shortId);
   return text === undefined ? { kind: 'unknown' } : parseSavedPermission(text, sessionId);
+}
+
+/** The first and the latest session id a job's `state.json` names (W167). */
+export interface JobSessionIds {
+  /** `sessionId`: the first. */
+  first: string;
+  /** `resumeSessionId`: the latest. Left out when the file has none, or it isn't a UUID. */
+  latest?: string;
+}
+
+/**
+ * The session ids a `state.json`'s text names, for the lineage backfill (W167): `sessionId`, and
+ * `resumeSessionId` when it is another UUID. Both must be canonical UUIDs, since they become file
+ * names (isSessionUuid()); anything else is undefined. Pure; never throws.
+ */
+export function parseJobSessionIds(text: string): JobSessionIds | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(parsed) || typeof parsed.sessionId !== 'string' || !isSessionUuid(parsed.sessionId)) return undefined;
+  const latest = parsed.resumeSessionId;
+  if (typeof latest !== 'string' || !isSessionUuid(latest) || latest === parsed.sessionId) return { first: parsed.sessionId };
+  return { first: parsed.sessionId, latest };
+}
+
+/** The session ids of the background job `shortId`, from its `state.json`, read as read() reads, without a cache. Never rejects. */
+export async function readJobSessionIds(shortId: string, options: Pick<JobReaderOptions, 'jobsDir'> = {}): Promise<JobSessionIds | undefined> {
+  const text = await readJobFile(options.jobsDir ?? path.join(defaultConfigDir(), 'jobs'), shortId);
+  return text === undefined ? undefined : parseJobSessionIds(text);
 }
 
 /** A job's `state.json` as text, by read()'s rules, or undefined when it can't be used. */

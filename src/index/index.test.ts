@@ -564,6 +564,37 @@ describe('createIndexer', () => {
     indexer.stop();
   });
 
+  it('hands listing each successful listing without the rows exclude leaves out, and keeps polling when it throws (W167)', async () => {
+    const { state, deps } = harness();
+    state.result = { ok: true, rows: [row('a', '/work/repo/a'), row('own', '/work/repo/own'), row('outside', '/elsewhere/x')] };
+    const seen: string[][] = [];
+    let broken = false;
+    const indexer = createIndexer(
+      {
+        roots: ['/work'],
+        intervalMs: 1000,
+        exclude: (r) => r.sessionId === 'own',
+        listing: (result) => {
+          seen.push(result.rows.map((r) => r.sessionId));
+          if (broken) throw new Error('broken hook');
+        },
+      },
+      deps,
+    );
+    await flush();
+    // Outside the roots is still listed: lineage follows every session Claude Code lists.
+    expect(seen).toEqual([['a', 'outside']]);
+    state.result = { ok: false, error: 'claude agents --json timed out after 10s' };
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(seen).toHaveLength(1);
+    state.result = { ok: true, rows: [row('a', '/work/repo/a')] };
+    broken = true;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(seen).toHaveLength(2);
+    expect(indexer.latest()?.groups.flatMap((g) => g.sessions.map((s) => s.sessionId))).toEqual(['a']);
+    indexer.stop();
+  });
+
   it('adds the relay’s alert to the snapshot, also when the source fails, and nothing when the hook has none or throws', async () => {
     const { state, deps } = harness();
     state.result = { ok: true, rows: [row('a', '/work/repo/a')] };

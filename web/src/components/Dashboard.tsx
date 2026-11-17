@@ -1905,6 +1905,15 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       openedBy={hiddenIn === undefined && opener.current?.sessionId === session.sessionId ? opener.current.gesture : undefined}
       terminalFocus={terminalFocus}
       polledAt={updatedAt}
+      lineage={
+        session.lineage === undefined
+          ? undefined
+          : {
+              ...(session.lineage.from === undefined ? {} : { from: { sessionId: session.lineage.from, name: listedSession(session.lineage.from)?.name } }),
+              ...(session.lineage.to === undefined ? {} : { to: { sessionId: session.lineage.to, name: listedSession(session.lineage.to)?.name } }),
+              onOpen: openSession,
+            }
+      }
       recaps={snapshot?.recaps}
       backLabel={hiddenIn === undefined ? backLabel : undefined}
       prs={{

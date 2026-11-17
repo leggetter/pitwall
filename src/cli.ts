@@ -27,6 +27,7 @@ import { ConfigError, loadConfig, ownersByRoot, type LoadedConfig } from './conf
 import { startIndexer } from './index/index.js';
 import { createPrPoller, prsOff } from './prs/index.js';
 import { DiagnosticsLog } from './server/diagnostics.js';
+import { LineageStore } from './server/lineage.js';
 import { createRecapEngine } from './recaps/engine.js';
 import { createSupervisor } from './supervisor/supervisor.js';
 import { formatToolListing, listConnectorTools, listingNotice, listsThroughClaude, listToolsThroughClaude, signInInstructions } from './supervisor/connectorTools.js';
@@ -678,10 +679,12 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
     claude: createClaudeDefaultsReader({ roots: () => roots }),
   });
   const relay = createRelayManager({ work: () => work.choice('relay') });
+  // Session lineage (W167): what each session continues, from the listing's changes and what a job's files say. Ids and paths only; no off switch.
+  const lineage = new LineageStore({ home: pitwallHome() });
   // Recaps (M5, W110): the server starts them once it's listening. The index leaves their calls out, and
   // hands them what it read of each transcript. With --no-recaps, there's no engine, and no call.
   // Your messages through the relay are yours in a recap's input, by their ids (W110's review).
-  const recaps = command.recaps ? createRecapEngine({ relay: { name: RELAY_NAME, sent: (msgId) => relay.sentByRelay(msgId) }, work: () => work.choice('recaps') }) : undefined;
+  const recaps = command.recaps ? createRecapEngine({ predecessorOf: (sessionId) => lineage.linksOf(sessionId).from, relay: { name: RELAY_NAME, sent: (msgId) => relay.sentByRelay(msgId) }, work: () => work.choice('recaps') }) : undefined;
   // The supervisor (M5, W113): started only when the page asks. The index leaves it out, as it does the relay.
   // With --no-supervisor, there's none, and pitwall never runs it.
   // Its connectors (W184, D28): the config file's, none with --no-connectors, started only with it.
@@ -701,6 +704,10 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
     roots,
     intervalMs,
     exclude: isPitwallOwn({ relay, recaps, supervisor, usage }),
+    listing: (result) => {
+      lineage.observe(result);
+      lineage.backfill(result);
+    },
     ...(recaps === undefined ? {} : { sessionFacts: (facts) => recaps.observe(facts) }),
     relayExchange: (sessionId) => relay.exchange(sessionId),
     relayAlert: () => relay.alert(),
@@ -729,6 +736,7 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
       // Attachments for New session's first prompt go in its attachments folder (W79), made on the first upload.
       pitwallHome: pitwallHome(),
       diagnostics,
+      lineage,
       // Your open PRs (M4), which the server starts fetching once it's listening. With --no-prs, never gh.
       // With the index, each PR is placed under the clone of its repo, or the root that claims its
       // owner, with each configured root's `github.owners` by real path (W105, W103).

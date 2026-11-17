@@ -23,6 +23,7 @@ import {
   type SupervisorToolSources,
 } from './mcpTools.js';
 import type { McpTool } from './mcp.js';
+import type { LineageLine } from './lineage.js';
 
 const NOW = Date.parse('2026-10-29T12:00:00.000Z');
 const OWN = 'cccccccc-0000-4000-8000-000000000003';
@@ -88,6 +89,7 @@ function tools(
     conversation?: SupervisorToolSources['conversation'];
     usage?: SupervisorToolSources['usage'];
     usageWaitMs?: number;
+    lineage?: SupervisorToolSources['lineage'];
   } = {},
 ): Record<string, McpTool> {
   const snapshot = snapshotOf(options.sessions ?? []);
@@ -100,6 +102,7 @@ function tools(
     prs: { latest: () => list },
     ...(options.usage === undefined ? {} : { usage: options.usage }),
     ...(options.usageWaitMs === undefined ? {} : { usageWaitMs: options.usageWaitMs }),
+    ...(options.lineage === undefined ? {} : { lineage: options.lineage }),
     ownSessionIds: () => new Set([OWN]),
     now: () => NOW,
   });
@@ -144,9 +147,9 @@ afterAll(() => {
 });
 
 describe('the tools', () => {
-  it('are the five read-only ones, each with a schema that takes no other argument', () => {
+  it('are the six read-only ones, each with a schema that takes no other argument', () => {
     const made = Object.values(tools());
-    expect(made.map((tool) => tool.name)).toEqual(['list_sessions', 'read_session', 'list_prs', 'get_recap', 'get_usage']);
+    expect(made.map((tool) => tool.name)).toEqual(['list_sessions', 'read_session', 'list_prs', 'get_recap', 'get_usage', 'session_lineage']);
     for (const tool of made) {
       expect(tool.inputSchema).toMatchObject({ type: 'object', additionalProperties: false });
       expect(tool.description).toContain('untrusted');
@@ -551,6 +554,35 @@ describe('get_recap', () => {
     expect(fallback).toMatchObject({ recap: { waitingOn: 'nothing', source: 'claude-code' }, untrusted: { summary: 'Waiting on the backport.', todos: [] } });
     expect(fallback.untrusted).not.toHaveProperty('title');
     expect((await call(tools({ sessions: [session('a')], recaps: 'off' }).get_recap!, { id: 'a' })).json).toMatchObject({ recap: null, reason: expect.stringContaining('--no-recaps') });
+  });
+});
+
+describe('session_lineage (W167)', () => {
+  const link = (from: string, to: string, extra: Partial<LineageLine> = {}): LineageLine => ({ v: 1, at: '2026-11-17T10:00:00.000Z', from, to, how: 'clear', ...extra });
+
+  it('gives the chain both ways, ids and fixed words with the names and paths untrusted', async () => {
+    const lineage = {
+      chain: () => ({
+        back: [link('a', 'b', { job: 'abc123', cwd: '/tmp/pitwall-test-root/repo', branch: 'feat/b' })],
+        forward: [link('b', 'c', { how: 'continue', inferred: true, cwd: '/tmp/pitwall-test-root/repo', branch: INJECTION })],
+      }),
+    };
+    const made = tools({ sessions: [session('b'), session('a')], lineage });
+    const { json } = await call(made.session_lineage!, { id: 'b' });
+    expect(json).toMatchObject({
+      id: 'b',
+      back: [{ id: 'a', how: 'clear', listed: true, job: 'abc123' }],
+      forward: [{ id: 'c', how: 'continue', inferred: true, listed: false, untrusted: { cwd: '/tmp/pitwall-test-root/repo', branch: INJECTION } }],
+    });
+    // A back step's directory and branch are the later session's, so they aren't shown against the earlier one.
+    expect((json as { back: { untrusted: object }[] }).back[0]!.untrusted).toEqual({ name: expect.any(String) });
+    // The injected branch name is only ever under `untrusted`.
+    expect(trustedStrings(json).join('\n')).not.toContain(INJECTION);
+  });
+
+  it('refuses an unknown session, and says when lineage is unavailable', async () => {
+    expect(await call(tools({ sessions: [session('a')] }).session_lineage!, { id: 'zzz' })).toMatchObject({ isError: true });
+    expect((await call(tools({ sessions: [session('a')] }).session_lineage!, { id: 'a' })).json).toMatchObject({ back: [], forward: [], reason: 'Lineage is unavailable.' });
   });
 });
 

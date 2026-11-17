@@ -1433,6 +1433,14 @@ export class World {
     this.#sessions.set(sessionId, { ...rest, ...(snoozed === undefined ? {} : { snoozed }), ...(ended === undefined ? {} : { snoozeEnded: ended }) });
   }
 
+  /** Until the next reset, the session continues another and is continued by a third (W167), or neither. */
+  lineage(sessionId: string, lineage: SessionSummary['lineage']): void {
+    const session = this.#sessions.get(sessionId);
+    if (!session) return;
+    const { lineage: _old, ...rest } = session;
+    this.#sessions.set(sessionId, lineage === undefined ? rest : { ...rest, lineage });
+  }
+
   /** Until the next reset, the session proposes a new session (W163), or proposes nothing. */
   spinOff(sessionId: string, spinOff: SessionSummary['spinOff']): void {
     const session = this.#sessions.get(sessionId);

@@ -222,6 +222,13 @@ export interface SessionSummary {
    */
   flagged?: SessionFlag;
   /**
+   * Session lineage (W167): the session this one continues (`from`, the newest line that names this
+   * one as its successor) and the session that continues it (`to`, the newest line that names this
+   * one as its predecessor), as pitwall's lineage log records them. Ids only; the web UI links an id
+   * pitwall lists. Left out when it has neither.
+   */
+  lineage?: SessionLineageLinks;
+  /**
    * You snoozed it (W154): Needs you is right about it, but not now. The web UI leaves a snoozed
    * session out of Needs you and every count, as it does a flagged one; `needsYou` stays set. Kept on
    * the server, in a 0600 file under pitwall's home, so it holds in every browser and across restarts.
@@ -991,6 +998,12 @@ export interface RelayResult {
 /** Relay a message to an interactive session, through pitwall's headless relay session (D8). */
 export function relayPath(sessionId: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/relay`;
+}
+
+/** What continues a session, and what it continues (W167): session ids from the lineage log. */
+export interface SessionLineageLinks {
+  from?: string;
+  to?: string;
 }
 
 /** A flag you put on a session in Needs you (W153): it doesn't need you. */
@@ -2480,6 +2493,7 @@ export const MCP_TOOLS = {
   listPrs: 'list_prs',
   getRecap: 'get_recap',
   getUsage: 'get_usage',
+  sessionLineage: 'session_lineage',
   spawnSession: 'spawn_session',
   resumeSession: 'resume_session',
   approve: 'approve',
