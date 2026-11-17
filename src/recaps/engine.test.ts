@@ -247,6 +247,25 @@ describe('when a session is recapped', () => {
     expect(h.calls[1]!.input).toContain('<your-messages>');
   });
 
+  it('gives the first recap of a continued session its predecessor’s last recap, inside the frame, as data (W167)', async () => {
+    const h = harness({ predecessorOf: (id) => (id === 'b' ? 'a' : id === 'c' ? 'missing' : undefined) });
+    h.start();
+    const a = h.add('a');
+    await h.poll([a]);
+    await h.reply(h.calls[0], envelope(answer({ summary: 'Moving the importer to streaming reads.' })));
+    expect(h.calls[0]!.input).not.toContain('<previous-session-recap');
+    const b = h.add('b');
+    const c = h.add('c');
+    await h.poll([a, b, c]);
+    const input = h.calls.find((call) => call.input?.includes('Fix b.'))!.input!;
+    expect(input).toMatch(/<previous-session-recap at="[^"]+">\n[\s\S]*Moving the importer to streaming reads\.\n<\/previous-session-recap>/);
+    // Inside the frame, so the model is told it is data.
+    expect(input.indexOf('<previous-session-recap')).toBeGreaterThan(input.indexOf('\n<session-0123456789abcdef>'));
+    expect(input.indexOf('</previous-session-recap>')).toBeLessThan(input.lastIndexOf('</session-0123456789abcdef>'));
+    // A predecessor with no recap adds nothing.
+    expect(h.calls.find((call) => call.input?.includes('Fix c.'))!.input).not.toContain('<previous-session-recap');
+  });
+
   it("recaps a running session once its turn has ended and it's been idle RECAP_DEBOUNCE_MS, with spike 010's call", async () => {
     const h = harness();
     h.start();

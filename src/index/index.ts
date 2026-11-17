@@ -9,7 +9,7 @@ import {
   type SourceHealth,
   type SubagentList,
 } from '../shared/protocol.js';
-import { createAgentsSource, listedSessionIds, type AgentRow, type AgentsSource } from './agents.js';
+import { createAgentsSource, listedSessionIds, type AgentRow, type AgentsResult, type AgentsSource } from './agents.js';
 import { ConversationCursorError, readConversationPage, RelayAddressBook, type ConversationReadOptions } from './conversation.js';
 import { createEndedScanner, type EndedScanner, type EndedSession } from './ended.js';
 import { oneLine } from './exec.js';
@@ -76,6 +76,12 @@ export interface IndexerOptions {
    * (SessionFacts), by session id: for M5's recap engine. A hook that throws is ignored.
    */
   sessionFacts?: (facts: ReadonlyMap<string, SessionFacts>) => void;
+  /**
+   * Called on each poll whose `claude agents` listing succeeded, with the listing less pitwall's own
+   * rows (`exclude`): for session lineage (W167), which tells a `/clear` from the same job or process
+   * listing a new session id. A hook that throws is ignored.
+   */
+  listing?: (result: Extract<AgentsResult, { ok: true }>) => void;
 }
 
 export interface Indexer {
@@ -432,6 +438,8 @@ async function poll(
   // parseAgentRows() skipped, such as one with an unknown kind (W81): none of them has ended.
   const listed = listedSessionIds(result);
   const rows = result.rows.filter((row) => !calls(() => options.exclude?.(row), false));
+  // Session lineage (W167): the listing without pitwall's own rows, before anything is placed. A hook that throws is ignored.
+  calls(() => options.listing?.({ ...result, rows }), undefined);
   const placed = await mapLimit(rows, deps.concurrency, async (row): Promise<PlacedSession | undefined> => {
     const { path: cwd, missing } = await inspectCwd(row.cwd, deps.realpath);
     const root = matchRoot(cwd, resolvedRoots);

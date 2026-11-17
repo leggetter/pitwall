@@ -165,6 +165,9 @@ scripts/diagnostics-report.ts
                          npx tsx scripts/diagnostics-report.ts [--days 7] [--session <id>] [--json]: why sessions were in
                          Needs you and for how long, from ~/.pitwall/diagnostics.jsonl (W165, written by
                          src/server/diagnostics.ts; ids and reasons only), read-only
+scripts/lineage.ts       npx tsx scripts/lineage.ts <session id> [--json]: the sessions one continues and is continued by, with
+                         each transcript's path, from ~/.pitwall/lineage.jsonl (W167, written by src/server/lineage.ts; ids and
+                         paths only), read-only
 scripts/extract-icons.ts regenerates web/src/icons/paths.ts from a pinned Material Symbols commit
 scripts/readme-screenshot.ts
                          writes <outDir>/hero-<theme>.png from made-up sessions on the app check's fake

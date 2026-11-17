@@ -101,7 +101,7 @@ import { checkClaudeVersion, prepareRelayDir } from '../server/relay.js';
 import { budgetFile, type BudgetStore } from './budget.js';
 import { runRecapCall, spawnRecapChild, type CallOutcome, type RecapSpawner } from './call.js';
 import { recapStoreDir, type RecapStore } from './store.js';
-import { firstRecapInput, sessionPrs, TurnCollector, updateRecapInput, type RelayMessages, type SessionPrs } from './input.js';
+import { firstRecapInput, sessionPrs, TurnCollector, updateRecapInput, type PredecessorRecap, type RelayMessages, type SessionPrs } from './input.js';
 import {
   MIN_RECAP_CLAUDE_VERSION,
   parseEnvelope,
@@ -215,6 +215,11 @@ export interface RecapEngineOptions {
   log?: (message: string) => void;
   /** Frame ids, for tests. */
   randomId?: () => string;
+  /**
+   * The session `sessionId` continues, from the lineage log (W167), or undefined. Its last recap of
+   * pitwall's own goes into this session's first recap as data. Never given session content.
+   */
+  predecessorOf?: (sessionId: string) => string | undefined;
 }
 
 /** A failed call isn't tried again automatically, for the same activity, sooner than this. */
@@ -375,6 +380,18 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   sync();
 
   /** The recaps kept on disk (W132), with what couldn't be used counted in the log, never shown. */
+  /** W167: the recap of the session `sessionId` continues, for a first recap's input, or nothing. A throwing hook adds nothing. */
+  function predecessorOf(sessionId: string): { predecessor: PredecessorRecap } | Record<string, never> {
+    let from: string | undefined;
+    try {
+      from = options.predecessorOf?.(sessionId);
+    } catch {
+      return {};
+    }
+    const recap = from === undefined || from === sessionId ? undefined : recaps.get(from);
+    return recap === undefined ? {} : { predecessor: { title: recap.title, summary: recap.summary, at: recap.at } };
+  }
+
   function loadKept(): Map<string, SessionRecap> {
     const loaded = kept.load(now());
     if (loaded.ignored > 0) log(`ignored ${loaded.ignored} kept recap${loaded.ignored === 1 ? '' : 's'} pitwall couldn't use; those sessions get new ones.`);
@@ -633,6 +650,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
       : firstRecapInput(
           {
             ...about,
+            ...predecessorOf(job.sessionId),
             ...(read.firstPrompt === undefined ? {} : { firstPrompt: read.firstPrompt }),
             ...(read.awaySummary === undefined ? {} : { awaySummary: read.awaySummary }),
             ...(read.compaction === undefined ? {} : { compaction: read.compaction }),
