@@ -97,7 +97,7 @@ import {
 import { DECLINED_MESSAGE, type ApprovalDraft, type ApprovalQueue, type PermissionAnswer } from '../supervisor/approvals.js';
 import { isPreviewOf, KNOWN_INPUT_FIELDS, OWN_NAMES } from '../supervisor/supervisorGateHook.mjs';
 import { mcpToolName } from '../supervisor/prompt.js';
-import { checkDirectory, MAX_PROMPT_LENGTH, resumeProblem, validateSpawnRequest, type ResumeRunner, type SpawnRunner, type ValidSpawn } from './actions.js';
+import { checkDirectory, MAX_PROMPT_LENGTH, resumeProblem, STOPPED_JOB_PROFILE_ERROR, validateSpawnRequest, type ResumeRunner, type SpawnRunner, type ValidSpawn } from './actions.js';
 import type { SessionLaunches } from './sessionLaunches.js';
 import { isClaudeCommand } from './claudeCommands.js';
 import type { McpTool, McpToolResult } from './mcp.js';
@@ -430,6 +430,8 @@ export async function checkResume(
   if (session.stale) return { ok: false, error: 'That session has been blocked for over a week, so pitwall won’t resume it for you. The user can open it from the list.' };
   const problem = resumeProblem(session);
   if (problem !== undefined) return { ok: false, error: problem };
+  // Not running (above), so a background session here is a stopped job (W197's review, F1).
+  if (profile.value !== undefined && session.kind === 'background') return { ok: false, error: STOPPED_JOB_PROFILE_ERROR };
   const dir = await checkDirectory(session.cwd, snapshot.roots);
   if (!dir.ok) return { ok: false, error: dir.error };
   return { ok: true, value: { session, directory: dir.path, text: text.value, ...(profile.value === undefined ? {} : { profile: profile.value }) } };

@@ -796,6 +796,16 @@ export function resumeProblem(session: SessionSummary): string | undefined {
   return undefined;
 }
 
+/** Why a stopped background job can't resume on another profile (W197's review, F1). */
+export const STOPPED_JOB_PROFILE_ERROR =
+  'That session is a stopped background job, which wakes only on the settings it was started with: Claude Code would start a copy for any other. Resume it without a profile, or start a new session on that profile.';
+
+/** Whether two launch records name the same settings, field by field. */
+function sameLaunch(a: SessionLaunch | undefined, b: SessionLaunch | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return a.profile === b.profile && a.custom === b.custom && a.model === b.model && a.effort === b.effort && a.subagentModel === b.subagentModel;
+}
+
 /** A background session that isn't running, stopped or finished (W107): no process, not alive. */
 function isStoppedJob(session: SessionSummary): boolean {
   return session.kind === 'background' && !session.alive && session.pid === undefined;
@@ -840,6 +850,12 @@ export function createResumeRunner(
     // again here as a launch record is.
     const approved = launch === undefined ? undefined : launchWork(launch);
     if (launch !== undefined && approved === undefined) return answer({ ok: false, error: "The profile's settings didn't pass pitwall's checks, so it didn't resume the session." }, 422);
+    // A stopped background job wakes only on the options it was started with: any flag makes Claude Code
+    // start a copy instead (W197's review, F1). So a profile other than the one it started with is refused,
+    // not dropped silently after the card showed it.
+    if (stoppedJob && approved !== undefined && !sameLaunch(approved.launch, options.launches?.lookup(session)?.launch)) {
+      return answer({ ok: false, error: STOPPED_JOB_PROFILE_ERROR }, 409);
+    }
     if (resuming.has(sessionId)) return answer({ ok: false, error: 'pitwall is already resuming this session.' }, 409);
     const release = slots.acquire();
     if (!release) return answer({ ok: false, error: slots.busyError }, 429, { retryAfterSeconds: 1 });
@@ -892,7 +908,8 @@ export function createResumeRunner(
       // under a root was refused with 409 above, rather than run with PWD set to the realpath.
       // The defaults for sessions and their sub-agents (W119), only for a session this pitwall started
       // or resumed (W119's review, #114's scope): one started elsewhere keeps the model and effort it
-      // was started with, so no flags. Claude Code takes `--model` and `--effort` on a resume too.
+      // was started with, so no flags. Claude Code takes `--model` and `--effort` on the resume of an ended
+      // session, not of a stopped background job (below).
       // A session pitwall started with a work profile resumes on what it used, kept on disk, checked
       // again as it's read: the profile's model, effort and sub-agents' model, never its skill (W155;
       // Phil, 2026-11-09). A field that didn't pass is the defaults'.
@@ -901,7 +918,13 @@ export function createResumeRunner(
       const ours = kept !== undefined || options.started?.has(sessionId) === true || (session.shortId !== undefined && options.started?.has(session.shortId) === true);
       const defaults = ours ? sessionWork() : { session: {}, subagents: {} };
       const work = kept === undefined ? defaults : { session: mergeChoices(kept.session, defaults.session), subagents: mergeChoices(kept.subagents, defaults.subagents) };
-      const result = await run(claudeBin, resumeArgs(sessionId, work.session, prompt, pluginDir), { cwd: dir.path, env: { ...withEffort(env(), work.session, work.subagents), PWD: cwd }, timeoutMs });
+      // A stopped background job keeps its own saved options, and any flag on its resume, `--model`,
+      // `--effort` or `--plugin-dir`, makes Claude Code start a copy instead of waking it (W197's
+      // review, F1, Claude Code 2.1.326). So it wakes with none: its saved options already hold the
+      // model, and the plugin's folder when pitwall started it after W197. The environment's effort
+      // still applies, since it isn't a flag.
+      const args = stoppedJob ? resumeArgs(sessionId, {}, prompt) : resumeArgs(sessionId, work.session, prompt, pluginDir);
+      const result = await run(claudeBin, args, { cwd: dir.path, env: { ...withEffort(env(), work.session, work.subagents), PWD: cwd }, timeoutMs });
       if (result.kind === 'failed') {
         if (result.reason === 'timeout') {
           indexer.pollSoon();

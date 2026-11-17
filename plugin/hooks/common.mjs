@@ -12,7 +12,7 @@
 // - a sub-agent's `agent-<id>.meta.json`, the same way, at most META_MAX_BYTES;
 // - the nudge state: one small file per session or sub-agent under os.tmpdir(), a folder that has to be a
 //   real folder of this user's. Nothing else is read, and the hooks write nothing but that state.
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, writeSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,6 +41,7 @@ export const SESSION_ID = /^[A-Za-z0-9-]{1,128}$/;
 export const AGENT_ID = /^[A-Za-z0-9]{1,64}$/;
 
 const OPEN_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+const WRITE_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 
 /**
  * @param {unknown} value
@@ -151,10 +152,13 @@ function openRegular(file) {
  * @returns {number | undefined}
  */
 export function lastContext(text, options = {}) {
-  const lines = text.split('\n');
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i];
-    if (line === undefined || line.trim() === '') continue;
+  // Line by line from the end, without splitting the whole tail into an array first (W197's review, F5).
+  let end = text.length;
+  while (end > 0) {
+    const start = text.lastIndexOf('\n', end - 1);
+    const line = text.slice(start + 1, end);
+    end = start < 0 ? 0 : start;
+    if (line.trim() === '') continue;
     // The request records are the large lines, and never the usage: skip them without parsing.
     if (line.startsWith('{"type":"api-request')) continue;
     /** @type {unknown} */
@@ -212,10 +216,21 @@ export function contextOf(file, options = {}) {
  * @returns {Record<string, unknown> | undefined}
  */
 export function readMeta(file) {
+  return readJsonRecord(file, META_MAX_BYTES);
+}
+
+/**
+ * A small JSON object from a regular file of this user's, opened without following a link and
+ * without blocking on a FIFO; undefined past `max` bytes or on any error.
+ * @param {string} file
+ * @param {number} max
+ * @returns {Record<string, unknown> | undefined}
+ */
+function readJsonRecord(file, max) {
   try {
     const { fd, size } = openRegular(file);
     try {
-      if (size > META_MAX_BYTES) return undefined;
+      if (size > max) return undefined;
       const buffer = Buffer.alloc(size);
       let read = 0;
       while (read < size) {
@@ -254,47 +269,69 @@ export function subagentsDirOf(transcriptPath) {
 
 /**
  * The state folder: PITWALL_HANDOFF_STATE_DIR when set (for tests), else a per-user folder under
- * os.tmpdir(), which is per-user on macOS but can be a shared /tmp on Linux.
+ * os.tmpdir(), which is per-user on macOS but can be a shared /tmp on Linux. A relative
+ * PITWALL_HANDOFF_STATE_DIR gives none, so the hooks stay silent rather than write in the cwd.
  * @param {NodeJS.ProcessEnv} env
+ * @returns {string | undefined}
  */
 export const stateDirOf = (env) => {
-  if (env.PITWALL_HANDOFF_STATE_DIR) return env.PITWALL_HANDOFF_STATE_DIR;
+  const set = env.PITWALL_HANDOFF_STATE_DIR;
+  if (set) return path.isAbsolute(set) ? set : undefined;
   const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
   return path.join(os.tmpdir(), uid === undefined ? 'pitwall-handoff-nudge' : `pitwall-handoff-nudge-${uid}`);
 };
+
+/** A state file is a few bytes: `{"v":1,"level":2}`. */
+const STATE_MAX_BYTES = 256;
+
+/**
+ * Whether the state folder can be trusted, for reads and writes alike (W197's review, F2): a real
+ * folder, not a link, of this user's, that no one else can write or read. On a shared /tmp another
+ * user could plant the folder, and then a FIFO or a link to /dev/zero as a state file.
+ * @param {string} dir
+ */
+function stateDirOk(dir) {
+  const st = lstatSync(dir);
+  const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
+  return st.isDirectory() && (uid === undefined || st.uid === uid) && (process.platform === 'win32' || (st.mode & 0o077) === 0);
+}
 
 /** The state file's key: letters, digits, dots and dashes only, so it names one file in the folder. */
 const STATE_KEY = /^[A-Za-z0-9.-]{1,200}$/;
 
 /**
  * The level last nudged for this key, 0 when there's no state.
- * @param {string} dir
+ * @param {string | undefined} dir
  * @param {string} key
  */
 export function readLevel(dir, key) {
   try {
-    if (!STATE_KEY.test(key)) return 0;
-    const state = JSON.parse(readFileSync(path.join(dir, `${key}.json`), 'utf8'));
-    return isRecord(state) && (state.level === 1 || state.level === 2) ? state.level : 0;
+    if (dir === undefined || !STATE_KEY.test(key) || !stateDirOk(dir)) return 0;
+    const state = readJsonRecord(path.join(dir, `${key}.json`), STATE_MAX_BYTES);
+    return state !== undefined && (state.level === 1 || state.level === 2) ? state.level : 0;
   } catch {
     return 0;
   }
 }
 
 /**
- * @param {string} dir
+ * @param {string | undefined} dir
  * @param {string} key
  * @param {number} level
  */
 export function writeLevel(dir, key, level) {
-  if (!STATE_KEY.test(key)) throw new Error('odd state key');
+  if (dir === undefined || !STATE_KEY.test(key)) throw new Error('odd state key');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   // A shared /tmp (Linux) lets another user plant the folder or a link: use it only when it's
-  // a real folder of ours; otherwise throw, and the hook stays silent.
-  const st = lstatSync(dir);
-  const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
-  if (!st.isDirectory() || (uid !== undefined && st.uid !== uid)) throw new Error('state folder not ours');
-  writeFileSync(path.join(dir, `${key}.json`), JSON.stringify({ v: 1, level }), { mode: 0o600 });
+  // a real folder of ours that no one else can reach; otherwise throw, and the hook stays silent.
+  if (!stateDirOk(dir)) throw new Error('state folder not ours');
+  // No link followed and no FIFO waited on, as for reads.
+  const fd = openSync(path.join(dir, `${key}.json`), WRITE_FLAGS, 0o600);
+  try {
+    writeSync(fd, JSON.stringify({ v: 1, level }));
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /**

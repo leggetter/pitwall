@@ -1,22 +1,27 @@
 // The pitwall plugin's folder (W176, W197), for `--plugin-dir` on the sessions pitwall starts or resumes
 // (actions.ts), so they get the plugin's hooks with no install (spike 018, finding 5).
 //
-// Found from this file's place in the installed package, never the working directory: the compiled
-// dist/server/pluginDir.js and src/server/pluginDir.ts are both two folders below the package root,
-// where plugin/ sits. It counts only when plugin/.claude-plugin/plugin.json is a regular file there, so a
-// package without the plugin, or a bundle that moved this file, starts sessions without the flag.
+// Found from this file's place in the installed package, never the working directory. A built pitwall,
+// dist/server/pluginDir.js, uses dist/plugin, the copy `npm run build` makes (scripts/copy-plugin.mjs),
+// so the hooks change only with a rebuild, as the server does (W197's review, F3). Run from source,
+// src/server/pluginDir.ts, it uses plugin/ two folders up, since src/plugin holds tests, not a plugin.
+// A folder counts only when its .claude-plugin/plugin.json is a regular file, so a package without the
+// plugin, or a bundle that moved this file, starts sessions without the flag.
 import { statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** The plugin's folder, or undefined when it isn't beside this module's package. */
 export function pluginDirOf(fromFile: string = fileURLToPath(import.meta.url)): string | undefined {
-  const dir = path.resolve(path.dirname(fromFile), '..', '..', 'plugin');
-  try {
-    return statSync(path.join(dir, '.claude-plugin', 'plugin.json')).isFile() ? dir : undefined;
-  } catch {
-    return undefined;
+  const here = path.dirname(fromFile);
+  for (const dir of [path.resolve(here, '..', 'plugin'), path.resolve(here, '..', '..', 'plugin')]) {
+    try {
+      if (statSync(path.join(dir, '.claude-plugin', 'plugin.json')).isFile()) return dir;
+    } catch {
+      // Not here; try the next.
+    }
   }
+  return undefined;
 }
 
 /**

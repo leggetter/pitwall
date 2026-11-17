@@ -48,6 +48,9 @@ export function nudge(level, context, threshold) {
  */
 export async function runHook(inputText, env, deps) {
   try {
+    // It runs after every tool call in every session with the plugin, and only a sub-agent's input
+    // names an agent_id: skip the parse for the rest (W197's review, F5).
+    if (!inputText.includes('"agent_id"')) return undefined;
     const input = JSON.parse(inputText);
     if (!isRecord(input) || input.hook_event_name !== 'PostToolUse') return undefined;
     const agentId = input.agent_id;

@@ -12,7 +12,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "npm run build:server && npm run build:web",
+    "build": "npm run build:server && npm run build:plugin && npm run build:web",
+    "build:plugin": "node scripts/copy-plugin.mjs",
     "build:server": "tsc -p tsconfig.build.json",
     "build:web": "vite build",
     "dev": "tsx scripts/dev.ts",
