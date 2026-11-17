@@ -177,7 +177,7 @@ async function start(options: StartOptions = {}): Promise<Started> {
   const run = options.run ?? fakeRunner(backgrounded());
   const server = await startServerWithInternals(
     { indexer: fakeIndexer(), token: TOKEN, webRoot, port: 0, ...(home === undefined ? {} : { pitwallHome: home }) },
-    { actions: { run, env: {}, agents: fakeAgents(), ...options.actions }, ...(options.attachments ? { attachments: options.attachments } : {}) },
+    { actions: { pluginDir: false, run, env: {}, agents: fakeAgents(), ...options.actions }, ...(options.attachments ? { attachments: options.attachments } : {}) },
   );
   running.push(server);
   return { server, apiKey: await apiKeyOf(server.port), run, home };

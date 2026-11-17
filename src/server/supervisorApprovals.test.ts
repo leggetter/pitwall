@@ -170,7 +170,7 @@ async function start(
   };
   // Never the user's jobs folder (W129): a stopped job's saved mode is the test's.
   const savedPermission = options.savedPermission ?? (async (): Promise<SavedPermission> => ({ kind: 'unset' }));
-  const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0, supervisor, ...(options.work === undefined ? {} : { work: options.work }) }, { actions: { run, agents, ...(options.launches === undefined ? {} : { launches: options.launches }) }, savedPermission });
+  const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0, supervisor, ...(options.work === undefined ? {} : { work: options.work }) }, { actions: { pluginDir: false, run, agents, ...(options.launches === undefined ? {} : { launches: options.launches }) }, savedPermission });
   running.push(server);
   return { server, supervisor, queue, indexer, state, runs };
 }
@@ -729,7 +729,7 @@ describe('a finished session resumed with a message, behind your click (W127)', 
     await Promise.all([job, ended, third]);
   });
 
-  it('a card says the profile settings pitwall kept for a session it started with one, and the resume uses them (W155)', async () => {
+  it('a card says the profile settings pitwall kept for a session it started with one, and a stopped job wakes on them with no flags (W155; W197 review, F1)', async () => {
     const launches = new SessionLaunches();
     launches.record('bbbbbbbb', { profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet' });
     const { server, queue, runs } = await start({ sessions: [stopped(), finished()], launches });
@@ -741,7 +741,7 @@ describe('a finished session resumed with a message, behind your click (W127)', 
     await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send' });
     await answer;
     await callTool(server.port, 'resume_session', input, { 'claudecode/toolUseId': 'toolu_launch' });
-    expect(resumeRuns(runs)[0]!.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'sonnet', '--effort', 'high', '--', 'Go on.']);
+    expect(resumeRuns(runs)[0]!.args).toEqual(['--resume', STOPPED_ID, '--bg', '--', 'Go on.']);
     expect(resumeRuns(runs)[0]!.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('sonnet');
     // One with no record says nothing of it.
     const ended = approve(server.port, RESUME, { id: FINISHED_ID, message: 'Go on.' }, 'toolu_nolaunch');
@@ -752,20 +752,24 @@ describe('a finished session resumed with a message, behind your click (W127)', 
     ws.close();
   });
 
-  it('resumes on a profile the supervisor named, as the card showed it, in place of what it started with, and keeps it for the next (W156)', async () => {
+  it('refuses a profile for a stopped background job, at once and again if you pick one on its card, since any flag starts a copy (W156; W197 review, F1)', async () => {
     const launches = new SessionLaunches();
     launches.record('bbbbbbbb', { profile: 'Build', model: 'claude-opus-5-5', effort: 'high', subagentModel: 'sonnet' });
     const { server, queue, runs } = await start({ sessions: [stopped(), finished()], launches });
     const { ws, apiKey } = await authedClient(server.port);
-    const input = { id: STOPPED_ID, message: 'Review what you built.', profile: 'Review' };
-    const answer = approve(server.port, RESUME, input, 'toolu_resume_review');
+    const named = await approve(server.port, RESUME, { id: STOPPED_ID, message: 'Review what you built.', profile: 'Review' });
+    expect(named).toMatchObject({ behavior: 'deny' });
+    expect(JSON.stringify(named)).toContain('stopped background job');
+    expect(queue.list()).toEqual([]);
+    // Picked on the card instead: the decision is checked again, refused, and nothing runs.
+    const answer = approve(server.port, RESUME, { id: STOPPED_ID, message: 'Go on.' }, 'toolu_resume_pick_stopped');
     await until(() => queue.list().length === 1);
-    expect(queue.list()[0]).toMatchObject({ profile: 'Review', profiles: BUILT_INS, launch: { profile: 'Build' } });
-    await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send' });
-    expect(await answer).toEqual({ behavior: 'allow', updatedInput: input });
-    expect(JSON.parse((await callTool(server.port, 'resume_session', input, { 'claudecode/toolUseId': 'toolu_resume_review' })).text)).toMatchObject({ resumed: true });
-    expect(resumeRuns(runs)[0]!.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'sonnet', '--effort', 'high', '--', 'Review what you built.']);
-    expect(launches.lookup({ sessionId: STOPPED_ID })?.launch).toEqual({ profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'sonnet' });
+    await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send', profile: 'Review' });
+    const picked = await answer;
+    expect(picked).toMatchObject({ behavior: 'deny' });
+    expect(JSON.stringify(picked)).toContain('stopped background job');
+    expect(resumeRuns(runs)).toEqual([]);
+    expect(launches.lookup({ sessionId: STOPPED_ID, shortId: 'bbbbbbbb' })?.launch).toEqual({ profile: 'Build', model: 'claude-opus-5-5', effort: 'high', subagentModel: 'sonnet' });
     ws.close();
   });
 
@@ -776,13 +780,14 @@ describe('a finished session resumed with a message, behind your click (W127)', 
     const { ws, apiKey } = await authedClient(server.port);
     expect(await approve(server.port, RESUME, { id: STOPPED_ID, message: 'Go on.', profile: 'Reviews' })).toMatchObject({ behavior: 'deny' });
     expect(queue.list()).toEqual([]);
-    const answer = approve(server.port, RESUME, { id: STOPPED_ID, message: 'Go on.', profile: 'Docs' }, 'toolu_resume_null');
+    // As it started: a stopped job wakes on its own saved options, with no flags (W197 review, F1).
+    const answer = approve(server.port, RESUME, { id: STOPPED_ID, message: 'Go on.' }, 'toolu_resume_null');
     await until(() => queue.list().length === 1);
     await decide(server.port, apiKey, queue.list()[0]!.id, { decision: 'send', profile: null });
-    expect(await answer).toEqual({ behavior: 'allow', updatedInput: { id: STOPPED_ID, message: 'Go on.' } });
-    expect(queue.takeNotes()).toEqual([`the user changed the profile the session ${STOPPED_ID} resumes on, from "Docs" to none, so it resumed as it started, before it was sent.`]);
+    expect(await answer).toMatchObject({ behavior: 'allow', updatedInput: { id: STOPPED_ID, message: 'Go on.' } });
+    queue.takeNotes();
     await callTool(server.port, 'resume_session', { id: STOPPED_ID, message: 'Go on.' }, { 'claudecode/toolUseId': 'toolu_resume_null' });
-    expect(resumeRuns(runs)[0]!.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'claude-opus-5-5', '--effort', 'high', '--', 'Go on.']);
+    expect(resumeRuns(runs)[0]!.args).toEqual(['--resume', STOPPED_ID, '--bg', '--', 'Go on.']);
     // A session with no record and no profile picked: picking one gives it a record.
     const ended = approve(server.port, RESUME, { id: FINISHED_ID, message: 'Go on.' }, 'toolu_resume_pick');
     await until(() => queue.list().length === 1);

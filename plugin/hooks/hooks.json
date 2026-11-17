@@ -1,5 +1,5 @@
 {
-  "description": "While pitwall runs, tell the session it's watched, how to link sessions in pitwall, and how to propose one.",
+  "description": "While pitwall runs: tell the session it's watched, how to link sessions in pitwall and how to propose one; ask big sessions and sub-agents to wrap up; stop a message resuming a big finished sub-agent.",
   "hooks": {
     "SessionStart": [
       {
@@ -10,6 +10,43 @@
             "command": "node",
             "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/sessionNote.mjs"],
             "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/subagentGuard.mjs"],
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/subagentNudge.mjs"],
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/handoffNudge.mjs"],
+            "timeout": 10
           }
         ]
       }

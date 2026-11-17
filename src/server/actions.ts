@@ -115,6 +115,7 @@ import type { RecentSpawns } from './recentSpawns.js';
 import { resolveSession } from './sessions.js';
 import { launchWork, type SessionLaunches } from './sessionLaunches.js';
 import { withSkill } from './profiles.js';
+import { pluginDirArgs, pluginDirOf } from './pluginDir.js';
 import { EFFORT_PROBLEM, mergeChoices, modelProblem, withEffort, workArgs, type WorkStore } from './work.js';
 
 export interface ActionOptions {
@@ -122,6 +123,11 @@ export interface ActionOptions {
   run?: RunCommand;
   /** Path or name of the claude binary. Default 'claude'. */
   claudeBin?: string;
+  /**
+   * The pitwall plugin's folder, added as `--plugin-dir` to each session spawn or resume starts (W197).
+   * Default: found from the installed package (pluginDir.ts). `false` adds none; tests pass it.
+   */
+  pluginDir?: string | false;
   /** The environment children start from, before childEnvironment() scrubs it. Default process.env, read per call. */
   env?: NodeJS.ProcessEnv;
   /** The server's token. Any variable whose value contains it is left out of a child's environment. */
@@ -364,10 +370,11 @@ function invalid(error: string): { ok: false; error: string } {
  * and the prompt is always the last argument. Each attachment's folder is `--add-dir=<dir>`, one
  * argument, never `--add-dir <dir>`, which would take the prompt as another directory (spike 008).
  */
-export function spawnArgs(spawn: ValidSpawn): string[] {
+export function spawnArgs(spawn: ValidSpawn, pluginDir?: string): string[] {
   const args = ['--bg'];
   if (spawn.name !== undefined) args.push('--name', spawn.name);
   args.push(...workArgs({ ...(spawn.model === undefined ? {} : { model: spawn.model }), ...(spawn.effort === undefined ? {} : { effort: spawn.effort }) }));
+  args.push(...pluginDirArgs(pluginDir));
   for (const file of spawn.attachments ?? []) args.push(`--add-dir=${file.dir}`);
   args.push('--', spawnPrompt(spawn));
   return args;
@@ -424,8 +431,8 @@ export function parseCopyNote(output: string): { found: true; shortId?: string }
  * message that starts with `-` stays a message. Claude Code runs it as the resumed session's next
  * turn, under the same session id (spike 011).
  */
-export function resumeArgs(sessionId: string, choice: WorkChoice = {}, prompt?: string): string[] {
-  return ['--resume', sessionId, '--bg', ...workArgs(choice), ...(prompt === undefined ? [] : ['--', prompt])];
+export function resumeArgs(sessionId: string, choice: WorkChoice = {}, prompt?: string, pluginDir?: string): string[] {
+  return ['--resume', sessionId, '--bg', ...workArgs(choice), ...pluginDirArgs(pluginDir), ...(prompt === undefined ? [] : ['--', prompt])];
 }
 
 /**
@@ -667,6 +674,7 @@ export function createSpawnRunner(options: Omit<ActionOptions, 'spawner'> = {}):
   const run = options.run ?? runCommand;
   const now = options.now ?? Date.now;
   const claudeBin = options.claudeBin ?? 'claude';
+  const pluginDir = options.pluginDir === false ? undefined : (options.pluginDir ?? pluginDirOf());
   const timeoutMs = options.timeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS;
   const env = () => childEnvironment(options.env ?? process.env, options.token);
   const limiter = new SpawnLimiter(
@@ -701,7 +709,7 @@ export function createSpawnRunner(options: Omit<ActionOptions, 'spawner'> = {}):
         // CLAUDE_CODE_SUBAGENT_MODEL for its sub-agents, and no inherited CLAUDE_CODE_EFFORT_LEVEL over its --effort (W119).
         // A profile's sub-agents' model is a default only: never CLAUDE_CODE_SUBAGENT_MODEL_FORCE (W155).
         const childEnv = withEffort(env(), spawn, spawn.subagentModel === undefined ? {} : { model: spawn.subagentModel });
-        result = await run(claudeBin, spawnArgs(spawn), { cwd: spawn.cwd, env: { ...childEnv, PWD: spawn.cwd }, timeoutMs });
+        result = await run(claudeBin, spawnArgs(spawn, pluginDir), { cwd: spawn.cwd, env: { ...childEnv, PWD: spawn.cwd }, timeoutMs });
       } finally {
         slot.release();
       }
@@ -788,6 +796,16 @@ export function resumeProblem(session: SessionSummary): string | undefined {
   return undefined;
 }
 
+/** Why a stopped background job can't resume on another profile (W197's review, F1). */
+export const STOPPED_JOB_PROFILE_ERROR =
+  'That session is a stopped background job, which wakes only on the settings it was started with: Claude Code would start a copy for any other. Resume it without a profile, or start a new session on that profile.';
+
+/** Whether two launch records name the same settings, field by field. */
+function sameLaunch(a: SessionLaunch | undefined, b: SessionLaunch | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return a.profile === b.profile && a.custom === b.custom && a.model === b.model && a.effort === b.effort && a.subagentModel === b.subagentModel;
+}
+
 /** A background session that isn't running, stopped or finished (W107): no process, not alive. */
 function isStoppedJob(session: SessionSummary): boolean {
   return session.kind === 'background' && !session.alive && session.pid === undefined;
@@ -805,6 +823,7 @@ export function createResumeRunner(
   const run = options.run ?? runCommand;
   const now = options.now ?? Date.now;
   const claudeBin = options.claudeBin ?? 'claude';
+  const pluginDir = options.pluginDir === false ? undefined : (options.pluginDir ?? pluginDirOf());
   const timeoutMs = options.timeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS;
   const env = () => childEnvironment(options.env ?? process.env, options.token);
   const sessionWork = () => ({ session: options.work?.choice('session') ?? {}, subagents: options.work?.choice('subagents') ?? {} });
@@ -831,6 +850,12 @@ export function createResumeRunner(
     // again here as a launch record is.
     const approved = launch === undefined ? undefined : launchWork(launch);
     if (launch !== undefined && approved === undefined) return answer({ ok: false, error: "The profile's settings didn't pass pitwall's checks, so it didn't resume the session." }, 422);
+    // A stopped background job wakes only on the options it was started with: any flag makes Claude Code
+    // start a copy instead (W197's review, F1). So a profile other than the one it started with is refused,
+    // not dropped silently after the card showed it.
+    if (stoppedJob && approved !== undefined && !sameLaunch(approved.launch, options.launches?.lookup(session)?.launch)) {
+      return answer({ ok: false, error: STOPPED_JOB_PROFILE_ERROR }, 409);
+    }
     if (resuming.has(sessionId)) return answer({ ok: false, error: 'pitwall is already resuming this session.' }, 409);
     const release = slots.acquire();
     if (!release) return answer({ ok: false, error: slots.busyError }, 429, { retryAfterSeconds: 1 });
@@ -883,7 +908,8 @@ export function createResumeRunner(
       // under a root was refused with 409 above, rather than run with PWD set to the realpath.
       // The defaults for sessions and their sub-agents (W119), only for a session this pitwall started
       // or resumed (W119's review, #114's scope): one started elsewhere keeps the model and effort it
-      // was started with, so no flags. Claude Code takes `--model` and `--effort` on a resume too.
+      // was started with, so no flags. Claude Code takes `--model` and `--effort` on the resume of an ended
+      // session, not of a stopped background job (below).
       // A session pitwall started with a work profile resumes on what it used, kept on disk, checked
       // again as it's read: the profile's model, effort and sub-agents' model, never its skill (W155;
       // Phil, 2026-11-09). A field that didn't pass is the defaults'.
@@ -892,7 +918,13 @@ export function createResumeRunner(
       const ours = kept !== undefined || options.started?.has(sessionId) === true || (session.shortId !== undefined && options.started?.has(session.shortId) === true);
       const defaults = ours ? sessionWork() : { session: {}, subagents: {} };
       const work = kept === undefined ? defaults : { session: mergeChoices(kept.session, defaults.session), subagents: mergeChoices(kept.subagents, defaults.subagents) };
-      const result = await run(claudeBin, resumeArgs(sessionId, work.session, prompt), { cwd: dir.path, env: { ...withEffort(env(), work.session, work.subagents), PWD: cwd }, timeoutMs });
+      // A stopped background job keeps its own saved options, and any flag on its resume, `--model`,
+      // `--effort` or `--plugin-dir`, makes Claude Code start a copy instead of waking it (W197's
+      // review, F1, Claude Code 2.1.326). So it wakes with none: its saved options already hold the
+      // model, and the plugin's folder when pitwall started it after W197. The environment's effort
+      // still applies, since it isn't a flag.
+      const args = stoppedJob ? resumeArgs(sessionId, {}, prompt) : resumeArgs(sessionId, work.session, prompt, pluginDir);
+      const result = await run(claudeBin, args, { cwd: dir.path, env: { ...withEffort(env(), work.session, work.subagents), PWD: cwd }, timeoutMs });
       if (result.kind === 'failed') {
         if (result.reason === 'timeout') {
           indexer.pollSoon();

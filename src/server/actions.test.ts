@@ -250,7 +250,7 @@ interface Started {
 
 async function start(run = fakeRunner(backgrounded()), actions: ActionOptions = {}, indexer: Indexer = fakeIndexer()): Promise<Started> {
   // A fake agents source by default, so no test can reach the real `claude agents`.
-  const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0 }, { actions: { run, env: {}, agents: fakeAgents(), ...actions } });
+  const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0 }, { actions: { pluginDir: false, run, env: {}, agents: fakeAgents(), ...actions } });
   running.push(server);
   return { server, apiKey: await apiKeyOf(server.port), run };
 }
@@ -1117,6 +1117,13 @@ describe("resume a background session that isn't running (W107)", () => {
     expect(indexer.noteRestart).toHaveBeenCalledWith(STOPPED_ID, expect.any(Number));
   });
 
+  it('wakes it without --plugin-dir, since any flag makes Claude Code start a copy instead (W197 review, F1)', async () => {
+    const agents = fakeAgents({ ok: true, rows: [ownRow()] });
+    const started = await start(fakeRunner(woken), { agents, pluginDir: '/opt/pitwall/plugin' }, fakeIndexer(snapshotWith(stopped())));
+    expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
+    expect(started.run.calls.map((call) => call.args)).toEqual([['--resume', STOPPED_ID, '--bg']]);
+  });
+
   it('answers 409 and runs nothing when the listing gives it a process, an interactive row, or no row at all', async () => {
     for (const rows of [[ownRow({ pid: 7777, status: 'idle' })], [ownRow(), agentRow(STOPPED_ID)], [] as AgentRow[]]) {
       const agents = fakeAgents({ ok: true, rows });
@@ -1367,6 +1374,24 @@ describe('helpers', () => {
     expect(resumeArgs('5e66fcb3-0000-4000-8000-000000000000', { model: 'default', effort: 'xhigh' })).toEqual(['--resume', '5e66fcb3-0000-4000-8000-000000000000', '--bg', '--effort', 'xhigh']);
   });
 
+  it('spawnArgs and resumeArgs add --plugin-dir=<folder> as one argument before the prompt, and nothing without a folder (W197)', () => {
+    const dir = '/made up/pitwall/plugin';
+    const spawn = { cwd: '/made-up/folder', prompt: '--help', name: 'pitwall-test-w197' } as unknown as Parameters<typeof spawnArgs>[0];
+    expect(spawnArgs(spawn, dir)).toEqual(['--bg', '--name', 'pitwall-test-w197', `--plugin-dir=${dir}`, '--', '--help']);
+    expect(spawnArgs(spawn)).toEqual(['--bg', '--name', 'pitwall-test-w197', '--', '--help']);
+    expect(resumeArgs('5e66fcb3-0000-4000-8000-000000000000', { effort: 'high' }, 'Go on.', dir)).toEqual(['--resume', '5e66fcb3-0000-4000-8000-000000000000', '--bg', '--effort', 'high', `--plugin-dir=${dir}`, '--', 'Go on.']);
+  });
+
+  it('a server with no pluginDir option finds the repo’s plugin folder and passes it to spawn and resume (W197)', async () => {
+    const started = await start(fakeRunner(backgrounded()), { pluginDir: undefined as unknown as string });
+    await spawnAsPage(started, { cwd: repo, prompt: 'Reply with: ready' });
+    const args = started.run.calls[0]?.args ?? [];
+    const flag = args.find((arg) => arg.startsWith('--plugin-dir='));
+    expect(flag).toBeDefined();
+    expect(flag?.endsWith("plugin")).toBe(true);
+    expect(args.indexOf(flag ?? '')).toBeLessThan(args.indexOf('--'));
+  });
+
   it('resumeArgs puts the supervisor’s message last, after --, so one that starts with - stays a message (W127, spike 011)', () => {
     expect(resumeArgs('5e66fcb3-0000-4000-8000-000000000000', {}, '--dangerously-skip-permissions')).toEqual(['--resume', '5e66fcb3-0000-4000-8000-000000000000', '--bg', '--', '--dangerously-skip-permissions']);
     expect(resumeArgs('5e66fcb3-0000-4000-8000-000000000000', { effort: 'high' }, 'Go on.')).toEqual(['--resume', '5e66fcb3-0000-4000-8000-000000000000', '--bg', '--effort', 'high', '--', 'Go on.']);
@@ -1449,7 +1474,7 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
     createWorkStore({ config: { ...emptyChoices(), session: { model: 'opus', effort: 'high' }, subagents: { model: 'haiku' } }, configFile: '/home/example/.pitwall/config.json' });
 
   async function startWith(work: WorkStore, run = fakeRunner(backgrounded()), env: NodeJS.ProcessEnv = {}, indexer = fakeIndexer(), agents = fakeAgents()): Promise<Started> {
-    const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0, work }, { actions: { run, env, agents } });
+    const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0, work }, { actions: { pluginDir: false, run, env, agents } });
     running.push(server);
     return { server, apiKey: await apiKeyOf(server.port), run };
   }
@@ -1541,7 +1566,7 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
     expect(second?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('haiku');
   });
 
-  it('resume takes the defaults for a stopped background session this pitwall started, found by its short id', async () => {
+  it('resume wakes a stopped background session this pitwall started, found by its short id, with no flags, since any flag starts a copy (W197 review, F1)', async () => {
     const STOPPED_ID = '99999999-9999-4999-8999-999999999999';
     const stopped = session({ sessionId: STOPPED_ID, shortId: '99999999', name: 'pitwall-test-stopped', alive: false, finished: true, state: 'stopped' });
     const agents = fakeAgents({ ok: true, rows: [agentRow(STOPPED_ID, { kind: 'background', shortId: '99999999', pid: undefined, state: 'stopped' })] });
@@ -1549,7 +1574,7 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
     const started = await startWith(configured(), fakeRunner(backgrounded('99999999', 'pitwall-test-stopped'), woken), {}, fakeIndexer(snapshotWith(stopped)), agents);
     expect((await spawnAsPage(started, { cwd: repo, prompt: 'go' })).status).toBe(201);
     expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
-    expect(started.run.calls[1]?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'opus', '--effort', 'high']);
+    expect(started.run.calls[1]?.args).toEqual(['--resume', STOPPED_ID, '--bg']);
     expect(started.run.calls[1]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('haiku');
   });
 
@@ -1681,7 +1706,7 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
       expect(work.update({ overrides: { session: { effort: 'low' }, subagents: { model: 'sonnet' } } }).ok).toBe(true);
       const launches = new SessionLaunches();
       const run = fakeRunner(backgrounded());
-      const server = await startServerWithInternals({ indexer: fakeIndexer(), token: TOKEN, webRoot, port: 0, work }, { actions: { run, env: {}, agents: fakeAgents(), launches } });
+      const server = await startServerWithInternals({ indexer: fakeIndexer(), token: TOKEN, webRoot, port: 0, work }, { actions: { pluginDir: false, run, env: {}, agents: fakeAgents(), launches } });
       running.push(server);
       const started = { server, apiKey: await apiKeyOf(server.port), run };
       expect((await spawnAsPage(started, { cwd: repo, prompt: 'go' })).status).toBe(201);
@@ -1713,7 +1738,7 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
       async function startHome(work: WorkStore, run: ReturnType<typeof fakeRunner>, pitwallHome?: string): Promise<Started> {
         const server = await startServerWithInternals(
           { indexer: fakeIndexer(snapshotWith(stopped())), token: TOKEN, webRoot, port: 0, work, ...(pitwallHome === undefined ? {} : { pitwallHome }) },
-          { actions: { run, env: {}, agents: agents() } },
+          { actions: { pluginDir: false, run, env: {}, agents: agents() } },
         );
         running.push(server);
         return { server, apiKey: await apiKeyOf(server.port), run };
@@ -1725,19 +1750,19 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
         expect(started.run.calls[0]?.args.at(-1)).toBe('/agent-roles:role-reviewer Review PR 12');
         expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
         const resume = started.run.calls[1];
-        expect(resume?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'sonnet', '--effort', 'high']);
+        expect(resume?.args).toEqual(['--resume', STOPPED_ID, '--bg']);
         expect(resume?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('sonnet');
         expect(resume?.args.join(' ')).not.toMatch(/role-reviewer/);
         // Again, after the first resume moved its record: the same.
         expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
-        expect(started.run.calls[2]?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'sonnet', '--effort', 'high']);
+        expect(started.run.calls[2]?.args).toEqual(['--resume', STOPPED_ID, '--bg']);
       });
 
       it('keeps what Customized used, and a profile whose sub-agents are on Claude Code\'s default leaves the variable alone', async () => {
         const started = await startHome(profiled(), fakeRunner(backgrounded('99999999', 'pitwall-test-stopped'), woken()));
         expect((await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Inherit', model: 'haiku', effort: 'low' })).status).toBe(201);
         expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
-        expect(started.run.calls[1]?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'haiku', '--effort', 'low']);
+        expect(started.run.calls[1]?.args).toEqual(['--resume', STOPPED_ID, '--bg']);
         expect(started.run.calls[1]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
       });
 
@@ -1745,7 +1770,7 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
         const started = await startHome(profiled(), fakeRunner(backgrounded('99999999', 'pitwall-test-stopped'), woken()));
         expect((await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'haiku' })).status).toBe(201);
         expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
-        expect(started.run.calls[1]?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'sonnet', '--effort', 'high']);
+        expect(started.run.calls[1]?.args).toEqual(['--resume', STOPPED_ID, '--bg']);
         expect(started.run.calls[1]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('haiku');
       });
 
@@ -1757,7 +1782,7 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
           await first.server.close();
           const second = await startHome(profiled(), fakeRunner(woken()), home);
           expect((await postAsPage(second, resumePath(STOPPED_ID))).status).toBe(200);
-          expect(second.run.calls[0]?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'claude-opus-5-5', '--effort', 'xhigh']);
+          expect(second.run.calls[0]?.args).toEqual(['--resume', STOPPED_ID, '--bg']);
           expect(second.run.calls[0]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('opus');
         } finally {
           await rm(home, { recursive: true, force: true });
@@ -1768,7 +1793,7 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
         const snap = snapshotWith(stopped());
         const run = fakeRunner(backgrounded('99999999', 'pitwall-test-stopped'), woken(), exited(0, 'backgrounded · 77777777 · pitwall-test-stopped\n'));
         const fakeAgentList = agents();
-        const server = await startServerWithInternals({ indexer: fakeIndexer(snap), token: TOKEN, webRoot, port: 0, work: profiled() }, { actions: { run, env: {}, agents: fakeAgentList } });
+        const server = await startServerWithInternals({ indexer: fakeIndexer(snap), token: TOKEN, webRoot, port: 0, work: profiled() }, { actions: { pluginDir: false, run, env: {}, agents: fakeAgentList } });
         running.push(server);
         const started = { server, apiKey: await apiKeyOf(server.port), run };
         expect((await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Docs' })).status).toBe(201);
@@ -1787,7 +1812,7 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
         const started = await startHome(profiled(), fakeRunner(backgrounded('99999999', 'pitwall-test-stopped'), woken()));
         expect((await spawnAsPage(started, { cwd: repo, prompt: 'go' })).status).toBe(201);
         expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
-        expect(started.run.calls[1]?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'opus', '--effort', 'high']);
+        expect(started.run.calls[1]?.args).toEqual(['--resume', STOPPED_ID, '--bg']);
         expect(started.run.calls[1]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('haiku');
       });
     });
