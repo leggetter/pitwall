@@ -80,7 +80,7 @@ export interface LineageLine {
 /** What record() takes: a line without its version and time. */
 export type NewLink = Omit<LineageLine, 'v' | 'at'>;
 
-const isTime = (value: unknown): value is string => typeof value === 'string' && ISO_TIME.test(value) && !Number.isNaN(Date.parse(value));
+const isTime = (value: unknown): value is string => typeof value === 'string' && ISO_TIME.test(value) && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString() === value;
 /** Real session ids are UUIDs; anything looser could carry words into the supervisor's fields (review F4). */
 const isId = (value: unknown): value is string => typeof value === 'string' && isSessionUuid(value);
 
@@ -267,7 +267,7 @@ export class LineageStore {
   record(link: NewLink): boolean {
     const line = parseLine(JSON.stringify({ ...link, v: 1, at: this.#now().toISOString() }));
     if (line === undefined || this.#pairs.has(pairKey(line))) return false;
-    if (this.chain(line.to).forward.some((step) => step.to === line.from)) return false;
+    if (this.#reaches(line.to, line.from)) return false;
     this.#hold(line);
     this.#append(line);
     for (const listener of [...this.#listeners]) listener();
@@ -302,6 +302,23 @@ export class LineageStore {
     } catch {
       // Lineage never breaks a poll.
     }
+  }
+
+  /** Whether `to` is reachable from `from` along every held line, not only each session's preferred successor. */
+  #reaches(from: string, to: string): boolean {
+    const next = new Map<string, string[]>();
+    for (const line of this.#lines) next.set(line.from, [...(next.get(line.from) ?? []), line.to]);
+    const seen = new Set<string>([from]);
+    for (const todo = [from]; todo.length > 0; ) {
+      for (const each of next.get(todo.pop()!) ?? []) {
+        if (each === to) return true;
+        if (!seen.has(each)) {
+          seen.add(each);
+          todo.push(each);
+        }
+      }
+    }
+    return false;
   }
 
   #clear(before: Seen, row: AgentRow, job: string): void {

@@ -78,7 +78,7 @@ export interface IndexerOptions {
   sessionFacts?: (facts: ReadonlyMap<string, SessionFacts>) => void;
   /**
    * Called on each poll whose `claude agents` listing succeeded, with the listing less pitwall's own
-   * rows (`exclude`): for session lineage (W167), which tells a `/clear` from the same job or process
+   * rows (`exclude`): for session lineage (W167), which tells a `/clear` from the same background job
    * listing a new session id. A hook that throws is ignored.
    */
   listing?: (result: Extract<AgentsResult, { ok: true }>) => void;
