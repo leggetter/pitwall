@@ -115,6 +115,7 @@ import type { RecentSpawns } from './recentSpawns.js';
 import { resolveSession } from './sessions.js';
 import { launchWork, type SessionLaunches } from './sessionLaunches.js';
 import { withSkill } from './profiles.js';
+import { pluginDirArgs, pluginDirOf } from './pluginDir.js';
 import { EFFORT_PROBLEM, mergeChoices, modelProblem, withEffort, workArgs, type WorkStore } from './work.js';
 
 export interface ActionOptions {
@@ -122,6 +123,11 @@ export interface ActionOptions {
   run?: RunCommand;
   /** Path or name of the claude binary. Default 'claude'. */
   claudeBin?: string;
+  /**
+   * The pitwall plugin's folder, added as `--plugin-dir` to each session spawn or resume starts (W197).
+   * Default: found from the installed package (pluginDir.ts). `false` adds none; tests pass it.
+   */
+  pluginDir?: string | false;
   /** The environment children start from, before childEnvironment() scrubs it. Default process.env, read per call. */
   env?: NodeJS.ProcessEnv;
   /** The server's token. Any variable whose value contains it is left out of a child's environment. */
@@ -364,10 +370,11 @@ function invalid(error: string): { ok: false; error: string } {
  * and the prompt is always the last argument. Each attachment's folder is `--add-dir=<dir>`, one
  * argument, never `--add-dir <dir>`, which would take the prompt as another directory (spike 008).
  */
-export function spawnArgs(spawn: ValidSpawn): string[] {
+export function spawnArgs(spawn: ValidSpawn, pluginDir?: string): string[] {
   const args = ['--bg'];
   if (spawn.name !== undefined) args.push('--name', spawn.name);
   args.push(...workArgs({ ...(spawn.model === undefined ? {} : { model: spawn.model }), ...(spawn.effort === undefined ? {} : { effort: spawn.effort }) }));
+  args.push(...pluginDirArgs(pluginDir));
   for (const file of spawn.attachments ?? []) args.push(`--add-dir=${file.dir}`);
   args.push('--', spawnPrompt(spawn));
   return args;
@@ -424,8 +431,8 @@ export function parseCopyNote(output: string): { found: true; shortId?: string }
  * message that starts with `-` stays a message. Claude Code runs it as the resumed session's next
  * turn, under the same session id (spike 011).
  */
-export function resumeArgs(sessionId: string, choice: WorkChoice = {}, prompt?: string): string[] {
-  return ['--resume', sessionId, '--bg', ...workArgs(choice), ...(prompt === undefined ? [] : ['--', prompt])];
+export function resumeArgs(sessionId: string, choice: WorkChoice = {}, prompt?: string, pluginDir?: string): string[] {
+  return ['--resume', sessionId, '--bg', ...workArgs(choice), ...pluginDirArgs(pluginDir), ...(prompt === undefined ? [] : ['--', prompt])];
 }
 
 /**
@@ -667,6 +674,7 @@ export function createSpawnRunner(options: Omit<ActionOptions, 'spawner'> = {}):
   const run = options.run ?? runCommand;
   const now = options.now ?? Date.now;
   const claudeBin = options.claudeBin ?? 'claude';
+  const pluginDir = options.pluginDir === false ? undefined : (options.pluginDir ?? pluginDirOf());
   const timeoutMs = options.timeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS;
   const env = () => childEnvironment(options.env ?? process.env, options.token);
   const limiter = new SpawnLimiter(
@@ -701,7 +709,7 @@ export function createSpawnRunner(options: Omit<ActionOptions, 'spawner'> = {}):
         // CLAUDE_CODE_SUBAGENT_MODEL for its sub-agents, and no inherited CLAUDE_CODE_EFFORT_LEVEL over its --effort (W119).
         // A profile's sub-agents' model is a default only: never CLAUDE_CODE_SUBAGENT_MODEL_FORCE (W155).
         const childEnv = withEffort(env(), spawn, spawn.subagentModel === undefined ? {} : { model: spawn.subagentModel });
-        result = await run(claudeBin, spawnArgs(spawn), { cwd: spawn.cwd, env: { ...childEnv, PWD: spawn.cwd }, timeoutMs });
+        result = await run(claudeBin, spawnArgs(spawn, pluginDir), { cwd: spawn.cwd, env: { ...childEnv, PWD: spawn.cwd }, timeoutMs });
       } finally {
         slot.release();
       }
@@ -805,6 +813,7 @@ export function createResumeRunner(
   const run = options.run ?? runCommand;
   const now = options.now ?? Date.now;
   const claudeBin = options.claudeBin ?? 'claude';
+  const pluginDir = options.pluginDir === false ? undefined : (options.pluginDir ?? pluginDirOf());
   const timeoutMs = options.timeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS;
   const env = () => childEnvironment(options.env ?? process.env, options.token);
   const sessionWork = () => ({ session: options.work?.choice('session') ?? {}, subagents: options.work?.choice('subagents') ?? {} });
@@ -892,7 +901,7 @@ export function createResumeRunner(
       const ours = kept !== undefined || options.started?.has(sessionId) === true || (session.shortId !== undefined && options.started?.has(session.shortId) === true);
       const defaults = ours ? sessionWork() : { session: {}, subagents: {} };
       const work = kept === undefined ? defaults : { session: mergeChoices(kept.session, defaults.session), subagents: mergeChoices(kept.subagents, defaults.subagents) };
-      const result = await run(claudeBin, resumeArgs(sessionId, work.session, prompt), { cwd: dir.path, env: { ...withEffort(env(), work.session, work.subagents), PWD: cwd }, timeoutMs });
+      const result = await run(claudeBin, resumeArgs(sessionId, work.session, prompt, pluginDir), { cwd: dir.path, env: { ...withEffort(env(), work.session, work.subagents), PWD: cwd }, timeoutMs });
       if (result.kind === 'failed') {
         if (result.reason === 'timeout') {
           indexer.pollSoon();

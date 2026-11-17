@@ -1,7 +1,7 @@
 {
   "name": "pitwall",
-  "version": "0.1.0",
-  "description": "For the sessions pitwall watches: while pitwall runs, a short SessionStart note says the session is watched and how to link sessions in pitwall; the pitwall skill proposes a new session, which you start from pitwall.",
+  "version": "0.2.0",
+  "description": "For the sessions pitwall watches: while pitwall runs, a short SessionStart note says the session is watched and how to link sessions in pitwall; the pitwall skill proposes a new session, which you start from pitwall; a session or sub-agent past 200K tokens of context is asked to wrap up, and a message to a big finished sub-agent is refused so the work goes to a fresh one.",
   "author": { "name": "Phil Leggetter" },
   "homepage": "https://github.com/leggetter/pitwall",
   "repository": "https://github.com/leggetter/pitwall",

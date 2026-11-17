@@ -231,9 +231,10 @@ describe('runHook', () => {
     expect(readServerFile(fileIn(pitwall))).toEqual({ v: 1, url: `http://127.0.0.1:${port}`, pid: process.pid });
   });
 
-  it('keeps the note to four short lines', () => {
+  it('keeps the note to six short lines (two of them W197’s, on fresh sub-agents)', () => {
     const note = noteFor('http://127.0.0.1:4518', SESSION);
-    expect(note.split('\n')).toHaveLength(4);
-    expect(note.length).toBeLessThan(700);
+    expect(note.split('\n')).toHaveLength(6);
+    expect(note).toMatch(/fresh sub-agent/);
+    expect(note.length).toBeLessThan(1000);
   });
 });

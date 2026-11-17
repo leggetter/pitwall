@@ -45,7 +45,7 @@ Usage limits are weekly, and pitwall's own work should leave room for the weeken
 - **Read what you need:** excerpts and `grep`, not whole large files, and counts, not full outputs. Some lines are very long (`docs/decisions.md`'s entries, up to 3,200 characters; `PLAN.md`'s are under 1,100 since its Security bullets and M5.1 work breakdown were split into sub-bullets), so a `grep` that matches one prints all of it: cut it, `grep -n … | cut -c1-200`, or `grep -o '.\{0,80\}word.\{0,80\}'`, and read the whole line only when you need it.
 - **Keep the starting context small:** `.claude/settings.json` turns off claude.ai connectors in this repo (`disableClaudeAiConnectors`), and an untracked `.claude/settings.local.json` turns off the plugins and skills a person's setup adds that pitwall work doesn't use (`enabledPlugins`, `skillOverrides`, `syncClaudeAiSkills`). Either applies only to sessions whose folder is this repo or one of its worktrees, never to the sessions pitwall watches or starts elsewhere. On 2026-11-04 the two cut a fresh session's first call from 53.1K to 28.6K. Measure it with `claude -p "Reply with OK." --output-format json --no-session-persistence --max-turns 1` and its `usage`, not `/context`: its output stays in the conversation, about 56K a run.
 - **One session per work item:** hand off with the `handoff` skill after each merge, not only at 200K. A session starts at about 29K of context before any work (measured 2026-11-04, after the settings above), and every call re-reads all of it. A coordinator that reviews and merges two items in a row reached 209K over 103 calls.
-- **Long sessions get compacted or handed off:** a session whose every turn re-reads a very large context should hand off with the `handoff` skill (`.claude/skills/handoff/SKILL.md`), which updates `NOW.md` and commits, then `/clear` and start the next session with "Read NOW.md". Or compact. Past 200K tokens of context, the hand-off hook in `.claude/settings.json` says so after a turn.
+- **Long sessions get compacted or handed off:** a session whose every turn re-reads a very large context should hand off with the `handoff` skill (`.claude/skills/handoff/SKILL.md`), which updates `NOW.md` and commits, then `/clear` and start the next session with "Read NOW.md". Or compact. Past 200K tokens of context, the pitwall plugin's hand-off hook (`plugin/hooks/handoffNudge.mjs`, W133, moved there by W197) says so after a turn, while pitwall runs; it needs the plugin, which pitwall adds with `--plugin-dir` to the sessions it starts or resumes and which you install once for a terminal session (README).
 
 ## Commands
 
@@ -90,12 +90,16 @@ plugin/                  the pitwall plugin (W176), for the sessions pitwall wat
                          SessionStart hook, hooks/sessionNote.mjs, that adds a short note while pitwall runs (found
                          through $PITWALL_HOME/server.json, src/server/serverFile.ts), and the `pitwall` skill, W163's
                          spin-off proposals. Outside .claude/, so it isn't one of this repo's project plugins. Its
-                         test is src/plugin/sessionNote.test.ts; typechecked, not built
-.claude/settings.json    pitwall's own project settings, checked in: the hand-off hook and disableClaudeAiConnectors.
+                         test is src/plugin/sessionNote.test.ts; typechecked, not built. W197 (fresh sub-agents) added
+                         hooks/subagentGuard.mjs (PreToolUse on SendMessage: refuses a message to a finished sub-agent past
+                         200K tokens of context), hooks/subagentNudge.mjs (PostToolUse: tells a sub-agent past 200K, and
+                         400K, to finish and report), hooks/handoffNudge.mjs (the Stop hook W133 had in .claude/hooks/)
+                         and hooks/common.mjs (what they share: is pitwall running, safe tail reads, the nudge state);
+                         their tests and kit are src/plugin/*.test.ts and pluginHookKit.ts. The server adds
+                         `--plugin-dir=<this folder>` to the sessions it starts or resumes (src/server/pluginDir.ts)
+.claude/settings.json    pitwall's own project settings, checked in: disableClaudeAiConnectors. The hand-off hook that was here
+                         is in the plugin since W197
                          .claude/settings.local.json, untracked, is a person's own (Efficiency)
-.claude/hooks/           handoffNudge.mjs, a Stop hook that tells a session past 200K tokens of context, and again
-                         past 400K, to finish safely and use the handoff skill (W133, spike 012); fails soft, leaves
-                         sub-agents alone. Its test sits beside it; typechecked and in npm test, not built
 README.md                for newcomers: what pitwall is, how to run it, how it works, the roadmap
 docs/decisions.md        settled decisions, D1 to D28, with their reasoning
 docs/design-system.md    the web UI's design system: tokens, layout, components, content, accessibility
@@ -171,7 +175,7 @@ THIRD_PARTY_NOTICES.md   licences for the bundled fonts and icons
 .env.example             how to make a fixed PITWALL_TOKEN for npm run dev (D7), and PITWALL_DEV_RECAPS;
                          .env is gitignored
 CLAUDE.md                imports this file for Claude Code
-tsconfig.json            server typecheck: src/ with tests, .claude/hooks/, plugin/hooks/, scripts/, config files
+tsconfig.json            server typecheck: src/ with tests, plugin/hooks/, scripts/, config files
 tsconfig.build.json      server build: src/ to dist/, without tests
 web/tsconfig.json        web UI typecheck (DOM, react-jsx, bundler resolution)
 vite.config.ts           web UI build

@@ -767,7 +767,7 @@ describe('the attach socket', () => {
       const run = vi.fn(async (): Promise<CommandResult> => ({ kind: 'exited', code: 0, stdout: 'backgrounded · bgnew · pitwall-test-spawned\n', stderr: '' }));
       // The fresh row still has no process, and startedAt is an hour old, as for a restarted job.
       const agents = fakeAgents({ ok: true, rows: [row({ sessionId: IDLE_ID, shortId: 'bgnew', cwd: root, state: 'working', startedAt: ago(3_600_000) })] });
-      const { server } = await start({ indexer, agents, now, actions: { run, env: {} } });
+      const { server } = await start({ indexer, agents, now, actions: { pluginDir: false, run, env: {} } });
 
       // Before the spawn, it would be asked about.
       const before = await ready(server.port);
@@ -791,7 +791,7 @@ describe('the attach socket', () => {
       const endedRow = summary({ ...(SESSIONS.find((s) => s.sessionId === ENDED_ID) as SessionSummary), cwd: root });
       const indexer = fakeIndexer({ ...snapshot([endedRow]), roots: [root], groups: [{ key: root, label: 'root', kind: 'directory', root, sessions: [endedRow] }] });
       const run = vi.fn(async (): Promise<CommandResult> => ({ kind: 'exited', code: 0, stdout: 'backgrounded · 77777777 (idle — send a prompt to start)\n', stderr: '' }));
-      const { server, spawner } = await start({ indexer, now, actions: { run, env: {}, agents: fakeAgents() } });
+      const { server, spawner } = await start({ indexer, now, actions: { pluginDir: false, run, env: {}, agents: fakeAgents() } });
 
       const before = await ready(server.port);
       send(before, { type: 'open', sessionId: ENDED_ID, cols: 80, rows: 24 });

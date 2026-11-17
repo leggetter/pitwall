@@ -1,24 +1,26 @@
-// The hand-off nudge (W133 B): run as Claude Code runs it, node with the script reading a Stop
+// The hand-off nudge (W133 B, in the pitwall plugin since W197): run as Claude Code runs it, node with the script reading a Stop
 // input on stdin, against made-up transcripts. No real session content, and no test runs claude.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { THRESHOLD, lastContext, levelOf, thresholdOf } from './handoffNudge.mjs';
+import { THRESHOLD, lastContext, levelOf, thresholdOf } from '../../plugin/hooks/handoffNudge.mjs';
+import { makeKit, type Kit } from './pluginHookKit.js';
 
-const SCRIPT = fileURLToPath(new URL('./handoffNudge.mjs', import.meta.url));
+const SCRIPT = fileURLToPath(new URL('../../plugin/hooks/handoffNudge.mjs', import.meta.url));
 
+let kit: Kit;
 let tmp: string;
 let stateDir: string;
 let sessionN = 0;
-beforeAll(() => {
-  tmp = mkdtempSync(path.join(os.tmpdir(), 'pitwall-test-handoff-'));
-  stateDir = path.join(tmp, 'state');
+beforeAll(async () => {
+  kit = await makeKit('handoff');
+  tmp = kit.tmp;
+  stateDir = kit.stateDir;
 });
-afterAll(() => {
-  rmSync(tmp, { recursive: true, force: true });
+afterAll(async () => {
+  await kit.close();
 });
 
 const assistant = (id: string, usage: Record<string, number>, extra: Record<string, unknown> = {}) =>
@@ -37,10 +39,10 @@ function newSession(): string {
   return `00000000-0000-4000-8000-${String(++sessionN).padStart(12, '0')}`;
 }
 
-function run(input: Record<string, unknown> | string, threshold = 1000, dir = stateDir) {
+function run(input: Record<string, unknown> | string, threshold = 1000, dir = stateDir, home = kit.home) {
   const result = spawnSync(process.execPath, [SCRIPT], {
     input: typeof input === 'string' ? input : JSON.stringify(input),
-    env: { ...process.env, PITWALL_HANDOFF_THRESHOLD: String(threshold), PITWALL_HANDOFF_STATE_DIR: dir },
+    env: { ...process.env, PITWALL_HOME: home, PITWALL_HANDOFF_THRESHOLD: String(threshold), PITWALL_HANDOFF_STATE_DIR: dir },
     encoding: 'utf8',
     timeout: 10_000,
   });
@@ -100,6 +102,11 @@ describe('levels and the threshold', () => {
 describe('the hook, run as Claude Code runs it', () => {
   it('prints nothing under the threshold', () => {
     const result = run(stop(newSession(), transcript([user, assistant('m1', usage(1, 900, 0)), request])));
+    expect(result).toEqual({ status: 0, stdout: '', stderr: '' });
+  });
+
+  it('does nothing while pitwall isn’t running', () => {
+    const result = run(stop(newSession(), transcript([user, assistant('m1', usage(2, 1200, 300))])), 1000, stateDir, kit.emptyHome);
     expect(result).toEqual({ status: 0, stdout: '', stderr: '' });
   });
 
