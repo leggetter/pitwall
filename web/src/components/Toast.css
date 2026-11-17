@@ -28,9 +28,14 @@
   }
 }
 
+/*
+ * Top aligned, so a message that wraps leaves the tile and the buttons at its first line, not its
+ * middle. The message's padding and the buttons' margin centre each on the 28 px tile, so a one-line
+ * toast looks as it did when everything was centred.
+ */
 .toast {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--pw-space-3);
   padding: var(--pw-space-2);
   background: var(--pw-surface-overlay);
@@ -95,6 +100,7 @@
   font-size: var(--pw-text-m);
   font-weight: var(--pw-weight-medium);
   line-height: var(--pw-leading-m);
+  padding-block: calc((var(--pw-control-md) - var(--pw-leading-m)) / 2);
   overflow-wrap: anywhere;
 }
 
@@ -102,4 +108,5 @@
 .toast-action,
 .toast-dismiss {
   flex: none;
+  margin-top: calc((var(--pw-control-md) - var(--pw-control-sm)) / 2);
 }

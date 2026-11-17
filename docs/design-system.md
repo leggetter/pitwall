@@ -2300,6 +2300,7 @@ The header's dialog of settings, a section for each area they affect (W59; Phil,
 - **Card:** `--pw-surface-overlay`, `--pw-shadow-3`, `--pw-radius-md`, `--pw-toast-w` wide, padding 8 px.
   - A 28 px icon tile (`--pw-<tone>-tint` with `inset 0 0 0 1px var(--pw-<tone>-border)`, `--pw-radius-sm`, a 16 px icon in `--pw-<tone>-tint-fg`): `success`, `info`, or `error` on the danger tokens.
   - The message (m 14/20, 500), 12 px after the tile, as text.
+  - Everything is top aligned, so a message that wraps leaves the tile, an action and Dismiss at its first line: the message has 4 px above and below its lines, and the sm buttons 2 px above, which centres each on the tile.
   - A ghost sm `close` button, named "Dismiss" by its tooltip. Focus it had goes to the next toast's Dismiss, or the one before, or the session list's heading (the view's, while the view covers the list).
 - **Timing:**
   - Success and info toasts dismiss after `--pw-toast-timeout` (4 s), or after `--pw-toast-action-timeout` (10 s) with an action, below. The time stops while the pointer is over the stack or focus is inside it, and goes on from where it was.
