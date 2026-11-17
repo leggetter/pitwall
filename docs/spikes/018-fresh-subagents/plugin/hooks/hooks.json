@@ -1,0 +1,7 @@
+{ "hooks": {
+  "SessionStart": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/log.mjs"] }] }],
+  "PreToolUse": [{ "matcher": ".*", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/log.mjs"] }] }],
+  "PostToolUse": [{ "matcher": ".*", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/log.mjs"] }] }],
+  "Stop": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/log.mjs"] }] }],
+  "SubagentStop": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/log.mjs"] }] }]
+} }
