@@ -150,6 +150,20 @@ describe('readConversationPage: what becomes an entry', () => {
     expect(entry?.markdown).toBeUndefined();
   });
 
+  it("removes Claude Code's paste tags and keeps the pasted text as pasted (W204)", async () => {
+    const pasted = 'line one\n    indented   with runs\n\nline three';
+    expect(await entriesOf(user(`<pasted_content id="50a5">\n${pasted}\n</pasted_content>`))).toMatchObject([{ kind: 'user', text: pasted }]);
+    expect(await entriesOf(user(`see this:\n<pasted_content id="0466">${pasted}</pasted_content>\nand fix it`))).toMatchObject([
+      { kind: 'user', text: `see this:\n${pasted}\nand fix it` },
+    ]);
+    expect(await entriesOf(user('<pasted_content id="50a5"></pasted_content>'))).toEqual([]);
+    expect(await entriesOf(user([text('<pasted_content id="50a5"></pasted_content>'), { type: 'image', source: {} }]))).toMatchObject([
+      { kind: 'user', text: '[1 image]' },
+    ]);
+    // Other markup stays as typed.
+    expect(await entriesOf(user('keep <b>this</b>'))).toMatchObject([{ kind: 'user', text: 'keep <b>this</b>' }]);
+  });
+
   it('reads text blocks and images as one prompt', async () => {
     const entries = await entriesOf(user([text('look at this'), { type: 'image', source: {} }, { type: 'image', source: {} }]));
     expect(entries).toMatchObject([{ kind: 'user', text: 'look at this\n\n[2 images]' }]);
