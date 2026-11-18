@@ -1541,7 +1541,7 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
     expect(second?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('haiku');
   });
 
-  it('resume takes the defaults for a stopped background session this pitwall started, found by its short id', async () => {
+  it('resume wakes a stopped background session this pitwall started, found by its short id, with no flags, since any flag starts a copy (W197 review, F1)', async () => {
     const STOPPED_ID = '99999999-9999-4999-8999-999999999999';
     const stopped = session({ sessionId: STOPPED_ID, shortId: '99999999', name: 'pitwall-test-stopped', alive: false, finished: true, state: 'stopped' });
     const agents = fakeAgents({ ok: true, rows: [agentRow(STOPPED_ID, { kind: 'background', shortId: '99999999', pid: undefined, state: 'stopped' })] });
@@ -1549,7 +1549,7 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
     const started = await startWith(configured(), fakeRunner(backgrounded('99999999', 'pitwall-test-stopped'), woken), {}, fakeIndexer(snapshotWith(stopped)), agents);
     expect((await spawnAsPage(started, { cwd: repo, prompt: 'go' })).status).toBe(201);
     expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
-    expect(started.run.calls[1]?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'opus', '--effort', 'high']);
+    expect(started.run.calls[1]?.args).toEqual(['--resume', STOPPED_ID, '--bg']);
     expect(started.run.calls[1]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('haiku');
   });
 
@@ -1725,19 +1725,19 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
         expect(started.run.calls[0]?.args.at(-1)).toBe('/agent-roles:role-reviewer Review PR 12');
         expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
         const resume = started.run.calls[1];
-        expect(resume?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'sonnet', '--effort', 'high']);
+        expect(resume?.args).toEqual(['--resume', STOPPED_ID, '--bg']);
         expect(resume?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('sonnet');
         expect(resume?.args.join(' ')).not.toMatch(/role-reviewer/);
         // Again, after the first resume moved its record: the same.
         expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
-        expect(started.run.calls[2]?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'sonnet', '--effort', 'high']);
+        expect(started.run.calls[2]?.args).toEqual(['--resume', STOPPED_ID, '--bg']);
       });
 
       it('keeps what Customized used, and a profile whose sub-agents are on Claude Code\'s default leaves the variable alone', async () => {
         const started = await startHome(profiled(), fakeRunner(backgrounded('99999999', 'pitwall-test-stopped'), woken()));
         expect((await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Inherit', model: 'haiku', effort: 'low' })).status).toBe(201);
         expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
-        expect(started.run.calls[1]?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'haiku', '--effort', 'low']);
+        expect(started.run.calls[1]?.args).toEqual(['--resume', STOPPED_ID, '--bg']);
         expect(started.run.calls[1]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
       });
 
@@ -1745,7 +1745,7 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
         const started = await startHome(profiled(), fakeRunner(backgrounded('99999999', 'pitwall-test-stopped'), woken()));
         expect((await spawnAsPage(started, { cwd: repo, prompt: 'go', profile: 'Review', model: 'sonnet', effort: 'high', subagentModel: 'haiku' })).status).toBe(201);
         expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
-        expect(started.run.calls[1]?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'sonnet', '--effort', 'high']);
+        expect(started.run.calls[1]?.args).toEqual(['--resume', STOPPED_ID, '--bg']);
         expect(started.run.calls[1]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('haiku');
       });
 
@@ -1757,7 +1757,7 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
           await first.server.close();
           const second = await startHome(profiled(), fakeRunner(woken()), home);
           expect((await postAsPage(second, resumePath(STOPPED_ID))).status).toBe(200);
-          expect(second.run.calls[0]?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'claude-opus-5-5', '--effort', 'xhigh']);
+          expect(second.run.calls[0]?.args).toEqual(['--resume', STOPPED_ID, '--bg']);
           expect(second.run.calls[0]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('opus');
         } finally {
           await rm(home, { recursive: true, force: true });
@@ -1787,7 +1787,7 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
         const started = await startHome(profiled(), fakeRunner(backgrounded('99999999', 'pitwall-test-stopped'), woken()));
         expect((await spawnAsPage(started, { cwd: repo, prompt: 'go' })).status).toBe(201);
         expect((await postAsPage(started, resumePath(STOPPED_ID))).status).toBe(200);
-        expect(started.run.calls[1]?.args).toEqual(['--resume', STOPPED_ID, '--bg', '--model', 'opus', '--effort', 'high']);
+        expect(started.run.calls[1]?.args).toEqual(['--resume', STOPPED_ID, '--bg']);
         expect(started.run.calls[1]?.options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('haiku');
       });
     });
