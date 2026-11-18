@@ -47,6 +47,7 @@ Still to do:
 | W194 (a resumed job's recap and conversation read its latest transcript; a security review with W167's), W195 (Not for me on a session row its PR puts in Needs you) | Planned (Phil, 2026-11-16) |
 | W196 (a resume that finds the session open elsewhere stops and removes the copy it caused, and says "Not resumed") | Planned (Phil, 2026-11-17) |
 | W198 ("Added folder not trusted" says how to fix it: the hint, and a startup check that the attachments folder is trusted) | Planned (Phil, 2026-11-17). The failure itself is fixed on this machine: `~/.pitwall/attachments` is trusted |
+| W199 (a snooze holds the session's PR too: a snoozed session's row leaves Needs you even while its PR needs attention, until the PR has something new) | Planned (Phil, 2026-11-18) |
 | W178 (ask the supervisor about this session, and why it's in its state), W179 (the supervisor keeps its conversation short) | Planned (Phil, 2026-11-09); W178 uses W165's reasons |
 | W191 (the supervisor reads through the connectors your sessions already have, with pitwall's read-only limits) | Planned (Phil, 2026-11-12); a spike first; revises W184's route |
 | Left from W164 (M5.1's security review) | F5 (a snooze trusts the relay's name, not its msg_ids), I3's note on attached files, I4 (by design); in the archive's W164 item |
@@ -59,7 +60,7 @@ Still to do:
 
 ## Next, in order
 
-1. **M5.4, the rest of M5.3** (`PLAN.md`, "M5.4 work breakdown"), one session per item (`AGENTS.md`, Efficiency): W168 (Clear and continue, next: it uses W167's `record({ how: 'continue' })`), W171 (a team's open request), W174 (a working session's to-dos), W178 (ask the supervisor about a session), W179 (the supervisor keeps its conversation short), W191 (the supervisor uses your sessions' connectors), W196 (a resume's copy cleaned up), W198 (the attachments folder's trust), W194 (a resumed job's latest transcript) and W195 (Not for me on a session row).
+1. **M5.4, the rest of M5.3** (`PLAN.md`, "M5.4 work breakdown"), one session per item (`AGENTS.md`, Efficiency): W168 (Clear and continue, next: it uses W167's `record({ how: 'continue' })`), W171 (a team's open request), W174 (a working session's to-dos), W178 (ask the supervisor about a session), W179 (the supervisor keeps its conversation short), W191 (the supervisor uses your sessions' connectors), W196 (a resume's copy cleaned up), W198 (the attachments folder's trust), W194 (a resumed job's latest transcript), W195 (Not for me on a session row) and W199 (a snooze holds the session's PR too).
 2. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
 
 ## Open questions for Phil
