@@ -15,8 +15,8 @@ describe('pluginDirOf (W197)', () => {
   it('is undefined where no plugin sits two folders up, and counts only a plugin.json that is a file', () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'pitwall-test-plugindir-'));
     try {
-      mkdirSync(path.join(root, 'dist', 'server'), { recursive: true });
-      const from = path.join(root, 'dist', 'server', 'pluginDir.js');
+      mkdirSync(path.join(root, 'src', 'server'), { recursive: true });
+      const from = path.join(root, 'src', 'server', 'pluginDir.ts');
       expect(pluginDirOf(from)).toBeUndefined();
       mkdirSync(path.join(root, 'plugin', '.claude-plugin', 'plugin.json'), { recursive: true });
       expect(pluginDirOf(from)).toBeUndefined();
@@ -28,7 +28,7 @@ describe('pluginDirOf (W197)', () => {
     }
   });
 
-  it('prefers the copy a build makes in dist/plugin to plugin/ (W197 review, F3)', () => {
+  it('uses only the copy a build makes in dist/plugin, never plugin/ (W197 review, F3; M5.4 review, H3)', () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'pitwall-test-plugindir-'));
     try {
       const from = path.join(root, 'dist', 'server', 'pluginDir.js');
@@ -39,7 +39,10 @@ describe('pluginDirOf (W197)', () => {
       mkdirSync(path.join(root, 'dist', 'server'), { recursive: true });
       expect(pluginDirOf(from)).toBe(path.join(root, 'dist', 'plugin'));
       rmSync(path.join(root, 'dist', 'plugin'), { recursive: true });
-      expect(pluginDirOf(from)).toBe(path.join(root, 'plugin'));
+      expect(pluginDirOf(from)).toBeUndefined();
+      // Run from source, plugin/ is the one.
+      mkdirSync(path.join(root, 'src', 'server'), { recursive: true });
+      expect(pluginDirOf(path.join(root, 'src', 'server', 'pluginDir.ts'))).toBe(path.join(root, 'plugin'));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

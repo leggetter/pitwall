@@ -1,7 +1,8 @@
 // The hand-off nudge (W133 B, in the pitwall plugin since W197): run as Claude Code runs it, node with the script reading a Stop
 // input on stdin, against made-up transcripts. No real session content, and no test runs claude.
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -208,5 +209,22 @@ describe('the hook, run as Claude Code runs it', () => {
   it('stays silent with a relative state folder, rather than write in the working directory', () => {
     const result = run(stop(newSession(), transcript([user, assistant('m1', usage(0, 5000, 0))])), 1000, 'relative-state');
     expect(result).toEqual({ status: 0, stdout: '', stderr: '' });
+  });
+
+  it('stays silent with a relative TMPDIR and no state folder set (M5.4 security review, H4)', () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'pitwall-test-relative-tmpdir-'));
+    try {
+      const result = spawnSync(process.execPath, [SCRIPT], {
+        input: JSON.stringify(stop(newSession(), transcript([user, assistant('m1', usage(0, 5000, 0))]))),
+        env: { ...process.env, PITWALL_HOME: kit.home, PITWALL_HANDOFF_THRESHOLD: '1000', PITWALL_HANDOFF_STATE_DIR: '', TMPDIR: 'relative/dir' },
+        encoding: 'utf8',
+        timeout: 10_000,
+        cwd,
+      });
+      expect({ status: result.status, stdout: result.stdout, stderr: result.stderr }).toEqual({ status: 0, stdout: '', stderr: '' });
+      expect(readdirSync(cwd)).toEqual([]);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });

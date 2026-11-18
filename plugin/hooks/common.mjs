@@ -270,7 +270,7 @@ export function subagentsDirOf(transcriptPath) {
 /**
  * The state folder: PITWALL_HANDOFF_STATE_DIR when set (for tests), else a per-user folder under
  * os.tmpdir(), which is per-user on macOS but can be a shared /tmp on Linux. A relative
- * PITWALL_HANDOFF_STATE_DIR gives none, so the hooks stay silent rather than write in the cwd.
+ * PITWALL_HANDOFF_STATE_DIR, or a relative TMPDIR, gives none, so the hooks stay silent rather than write in the cwd.
  * @param {NodeJS.ProcessEnv} env
  * @returns {string | undefined}
  */
@@ -278,7 +278,10 @@ export const stateDirOf = (env) => {
   const set = env.PITWALL_HANDOFF_STATE_DIR;
   if (set) return path.isAbsolute(set) ? set : undefined;
   const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
-  return path.join(os.tmpdir(), uid === undefined ? 'pitwall-handoff-nudge' : `pitwall-handoff-nudge-${uid}`);
+  // A relative TMPDIR would put the folder in the session's cwd (M5.4's security review, H4).
+  const tmp = os.tmpdir();
+  if (!path.isAbsolute(tmp)) return undefined;
+  return path.join(tmp, uid === undefined ? 'pitwall-handoff-nudge' : `pitwall-handoff-nudge-${uid}`);
 };
 
 /** A state file is a few bytes: `{"v":1,"level":2}`. */
