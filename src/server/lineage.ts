@@ -53,6 +53,11 @@ export const LINKS_HELD_MAX = 5000;
 export const CHAIN_MAX = 50;
 /** A background job's short id, as Claude Code names its folder in ~/.claude/jobs. */
 const SAFE_SHORT_ID = /^[0-9a-f]{8}$/;
+/** How long a session started from a hand-off card is waited for in the listing before the link is given up (W168). */
+export const CONTINUE_WAIT_MS = 10 * 60 * 1000;
+/** The most sessions waited for at once; starts are rate-limited, so a handful. */
+export const CONTINUE_EXPECTED_MAX = 20;
+
 /** A time as toISOString() writes it, so no free text rides in `at` (review F3). */
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
@@ -225,6 +230,8 @@ export class LineageStore {
   /** Jobs backfilled this run, by short id and the session id the listing gave. */
   readonly #backfilled = new Set<string>();
   #backfilling = false;
+  /** Sessions started from a hand-off card's Start, waiting for their first listing (W168), by the job's short id. */
+  readonly #expected = new Map<string, { from: string; at: number }>();
 
   constructor(options: LineageStoreOptions = {}) {
     this.#home = options.home === undefined ? undefined : path.resolve(options.home);
@@ -275,6 +282,41 @@ export class LineageStore {
   }
 
   /**
+   * Remembers that the background job `shortId`, just started from the hand-off card of session
+   * `from` (W168), carries on from it, and records a `continue` line once a listing gives the job its
+   * session id. Held in memory for CONTINUE_WAIT_MS, at most CONTINUE_EXPECTED_MAX at once. False when
+   * either id isn't valid, or the table is full. Never throws.
+   */
+  expectContinue(shortId: string, from: string): boolean {
+    try {
+      if (!SAFE_SHORT_ID.test(shortId) || !isId(from)) return false;
+      const now = this.#now().getTime();
+      for (const [key, entry] of this.#expected) if (now - entry.at >= CONTINUE_WAIT_MS) this.#expected.delete(key);
+      if (!this.#expected.has(shortId) && this.#expected.size >= CONTINUE_EXPECTED_MAX) return false;
+      this.#expected.set(shortId, { from, at: now });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The `continue` lines for the jobs expectContinue() is waiting on that this listing now has. */
+  #continued(result: Extract<AgentsResult, { ok: true }>): void {
+    if (this.#expected.size === 0) return;
+    const now = this.#now().getTime();
+    for (const [shortId, entry] of [...this.#expected]) {
+      if (now - entry.at >= CONTINUE_WAIT_MS) {
+        this.#expected.delete(shortId);
+        continue;
+      }
+      const rows = result.rows.filter((row) => row.kind === 'background' && row.shortId === shortId);
+      if (rows.length !== 1 || rows[0]!.sessionId === entry.from) continue;
+      this.#expected.delete(shortId);
+      this.record({ from: entry.from, to: rows[0]!.sessionId, how: 'continue', job: shortId, cwd: rows[0]!.cwd });
+    }
+  }
+
+  /**
    * Live `clear`s from a successful listing of `claude agents --json --all`: a background row with a
    * live worker whose job id was listed last time with another session id that is no longer listed.
    * A row with no worker keeps what was remembered for its job, since a finished job lists its first
@@ -282,6 +324,7 @@ export class LineageStore {
    */
   observe(result: Extract<AgentsResult, { ok: true }>): void {
     try {
+      this.#continued(result);
       const listed = listedSessionIds(result);
       const jobs = new Map<string, Seen>();
       // A job id that more than one row names is ambiguous: neither a clear nor remembered.

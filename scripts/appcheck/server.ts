@@ -53,7 +53,7 @@ import type {
   SupervisorDecision,
   UsageWindowKey,
 } from '../../src/shared/protocol.js';
-import { COPY_SHORT_ID, NAMES, RECAP_CALL_MS, SUPERVISOR_HELD_ERROR, SUPERVISOR_STEP_MS, terminalScreen, World, type ResetOptions, type TerminalSize } from './fixtures.js';
+import { CLEAR_TIMEOUT_MARKER, COPY_SHORT_ID, NAMES, RECAP_CALL_MS, SUPERVISOR_HELD_ERROR, SUPERVISOR_STEP_MS, terminalScreen, World, type ResetOptions, type TerminalSize } from './fixtures.js';
 
 type Security = typeof import('../../src/server/security.js');
 type Static = typeof import('../../src/server/static.js');
@@ -125,6 +125,10 @@ export interface Records {
   snoozes: Array<{ action: 'snooze' | 'unsnooze'; name: string; until?: string }>;
   /** Each spin-off check the server answered (W163), by the asking session's name, with the key asked for and the status. */
   spinOffChecks: Array<{ name: string; key: unknown; status: number }>;
+  /** Each Clear and continue the server answered (W168), by the asking session's name, with the key asked for and the status. */
+  clears: Array<{ name: string; key: unknown; status: number }>;
+  /** Each started session the page said continues another (W168), by the old session's name. */
+  continued: Array<{ name: string; shortId: unknown }>;
   actions: Array<{ action: 'stop' | 'remove'; name: string }>;
   /** Each resume of an ended session the server answered (W67), by the session's name. */
   resumes: string[];
@@ -165,6 +169,8 @@ const emptyRecords = (): Records => ({
   prDismissals: [],
   snoozes: [],
   spinOffChecks: [],
+  clears: [],
+  continued: [],
   actions: [],
   resumes: [],
   opens: [],
@@ -447,7 +453,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     const recapRefresh = /^\/api\/sessions\/([^/]+)\/recap\/refresh$/.exec(url.pathname);
     if (recapRefresh && method === 'POST') return refreshRecap(req, res, decodeURIComponent(recapRefresh[1]!));
 
-    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|flag|unflag|snooze|unsnooze|spin-off|stop|remove|resume|open|subagents|end|recap)$/.exec(url.pathname);
+    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|flag|unflag|snooze|unsnooze|spin-off|clear-and-continue|continued|stop|remove|resume|open|subagents|end|recap)$/.exec(url.pathname);
     if (!match) return end(res, 404);
     const session = world.session(decodeURIComponent(match[1]!));
     if (!session) return end(res, 404);
@@ -503,6 +509,28 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       if (proposal.kind !== 'proposal') return answer(409, { ok: false, error: proposal.problem });
       if (world.rootFor(proposal.folder) === undefined) return answer(409, { ok: false, error: `The directory ${proposal.folder} isn't under one of your roots.` });
       return answer(200, { ok: true, cwd: proposal.folder, prompt: proposal.prompt, ...(proposal.name === undefined ? {} : { name: proposal.name }) });
+    }
+    if (route === 'clear-and-continue' && method === 'POST') {
+      // clearAndContinuePath(id) (W168): the session's own hand-off, by its key; a made-up job that clears at once,
+      // or one that times out when the prompt holds CLEAR_TIMEOUT_MARKER. Never the request's text.
+      const body = await readJson(req);
+      const key = isRecord(body) ? body.key : undefined;
+      const answer = (status: number, result: Record<string, unknown>) => {
+        records.clears.push({ name: session.name, key, status });
+        return json(res, status, result);
+      };
+      const proposal = session.spinOff;
+      if (typeof key !== 'string') return answer(400, { ok: false, error: 'The body must be { key }, the proposal’s key.' });
+      if (proposal === undefined || proposal.key !== key) return answer(409, { ok: false, error: 'That session has proposed something else since. Read its new proposal first.' });
+      if (proposal.kind !== 'proposal') return answer(409, { ok: false, error: proposal.problem });
+      if (session.kind !== 'background' || !proposal.prompt.startsWith(`Continues session ${session.sessionId}.`)) return answer(409, { ok: false, error: 'Clear and continue is for a running background session. Start a new session instead.' });
+      if (proposal.prompt.includes(CLEAR_TIMEOUT_MARKER)) return answer(504, { ok: false, error: 'The job didn’t list a new session id in time, so the prompt was not typed. /clear may or may not have run: check the job.' });
+      return answer(200, { ok: true, sessionId: '00000000-0000-4000-8000-0000000168ff' });
+    }
+    if (route === 'continued' && method === 'POST') {
+      const body = await readJson(req);
+      records.continued.push({ name: session.name, shortId: isRecord(body) ? body.shortId : undefined });
+      return json(res, 200, { ok: true });
     }
     if (route === 'snooze' && method === 'POST') {
       // snoozePath(id) (W154): snoozed at once, as the real route says, with `until` or Later.

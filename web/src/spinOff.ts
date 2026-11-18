@@ -18,7 +18,8 @@
 // - The index clears a proposal when the session's next turn ends without one, or a prompt comes.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { spinOffPath, type SessionGroup, type SessionSummary, type SpinOff, type SpinOffCheck } from '../../src/shared/protocol.js';
+import { isHandoffOf } from '../../src/shared/handoff.js';
+import { clearAndContinuePath, continuedPath, spinOffPath, type ClearAndContinueResult, type SessionGroup, type SessionSummary, type SpinOff, type SpinOffCheck } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
 import { browserStorage, type StorageSource } from './groupState.js';
 import { activityMs } from './sessions.js';
@@ -168,3 +169,56 @@ export const SPIN_OFF_NOTE = 'Start opens New session filled in with this, to re
 /** Under the heading of one pitwall couldn't read: why, then what to do. */
 export const SPIN_OFF_UNREADABLE = "pitwall found a proposal it won't show:";
 export const SPIN_OFF_UNREADABLE_NEXT = 'Open the session to read it, or ask it to propose it again.';
+
+// --- Clear and continue (W168) -----------------------------------------------------------------------
+
+/**
+ * Whether the card for `session`'s proposal can offer Clear and continue: it's that session's own
+ * hand-off (its prompt starts with "Continues session <its id>."), and the session is a running
+ * background job. The server checks all of it again, from its own snapshot and a fresh listing.
+ */
+export function canClearAndContinue(session: SessionSummary, spinOff: SpinOff): boolean {
+  return (
+    spinOff.kind === 'proposal' &&
+    isHandoffOf(session.sessionId, spinOff.prompt) &&
+    session.kind === 'background' &&
+    session.shortId !== undefined &&
+    session.alive &&
+    session.ended !== true &&
+    !session.stale
+  );
+}
+
+/** Whether the proposal is `session`'s own hand-off, whatever kind of session it is. */
+export const isHandoffProposal = (session: Pick<SessionSummary, 'sessionId'>, spinOff: SpinOff): boolean => spinOff.kind === 'proposal' && isHandoffOf(session.sessionId, spinOff.prompt);
+
+export type ClearOutcome = { kind: 'cleared'; sessionId: string } | { kind: 'failed'; error: string };
+
+export const CLEAR_UNEXPECTED = "pitwall didn't answer Clear and continue as expected.";
+
+/** Asks the server to clear the job and type the hand-off's prompt (clearAndContinuePath()). Never rejects. */
+export async function clearAndContinue(api: ApiClient, sessionId: string, key: string): Promise<ClearOutcome> {
+  const result = await api.post(clearAndContinuePath(sessionId), { key });
+  if (result.kind === 'unauthorized') return { kind: 'failed', error: "pitwall didn't accept the page's key. Reload the page." };
+  const body = result.body as ClearAndContinueResult | undefined;
+  if (isRecord(body) && body.ok === true && typeof body.sessionId === 'string') return { kind: 'cleared', sessionId: body.sessionId };
+  if (isRecord(body) && body.ok === false && typeof body.error === 'string') return { kind: 'failed', error: body.error };
+  return { kind: 'failed', error: CLEAR_UNEXPECTED };
+}
+
+/** Tells the server which session was just started from `fromSessionId`'s hand-off, for the lineage log. Best effort. */
+export async function noteContinued(api: ApiClient, fromSessionId: string, shortId: string): Promise<void> {
+  try {
+    await api.post(continuedPath(fromSessionId), { shortId });
+  } catch {
+    // The link is a convenience; the session has started.
+  }
+}
+
+/** What a hand-off card says Clear and continue does, under the heading. */
+export const SPIN_OFF_CLEAR_NOTE =
+  'Clear and continue types /clear into this job, then the prompt below as one message. The job, its name and its pull requests stay. Nothing runs until you click it.';
+/** What the hand-off card's Start does, beside Clear and continue. */
+export const SPIN_OFF_HANDOFF_START_NOTE = 'Start opens New session filled in with this, to start a separate session instead. End session on the old one is yours to do.';
+/** The toast once a job is cleared and has its prompt. */
+export const clearedText = (name: string) => `Cleared ${name} and sent it the prompt. It carries on as the same job.`;
