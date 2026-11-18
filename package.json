@@ -13,7 +13,7 @@
   },
   "scripts": {
     "build": "npm run build:server && npm run build:plugin && npm run build:web",
-    "build:plugin": "node scripts/copy-plugin.mjs",
+    "build:plugin": "node scripts/copy-plugin.mjs && node scripts/copy-reference.mjs",
     "build:server": "tsc -p tsconfig.build.json",
     "build:web": "vite build",
     "dev": "tsx scripts/dev.ts",

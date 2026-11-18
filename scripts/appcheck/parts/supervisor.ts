@@ -19,13 +19,15 @@
 // message draft and its editor, and a session's reply to the supervisor, To pitwall-supervisor, with
 // Claude Code's refusal in pitwall's words (W138); Attach file, a text file read in the page into the
 // box under its name, then sent, and a file that isn't UTF-8, has a NUL or is too big refused (W135);
-// and none with --no-supervisor. Made-up example/* content only.
+// Ask the supervisor (W178), from a session's actions menu and a PR's view: the panel opens, its box
+// started with the session's name and id or the PR, focus in it, nothing sent, and neither offered with
+// --no-supervisor; and none with --no-supervisor. Made-up example/* content only.
 
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { REFUSED_TO_SUPERVISOR_NOTICE } from '../../../src/index/conversation.js';
 import { SUPERVISOR_MESSAGE_FOOTER } from '../../../src/shared/protocol.js';
-import { CODE, DEMO_APP, NAMES, OSS, SUPERVISOR_APPROVALS, SUPERVISOR_RACE_REFUSAL } from '../fixtures.js';
+import { CODE, DEMO_APP, NAMES, OSS, PRS, SUPERVISOR_APPROVALS, SUPERVISOR_RACE_REFUSAL } from '../fixtures.js';
 import type { Case, Part } from '../runner.js';
 import { focused, listHeading, openFromRow, openRepoList, repoLabels, selectedRepo, VIEW, viewClose, viewName } from './_dom.js';
 
@@ -958,12 +960,38 @@ const part: Part = {
       await t.shot('header-full');
     });
 
+    await t.step('Ask the supervisor (W178): a session’s menu and a PR’s view open the panel with the box started for you, focus in it, nothing sent', async () => {
+      allowNew();
+      await t.fresh({ search: '?view=all', supervisor: 'idle' });
+      await openFromRow(t, NAMES.conversation);
+      const MENU_BUTTON = `${VIEW}?.querySelector('button[aria-label="Session actions"]')`;
+      const ASK_ITEM = `[...(${VIEW}?.querySelectorAll('[role="menuitem"]') ?? [])].find((item) => item.textContent.trim() === 'Ask the supervisor')`;
+      await page.click('Session actions', MENU_BUTTON);
+      await page.waitFor('the Ask the supervisor item', `!!(${ASK_ITEM})`);
+      await t.shot('ask-menu');
+      await page.click('Ask the supervisor', ASK_ITEM);
+      await page.waitFor('the panel with the box started', `!!${BOX} && ${BOX}.value.startsWith('About the session "${NAMES.conversation}" (id ')`);
+      t.expect(await page.evaluate<boolean>(`document.activeElement === ${BOX}`), 'focus in the message box');
+      t.expect(await page.evaluate<boolean>(`${BOX}.value.endsWith('): ')`), 'ready to finish');
+      t.expectEqual(records.supervisorMessages.length, 0, 'nothing sent');
+      await t.shot('ask-session');
+      // A PR's view has the button.
+      await t.fresh({ search: `?view=prs&pr=${PRS.failing}`, supervisor: 'idle', ready: `!!document.getElementById('pr-view')` });
+      await page.click('Ask the supervisor', `document.getElementById('pr-view')?.querySelector('button[data-ask-supervisor]')`);
+      await page.waitFor('the panel with the box started', `!!${BOX} && ${BOX}.value.startsWith('About the pull request example/demo-app#51 (')`);
+      t.expect(await page.evaluate<boolean>(`document.activeElement === ${BOX}`), 'focus in the message box');
+      t.expectEqual(records.supervisorMessages.length, 0, 'nothing sent');
+      await t.shot('ask-pr');
+    });
+
     await t.step('with --no-supervisor: no button, and ?supervisor says it’s off', async () => {
       await t.fresh({ search: '?view=all&supervisor' });
       await page.waitFor('the off view', `${VIEW}?.querySelector('h2')?.textContent === 'The supervisor is off'`);
       t.expect(await page.evaluate<boolean>(`!${ITEM}`), 'no Supervisor button in the header');
       await openRepoList(t);
       t.expectEqual((await page.evaluate<string[]>(repoLabels))[0], 'Needs you', 'Needs you first, as before');
+      await t.fresh({ search: `?view=prs&pr=${PRS.failing}`, ready: `!!document.getElementById('pr-view')` });
+      t.expect(await page.evaluate<boolean>(`!document.getElementById('pr-view').querySelector('button[data-ask-supervisor]')`), 'no Ask the supervisor in a PR’s view');
     });
   },
 };

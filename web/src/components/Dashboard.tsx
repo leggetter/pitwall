@@ -155,7 +155,7 @@ import { supervisorLast, useOpenSession, withSession, type OpenSession } from '.
 import { useOpenPr, withPr } from '../openPr.js';
 import { useOpenUsage } from '../usage.js';
 import { RunRateContext, useRunRate } from '../runRate.js';
-import { approvalsWaiting, asSupervisorState, SUPERVISOR_DRAFT_ID, SUPERVISOR_VIEW_ID, useOpenSupervisor, withSupervisor } from '../supervisor.js';
+import { approvalsWaiting, askAboutPr, askAboutSession, asSupervisorState, type AskSeed, SUPERVISOR_DRAFT_ID, SUPERVISOR_VIEW_ID, useOpenSupervisor, withSupervisor } from '../supervisor.js';
 import { usePrRefresh } from '../prRefresh.js';
 import { listNow, prKey, prListState, prName, prsOff, SEARCH_NAMES, sessionsFor, strongPrsOf } from '../prs.js';
 import { pendingLink, prPrefill, withPendingLinks, type PendingLinks } from '../prStart.js';
@@ -1038,9 +1038,20 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     focusSupervisorView.current = true;
     supervisorUrl.show('push');
   };
+  // Ask the supervisor (W178), from a session's or PR's view: the panel opens and its box takes the question once.
+  const [ask, setAsk] = useState<AskSeed>();
+  const askCount = useRef(0);
+  const askSupervisor = (text: string) => {
+    askCount.current += 1;
+    setAsk({ text, at: askCount.current });
+    openSupervisor();
+    // The box takes focus (SupervisorBox's ask), not the heading.
+    focusSupervisorView.current = false;
+  };
   const returnSupervisorFocus = useRef(false);
   const closeSupervisor = () => {
     returnSupervisorFocus.current = true;
+    setAsk(undefined);
     supervisorUrl.close();
   };
   /** The header's button (W182): opens the panel, or closes it while it's open, focus staying on the button. */
@@ -1907,6 +1918,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       star={{ starred: starred.set.has(session.sessionId), onStar: starred.star }}
       onSnooze={api ? (changed, until) => setSnooze(changed, until, 'menu') : undefined}
       onFlag={api ? (changed, on) => setFlag(changed, on, 'menu') : undefined}
+      onAskSupervisor={supervisor ? (asked) => askSupervisor(askAboutSession(asked)) : undefined}
       backgroundTab={backgroundTab}
       stepped={hiddenIn === undefined && stepped.current === session.sessionId}
       openedBy={hiddenIn === undefined && opener.current?.sessionId === session.sessionId ? opener.current.gesture : undefined}
@@ -1974,6 +1986,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         onStart={snapshot && prMissing === undefined && work.ownerOf.get(prOpen) === undefined ? startPr : undefined}
         onDismiss={api && prMissing === undefined ? (pr) => setDismissal(pr, true, 'view') : undefined}
         onUndismiss={api && prMissing === undefined ? (pr) => setDismissal(pr, false, 'view') : undefined}
+        onAskSupervisor={supervisor && prMissing === undefined ? (asked) => askSupervisor(askAboutPr(asked)) : undefined}
         onOpenSession={(sessionId) => openSessionFromPr(sessionId)}
         onClose={closePr}
         layout={viewLayout}
@@ -2056,6 +2069,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         onOpenSession={openSessionFromSupervisor}
         prs={prList?.prs}
         onOpenPr={openPrFromSupervisor}
+        ask={ask}
+        onAskUsed={() => setAsk(undefined)}
       />
     );
   } else if (supervisorOpen && !snapshot) {

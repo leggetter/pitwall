@@ -106,6 +106,7 @@ import { registerEndSession, type EndOptions } from './end.js';
 import type { RunningServer, ServerOptions } from './index.js';
 import { registerMcp } from './mcp.js';
 import { createSupervisorTools } from './mcpTools.js';
+import { readStatesDoc } from './referenceDocs.js';
 import { PrDismissalStore, registerPrDismissals, withDismissals } from './prDismissals.js';
 import { registerPrs } from './prs.js';
 import { registerRecaps } from './recapRoutes.js';
@@ -383,6 +384,8 @@ export async function startServerWithInternals(
               prs,
               // session_lineage (W167): the chain of sessions around one.
               lineage,
+              // pitwall_states (W178): docs/states.md.
+              reference: () => readStatesDoc(),
               // get_usage (W160): the usage source's one report, through its reader's cache.
               ...(options.usage === undefined ? {} : { usage: options.usage }),
               ownSessionIds: () => supervisor.ownSessionIds(),

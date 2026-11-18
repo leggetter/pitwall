@@ -25,7 +25,7 @@ import { DraftStorageContext, readDraft, writeDraft, type UnsureSend } from '../
 import { plainText } from '../format.js';
 import { characterCount, outgoingText } from '../relay.js';
 import { ATTACH_FILE_TEXT, attachFile, fileLabel } from '../supervisorAttach.js';
-import { CHECK_ITS_CONVERSATION, interruptSupervisor, modelName, sendToSupervisor, SUPERVISOR_DRAFT_ID, SUPERVISOR_TEXT_MAX } from '../supervisor.js';
+import { CHECK_ITS_CONVERSATION, type AskSeed, interruptSupervisor, modelName, sendToSupervisor, SUPERVISOR_DRAFT_ID, SUPERVISOR_TEXT_MAX } from '../supervisor.js';
 import { Alert, Detail } from './Alert.js';
 import { Button } from './Button.js';
 import { InfoTip } from './InfoTip.js';
@@ -72,6 +72,12 @@ export interface SupervisorBoxProps {
   status: SupervisorStatus;
   /** A suggested question to put in the box, from the empty state: each new `at` fills it, and focus moves to it. */
   suggestion?: { text: string; at: number } | undefined;
+  /**
+   * A question about a session or a PR from its view's Ask the supervisor (W178): added to the box, after
+   * a draft already there, with focus and the caret at its end. Never sent. `onAskUsed` clears it.
+   */
+  ask?: AskSeed | undefined;
+  onAskUsed?: (() => void) | undefined;
   /** Whether there's a draft, for the view, which ignores Escape while there is one (6.2). */
   onDraftChange?: ((hasDraft: boolean) => void) | undefined;
   /** A message was taken: the view fetches its conversation again. */
@@ -80,7 +86,7 @@ export interface SupervisorBoxProps {
   fieldRef?: RefObject<HTMLTextAreaElement | null> | undefined;
 }
 
-export function SupervisorBox({ status, suggestion, onDraftChange, onSent, fieldRef }: SupervisorBoxProps) {
+export function SupervisorBox({ status, suggestion, ask, onAskUsed, onDraftChange, onSent, fieldRef }: SupervisorBoxProps) {
   const api = useContext(ApiContext);
   const drafts = useContext(DraftStorageContext);
   const ids = { heading: useId(), text: useId(), keys: useId(), count: useId(), unsure: useId() };
@@ -139,6 +145,23 @@ export function SupervisorBox({ status, suggestion, onDraftChange, onSent, field
       // A field that can't place the caret keeps it where the browser put it.
     }
   }, [suggestion?.at]);
+
+  // Ask the supervisor (W178): the question joins what is in the box, on a line of its own, and is used once.
+  useEffect(() => {
+    if (ask === undefined) return;
+    const before = latest.current.trimEnd();
+    const next = before === '' ? ask.text : `${before}\n\n${ask.text}`;
+    edit(next);
+    onAskUsed?.();
+    const element = field.current;
+    if (!element) return;
+    element.focus();
+    try {
+      element.setSelectionRange(next.length, next.length);
+    } catch {
+      // A field that can't place the caret keeps it where the browser put it.
+    }
+  }, [ask?.at]);
 
   const hasDraft = text !== '';
   const onDraftRef = useRef(onDraftChange);

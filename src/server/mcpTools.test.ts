@@ -24,6 +24,9 @@ import {
 } from './mcpTools.js';
 import type { McpTool } from './mcp.js';
 import type { LineageLine } from './lineage.js';
+import { SESSION_STATUSES, type SessionStatus } from '../shared/sessionState.js';
+import { statusBadge as pageBadge } from '../../web/src/sessions.js';
+import { needsAttention as pageNeeds } from '../../web/src/sessions.js';
 
 const NOW = Date.parse('2026-10-29T12:00:00.000Z');
 const OWN = 'cccccccc-0000-4000-8000-000000000003';
@@ -90,6 +93,7 @@ function tools(
     usage?: SupervisorToolSources['usage'];
     usageWaitMs?: number;
     lineage?: SupervisorToolSources['lineage'];
+    reference?: SupervisorToolSources['reference'];
   } = {},
 ): Record<string, McpTool> {
   const snapshot = snapshotOf(options.sessions ?? []);
@@ -103,6 +107,7 @@ function tools(
     ...(options.usage === undefined ? {} : { usage: options.usage }),
     ...(options.usageWaitMs === undefined ? {} : { usageWaitMs: options.usageWaitMs }),
     ...(options.lineage === undefined ? {} : { lineage: options.lineage }),
+    ...(options.reference === undefined ? {} : { reference: options.reference }),
     ownSessionIds: () => new Set([OWN]),
     now: () => NOW,
   });
@@ -147,9 +152,9 @@ afterAll(() => {
 });
 
 describe('the tools', () => {
-  it('are the six read-only ones, each with a schema that takes no other argument', () => {
+  it('are the eight read-only ones, each with a schema that takes no other argument', () => {
     const made = Object.values(tools());
-    expect(made.map((tool) => tool.name)).toEqual(['list_sessions', 'read_session', 'list_prs', 'get_recap', 'get_usage', 'session_lineage']);
+    expect(made.map((tool) => tool.name)).toEqual(['list_sessions', 'read_session', 'list_prs', 'get_recap', 'get_usage', 'session_lineage', 'why_state', 'pitwall_states']);
     for (const tool of made) {
       expect(tool.inputSchema).toMatchObject({ type: 'object', additionalProperties: false });
       expect(tool.description).toContain('untrusted');
@@ -696,5 +701,80 @@ describe('get_usage (W160)', () => {
 
   it('takes no arguments', async () => {
     expect(await call(tools({ usage: source(report()).usage }).get_usage!, { week: true })).toMatchObject({ isError: true, text: 'pitwall: Unknown argument: week.' });
+  });
+});
+
+// A session in each status the badges tell apart (W178), made up.
+const BY_STATUS: Record<SessionStatus, Partial<SessionSummary>> = {
+  ended: { ended: true, alive: false, finished: true },
+  waiting: { status: 'waiting', waitingFor: 'permission prompt', needsYou: { reason: 'prompt' } },
+  blocked: { kind: 'background', state: 'blocked', needsYou: { reason: 'claude-code', text: 'Which database?' } },
+  restarted: { needsYou: { reason: 'restarted' } },
+  asked: { needsYou: { reason: 'asked' } },
+  recap: { needsYou: { reason: 'recap', text: 'Say whether to merge' } },
+  'blocked-stale': { kind: 'background', state: 'blocked', stale: true },
+  failed: { kind: 'background', state: 'failed', finished: true, alive: false },
+  'waiting-on': { kind: 'background', state: 'done', finished: true, recap: { waitingOn: 'CI', title: 't', forYou: 0, at: new Date(NOW).toISOString(), source: 'pitwall' } },
+  done: { kind: 'background', state: 'done', finished: true },
+  stopped: { kind: 'background', state: 'stopped', finished: true, alive: false },
+  'not-running': { alive: false, status: undefined },
+  busy: { status: 'busy' },
+  working: { kind: 'background', state: 'working', status: undefined },
+  idle: { status: 'idle' },
+  unknown: { status: undefined },
+};
+
+describe('why_state (W178)', () => {
+  it('agrees with the page on the status badge and on Needs you for every status, and names the rule', async () => {
+    expect(Object.keys(BY_STATUS).sort()).toEqual([...SESSION_STATUSES].sort());
+    for (const status of SESSION_STATUSES) {
+      const made = session('a', BY_STATUS[status]);
+      const { json } = await call(tools({ sessions: [made] }).why_state!, { id: 'a' });
+      expect(pageBadge(made).status, status).toBe(status);
+      expect(json.status, status).toMatchObject({ status, look: pageBadge(made).look });
+      expect((json.status as { rule: string }).rule.length).toBeGreaterThan(20);
+      expect((json.needsYou as { inNeedsYou: boolean }).inNeedsYou, status).toBe(pageNeeds(made));
+      expect(trustedStrings(json).some((text) => text.includes('pitwall-test-'))).toBe(false);
+    }
+  });
+
+  it('explains Needs you through its own reason, a PR, a flag and a snooze, and a PR held while busy', async () => {
+    const owner = session('a', { status: 'idle', prLinks: [{ repo: 'made-up/repo', number: 7, kind: 'opened', lastAt: new Date(NOW).toISOString() }] });
+    const need = pr(7, { checks: 'failing' });
+    const viaPr = (await call(tools({ sessions: [owner], prs: { prs: [need] } }).why_state!, { id: 'a' })).json;
+    expect(viaPr.needsYou).toMatchObject({ inNeedsYou: true, pr: { need: 'checks-failing' }, won: 'pr' });
+    expect(viaPr.untrusted).toMatchObject({ pr: 'made-up/repo#7' });
+    const busy = (await call(tools({ sessions: [{ ...owner, status: 'busy' }], prs: { prs: [need] } }).why_state!, { id: 'a' })).json;
+    expect(busy).toMatchObject({ busy: { busy: true }, needsYou: { inNeedsYou: false, prHeldWhileBusy: { need: 'checks-failing' } } });
+    const flagged = session('b', { needsYou: { reason: 'asked' }, flagged: { at: new Date(NOW).toISOString() } });
+    const out = (await call(tools({ sessions: [flagged] }).why_state!, { id: 'b' })).json;
+    expect(out).toMatchObject({ needsYou: { inNeedsYou: false, indexSaysNeeds: true, setAside: 'flagged' }, flag: { flagged: true }, status: { setAside: true } });
+    const snoozed = session('c', { needsYou: { reason: 'asked' }, snoozed: { at: new Date(NOW).toISOString(), until: new Date(NOW + 3_600_000).toISOString() } });
+    expect((await call(tools({ sessions: [snoozed] }).why_state!, { id: 'c' })).json).toMatchObject({ needsYou: { setAside: 'snoozed' }, snooze: { snoozed: true } });
+  });
+
+  it('reports the context level, and puts a prompt reason and a job line under untrusted', async () => {
+    const made = session('a', { contextTokens: CONTEXT_WARN_TOKENS + 1, status: 'waiting', waitingFor: INJECTION, needsYou: { reason: 'prompt' } });
+    const { json } = await call(tools({ sessions: [made] }).why_state!, { id: 'a' });
+    expect(json.context).toMatchObject({ level: 'warn', warnAbove: CONTEXT_WARN_TOKENS });
+    expect(json.untrusted).toMatchObject({ waitingFor: INJECTION });
+    expect(trustedStrings(json).join('\n')).not.toContain(INJECTION);
+    expect(json.status).toMatchObject({ label: 'Waiting' });
+  });
+
+  it('refuses an unknown session, never lists pitwall’s own, and takes only an id', async () => {
+    const made = tools({ sessions: [session('a'), session(OWN)] });
+    expect(await call(made.why_state!, { id: 'zzz' })).toMatchObject({ isError: true });
+    expect(await call(made.why_state!, { id: OWN })).toMatchObject({ isError: true });
+    expect(await call(made.why_state!, { id: 'a', extra: 1 })).toMatchObject({ isError: true });
+    expect(await call(made.why_state!, {})).toMatchObject({ isError: true });
+  });
+});
+
+describe('pitwall_states (W178)', () => {
+  it('serves the reference as it is read, and says so when it is unavailable', async () => {
+    expect((await call(tools({ reference: () => '# States' }).pitwall_states!)).text).toBe('# States');
+    expect(await call(tools().pitwall_states!)).toMatchObject({ isError: true });
+    expect(await call(tools({ reference: () => '# States' }).pitwall_states!, { x: 1 })).toMatchObject({ isError: true });
   });
 });

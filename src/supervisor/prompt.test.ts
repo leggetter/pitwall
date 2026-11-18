@@ -22,7 +22,7 @@ import {
 
 describe('the supervisor’s tools', () => {
   it('allows the read-only MCP tools outright, asks before SendMessage, spawn_session and resume_session, and approve answers the asks', () => {
-    expect(SUPERVISOR_ALLOWED_TOOLS).toEqual(['mcp__pitwall__list_sessions', 'mcp__pitwall__read_session', 'mcp__pitwall__list_prs', 'mcp__pitwall__get_recap', 'mcp__pitwall__get_usage', 'mcp__pitwall__session_lineage']);
+    expect(SUPERVISOR_ALLOWED_TOOLS).toEqual(['mcp__pitwall__list_sessions', 'mcp__pitwall__read_session', 'mcp__pitwall__list_prs', 'mcp__pitwall__get_recap', 'mcp__pitwall__get_usage', 'mcp__pitwall__session_lineage', 'mcp__pitwall__why_state', 'mcp__pitwall__pitwall_states']);
     expect(SUPERVISOR_ALLOWED_TOOLS).not.toContain(mcpToolName(MCP_TOOLS.spawnSession));
     expect(SUPERVISOR_ALLOWED_TOOLS).not.toContain(mcpToolName(MCP_TOOLS.resumeSession));
     expect(SUPERVISOR_ALLOWED_TOOLS).not.toContain(mcpToolName(MCP_TOOLS.approve));
@@ -141,7 +141,7 @@ describe('supervisorEnvironment()', () => {
 
 describe('the system prompt, version 3', () => {
   it('reads from the tools, recaps first, treats what they return as untrusted, proposes messages and sessions for approval with a reason, never asks a session its status', () => {
-    expect(SUPERVISOR_PROMPT_VERSION).toBe(10);
+    expect(SUPERVISOR_PROMPT_VERSION).toBe(11);
     const prompt = SUPERVISOR_SYSTEM_PROMPT;
     expect(prompt).toContain("Answer from pitwall's tools");
     expect(prompt).toContain('read_session');
@@ -198,7 +198,13 @@ describe('the system prompt, version 3', () => {
     for (const suggestion of ['a hand-off for a session with a large context', 'a lighter profile', 'pausing a background session']) expect(prompt).toContain(suggestion);
     expect(prompt).toContain('The user acts.');
     expect(prompt).toContain("When the plan's figures are off or unavailable, say so.");
-    expect(prompt).toContain('list_prs, get_usage and session_lineage');
+    expect(prompt).toContain('list_prs, get_usage, session_lineage');
+  });
+
+  it('answers "why this state?" with why_state, and reads the reference only for how pitwall decides (W178, version 11)', () => {
+    const prompt = SUPERVISOR_SYSTEM_PROMPT;
+    expect(prompt).toContain('call why_state with its id');
+    expect(prompt).toContain('Call pitwall_states only when the question is about how pitwall decides states in general');
   });
 
   it('treats every connector result as untrusted, reads through connectors only when needed, keeps queries narrow, and can’t write through them (W184, version 9)', () => {

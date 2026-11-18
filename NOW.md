@@ -21,12 +21,12 @@ Last updated: 2026-11-18, on `docs/w202-merged`, by the backlog lead (handing of
 ## Open work
 
 - **W203 (the session row's "You:" line and its hover show Claude Code's `<pasted_content>` tags)** merged into `main` on 2026-11-18 in [#308](https://github.com/leggetter/pitwall/pull/308) (Phil's yes, the backlog lead's OK): `userPromptOf()` in `src/index/transcripts.ts` unwraps the tags before truncating. On 4518 after its next restart.
-- **W204 (the Session view's conversation shows the same `<pasted_content>` tags)** on `w204-conversation-paste`, from `main` (Phil, 2026-11-18): the user entry in `src/index/conversation.ts` drops the tags with `removePasteTags()` and keeps the pasted text's lines and indents; a prompt that was only an empty paste gives no entry. Waits on a fresh review and Phil's yes; the backlog lead restarts 4518 after it and W178 land. Not changed: the recap's input and the supervisor's rows, which are model input.
+- **W204 (the Session view's conversation shows the same `<pasted_content>` tags)** merged into `main` on 2026-11-18 in [#310](https://github.com/leggetter/pitwall/pull/310) (Phil's yes, a fresh review): the user entry in `src/index/conversation.ts` drops the tags with `removePasteTags()` and keeps the pasted text's lines and indents; a prompt that was only an empty paste gives no entry. The backlog lead has pitwall-b2 restart 4518 once W178 lands. Not changed: the recap's input and the supervisor's rows, which are model input.
+- **In review: W178 (ask the supervisor about this session, and why it's in its state)** in [#309](https://github.com/leggetter/pitwall/pull/309), from `w178-supervisor-ask-session`; fresh review: approve, Low findings fixed by the lead (a PR title cut at 120 characters in the box, the design system's entry, a comment): `why_state` and `pitwall_states` tools, `docs/states.md`, prompt version 11, and Ask the supervisor in a session's actions menu and a PR's view. See `PLAN.md`, W178.
 - **W202 (the attached terminal leaks a PTY on every attach)** merged into `main` on 2026-11-18 in [#304](https://github.com/leggetter/pitwall/pull/304): `closeStrayTerminals()` in `src/server/pty.ts` closes the slave and spare `/dev/ptmx` node-pty 1.1.0 leaves per spawn on macOS. Live-checked by a fresh review (0 ptmx and 0 revoked after 5 rounds and 2 simultaneous attaches); its F2 and F3 tests added. Left: one kqueue descriptor per spawn (node-pty's). `.worktrees/attach-pty-leak` is the fix-attach-pty-leak session's; it can go once that session ends.
 - **Once M5.4 is on 4518:**
   - A finished session already in Needs you from an old recap's to-do stays there until you press Refresh on its recap (W173; `RECAP_STORE_VERSION` stays 2).
   - W165's diagnostics log (`~/.pitwall/diagnostics.jsonl`, `scripts/diagnostics-report.ts`) starts writing.
-  - Run `git -C ~/pitwall-plugin-source switch main` for the plugin installed at user scope (`pitwall@pitwall-local`).
 - **Left from M5.4** (archive entries): W201's H1 (Clear and continue's window before each Enter: also wait for a quiet PTY) and H2 (rate-limit the link check's lsof); W174's F2 to F4; W168's: Phil's global handoff skill now ends with the `spin-off` block ([leggetter/phil-skills#10](https://github.com/leggetter/phil-skills/pull/10), merged), and a `PITWALL_HOME` not 0700 silently drops `lineage.jsonl` and `server.json`; W167's: a wake under a new id without `/clear` is logged as `clear`; W197's: the resume card still offers the profile picker for a stopped job.
 - **A Resume made a copy** (2026-11-17): 4518's `main` added `--model`/`--effort` to a stopped job's resume (W197's review F1). Fixed on `main` in #290; 4518 has it after the restart. W196 (a resume's copy cleaned up) covers what's left.
 
@@ -51,7 +51,7 @@ Still to do:
 
 ## Next, in order
 
-1. **W178 (ask the supervisor about this session, and why it's in its state),** from `main`; it uses W165's reasons.
+1. **W178 (ask the supervisor about this session, and why it's in its state),** in review in [#309](https://github.com/leggetter/pitwall/pull/309); merge into `main` on Phil's yes.
 2. **The other open items** (`PLAN.md`, "Open items"), one at a time: W179 (the supervisor keeps its conversation short), W191 (the supervisor uses your sessions' connectors; a spike first), W196 (a resume's copy cleaned up), W198 (the attachments folder's trust), W194 (a resumed job's latest transcript), W195 (Not for me on a session row), W199 (a snooze holds the session's PR too) and W200 (a mention owns a PR inside the PR's repo).
 3. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
 
