@@ -193,7 +193,7 @@ function readPullRequest(node: unknown, relation: PullRequestRelation, viewer: s
   const review = enumValue(REVIEWS, node.reviewDecision);
   if (review !== undefined) pr.review = review;
   if (relation === 'review-requested') {
-    const request = reviewRequestOf(node.reviewRequests, viewer);
+    const request = reviewRequestOf(node.reviewRequests, viewer, reviewedOnHead(node));
     if (request === 'none') return 'reviewed';
     if (request !== undefined) pr.reviewRequest = request;
   }
@@ -333,13 +333,22 @@ function newestOfYou(timeline: unknown, me: string): { request: string | null; m
  * index is behind the PR, as just after you've reviewed it, so it doesn't ask you now. Undefined
  * when it can't say: no list, a request it can't read, or your login unknown, which can't rule out
  * one of you by name.
+ *
+ * W171: a team's request stays open after you've reviewed, so `reviewed` (your latest review is a
+ * verdict on the head commit, reviewedOnHead()) also gives 'none' when every request was read and
+ * none names you. A request that can't be read might, so it never counts as moved on, and nor does
+ * a list with more requests than were read (`pageInfo.hasNextPage`), since one past the first
+ * PRS_REVIEW_REQUESTS_MAX might name you; the moved-on rule needs `hasNextPage: false` to be read.
  */
-export function reviewRequestOf(requests: unknown, viewer: string | undefined): PullRequestReviewRequest | 'none' | undefined {
+export function reviewRequestOf(requests: unknown, viewer: string | undefined, reviewed = false): PullRequestReviewRequest | 'none' | undefined {
   if (!isRecord(requests) || !Array.isArray(requests.nodes)) return undefined;
   const me = viewer?.toLowerCase();
   /** Each team asked: its `org/slug`, or undefined when that can't be read. */
   const teams: (string | undefined)[] = [];
-  let unreadable = false;
+  const pageInfo = isRecord(requests.pageInfo) ? requests.pageInfo : undefined;
+  // More requests than were read: one of them might name you.
+  let unreadable = pageInfo?.hasNextPage === true;
+  const complete = pageInfo?.hasNextPage === false;
   for (const node of requests.nodes) {
     const reviewer = isRecord(node) ? node.requestedReviewer : undefined;
     if (!isRecord(reviewer) || typeof reviewer.__typename !== 'string') {
@@ -356,8 +365,22 @@ export function reviewRequestOf(requests: unknown, viewer: string | undefined): 
   // A login that couldn't be read can't rule out a request of you by name.
   if (me === undefined) return undefined;
   if (teams.length === 0) return unreadable ? undefined : 'none';
+  if (reviewed && complete && !unreadable) return 'none';
   const [only] = teams;
   return teams.length === 1 && only !== undefined ? { via: 'team', team: only } : { via: 'team' };
+}
+
+/**
+ * Whether your latest review of the PR (`viewerLatestReview`) is an approval or a changes request
+ * on the commit that is the PR's head now (`headRefOid`) (W171). A comment isn't a verdict, and a
+ * review of an older commit isn't of this code. False when any of it can't be read.
+ */
+function reviewedOnHead(node: Record<string, unknown>): boolean {
+  const review = node.viewerLatestReview;
+  if (!isRecord(review) || (review.state !== 'APPROVED' && review.state !== 'CHANGES_REQUESTED')) return false;
+  const head = node.headRefOid;
+  const reviewed = isRecord(review.commit) ? review.commit.oid : undefined;
+  return typeof head === 'string' && OID.test(head) && reviewed === head;
 }
 
 /**

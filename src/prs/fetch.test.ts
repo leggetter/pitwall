@@ -126,6 +126,8 @@ describe('fetchPullRequests: the command', () => {
       for (const field of ['viewer { login }', 'oid']) expect(PRS_QUERIES[relation], `${relation}: ${field}`).toContain(field);
       const reviews = relation === 'review-requested';
       expect(PRS_QUERIES[relation].includes('reviewRequests(first: 100)'), relation).toBe(reviews);
+      // W171: your latest review and the head commit, for the review-requested search only.
+      for (const field of ['headRefOid', 'viewerLatestReview { state commit { oid } }', 'pageInfo { hasNextPage }\n']) expect(PRS_QUERIES[relation].includes(field), `${relation}: ${field}`).toBe(reviews);
       // W188's state hash: your own PRs' reviews by others; the others' review requests and mentions.
       expect(PRS_QUERIES[relation].includes('reviews(last: 50, states: [APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED])'), relation).toBe(relation === 'authored');
       expect(PRS_QUERIES[relation].includes('timelineItems(last: 50, itemTypes: [REVIEW_REQUESTED_EVENT, MENTIONED_EVENT])'), relation).toBe(relation !== 'authored');

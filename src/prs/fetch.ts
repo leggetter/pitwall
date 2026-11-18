@@ -141,6 +141,7 @@ export const PRS_FRAGMENT = `fragment pr on PullRequest {
 
 /** For the review-requested search only: who was asked, so pitwall can say whether it was you or a team. */
 export const PRS_REVIEW_REQUESTS = `reviewRequests(first: ${PRS_REVIEW_REQUESTS_MAX}) {
+          pageInfo { hasNextPage }
           nodes {
             requestedReviewer {
               __typename
@@ -149,6 +150,13 @@ export const PRS_REVIEW_REQUESTS = `reviewRequests(first: ${PRS_REVIEW_REQUESTS_
             }
           }
         }`;
+
+/**
+ * For the review-requested search only (W171): the PR's head commit and your latest review with the
+ * commit it was of, so a team's request that stays open after you've reviewed doesn't keep the PR.
+ */
+export const PRS_REVIEWED = `headRefOid
+        viewerLatestReview { state commit { oid } }`;
 
 /**
  * The most reviews and timeline events read per PR for W188's state hash (parse.ts, stateHashOf()):
@@ -195,7 +203,7 @@ export const PRS_TIMELINE = `timelineItems(last: ${PRS_HASH_ITEMS_MAX}, itemType
  * requests too. Made only from constants.
  */
 export function prsQuery(relation: PullRequestRelation): string {
-  const extra = relation === 'authored' ? [PRS_REVIEWS] : relation === 'review-requested' ? [PRS_REVIEW_REQUESTS, PRS_TIMELINE] : [PRS_TIMELINE];
+  const extra = relation === 'authored' ? [PRS_REVIEWS] : relation === 'review-requested' ? [PRS_REVIEW_REQUESTS, PRS_REVIEWED, PRS_TIMELINE] : [PRS_TIMELINE];
   return `query($q: String!, $after: String) {
   viewer { login }
   search(query: $q, type: ISSUE, first: ${PRS_PAGE_SIZE}, after: $after) {

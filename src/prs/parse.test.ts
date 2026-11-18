@@ -334,6 +334,74 @@ describe('parseSearchResponse', () => {
   });
 });
 
+describe('a team request after your review (W171)', () => {
+  const HEAD = 'a'.repeat(40);
+  const OLD = 'b'.repeat(40);
+  const review = (state: unknown, oid: unknown): Record<string, unknown> => ({ viewerLatestReview: { state, commit: { oid } }, headRefOid: HEAD });
+  const via = (overrides: Record<string, unknown>, ...asked: Parameters<typeof reviewRequests>) =>
+    parsePullRequest(prNode({ reviewRequests: reviewRequests(...asked), ...overrides }), 'review-requested', VIEWER);
+  const team = { team: 'example/reviewers' };
+
+  it('leaves out a PR with only a team asked and your approval or changes request on the head commit', () => {
+    expect(via(review('APPROVED', HEAD), team)).toBeUndefined();
+    expect(via(review('CHANGES_REQUESTED', HEAD), team)).toBeUndefined();
+    expect(via(review('APPROVED', HEAD), team, { team: 'example/docs' })).toBeUndefined();
+  });
+
+  it('counts it as skipped, as W101 does', () => {
+    const page = parseSearchResponse(searchPage([prNode({ number: 1, reviewRequests: reviewRequests(team), ...review('APPROVED', HEAD) }), prNode({ number: 2, reviewRequests: reviewRequests(team) })]), 'review-requested');
+    expect(page?.prs.map((pr) => pr.number)).toEqual([2]);
+    expect(page).toMatchObject({ nodes: 2, skipped: 1 });
+  });
+
+  it('keeps it when your review is of an older commit', () => {
+    expect(via(review('APPROVED', OLD), team)?.reviewRequest).toEqual({ via: 'team', team: 'example/reviewers' });
+  });
+
+  it('keeps it when you are asked by name, whatever you reviewed', () => {
+    expect(via(review('APPROVED', HEAD), team, { user: VIEWER })?.reviewRequest).toEqual({ via: 'direct' });
+  });
+
+  it('keeps it when your latest review only commented, or is dismissed or pending', () => {
+    for (const state of ['COMMENTED', 'DISMISSED', 'PENDING', 'approved', 42, undefined]) expect(via(review(state, HEAD), team), String(state)).toBeDefined();
+  });
+
+  it('keeps it, failing soft, when the review, its commit or the head cannot be read', () => {
+    const cases: Record<string, unknown>[] = [
+      {},
+      { viewerLatestReview: null, headRefOid: HEAD },
+      { viewerLatestReview: 'junk', headRefOid: HEAD },
+      { viewerLatestReview: { state: 'APPROVED', commit: null }, headRefOid: HEAD },
+      { viewerLatestReview: { state: 'APPROVED', commit: { oid: 7 } }, headRefOid: HEAD },
+      { viewerLatestReview: { state: 'APPROVED', commit: { oid: HEAD } } },
+      { viewerLatestReview: { state: 'APPROVED', commit: { oid: HEAD } }, headRefOid: null },
+      { viewerLatestReview: { state: 'APPROVED', commit: { oid: 'not-an-oid' } }, headRefOid: 'not-an-oid' },
+    ];
+    for (const overrides of cases) expect(via(overrides, team), JSON.stringify(overrides)).toBeDefined();
+  });
+
+  it('keeps it when more requests exist than were read, or it can’t tell, since one might name you', () => {
+    const more = { ...reviewRequests(team), pageInfo: { hasNextPage: true } };
+    expect(parsePullRequest(prNode({ reviewRequests: more, ...review('APPROVED', HEAD) }), 'review-requested', VIEWER)).toBeDefined();
+    for (const pageInfo of [undefined, null, {}, { hasNextPage: 'no' }]) {
+      const unsure = { ...reviewRequests(team), pageInfo };
+      expect(parsePullRequest(prNode({ reviewRequests: unsure, ...review('APPROVED', HEAD) }), 'review-requested', VIEWER), JSON.stringify(pageInfo)).toBeDefined();
+    }
+    // Past the first page with no team read, it can't say 'none' either.
+    expect(reviewRequestOf({ ...reviewRequests({ user: 'someone-else' }), pageInfo: { hasNextPage: true } }, VIEWER)).toBeUndefined();
+  });
+
+  it('keeps it beside an unreadable request, end to end, and for a head oid that isn’t GitHub’s lowercase form', () => {
+    expect(via(review('APPROVED', HEAD), team, { requestedReviewer: null } as never)).toBeDefined();
+    const upper = 'A'.repeat(40);
+    expect(via({ viewerLatestReview: { state: 'APPROVED', commit: { oid: upper } }, headRefOid: upper }, team)).toBeDefined();
+  });
+
+  it('keeps it when a request cannot be read, since it might name you', () => {
+    expect(reviewRequestOf({ nodes: [{ requestedReviewer: { __typename: 'Team', combinedSlug: 'example/reviewers' } }, { requestedReviewer: null }] }, VIEWER, true)).toEqual({ via: 'team', team: 'example/reviewers' });
+  });
+});
+
 describe('reviewRequestOf (W101)', () => {
   it('is direct when a User requested is you, without case, whatever else was asked', () => {
     expect(reviewRequestOf(reviewRequests({ team: 'example/reviewers' }, { user: VIEWER.toUpperCase() }), VIEWER)).toEqual({ via: 'direct' });
