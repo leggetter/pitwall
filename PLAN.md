@@ -394,6 +394,12 @@ Branch from `main`, merge into `main` (Phil, 2026-11-18). Planned during M5.4; b
   - Deferred (Phil, 2026-11-18): fix C, a "Belongs to session…" control on a PR row, as a backstop if A misreads cases.
   - Side finding, not this case's cause: `git push -q` prints no "To" lines, so the `pushed` link detection (`src/index/prLinks.ts`) misses quiet pushes; Claude Code's `pr-link` entries covered it here. Worth a look while in `prLinks.ts`, or a small item of its own.
   - Status: Planned (Phil, 2026-11-18).
+- **W202, The attached terminal leaks a PTY on every attach** (`w202-attach-pty-leak`, S). Phil, 2026-11-18: the 4518 pitwall, up about 2 days 5 hours, held 472 PTY descriptors (`/dev/ptmx` and "(revoked)" in `lsof`) against macOS's 511 for the whole machine (`kern.tty.ptmx_max`); no process on the Mac could open a terminal until a restart.
+  - Cause: node-pty 1.1.0's macOS spawn (`pty_posix_spawn`, `src/unix/pty.cc`) leaves two terminal descriptors in the parent on every spawn: the new PTY's slave, never closed in the parent ("(revoked)" once the child's session ends), and a spare `/dev/ptmx` from its low-descriptor guard, whose clean-up loop skips index 0. Every end of an attach leaked the same (the socket closing, the process ending on its own, the SIGKILL fallback, the server closing), since the leak is at the spawn; the master itself is closed. Upstream: microsoft/node-pty#907 (closed) and #950 (open); the 1.2.0 betas close both. Clear and continue's PTY (W168) went through the same spawn.
+  - Fix: `ptySpawner()` (`src/server/pty.ts`) lists the open descriptors before and after each spawn and closes each new terminal other than the PTY's master (`closeStrayTerminals()`). Fail-soft: it closes nothing when the master's descriptor is unknown or the list can't be read, and never throws. Remove it once a stable node-pty closes them.
+  - Measured with a `pitwall-test-*` session against a pitwall on its own `PITWALL_HOME`: 5 attaches and detaches left 5 `/dev/ptmx` and 5 "(revoked)" before, 0 and 0 after; a session stopped while attached, 0 after.
+  - Left: node-pty 1.1.0 also leaves one kqueue descriptor per spawn (its exit watcher), not a PTY; it counts against the process's descriptor limit (macOS `kern.maxfilesperproc`, 122,880 here), not the machine's PTYs, and only node-pty can close it safely. The 1.2.0 betas close it too.
+  - Status: built, PR into `main`.
 
 ## Open questions
 

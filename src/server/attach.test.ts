@@ -1,5 +1,7 @@
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { fstatSync, readdirSync } from 'node:fs';
+import { chmod, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { isatty } from 'node:tty';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
@@ -36,7 +38,8 @@ import { pitwallOrigin, proofFor as contractProof, version2ProofFor } from '../t
 import { startServerWithInternals, type ServerInternals } from './server.js';
 
 // Made-up sessions only. No test here runs `claude`: every PTY is a FakePty,
-// except one that runs /bin/echo through the real node-pty.
+// except the ones at the end, which run /bin/echo and a stand-in shell script
+// through the real node-pty.
 
 const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
 const ROOT = '/tmp/pitwall-test-root';
@@ -1058,4 +1061,65 @@ describe.skipIf(process.platform === 'win32')('spawnPty', () => {
     expect(exit.exitCode).toBe(0);
     await waitFor(() => output.includes('pitwall-pty-ok'));
   });
+});
+
+/** This process's open terminal descriptors: PTY masters and slaves, /dev/ptmx included. */
+function openTerminals(): number[] {
+  return readdirSync('/dev/fd')
+    .map(Number)
+    .filter((fd) => {
+      try {
+        fstatSync(fd);
+        return isatty(fd);
+      } catch {
+        return false;
+      }
+    });
+}
+
+// W202: node-pty 1.1.0 left two terminal descriptors open in pitwall per spawn
+// on macOS, however the attach ended, until the machine ran out of PTYs. Real
+// attaches through the socket, with a stand-in for `claude attach` that waits
+// for a line, then exits.
+describe.skipIf(process.platform === 'win32')('attaching and detaching through the real node-pty', () => {
+  it('leaves no terminal open, whether the socket closes or the process ends on its own', async () => {
+    const script = join(webRoot, 'claude-attach-stand-in.sh');
+    await writeFile(script, '#!/bin/sh\necho pitwall-test-attached\nread line\nexit 0\n');
+    await chmod(script, 0o755);
+    const server = await startServerWithInternals(
+      { indexer: fakeIndexer(), token: TOKEN, webRoot, port: 0 },
+      {
+        attach: {
+          // The real spawner, running the stand-in where the server asks for `claude`.
+          spawnPty: (file, args, options) => {
+            expect(file).toBe('claude');
+            return spawnPty(script, args, options);
+          },
+          env: ENV,
+          agents: fakeAgents(),
+          processAlive: () => true,
+        },
+      },
+    );
+    running.push(server);
+    const baseline = openTerminals();
+
+    for (let round = 1; round <= 6; round++) {
+      const client = await attached(server.port);
+      await waitFor(() => client.text().includes('pitwall-test-attached'), 5000);
+      // While attached: the PTY's master, and nothing else.
+      expect(openTerminals().length).toBe(baseline.length + 1);
+      if (round % 2 === 1) {
+        // Detach: the socket closes, and the server ends the process.
+        client.ws.close();
+      } else {
+        // The process ends on its own, and the server closes the socket.
+        send(client, { type: 'input', data: 'done\r' });
+        expect(await client.next()).toEqual({ type: 'exit', code: 0 });
+      }
+      await client.closed;
+      await waitFor(() => openTerminals().length === baseline.length, 5000);
+    }
+    expect(openTerminals()).toEqual(baseline);
+  }, 30_000);
 });
