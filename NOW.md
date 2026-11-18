@@ -20,7 +20,7 @@ Last updated: 2026-11-17, on `docs/handoff-resume-copy`: a Resume from 4518 made
 
 ## Open work
 
-**In flight:** `fix/resume-stopped-job-flags` (01efa87, from `main`, pushed, no PR yet): the resume part of W197's review F1 for `main`, so 4518 stops making copies. A stopped or finished background job resumes with no flags, and a profile other than its own is refused (`STOPPED_JOB_PROFILE_ERROR`), in the resume route and the supervisor's check; no plugin. `npm test` green but for two timing tests that pass alone. A PR into `main` is the verbatim tier: show Phil its exact text, open it on his OK, merge on green CI, then restart 4518 from `main`.
+**Nothing is in flight.** The resume part of W197's review F1 (a stopped background job wakes with no flags) merged into `main` on 2026-11-18 in [#290](https://github.com/leggetter/pitwall/pull/290), at 60c20e1; Phil restarts 4518 from `main` to pick it up. `m5.4/integration` has the same change and more, so M5.4's merge into `main` may need `src/server/actions.ts` and its tests resolved to the integration side.
 
 - **A Resume made a copy again** (2026-11-17, 22:28): Resume of the finished coordinator 3e3091fa from 4518 started 9d8b93e9, and pitwall said "It was open in another Claude Code process", but 3e3091fa was `done` with no process and no `~/.claude/sessions/` file. Cause, inferred: 4518 runs `main`, which adds `--model`/`--effort` to a stopped job's resume, and Claude Code starts a copy for any flag (W197's review F1, fixed on `m5.4/integration`). The copy carries the whole conversation, so Phil's next message went to it: keep 9d8b93e9. W196 (a resume's copy cleaned up) now covers this case too (`PLAN.md`).
 - **W167 (session lineage)** merged on 2026-11-17 in [#286](https://github.com/leggetter/pitwall/pull/286): `$PITWALL_HOME/lineage.jsonl`, `scripts/lineage.ts`, the supervisor's `session_lineage`, "Continued from/in" in the session view, and the predecessor's recap in a continued session's first recap. The review's F1 (High): a finished or stopped job lists its first session id again, so a live diff wrote links backwards; a row with no worker now records nothing. Live clears are for background jobs only (F2: an interactive `/resume` looks the same); the transcripts-only inference is left out. Not verified live: a real `/clear` through the listing. Left (`PLAN.md`'s W167 item): a wake under a new id without `/clear` is logged as `clear`; a clear then exit within one poll isn't inferred until the next start.
@@ -64,7 +64,8 @@ Still to do:
 
 ## Open questions for Phil
 
-- **OK the PR text for the resume fix into `main`?** The next session (or this one) shows Phil the exact title and body for `fix/resume-stopped-job-flags` into `main`, since anything into `main` is shown verbatim first. Lean: yes, then merge on green CI and restart 4518.
+
+Answered (Phil, 2026-11-18, "yes"): the resume fix's PR into `main`, as shown; merged in #290.
 
 Answered (Phil, 2026-11-17, "yes, to all"): bring W197's resume fix to `main` (branch pushed, PR text to show); remove 3e3091fa (done); W167 ships without the transcripts-only inference for interactive sessions (left in `PLAN.md`). The pitwall plugin is installed at user scope from `~/pitwall-plugin-source` on `m5.4/integration` (`claude plugin list`: `pitwall@pitwall-local`, enabled); once M5.4 merges into `main`, run `git -C ~/pitwall-plugin-source switch main`.
 
