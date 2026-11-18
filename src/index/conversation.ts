@@ -59,7 +59,7 @@ import type { AskedQuestion, ConversationEntry, ConversationPage } from '../shar
 import { isRecord } from './guards.js';
 import type { SubagentLabels } from './subagents.js';
 import { cap, truncate } from './text.js';
-import { queuedEntryOf, stripSystemReminders, turnSignalOf, type TurnSignal } from './transcripts.js';
+import { queuedEntryOf, removePasteTags, stripSystemReminders, turnSignalOf, type TurnSignal } from './transcripts.js';
 
 const KIB = 1024;
 const MIB = 1024 * KIB;
@@ -1422,8 +1422,10 @@ function userItems(entry: Record<string, unknown>, at: string | undefined): Item
   if (text.startsWith('Caveat:')) return [];
   if (text === '' && images === 0) return [];
   const imageNote = images === 0 ? '' : `[${images} ${images === 1 ? 'image' : 'images'}]`;
-  const typed = asTyped(unreminded);
+  // Claude Code's paste tags go, the pasted text stays (W204).
+  const typed = asTyped(removePasteTags(unreminded));
   const prompt = typed === '' ? imageNote : imageNote === '' ? typed : `${typed}\n\n${imageNote}`;
+  if (prompt === '') return [];
   return [{ kind: 'entry', entry: withAt({ kind: 'user', text: cap(prompt, ENTRY_TEXT_MAX + 1) }, at) }];
 }
 
