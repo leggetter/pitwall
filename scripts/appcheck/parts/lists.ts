@@ -133,6 +133,25 @@ const part: Part = {
       t.expect(await page.evaluate(`[...document.querySelectorAll('.session-list li.session')].every((li) => li.dataset.attention === 'true')`), 'each row is marked as needing you');
     });
 
+    await t.step("a busy session whose recap has a to-do for you shows Waiting on you with Busy's dot, in Needs you, and the dot goes when it stops (W174)", async () => {
+      const job = t.server.world.byName(NAMES.running);
+      t.server.world.need(job.sessionId, { status: 'busy', needsYou: { reason: 'recap', text: 'Name the made-up post' } });
+      t.server.broadcast();
+      const badgeOf = `(() => { const el = (${row(NAMES.running)})?.closest('li.session')?.querySelector('.session-badges [data-status]'); return el ? { status: el.dataset.status, text: el.textContent.trim(), dot: !!el.querySelector('.status-dot'), warning: getComputedStyle(el).color } : null; })()`;
+      const shown = await page.waitFor<{ status: string; text: string; dot: boolean; warning: string }>('its badge', `(() => { const b = ${badgeOf}; return b?.status === 'recap' ? b : null; })()`);
+      t.expectEqual({ text: shown.text, dot: shown.dot }, { text: 'Waiting on you', dot: true }, 'Waiting on you, with the dot');
+      t.expect(await page.evaluate(`${row(NAMES.running)}.closest('li.session').dataset.attention === 'true'`), 'the row is in Needs you');
+      t.expect(((await page.evaluate<string | null>(`(${row(NAMES.running)})?.closest('li.session')?.querySelector('.session-what-text')?.textContent ?? null`)) ?? '').includes('Name the made-up post'), 'its to-do on line 2');
+      await t.shot('busy-waiting-on-you');
+      // Idle, the same recap reason has no dot.
+      t.server.world.need(job.sessionId, { status: 'idle', state: 'blocked' });
+      t.server.broadcast();
+      await page.waitFor('no dot', `(() => { const b = ${badgeOf}; return b?.status === 'recap' && !b.dot; })()`);
+      t.server.world.need(job.sessionId, { status: job.status, state: job.state, needsYou: undefined });
+      t.server.broadcast();
+      await page.waitFor('the row back as it was', `(() => { const b = ${badgeOf}; return b?.status !== 'recap'; })()`);
+    });
+
     await t.step("a session's proposal for a new session is a card over Needs you's rows, counted in Needs you and the title, until dismissed (W163)", async () => {
       const card = `document.querySelector('.session-list li.spin-off-card')`;
       const titleCount = `Number(/^\\((\\d+)\\)/.exec(document.title)?.[1] ?? 0)`;
