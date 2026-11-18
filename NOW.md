@@ -20,6 +20,7 @@ Last updated: 2026-11-18, on `docs/w202-merged`, by the backlog lead (handing of
 
 ## Open work
 
+- **In review: W178 (ask the supervisor about this session, and why it's in its state)**, draft PR from `w178-supervisor-ask-session`: `why_state` and `pitwall_states` tools, `docs/states.md`, prompt version 11, and Ask the supervisor in a session's actions menu and a PR's view. See `PLAN.md`, W178.
 - **W202 (the attached terminal leaks a PTY on every attach)** merged into `main` on 2026-11-18 in [#304](https://github.com/leggetter/pitwall/pull/304): `closeStrayTerminals()` in `src/server/pty.ts` closes the slave and spare `/dev/ptmx` node-pty 1.1.0 leaves per spawn on macOS. Live-checked by a fresh review (0 ptmx and 0 revoked after 5 rounds and 2 simultaneous attaches); its F2 and F3 tests added. Left: one kqueue descriptor per spawn (node-pty's). `.worktrees/attach-pty-leak` is the fix-attach-pty-leak session's; it can go once that session ends.
 - **Once M5.4 is on 4518:**
   - A finished session already in Needs you from an old recap's to-do stays there until you press Refresh on its recap (W173; `RECAP_STORE_VERSION` stays 2).
@@ -48,7 +49,7 @@ Still to do:
 
 ## Next, in order
 
-1. **W178 (ask the supervisor about this session, and why it's in its state),** from `main`; it uses W165's reasons.
+1. **W178 (ask the supervisor about this session, and why it's in its state),** in review as a draft PR from `w178-supervisor-ask-session`.
 2. **The other open items** (`PLAN.md`, "Open items"), one at a time: W179 (the supervisor keeps its conversation short), W191 (the supervisor uses your sessions' connectors; a spike first), W196 (a resume's copy cleaned up), W198 (the attachments folder's trust), W194 (a resumed job's latest transcript), W195 (Not for me on a session row), W199 (a snooze holds the session's PR too) and W200 (a mention owns a PR inside the PR's repo).
 3. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
 
