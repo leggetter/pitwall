@@ -68,10 +68,11 @@ Still to do:
 
 ## Open questions for Phil
 
-- **Does "working off main" change how M5.4 reaches you?** (asked 2026-11-18) Phil: "we should generally be working off a main and trying to work through our backlog, then merging things into main for me to try. Unless it's a significant change, we might work on or run something separately from a work tree." Lean: merge `m5.4/integration` into `main` once W174 is in (after the milestone's security review of W175, W197 and W168), and from then on build small items on branches from `main` and merge each into `main` for Phil to try; `m5.x/integration` only for a significant change. Merging into `main` stays Phil's call each time.
-- **Stop and remove the finished snooze session 1129e19e** ("ca40484f needs-you snooze"; its finding is W199)? Conversation kept. Lean: yes.
-- **Change your global handoff skill's last step** (`~/.agents/skills/handoff`, outside the repo) to end with a `spin-off` block, so sessions in other repos get W168's card? The suggested text is in #293's builder report, quoted in the lead's reply of 2026-11-18. Lean: yes.
+- **Where hand-off files live** (asked 2026-11-18): Phil has seen `NOW.md` and plan archives in different places, some at a workspace root shared by several repos, and wants one standard with options and considerations, including whether they're in source control. The options and the lead's recommendation are in the lead's reply of 2026-11-18; his choice goes into the global handoff skill (`~/leggetter/git/phil-skills/handoff/SKILL.md`, via a PR) together with the spin-off step below.
 
+
+
+Answered (Phil, 2026-11-18, "yes to all three"): (1) **Work off `main`:** once W174 (a working session's to-dos) is in and the milestone's security review (W175, W197, W168) is done, merge `m5.4/integration` into `main` for Phil to try (his call, asked as a yes/no with the PR); after that, small items branch from `main` and each merges into `main` for him to try; an integration branch only for a significant change. (2) 1129e19e is stopped and removed; its conversation is kept. (3) The global handoff skill ends a hand-off with a `spin-off` block (W168's card); not yet changed, since it waits on where hand-off files live (Open questions).
 
 Answered (Phil, 2026-11-18): W174's "Waiting on you" rule, as in Open work. The main checkout goes back on `main` (done; it is 2 behind `origin/main`, left for Phil's 4518 restart). The f3b57341 duplicate: Phil's screenshot of 4518 shows the investigating session ac6ba646 ("f3b57341 duplicate review", in the pitwall group) with "· also in co…" on its line 2, and a finished ca4048… row with "· also in core": a session shown under its own repo and, through the "also in" marker, under hookdeck/core. ac6ba646 has no process now, so a fresh read-only sub-agent traces the rule behind "also in" and proposes a work item.
 
