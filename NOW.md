@@ -20,7 +20,7 @@ Last updated: 2026-11-18, on `docs/handoff-backlog-lead`: the backlog lead hands
 
 ## Open work
 
-**In flight: W174 (a working session's to-dos for you aren't hidden behind CI).** A builder sub-agent of the old lead (session 005e70ee) builds it on `m5.4/working-job-todos` in `.worktrees/working-job-todos`, from 461350f, and opens a PR into `m5.4/integration` titled `fix: W174 (…)`. The next lead: `gh pr list --base m5.4/integration`; if the PR is there, read the diff, have a fresh agent review it, fix small findings, merge on green CI, update `NOW.md`, remove the worktree. If no PR and the builder has stopped (`git -C .worktrees/working-job-todos log`), brief a fresh builder from what's on the branch. The builder was told to stop and ask if the design system has no look for a busy session that also waits on you.
+**In flight: W174 (a working session's to-dos for you aren't hidden behind CI),** built in [#296](https://github.com/leggetter/pitwall/pull/296) on `m5.4/working-job-todos` (`.worktrees/working-job-todos`), not reviewed or merged. Phil's rule (2026-11-18), which settles its open question: "Waiting on you" means there is an action Phil can take now that moves the session on, whatever its state (busy, a background process, a sub-agent) and whatever `waitingOn` says; if there is nothing for him to do, it isn't waiting on him. So the next lead first removes `dueNow()`'s exclusion of `waitingOn: 'another session'` (`src/recaps/engine.ts`) with a test, records the rule in `PLAN.md`'s W174 bullet, then has a fresh agent review #296 and merges it on green CI. Then: a read-only sub-agent traces the "also in <repo>" marker (below), and W178 (ask the supervisor about this session) starts.
 
 **How the backlog lead works** (Phil, 2026-11-18): one item at a time in Next's order; for each, a fresh builder sub-agent in `.worktrees/<name>` on `m5.4/<name>`, the lead reads the diff and CI, a fresh reviewer (xhigh where the plan asks a security review; a live check on a `pitwall-test-*` job where real typing or processes are involved), small fixes by the lead, merge into `m5.4/integration` with a merge commit, `NOW.md` and `PLAN.md` in the same PR, a short update to Phil. Never merge to `main`, release, or restart 4518; stop and ask on a product or design decision or a second failure. Hand off at about five items or 200K. The resume part of W197's review F1 (a stopped background job wakes with no flags) merged into `main` on 2026-11-18 in [#290](https://github.com/leggetter/pitwall/pull/290), at 60c20e1; Phil restarts 4518 from `main` to pick it up. `m5.4/integration` has the same change and more, so M5.4's merge into `main` may need `src/server/actions.ts` and its tests resolved to the integration side.
 
@@ -68,11 +68,12 @@ Still to do:
 
 ## Open questions for Phil
 
-- **Which entry is the f3b57341 duplicate?** (asked 2026-11-18) Session "f3b57341 duplicate review" (ac6ba646) is blocked on it: both of "core 6089 posthog tracking review"'s PRs are merged and the listing has one row, so it needs a screenshot or where it shows (repo list, Needs you, or the session view's Pull requests tab). Lean: none; only Phil can see it.
+- **Does "working off main" change how M5.4 reaches you?** (asked 2026-11-18) Phil: "we should generally be working off a main and trying to work through our backlog, then merging things into main for me to try. Unless it's a significant change, we might work on or run something separately from a work tree." Lean: merge `m5.4/integration` into `main` once W174 is in (after the milestone's security review of W175, W197 and W168), and from then on build small items on branches from `main` and merge each into `main` for Phil to try; `m5.x/integration` only for a significant change. Merging into `main` stays Phil's call each time.
 - **Stop and remove the finished snooze session 1129e19e** ("ca40484f needs-you snooze"; its finding is W199)? Conversation kept. Lean: yes.
-- **Put the main checkout back on `main`?** (asked 2026-11-18) `~/leggetter/git/pitwall` has been on a detached HEAD at d84e9e7 (the same commit as `main`, clean) since 12:11 that day (reflog: `checkout: moving from main to HEAD`), probably a sub-agent. 4518 is unaffected. `git switch main` changes nothing on disk and lets the next `git pull` work. Lean: yes.
 - **Change your global handoff skill's last step** (`~/.agents/skills/handoff`, outside the repo) to end with a `spin-off` block, so sessions in other repos get W168's card? The suggested text is in #293's builder report, quoted in the lead's reply of 2026-11-18. Lean: yes.
 
+
+Answered (Phil, 2026-11-18): W174's "Waiting on you" rule, as in Open work. The main checkout goes back on `main` (done; it is 2 behind `origin/main`, left for Phil's 4518 restart). The f3b57341 duplicate: Phil's screenshot of 4518 shows the investigating session ac6ba646 ("f3b57341 duplicate review", in the pitwall group) with "· also in co…" on its line 2, and a finished ca4048… row with "· also in core": a session shown under its own repo and, through the "also in" marker, under hookdeck/core. ac6ba646 has no process now, so a fresh read-only sub-agent traces the rule behind "also in" and proposes a work item.
 
 Answered (Phil, 2026-11-18, "yes"): the resume fix's PR into `main`, as shown; merged in #290.
 
@@ -82,9 +83,7 @@ Answered (Phil, 2026-11-17, "yes to both"): the "Added folder not trusted" fix i
 
 Answered (Phil, 2026-11-17, "yes to both"): the fix for "Claude Code started a copy instead" is planned as W196; W197 starts now.
 
-Answered (Phil, 2026-11-16, "all fine as implemented"): the diagnostics log keeps naming PRs as `owner/repo#123` (W165).
-
-Older answers (2026-11-06 to 11-12: W191 option B, connector reads without a click; the hosted-connector question dropped (now W191), the supervisor panel pushes (W187), W184 after W176, M5.2 to `main` as drafted, no user guide for now, W163's card as built, W155 work profiles and the Usage view) were cut from here; they are in this file's git history.
+Older answers (2026-11-06 to 11-16: W165 names PRs as owner/repo#123; W191 option B, connector reads without a click; the hosted-connector question dropped (now W191), the supervisor panel pushes (W187), W184 after W176, M5.2 to `main` as drafted, no user guide for now, W163's card as built, W155 work profiles and the Usage view) were cut from here; they are in this file's git history.
 
 ## Standing context
 
