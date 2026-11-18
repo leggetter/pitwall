@@ -1,7 +1,7 @@
 // Why a session is in the state its row shows (W178): each badge it has, the rule that set it and the
 // inputs the rule read, for the supervisor's why_state tool (mcpTools.ts). Every verdict comes from the
 // code the page uses (src/shared/sessionState.ts and needsYou.ts), never a copy of its rules, so the two
-// can't disagree; src/server/whyState.test.ts checks that for each status. Pure. Everything in the
+// can't disagree; mcpTools.test.ts' "why_state (W178)" tests check that for each status. Pure. Everything in the
 // answer is pitwall's own fixed words, ids, enums, numbers and times, except what is under `untrusted`
 // (a prompt's reason, a job's line, a PR's repo): text from sessions or GitHub, plain and capped by the caller.
 import { CONTEXT_HIGH_TOKENS, CONTEXT_WARN_TOKENS, type PullRequestSummary, type SessionSummary } from '../shared/protocol.js';

@@ -8,7 +8,7 @@ import type { IndexSnapshot, PullRequestSummary, SupervisorState } from '../../.
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import { BACKGROUND_TAB_KEY } from '../backgroundTab.js';
 import type { StorageSource } from '../groupState.js';
-import { ASK_SUPERVISOR, askAboutPr, askAboutSession } from '../supervisor.js';
+import { ASK_PR_TITLE_MAX, ASK_SUPERVISOR, askAboutPr, askAboutSession } from '../supervisor.js';
 import { group, pr, prList, session, snapshot, withoutSubagents } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
 import { Dashboard } from './Dashboard.js';
@@ -61,6 +61,8 @@ describe('the texts', () => {
   it('name the session and its id, or the PR, on one line, ready to finish', () => {
     expect(askAboutSession({ name: 'a\nb  c', sessionId: 'abc' })).toBe('About the session "a b c" (id abc): ');
     expect(askAboutPr({ repoLabel: 'example/demo-app', number: 4, title: ' Fix\nit ' })).toBe('About the pull request example/demo-app#4 (Fix it): ');
+    const long = askAboutPr({ repoLabel: 'example/demo-app', number: 5, title: 'x'.repeat(500) });
+    expect(long).toBe(`About the pull request example/demo-app#5 (${'x'.repeat(ASK_PR_TITLE_MAX - 1)}…): `);
   });
 });
 

@@ -98,9 +98,14 @@ export function askAboutSession(session: Pick<SessionSummary, 'name' | 'sessionI
   return `About the session "${name}" (id ${session.sessionId}): `;
 }
 
-/** The same for a pull request: its repo, number and title. */
+/** The most characters of a PR's title the box is filled with: its author writes it, not you. */
+export const ASK_PR_TITLE_MAX = 120;
+
+/** The same for a pull request: its repo, number and title, cut at ASK_PR_TITLE_MAX. */
 export function askAboutPr(pr: Pick<PullRequestSummary, 'repoLabel' | 'number' | 'title'>): string {
-  return `About the pull request ${pr.repoLabel}#${pr.number} (${pr.title.replace(/\s+/g, ' ').trim()}): `;
+  const title = pr.title.replace(/\s+/g, ' ').trim();
+  const cut = title.length > ASK_PR_TITLE_MAX ? `${title.slice(0, ASK_PR_TITLE_MAX - 1).trimEnd()}…` : title;
+  return `About the pull request ${pr.repoLabel}#${pr.number} (${cut}): `;
 }
 
 /** A question for the box to start with: `at` changes with each, so the same text asked again fills it again. */
