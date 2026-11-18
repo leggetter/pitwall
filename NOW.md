@@ -24,7 +24,6 @@ Last updated: 2026-11-18, on `docs/w202-merged`, by the backlog lead (handing of
 - **Once M5.4 is on 4518:**
   - A finished session already in Needs you from an old recap's to-do stays there until you press Refresh on its recap (W173; `RECAP_STORE_VERSION` stays 2).
   - W165's diagnostics log (`~/.pitwall/diagnostics.jsonl`, `scripts/diagnostics-report.ts`) starts writing.
-  - Run `git -C ~/pitwall-plugin-source switch main` for the plugin installed at user scope (`pitwall@pitwall-local`).
 - **Left from M5.4** (archive entries): W201's H1 (Clear and continue's window before each Enter: also wait for a quiet PTY) and H2 (rate-limit the link check's lsof); W174's F2 to F4; W168's: Phil's global handoff skill now ends with the `spin-off` block ([leggetter/phil-skills#10](https://github.com/leggetter/phil-skills/pull/10), merged), and a `PITWALL_HOME` not 0700 silently drops `lineage.jsonl` and `server.json`; W167's: a wake under a new id without `/clear` is logged as `clear`; W197's: the resume card still offers the profile picker for a stopped job.
 - **A Resume made a copy** (2026-11-17): 4518's `main` added `--model`/`--effort` to a stopped job's resume (W197's review F1). Fixed on `main` in #290; 4518 has it after the restart. W196 (a resume's copy cleaned up) covers what's left.
 

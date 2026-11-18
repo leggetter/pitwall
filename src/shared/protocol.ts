@@ -2525,6 +2525,8 @@ export const MCP_TOOLS = {
   getRecap: 'get_recap',
   getUsage: 'get_usage',
   sessionLineage: 'session_lineage',
+  whyState: 'why_state',
+  pitwallStates: 'pitwall_states',
   spawnSession: 'spawn_session',
   resumeSession: 'resume_session',
   approve: 'approve',

@@ -167,3 +167,48 @@ export function contextLevel(tokens: number): ContextLevel {
   if (tokens > CONTEXT_WARN_TOKENS) return 'warn';
   return 'ok';
 }
+
+/**
+ * Every status the badges tell apart, as a record so that a new SessionStatus is a compile error here
+ * until it has its rule, and docs/states.md's coverage test (src/shared/states.test.ts) until it's
+ * explained. The rule is pitwall's own fixed words: why the status holds, in the order statusBadge() checks.
+ */
+export const STATUS_RULES: Readonly<Record<SessionStatus, string>> = {
+  ended: 'An interactive session whose process has exited (ended is set). Checked first: an ended session has no other status.',
+  waiting: "Claude Code shows a prompt (status waiting) and the index says it needs you for reason 'prompt'. The label adds what it waits for.",
+  blocked: "The index says it needs you for reason 'claude-code' (the job's own line) or 'blocked' (blocked, and pitwall couldn't read why).",
+  restarted: "You resumed or restarted it in this run of pitwall and no prompt has been sent since (Needs you reason 'restarted').",
+  asked: "Its last turn ended by asking you something (Needs you reason 'asked').",
+  recap: "Its current recap says it's waiting on you (Needs you reason 'recap'). A busy session keeps Busy's dot.",
+  'blocked-stale': 'Claude Code says blocked, nothing needs you, and it has had no activity for over 7 days (stale). Outlined.',
+  failed: "Claude Code's background state is failed.",
+  'waiting-on': "Claude Code says done, but pitwall's own current recap says it waits on CI, another session or someone else.",
+  done: "Claude Code's background state is done, and its recap doesn't say it waits on anyone else.",
+  stopped: "Claude Code's background state is stopped.",
+  'not-running': 'Its process is not alive, and it is not done, failed or stopped.',
+  busy: "Claude Code's process status is busy.",
+  working: "Claude Code's background state is working, while the process is alive and not busy or idle.",
+  idle: "Claude Code's process status is idle, or blocked with nothing needed from you. No badge in the list; 'Idle' in the session view.",
+  unknown: 'None of the rules above holds.',
+};
+
+/** Every status in STATUS_RULES, in the order statusBadge() checks them. */
+export const SESSION_STATUSES = Object.keys(STATUS_RULES) as SessionStatus[];
+
+/** Why a session needs you itself, by NeedsYou.reason (protocol.ts), as fixed words. */
+export const NEEDS_YOU_RULES: Readonly<Record<NonNullable<SessionSummary['needsYou']>['reason'], string>> = {
+  prompt: 'Claude Code is showing a prompt (status waiting); waitingFor says which.',
+  'claude-code': "A background job's own line on what it needs, from its state.json.",
+  asked: 'Its last turn ended by asking you something.',
+  recap: "Its recap, made after its newest activity, says it's waiting on you.",
+  restarted: 'You resumed or restarted it in this run of pitwall and no prompt has been sent since.',
+  blocked: "Claude Code says blocked and pitwall couldn't read why. Kept so a question is never hidden.",
+};
+
+/** Why a PR a session owns puts it in Needs you, by PrNeedKind (needsYou.ts), as fixed words. */
+export const PR_NEED_RULES = {
+  'review-requested': 'Your review is asked for on the PR.',
+  'checks-failing': "The PR's checks are failing.",
+  conflicts: 'The PR has merge conflicts.',
+  'changes-requested': 'A reviewer requested changes on the PR.',
+} as const;
