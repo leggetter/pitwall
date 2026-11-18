@@ -84,13 +84,7 @@ Answered (Phil, 2026-11-12, "B, go with your recommendation"): connector reads r
 
 Answered (Phil, 2026-11-12): the hosted-connector policy question is dropped, since its premise didn't reproduce, and becomes W191; Slack's scope is the connector's own grant with pitwall's limits on top (W191); spike 017's keychain entries stay; the housekeeping goes ahead.
 
-Answered (Phil, 2026-11-11): go with the leans on the supervisor panel (it pushes, as W187); build W188 now; W176, W184, W185 and W187 run in parallel as sub-agents.
-
-Answered (Phil, 2026-11-11, "go with your leans"): W184 goes ahead after W176; W185 uses Slack and Notion first, Gmail later; finished pitwall sessions are stopped once their work merges (`claude attach <id>` resumes one).
-
-Answered (Phil, 2026-11-10, "go with your leans"): M5.2 → `main` PR as drafted; split M5.2 at W180; build W176 next; builders' decisions confirmed as built (archive's M5.2 work breakdown); the Supervisor button below 1,000 px stays as built (W182).
-
-Older answers (2026-11-06 to 11-09: no user guide for now, W163's card as built, W155 work profiles and the Usage view) were cut from here; they are in this file's git history.
+Older answers (2026-11-06 to 11-11: the supervisor panel pushes (W187), W184 after W176, M5.2 to `main` as drafted, no user guide for now, W163's card as built, W155 work profiles and the Usage view) were cut from here; they are in this file's git history.
 
 ## Standing context
 
