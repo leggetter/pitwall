@@ -35,6 +35,7 @@ import {
   type ConversationEntry,
   type SavedPermission,
   type SessionLaunch,
+  type PullRequestSummary,
   type SessionSummary,
   type SupervisorApproval,
   type SupervisorDecision,
@@ -81,6 +82,32 @@ export const SUPERVISOR_VIEW_ID = 'supervisor-view';
 
 /** The key its message box's draft is kept under in the tab's sessionStorage (drafts.ts, D14): `pitwall.draft.v1:supervisor`. */
 export const SUPERVISOR_DRAFT_ID = 'supervisor';
+
+// --- Asking it about a session or a PR (W178) ---------------------------------------------------
+
+/** The button and menu item that open the supervisor's panel with a question about what is open. */
+export const ASK_SUPERVISOR = 'Ask the supervisor';
+
+/**
+ * What the supervisor's message box starts with when you ask about a session: its name and id, so the
+ * supervisor can call why_state with the id, then a colon and a space for you to finish. Never sent
+ * for you (D4). The name is the session's, as the row shows it, on one line.
+ */
+export function askAboutSession(session: Pick<SessionSummary, 'name' | 'sessionId'>): string {
+  const name = session.name.replace(/\s+/g, ' ').trim();
+  return `About the session "${name}" (id ${session.sessionId}): `;
+}
+
+/** The same for a pull request: its repo, number and title. */
+export function askAboutPr(pr: Pick<PullRequestSummary, 'repoLabel' | 'number' | 'title'>): string {
+  return `About the pull request ${pr.repoLabel}#${pr.number} (${pr.title.replace(/\s+/g, ' ').trim()}): `;
+}
+
+/** A question for the box to start with: `at` changes with each, so the same text asked again fills it again. */
+export interface AskSeed {
+  text: string;
+  at: number;
+}
 
 // --- Its place in the URL -------------------------------------------------------------------------
 

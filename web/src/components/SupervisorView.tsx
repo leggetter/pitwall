@@ -37,6 +37,7 @@ import type { WorkingLineState } from '../working.js';
 import { getSupervisorConversation } from '../conversation.js';
 import { plainText } from '../format.js';
 import {
+  type AskSeed,
   COST_HINT,
   costText,
   heldCommand,
@@ -118,9 +119,12 @@ export interface SupervisorViewProps {
   prs?: readonly PullRequestSummary[] | undefined;
   /** Opens a PR's view by its key (prKey()), as its row does. */
   onOpenPr?: ((key: string) => void) | undefined;
+  /** A question from a session's or PR's Ask the supervisor (W178), for the box to take once. */
+  ask?: AskSeed | undefined;
+  onAskUsed?: (() => void) | undefined;
 }
 
-export function SupervisorView({ state, onClose, layout = 'overlay', compact = false, backLabel, headingRef, animate = true, onDraftChange, sessions = [], onOpenSession, prs, onOpenPr }: SupervisorViewProps) {
+export function SupervisorView({ state, onClose, layout = 'overlay', compact = false, backLabel, headingRef, animate = true, onDraftChange, sessions = [], onOpenSession, prs, onOpenPr, ask, onAskUsed }: SupervisorViewProps) {
   const api = useContext(ApiContext);
   const mentions = useReplyMentions(sessions, onOpenSession, prs, onOpenPr);
   const ids = { title: useId(), conversation: useId(), panel: useId(), suggest: useId() };
@@ -432,7 +436,7 @@ export function SupervisorView({ state, onClose, layout = 'overlay', compact = f
       <ApprovalCards approvals={state.approvals} onEmpty={toBox} />
 
       <footer className="session-view-foot supervisor-foot">
-        <SupervisorBox status={status} suggestion={suggestion} onDraftChange={onDraft} onSent={() => setSent((count) => count + 1)} fieldRef={field} />
+        <SupervisorBox status={status} suggestion={suggestion} ask={ask} onAskUsed={onAskUsed} onDraftChange={onDraft} onSent={() => setSent((count) => count + 1)} fieldRef={field} />
       </footer>
     </Frame>
   );

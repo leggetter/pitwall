@@ -29,6 +29,7 @@ import { githubPrUrl, prName, prRelationText, type LinkedSession } from '../prs.
 import { statusBadge } from '../sessions.js';
 import { Alert } from './Alert.js';
 import { StatusBadge } from './Badge.js';
+import { ASK_SUPERVISOR } from '../supervisor.js';
 import { Button } from './Button.js';
 import { CopyButton } from './CopyButton.js';
 import { EmptyState } from './EmptyState.js';
@@ -141,9 +142,11 @@ export interface PrViewProps {
   onDismiss?: ((pr: PullRequestSummary) => void) | undefined;
   /** Undo, while it's dismissed. */
   onUndismiss?: ((pr: PullRequestSummary) => void) | undefined;
+  /** Ask the supervisor about it (W178): opens its panel with the box started for you to finish. Offered while the supervisor runs. */
+  onAskSupervisor?: ((pr: PullRequestSummary) => void) | undefined;
 }
 
-export function PrView({ pr, missing, sessions, ownerId, onOpenSession, onStart, onClose, layout = 'overlay', compact = false, headingRef, onStep, animate = true, backLabel, onDismiss, onUndismiss }: PrViewProps) {
+export function PrView({ pr, missing, sessions, ownerId, onOpenSession, onStart, onClose, layout = 'overlay', compact = false, headingRef, onStep, animate = true, backLabel, onDismiss, onUndismiss, onAskSupervisor }: PrViewProps) {
   const ids = { title: useId(), details: useId(), sessions: useId(), mentioned: useId() };
   const title = plainText(pr.title);
   const url = githubPrUrl(pr);
@@ -236,6 +239,13 @@ export function PrView({ pr, missing, sessions, ownerId, onOpenSession, onStart,
               </Button>
             </div>
           )
+        )}
+        {onAskSupervisor && (
+          <div className="pr-view-ask">
+            <Button size="sm" icon="supervisor" data-ask-supervisor="" onClick={() => onAskSupervisor(pr)}>
+              {ASK_SUPERVISOR}
+            </Button>
+          </div>
         )}
         {missing !== undefined && (
           <Alert tone="neutral" role="status">

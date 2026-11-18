@@ -100,6 +100,7 @@ import { RelayBox } from './RelayBox.js';
 import { SessionConfirm, useSessionActions } from './SessionActions.js';
 import { RecapStrip } from './RecapStrip.js';
 import { asideText, finishedAskedHint, finishedRecapHint, SESSION_VIEW_ID, STALE_HINT, titleHint } from './SessionRow.js';
+import { ASK_SUPERVISOR } from '../supervisor.js';
 import { StarButton } from './StarButton.js';
 import { SubagentsPanel, subagentsCount, useSubagents } from './Subagents.js';
 import { SessionTerminal, type RestartPhase } from './Terminal.js';
@@ -395,6 +396,8 @@ export interface SessionViewProps {
    * me while it can be flagged, and Undo flag while it's flagged.
    */
   onFlag?: ((session: SessionSummary, on: boolean) => void) | undefined;
+  /** Ask the supervisor about it (W178): the actions menu's first item opens its panel with the box started for you to finish. Offered while the supervisor runs. */
+  onAskSupervisor?: ((session: SessionSummary) => void) | undefined;
   /**
    * The tab a running background session's view opens on (W54), Preferences' Open running
    * background sessions on, read as the view is first shown. Left out, as the gallery's specimens and
@@ -467,6 +470,7 @@ export function SessionView({
   star,
   onSnooze,
   onFlag,
+  onAskSupervisor,
   backgroundTab = 'conversation',
   stepped = false,
   openedBy,
@@ -853,6 +857,7 @@ export function SessionView({
         ]
       : [];
   const entries: MenuEntry[] = [
+    ...(onAskSupervisor && listed ? [{ id: 'ask-supervisor', label: ASK_SUPERVISOR, icon: 'supervisor' as const, onSelect: () => onAskSupervisor(session) }] : []),
     { id: 'copy-id', label: 'Copy session ID', icon: 'copy', onSelect: () => copy('Session ID', sessionId) },
     ...(command ? [{ id: 'copy-attach', label: 'Copy attach command', icon: 'terminal' as const, onSelect: () => copy('Attach command', command) }] : []),
     ...(resumeCopy ? [{ id: 'copy-resume', label: COPY_RESUME_COMMAND, icon: 'terminal' as const, onSelect: () => copy('Resume command', resumeCopy) }] : []),

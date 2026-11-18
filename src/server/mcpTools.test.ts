@@ -739,7 +739,7 @@ describe('why_state (W178)', () => {
   });
 
   it('explains Needs you through its own reason, a PR, a flag and a snooze, and a PR held while busy', async () => {
-    const owner = session('a', { status: 'idle', prLinks: [{ repo: 'made-up/repo', number: 7, kind: 'created' }] });
+    const owner = session('a', { status: 'idle', prLinks: [{ repo: 'made-up/repo', number: 7, kind: 'opened', lastAt: new Date(NOW).toISOString() }] });
     const need = pr(7, { checks: 'failing' });
     const viaPr = (await call(tools({ sessions: [owner], prs: { prs: [need] } }).why_state!, { id: 'a' })).json;
     expect(viaPr.needsYou).toMatchObject({ inNeedsYou: true, pr: { need: 'checks-failing' }, won: 'pr' });
