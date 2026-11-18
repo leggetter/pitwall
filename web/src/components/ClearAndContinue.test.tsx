@@ -157,4 +157,9 @@ describe('a hand-off’s card', () => {
     renderDashboard(fakeServer(), snap('background', proposal('Continues session 00000000-0000-4000-8000-000000000999.\nDo it.')));
     expect(buttons()).not.toContain('Clear and continue');
   });
+
+  it('a hand-off whose prompt ends in a backslash is not offered Clear and continue', () => {
+    renderDashboard(fakeServer(), snap('background', proposal(`${HANDOFF}\\`)));
+    expect(buttons()).not.toContain('Clear and continue');
+  });
 });

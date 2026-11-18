@@ -33,7 +33,7 @@ class FakePty implements PtyProcess {
   end() { for (const l of this.exit) l({ exitCode: 0 }); }
 }
 
-const row = (overrides: Partial<AgentRow> = {}): AgentRow => ({ sessionId: OLD, shortId: JOB, name: 'pitwall-test-job', kind: 'background', cwd: '/tmp', pid: 4242, state: 'done', startedAt: '2026-11-18T00:00:00.000Z', ...overrides });
+const row = (overrides: Partial<AgentRow> = {}): AgentRow => ({ sessionId: OLD, shortId: JOB, name: 'pitwall-test-job', kind: 'background', cwd: '/tmp', pid: 4242, state: 'done', status: 'idle', startedAt: '2026-11-18T00:00:00.000Z', ...overrides });
 
 interface Setup {
   runner: ClearAndContinue;
@@ -76,6 +76,9 @@ describe('typedPromptProblem()', () => {
     expect(typedPromptProblem('  !rm -rf x')).toMatch(/shell line/);
     for (const hidden of ['a​b', 'a‮b', 'a\u001b[201~b', 'a\rb', 'a\u0000b']) expect(typedPromptProblem(hidden)).toMatch(/doesn’t show as itself/);
     expect(typedPromptProblem('  \n ')).toMatch(/empty/);
+    expect(typedPromptProblem('Do it.\\')).toMatch(/ends with/);
+    expect(typedPromptProblem('Do it.\\ \n')).toMatch(/ends with/);
+    expect(typedPromptProblem('Use C:\\dir\\x now.')).toBeUndefined();
     expect(typedPromptProblem('x'.repeat(16_385))).toMatch(/over/);
   });
 });
@@ -166,6 +169,10 @@ describe('the typing sequence', () => {
       [{ state: 'working' }, /still working/],
       [{ state: 'blocked' }, /waiting for you/],
       [{ sessionId: NEW }, /moved on/],
+      [{ state: undefined }, /no state/],
+      [{ state: 'failed' }, /not idle/],
+      [{ status: 'busy' }, /not idle/],
+      [{ status: undefined }, /no status/],
     ] as const) {
       const s = setup({ listing: () => ({ ok: true, rows: [row(overrides)] }) });
       const result = await s.runner.run({ sessionId: OLD, shortId: JOB, cwd: '/tmp' }, PROMPT);
@@ -173,6 +180,87 @@ describe('the typing sequence', () => {
       expect((result as { error: string }).error).toMatch(pattern);
       expect(s.ptys).toEqual([]);
     }
+  });
+
+  it('types no Enter when the job turns blocked after /clear is typed and before its Enter', async () => {
+    const s = setup();
+    const run = s.runner.run({ sessionId: OLD, shortId: JOB, cwd: '/tmp' }, PROMPT);
+    const arm = setInterval(() => {
+      const pty = s.ptys[0];
+      if (pty === undefined) return;
+      pty.onWrite = (d) => {
+        if (d === '/clear') s.listing.value = () => ({ ok: true, rows: [row({ state: 'blocked', status: 'waiting' })] });
+      };
+      clearInterval(arm);
+    }, 0);
+    const result = await run;
+    expect(result).toMatchObject({ ok: false, status: 409, typed: true });
+    expect((result as { error: string }).error).toMatch(/waiting for you/);
+    expect(s.ptys[0]!.writes).toEqual(['/clear']);
+    expect(s.ptys[0]!.killed.length).toBeGreaterThan(0);
+  });
+
+  it('types no /clear when the job turns blocked after the listing and before the keystrokes', async () => {
+    let reads = 0;
+    const s = setup({ listing: () => ({ ok: true, rows: [row(++reads > 1 ? { state: 'blocked', status: 'waiting' } : {})] }) as AgentsResult });
+    const result = await s.runner.run({ sessionId: OLD, shortId: JOB, cwd: '/tmp' }, PROMPT);
+    expect(result).toMatchObject({ ok: false, status: 409 });
+    expect(s.ptys[0]!.writes).toEqual([]);
+  });
+
+  it('types no paste and no Enter when the job turns blocked after the new id appears', async () => {
+    const s = setup();
+    const run = s.runner.run({ sessionId: OLD, shortId: JOB, cwd: '/tmp' }, PROMPT);
+    const arm = setInterval(() => {
+      const pty = s.ptys[0];
+      if (pty === undefined) return;
+      pty.onWrite = (d) => {
+        if (d !== '\r') return;
+        let reads = 0;
+        s.listing.value = () => ({ ok: true, rows: [row(++reads > 1 ? { sessionId: NEW, state: 'blocked', status: 'waiting' } : { sessionId: NEW })] });
+      };
+      clearInterval(arm);
+    }, 0);
+    const result = await run;
+    expect(result).toMatchObject({ ok: false, status: 409, typed: true });
+    expect((result as { error: string }).error).toMatch(/prompt was not typed/);
+    expect(s.ptys[0]!.writes).toEqual(['/clear', '\r']);
+  });
+
+  it('does not send the prompt’s Enter when the job turns blocked after the paste', async () => {
+    const s = setup();
+    const run = s.runner.run({ sessionId: OLD, shortId: JOB, cwd: '/tmp' }, PROMPT);
+    const arm = setInterval(() => {
+      const pty = s.ptys[0];
+      if (pty === undefined) return;
+      pty.onWrite = (d) => {
+        if (d === '\r' && pty.writes.length === 2) s.listing.value = () => ({ ok: true, rows: [row({ sessionId: NEW })] });
+        if (d.startsWith('\u001b[200~')) s.listing.value = () => ({ ok: true, rows: [row({ sessionId: NEW, state: 'blocked', status: 'waiting' })] });
+      };
+      clearInterval(arm);
+    }, 0);
+    const result = await run;
+    expect(result).toMatchObject({ ok: false, status: 409, typed: true });
+    expect(s.ptys[0]!.writes).toEqual(['/clear', '\r', `\u001b[200~${PROMPT}\u001b[201~`]);
+  });
+
+  it('close() stops a run in flight: nothing further is typed and the PTY is killed', async () => {
+    const s = setup();
+    const run = s.runner.run({ sessionId: OLD, shortId: JOB, cwd: '/tmp' }, PROMPT);
+    const arm = setInterval(() => {
+      const pty = s.ptys[0];
+      if (pty === undefined) return;
+      pty.onWrite = (d) => {
+        if (d === '/clear') void s.runner.close();
+      };
+      clearInterval(arm);
+    }, 0);
+    const result = await run;
+    expect(result).toMatchObject({ ok: false, status: 409 });
+    expect((result as { error: string }).error).toMatch(/closing/);
+    expect(s.ptys[0]!.writes).toEqual(['/clear']);
+    expect(s.ptys[0]!.killed.length).toBeGreaterThan(0);
+    expect(await s.runner.run({ sessionId: OLD, shortId: JOB, cwd: '/tmp' }, PROMPT)).toMatchObject({ ok: false, status: 409 });
   });
 
   it('says so when the job is not listed, or claude agents fails, or the PTY will not start', async () => {
@@ -226,7 +314,7 @@ describe('the routes', () => {
     const app = new Hono();
     registerClearAndContinue(app, {
       snapshots: { latest: () => snapshot },
-      runner: { run: async (job, prompt) => (calls.push({ job, prompt }), options.result ?? { ok: true, sessionId: NEW }) },
+      runner: { run: async (job, prompt) => (calls.push({ job, prompt }), options.result ?? { ok: true, sessionId: NEW }), close: async () => {} },
       spawned: { has: () => options.spawned ?? true },
       lineage,
     });
@@ -282,6 +370,18 @@ describe('the routes', () => {
     expect((await none.post(continuedPath(OLD), { shortId: '0f0f0f0f' })).status).toBe(409);
     expect((await r.post(continuedPath(OLD), { shortId: '../etc' })).status).toBe(400);
     expect((await r.post(continuedPath(OLD), { shortId: '0f0f0f0f' }, 'text/plain')).status).toBe(415);
+  });
+
+  it('links only a session that proposes its own hand-off now', async () => {
+    const plain = routes(session({}, { kind: 'proposal', key: KEY, folder: '/tmp', prompt: 'Fix the test.' }));
+    expect((await plain.post(continuedPath(OLD), { shortId: '0f0f0f0f' })).status).toBe(409);
+    const other = routes(session({}, { kind: 'proposal', key: KEY, folder: '/tmp', prompt: `${continuesLine(NEW)}\nDo it.` }));
+    expect((await other.post(continuedPath(OLD), { shortId: '0f0f0f0f' })).status).toBe(409);
+    const none = routes(session({}, null));
+    expect((await none.post(continuedPath(OLD), { shortId: '0f0f0f0f' })).status).toBe(409);
+    const unreadable = routes(session({}, { kind: 'unreadable', key: KEY, problem: 'No.' }));
+    expect((await unreadable.post(continuedPath(OLD), { shortId: '0f0f0f0f' })).status).toBe(409);
+    expect(plain.lineage.lines()).toEqual([]);
   });
 });
 

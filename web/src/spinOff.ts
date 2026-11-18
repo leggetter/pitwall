@@ -18,7 +18,7 @@
 // - The index clears a proposal when the session's next turn ends without one, or a prompt comes.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { isHandoffOf } from '../../src/shared/handoff.js';
+import { endsWithBackslash, isHandoffOf } from '../../src/shared/handoff.js';
 import { clearAndContinuePath, continuedPath, spinOffPath, type ClearAndContinueResult, type SessionGroup, type SessionSummary, type SpinOff, type SpinOffCheck } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
 import { browserStorage, type StorageSource } from './groupState.js';
@@ -181,6 +181,7 @@ export function canClearAndContinue(session: SessionSummary, spinOff: SpinOff): 
   return (
     spinOff.kind === 'proposal' &&
     isHandoffOf(session.sessionId, spinOff.prompt) &&
+    !endsWithBackslash(spinOff.prompt) &&
     session.kind === 'background' &&
     session.shortId !== undefined &&
     session.alive &&

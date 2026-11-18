@@ -16,3 +16,9 @@ export function isHandoffOf(sessionId: string, prompt: string): boolean {
   const next = prompt[line.length];
   return next === undefined || next === '\n' || next === ' ';
 }
+
+/**
+ * Whether the last non-whitespace character of `prompt` is a backslash. Typed into Claude Code's input,
+ * backslash then Enter is its newline escape, so such a prompt would sit unsent (W168's review, F2).
+ */
+export const endsWithBackslash = (prompt: string): boolean => prompt.trimEnd().endsWith('\\');

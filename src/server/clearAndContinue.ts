@@ -34,7 +34,7 @@ import type { Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { AgentRow, AgentsSource } from '../index/agents.js';
 import { isRecord } from '../index/guards.js';
-import { isHandoffOf } from '../shared/handoff.js';
+import { endsWithBackslash, isHandoffOf } from '../shared/handoff.js';
 import { describeCodePoint, hiddenCharacter } from '../shared/hiddenText.js';
 import {
   clearAndContinuePath,
@@ -120,6 +120,8 @@ export interface ClearAndContinueOptions {
 
 export interface ClearAndContinue {
   run(job: ClearJob, prompt: string): Promise<ClearOutcome>;
+  /** Server shutdown: a run in flight types nothing further and kills its PTY; later runs are refused. */
+  close(): Promise<void>;
 }
 
 /**
@@ -134,6 +136,7 @@ export function typedPromptProblem(prompt: string): string | undefined {
   const first = prompt.trimStart()[0];
   if (first === '/') return 'The prompt starts with /, so Claude Code would run it as a slash command. Start a new session instead.';
   if (first === '!') return 'The prompt starts with !, so Claude Code would run it as a shell line. Start a new session instead.';
+  if (endsWithBackslash(prompt)) return 'The prompt ends with \\, which Claude Code reads with Enter as a new line, so it would sit unsent in the input box. Start a new session instead.';
   return undefined;
 }
 
@@ -141,9 +144,22 @@ export function createClearAndContinue(options: ClearAndContinueOptions): ClearA
   const timings: ClearTimings = { ...CLEAR_TIMINGS, ...options.timings };
   const claudeBin = options.claudeBin ?? 'claude';
   const now = options.now ?? Date.now;
-  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const baseSleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  /** A sleep that ends early on close() and then stops the run. */
+  const sleep = async (ms: number): Promise<void> => {
+    if (aborted) throw new Aborted(ABORTED);
+    await Promise.race([baseSleep(ms), new Promise<void>((resolve) => (wake = resolve))]);
+    if (aborted) throw new Aborted(ABORTED);
+  };
   // One at a time, server-wide: each holds a PTY and a job's input.
   let running = false;
+  // Server shutdown (F4): set by close(), which also wakes any sleep and kills the PTY of a run in flight.
+  let aborted = false;
+  let wake: (() => void) | undefined;
+  let killNow: (() => void) | undefined;
+  let current: Promise<unknown> | undefined;
+  const ABORTED = 'pitwall is closing, so Clear and continue stopped.';
+  class Aborted extends Error {}
 
   const fail = (status: 409 | 429 | 502 | 504, error: string, typed?: true): ClearOutcome => ({ ok: false, status, error, ...(typed === true ? { typed } : {}) });
 
@@ -155,10 +171,33 @@ export function createClearAndContinue(options: ClearAndContinueOptions): ClearA
     return rows.length === 1 ? { row: rows[0]! } : { gone: true };
   };
 
+  /**
+   * The job's row if it is still the idle job pitwall means to type into: the single background row
+   * with this short id, the expected session id, a worker, and exactly state done with status idle
+   * (an allowlist: a missing or unknown state, a turn, a dialog and a failed job all refuse). `typed`
+   * says in the error what has gone in so far.
+   */
+  const idleRow = async (job: ClearJob, sessionId: string, typed: string, before: boolean): Promise<{ row: AgentRow } | { outcome: ClearOutcome }> => {
+    const read = await readRow(job);
+    const hasTyped = typed !== 'Nothing was typed.';
+    const refuse = (why: string): { outcome: ClearOutcome } => ({ outcome: fail(409, `${why} ${typed}`, hasTyped ? true : undefined) });
+    if ('error' in read) return { outcome: fail(502, `${read.error} ${typed}`, hasTyped ? true : undefined) };
+    if ('gone' in read) return refuse('The job isn’t listed any more.');
+    const row = read.row;
+    if (row.sessionId !== sessionId) return refuse(before ? 'That job has moved on to another session since the card was drawn. Read its new state first.' : 'The job’s session id isn’t the one pitwall expected.');
+    if (row.pid === undefined) return refuse('The job has no running process, and attaching to it would restart it.');
+    if (row.state !== 'done' || row.status !== 'idle') {
+      const what = row.state === 'working' ? 'still working' : row.state === 'blocked' ? 'waiting for you' : `not idle (${row.state ?? 'no state'}, ${row.status ?? 'no status'})`;
+      return refuse(`The job is ${what}, so pitwall stopped before the next keystroke.`);
+    }
+    return { row };
+  };
+
   const run = async (job: ClearJob, prompt: string): Promise<ClearOutcome> => {
     const problem = typedPromptProblem(prompt);
     if (problem !== undefined) return fail(409, problem);
     if (!SAFE_SHORT_ID.test(job.shortId)) return fail(409, 'This session has no id that claude attach can use.');
+    if (aborted) return fail(409, ABORTED);
     if (running) return fail(429, 'Another Clear and continue is running. Try again in a moment.');
     running = true;
     let pty: PtyProcess | undefined;
@@ -166,13 +205,10 @@ export function createClearAndContinue(options: ClearAndContinueOptions): ClearA
     let killTimer: NodeJS.Timeout | undefined;
     try {
       // 1. The job as it is now: a worker, and not in a turn or waiting on a dialog.
-      const first = await readRow(job);
-      if ('error' in first) return fail(502, first.error);
-      if ('gone' in first) return fail(409, 'That job isn’t listed any more. Start a new session instead.');
+      const NOTHING = 'Nothing was typed.';
+      const first = await idleRow(job, job.sessionId, NOTHING, true);
+      if ('outcome' in first) return first.outcome;
       const before = first.row;
-      if (before.sessionId !== job.sessionId) return fail(409, 'That job has moved on to another session since the card was drawn. Read its new state first.');
-      if (before.pid === undefined) return fail(409, 'That job has no running process, and attaching to it would restart it. Start a new session instead.');
-      if (before.state === 'working' || before.state === 'blocked') return fail(409, `That job is ${before.state === 'working' ? 'still working' : 'waiting for you'}, so pitwall won’t type into it. Start a new session instead.`);
 
       // 2. The server's own PTY, for this job only.
       let lastData = now();
@@ -192,6 +228,13 @@ export function createClearAndContinue(options: ClearAndContinueOptions): ClearA
         return fail(502, `Couldn't start claude attach: ${(error as Error).message}`);
       }
       const started = pty;
+      killNow = () => {
+        try {
+          started.kill();
+        } catch {
+          // Already gone.
+        }
+      };
       started.onData((data) => {
         seen = true;
         lastData = now();
@@ -213,9 +256,14 @@ export function createClearAndContinue(options: ClearAndContinueOptions): ClearA
       if (exited) return fail(409, '`claude attach` ended before pitwall could type. Nothing was typed.');
       if (!bracketed) return fail(409, 'The job’s terminal didn’t turn on bracketed paste, so pitwall can’t type a multi-line prompt as one message. Nothing was typed.');
 
-      // 4. /clear, then Enter as its own write.
+      // 4. /clear, then Enter as its own write. The job is read again before each keystroke group, so a
+      // job that turned to a dialog meanwhile gets no Enter (a dialog's default is Yes).
+      const beforeClear = await idleRow(job, job.sessionId, NOTHING, true);
+      if ('outcome' in beforeClear) return beforeClear.outcome;
       started.write('/clear');
       await sleep(timings.enterGapMs);
+      const beforeEnter = await idleRow(job, job.sessionId, '“/clear” was typed but not run: check the job’s input box.', false);
+      if ('outcome' in beforeEnter) return beforeEnter.outcome;
       started.write('\r');
 
       // 5. Wait for the same job to list a new session id, with a worker.
@@ -235,14 +283,20 @@ export function createClearAndContinue(options: ClearAndContinueOptions): ClearA
           continue;
         }
         misses = 0;
-        if (next.row.sessionId !== job.sessionId && next.row.pid !== undefined) after = next.row;
+        // Taken only when idle too: a new id on a job that is working or waiting is read again, not typed into.
+        if (next.row.sessionId !== job.sessionId && next.row.pid !== undefined && next.row.state === 'done' && next.row.status === 'idle') after = next.row;
       }
 
       // 6. The prompt, bracketed, then Enter.
       await sleep(timings.settleMs);
       if (exited) return fail(409, '`claude attach` ended after /clear, so the prompt was not typed. The job has a new session; check it.');
+      const newId = after.sessionId;
+      const beforePaste = await idleRow(job, newId, '/clear ran; the prompt was not typed.', false);
+      if ('outcome' in beforePaste) return beforePaste.outcome;
       started.write(`${PASTE_START}${prompt}${PASTE_END}`);
       await sleep(timings.enterGapMs);
+      const beforePromptEnter = await idleRow(job, newId, 'The prompt was pasted but not sent: check the job’s input box.', false);
+      if ('outcome' in beforePromptEnter) return beforePromptEnter.outcome;
       started.write('\r');
       await sleep(timings.afterPromptMs);
 
@@ -250,6 +304,7 @@ export function createClearAndContinue(options: ClearAndContinueOptions): ClearA
       options.lineage?.record({ from: job.sessionId, to: after.sessionId, how: 'clear', job: job.shortId, cwd: after.cwd });
       return { ok: true, sessionId: after.sessionId };
     } catch (error) {
+      if (error instanceof Aborted) return fail(409, error.message);
       return fail(502, `Clear and continue stopped: ${(error as Error).message}`);
     } finally {
       // Closed on every path: SIGHUP detaches (the job keeps running, spike 014), SIGKILL if it lingers.
@@ -271,10 +326,23 @@ export function createClearAndContinue(options: ClearAndContinueOptions): ClearA
         closing.onExit(() => clearTimeout(killTimer));
       }
       running = false;
+      killNow = undefined;
     }
   };
 
-  return { run };
+  return {
+    run: (job, prompt) => {
+      const promise = run(job, prompt);
+      current = promise;
+      return promise;
+    },
+    async close() {
+      aborted = true;
+      wake?.();
+      killNow?.();
+      await current?.catch(() => undefined);
+    },
+  };
 }
 
 // --- The routes ------------------------------------------------------------------------------------
@@ -352,6 +420,11 @@ export function registerClearAndContinue(app: Hono, sources: ClearRouteSources):
     if (!body.ok) return continuedAnswer(c, { ok: false, error: body.error }, body.status);
     const shortId = body.value.shortId as string;
     if (!JOB_ID.test(shortId)) return continuedAnswer(c, { ok: false, error: 'The body must be { shortId }, a job’s short id.' }, 400);
+    // Only for a session that proposes its own hand-off now, so the link can't name just any session.
+    const proposed = lookup.session.spinOff;
+    if (proposed?.kind !== 'proposal' || !isHandoffOf(lookup.session.sessionId, proposed.prompt)) {
+      return continuedAnswer(c, { ok: false, error: 'That session doesn’t propose a hand-off now, so pitwall won’t link a session to it.' }, 409);
+    }
     // Only a session this pitwall started a moment ago, so the page can't link two sessions that merely exist.
     if (sources.spawned?.has(shortId) !== true || sources.lineage === undefined) {
       return continuedAnswer(c, { ok: false, error: 'pitwall didn’t start that session a moment ago, so it won’t link it.' }, 409);

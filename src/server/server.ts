@@ -542,6 +542,8 @@ export async function startServerWithInternals(
           closing = true;
         }),
         attach.close(),
+        // A Clear and continue in flight types nothing further and kills its PTY (W168).
+        clearAndContinue.close(),
         relay.close(),
         // gh and git run in a session of their own, so nothing else stops them: SIGTERM, then the temp folder removed.
         clone.close(),
