@@ -794,6 +794,15 @@ export function unwrapPastes(text: string): string {
 }
 
 /**
+ * Removes the paste tags and nothing else, so the pasted text keeps its own lines,
+ * indents and runs of spaces: the Session view's conversation, which shows a prompt
+ * as typed (W204). unwrapPastes() is the one-line form, for the row.
+ */
+export function removePasteTags(text: string): string {
+  return text.includes('pasted_content') ? text.replace(PASTE_TAG, '') : text;
+}
+
+/**
  * A user entry's prompt, whole and trimmed, or undefined when the entry isn't
  * one the user typed: meta entries (including cross-session messages), compact
  * summaries, sidechains, tool results, entries whose `origin.kind` marks them
