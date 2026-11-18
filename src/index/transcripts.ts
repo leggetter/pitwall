@@ -765,12 +765,32 @@ const NOT_A_PROMPT_PREFIXES = [
 ];
 
 /**
- * A user entry's prompt, truncated to USER_PROMPT_MAX characters, or undefined
- * when the entry isn't one the user typed, by promptTextOf()'s rule.
+ * A user entry's prompt, its pasted text unwrapped (unwrapPastes()), truncated
+ * to USER_PROMPT_MAX characters, or undefined when the entry isn't one the user
+ * typed, by promptTextOf()'s rule. lastUserPrompt: the session row's "You:" line
+ * and its hover (W203).
  */
 export function userPromptOf(entry: Record<string, unknown>): string | undefined {
   const text = promptTextOf(entry);
-  return text === undefined ? undefined : truncate(text, USER_PROMPT_MAX);
+  if (text === undefined) return undefined;
+  const unwrapped = unwrapPastes(text);
+  return unwrapped === '' ? undefined : truncate(unwrapped, USER_PROMPT_MAX);
+}
+
+/**
+ * The `<pasted_content id="…">` and `</pasted_content>` tags Claude Code wraps
+ * around text pasted into a prompt (seen in 2.1.x transcripts; internal and
+ * undocumented). An `id` attribute or none; nothing else is matched.
+ */
+const PASTE_TAG = /<pasted_content(?:\s+id="[^"<>]*")?\s*>|<\/pasted_content\s*>/g;
+
+/**
+ * Removes the paste tags and keeps the pasted text, so a one-line preview reads
+ * as what you typed and pasted, not markup (W203). Linear: the pattern has no
+ * nested repetition.
+ */
+export function unwrapPastes(text: string): string {
+  return text.includes('pasted_content') ? text.replace(PASTE_TAG, ' ').replace(/[ \t]{2,}/g, ' ').trim() : text;
 }
 
 /**
