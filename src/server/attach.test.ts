@@ -1080,7 +1080,10 @@ function openTerminals(): number[] {
 // W202: node-pty 1.1.0 left two terminal descriptors open in pitwall per spawn
 // on macOS, however the attach ended, until the machine ran out of PTYs. Real
 // attaches through the socket, with a stand-in for `claude attach` that waits
-// for a line, then exits.
+// for a line, then exits. Only macOS's spawn leaks: on Linux, where CI runs,
+// node-pty forks with forkpty and closes both itself, so this passes there with
+// or without the fix and catches the leak only when run on a Mac.
+// src/server/pty.test.ts pins the release itself on every platform.
 describe.skipIf(process.platform === 'win32')('attaching and detaching through the real node-pty', () => {
   it('leaves no terminal open, whether the socket closes or the process ends on its own', async () => {
     const script = join(webRoot, 'claude-attach-stand-in.sh');
@@ -1120,6 +1123,19 @@ describe.skipIf(process.platform === 'win32')('attaching and detaching through t
       await client.closed;
       await waitFor(() => openTerminals().length === baseline.length, 5000);
     }
+    expect(openTerminals()).toEqual(baseline);
+
+    // Two at once: B's spawn, and its strays closing, leave A's PTY working.
+    const a = await attached(server.port);
+    await waitFor(() => a.text().includes('pitwall-test-attached'), 5000);
+    const b = await attached(server.port);
+    await waitFor(() => b.text().includes('pitwall-test-attached'), 5000);
+    expect(openTerminals().length).toBe(baseline.length + 2);
+    send(a, { type: 'input', data: 'done\r' });
+    expect(await a.next()).toEqual({ type: 'exit', code: 0 });
+    b.ws.close();
+    await Promise.all([a.closed, b.closed]);
+    await waitFor(() => openTerminals().length === baseline.length, 5000);
     expect(openTerminals()).toEqual(baseline);
   }, 30_000);
 });

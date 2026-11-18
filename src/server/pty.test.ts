@@ -156,6 +156,30 @@ describe('closing the terminals node-pty leaves open (W202)', () => {
     expect([...open.keys()].sort((a, b) => a - b)).toEqual([0, 1, 2, 5, 9, 12, 14]);
   });
 
+  it('keeps an earlier spawn\'s master open while a second spawn runs, and closes only the new strays', () => {
+    const open = new Map<number, boolean>([[0, true], [1, true], [2, true]]);
+    const { fds, closed } = fakeFds(open);
+    let spawns = 0;
+    const spawn = ptySpawner(
+      () => ({
+        helper: undefined,
+        spawn: (() => {
+          spawns += 1;
+          // The first spawn: spare 11, master 12, slave 13. The second, while 12 is still open: spare 11 again, master 14, slave 15.
+          const opened = spawns === 1 ? [11, 12, 13] : [11, 14, 15];
+          for (const fd of opened) open.set(fd, true);
+          return { fd: opened[1] } as unknown as PtyProcess;
+        }) as never,
+      }),
+      fds,
+    );
+    spawn('claude', ['attach', 'one'], OPTIONS);
+    expect(closed.sort()).toEqual([11, 13]);
+    spawn('claude', ['attach', 'two'], OPTIONS);
+    expect(closed.sort((a, b) => a - b)).toEqual([11, 11, 13, 15]);
+    expect([...open.keys()].sort((a, b) => a - b)).toEqual([0, 1, 2, 12, 14]);
+  });
+
   it('closes nothing when the master is not known, since it could be any of them', () => {
     const open = new Map<number, boolean>([[0, true]]);
     const { fds, closed } = fakeFds(open);
