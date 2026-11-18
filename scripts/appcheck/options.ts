@@ -85,7 +85,7 @@ Runs pitwall's headless app check against the production build. Run npm run buil
   --shots <mode>        key (default): each part's screenshots and every failure; failures; or none
   --pending             run the parts marked pending too
   --bail                stop at the first failed step
-  --timeout <minutes>   stop everything and fail after this long (default: 20)
+  --timeout <minutes>   stop everything and fail after this long (default: 40)
   --list                list the parts and exit
 
 The browser is CHROME_PATH, or chrome-headless-shell where npm run appcheck:install-shell puts it.
@@ -128,7 +128,7 @@ export function parseOptions(argv: readonly string[], repo: string): Options {
   const shots = values.get('--shots') ?? 'key';
   if (shots !== 'key' && shots !== 'failures' && shots !== 'none') throw new UsageError(`--shots: ${shots} isn't key, failures or none`);
 
-  const timeout = Number(values.get('--timeout') ?? 20);
+  const timeout = Number(values.get('--timeout') ?? 40);
   if (!(timeout > 0)) throw new UsageError('--timeout takes a number of minutes');
 
   const dist = resolve(values.get('--dist') ?? resolve(repo, 'dist'));

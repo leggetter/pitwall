@@ -16,7 +16,7 @@ npm run appcheck -- --out scratch/appcheck
   - `<dir>/shots/<part>/` holds each part's named screenshots.
   - `<dir>/failures/<part>/` holds a screenshot of the page as each failed step left it.
 - **Exit code:** 0 when every step passed, 1 when any failed, 2 when it couldn't run, such as with no build or no Chrome.
-- **Time:** about 12 minutes for a full run, 18 parts in 180 cases and about 1,600 steps, on the Mac it was written on (W111). One part at one size takes seconds.
+- **Time:** about 23 minutes for a full run, 264 cases and about 2,700 steps, on the Mac it was written on (M5.4's run, 2026-11-18; 12 minutes and 180 cases at W111). `--timeout` defaults to 40 minutes. One part at one size takes seconds.
 
 ## Running part of it
 
@@ -39,7 +39,7 @@ npm run appcheck -- --out <dir> --bail                       stop at the first f
 | `--dist <dir>` | The build to import pitwall's server code from. `dist` by default |
 | `--shots key\|failures\|none` | Every named screenshot and each failure's (the default), failures alone, or none |
 | `--pending` | Also run the parts marked pending |
-| `--timeout <minutes>` | Stop everything and fail after this long. 20 by default |
+| `--timeout <minutes>` | Stop everything and fail after this long. 40 by default |
 
 **The browser:** `CHROME_PATH`, when it's set. Otherwise `chrome-headless-shell` where `npm run appcheck:install-shell` puts it, `~/.cache/pitwall/chrome-headless-shell/155.0.8059.39/`. Otherwise `/Applications/Google Chrome.app`, which on macOS it then refuses, as the next section says.
 
