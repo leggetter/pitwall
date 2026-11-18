@@ -834,13 +834,12 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   /**
    * Your first to-do that follows no other, so it's due now whatever the lead to-do is (W166, W174): a
    * step of the session's, CI's or someone else's ahead of it doesn't hide it. Phil, 2026-11-09: a session
-   * showed Busy while two of his steps sat behind CI's. Not when the recap waits on another session,
-   * whose message would start its next turn, nor from a recap made before W166, which doesn't say which
-   * to-dos follow others.
+   * showed Busy while two of his steps sat behind CI's. Whatever `waitingOn` says, another session
+   * included: Phil, 2026-11-18, "Waiting on you" means there's an action you can take now that moves the
+   * session on. Not from a recap made before W166, which doesn't say which to-dos follow others.
    */
   function dueNow(full: SessionRecap): string | undefined {
     const recap = withoutOffered(full);
-    if (recap.waitingOn === 'another session') return undefined;
     if (recap.todos.some((todo) => todo.after === undefined)) return undefined;
     return recap.todos.find((todo) => todo.owner === 'you' && todo.after === false)?.text;
   }

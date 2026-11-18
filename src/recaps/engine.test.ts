@@ -1068,10 +1068,11 @@ describe('what the snapshot shows', () => {
       expect(later.h.engine.decorate(later.a).recap).toMatchObject({ forYou: 2, next: handoff[2]!.text });
     });
 
-    it("keeps W146's rule for a wait on another session and a recap from before W166", async () => {
+    it("keeps W146's rule for a recap from before W166, and since W174 a wait on another session doesn't hide your step", async () => {
       const { h, a } = await recapped({ todos: handoff, waitingOn: 'CI' });
+      // Phil, 2026-11-18: waiting on you means there's something you can do now, whatever else it waits on.
       const other = await recapped({ todos: handoff, waitingOn: 'another session' });
-      expect(other.h.engine.decorate(other.a)).not.toHaveProperty('needsYou');
+      expect(other.h.engine.decorate(other.a).needsYou).toEqual({ reason: 'recap', text: 'Push the hand-off commit' });
       const before = await recapped({ todos: handoff.map(({ text, owner }) => ({ text, owner })), waitingOn: 'CI' });
       expect(before.h.engine.decorate(before.a)).not.toHaveProperty('needsYou');
       for (const state of ['working', 'blocked'] as const) expect(before.h.engine.decorate({ ...before.a, state }), state).not.toHaveProperty('needsYou');
@@ -1139,7 +1140,7 @@ describe('what the snapshot shows', () => {
       expect(both.h.engine.decorate({ ...both.a, state: 'working' }).needsYou).toEqual({ reason: 'recap', text: todos[3]!.text });
     });
 
-    it('keeps an earlier reason, and a recap from before W166 and a wait on another session behave as before', async () => {
+    it('keeps an earlier reason, a recap from before W166 behaves as before, and a wait on another session counts', async () => {
       const { h, a } = await recapped({ todos, waitingOn: 'CI' });
       expect(h.engine.decorate({ ...a, state: 'working', needsYou: { reason: 'prompt' } }).needsYou).toEqual({ reason: 'prompt' });
       const old = await recapped({ todos: todos.map(({ text, owner }) => ({ text, owner })), waitingOn: 'CI' });
@@ -1149,8 +1150,12 @@ describe('what the snapshot shows', () => {
       oldYou.h.facts.set('a', { file: '/made-up/projects/a.jsonl', turnEnded: false });
       oldYou.h.engine.observe(new Map(oldYou.h.facts));
       expect(oldYou.h.engine.decorate({ ...oldYou.a, state: 'working' })).not.toHaveProperty('needsYou');
+      // Phil, 2026-11-18: your step that follows no other is due whatever the session waits on.
       const other = await recapped({ todos, waitingOn: 'another session' });
-      expect(other.h.engine.decorate({ ...other.a, state: 'working' })).not.toHaveProperty('needsYou');
+      expect(other.h.engine.decorate({ ...other.a, state: 'working' }).needsYou).toEqual({ reason: 'recap', text: todos[3]!.text });
+      // Nothing for you to do now: a wait on another session alone isn't one on you.
+      const none = await recapped({ todos: todos.slice(0, 3), waitingOn: 'another session' });
+      expect(none.h.engine.decorate({ ...none.a, state: 'working' })).not.toHaveProperty('needsYou');
     });
 
     it('not from a stale recap', async () => {
