@@ -380,6 +380,23 @@ describe('a team request after your review (W171)', () => {
     for (const overrides of cases) expect(via(overrides, team), JSON.stringify(overrides)).toBeDefined();
   });
 
+  it('keeps it when more requests exist than were read, or it can’t tell, since one might name you', () => {
+    const more = { ...reviewRequests(team), pageInfo: { hasNextPage: true } };
+    expect(parsePullRequest(prNode({ reviewRequests: more, ...review('APPROVED', HEAD) }), 'review-requested', VIEWER)).toBeDefined();
+    for (const pageInfo of [undefined, null, {}, { hasNextPage: 'no' }]) {
+      const unsure = { ...reviewRequests(team), pageInfo };
+      expect(parsePullRequest(prNode({ reviewRequests: unsure, ...review('APPROVED', HEAD) }), 'review-requested', VIEWER), JSON.stringify(pageInfo)).toBeDefined();
+    }
+    // Past the first page with no team read, it can't say 'none' either.
+    expect(reviewRequestOf({ ...reviewRequests({ user: 'someone-else' }), pageInfo: { hasNextPage: true } }, VIEWER)).toBeUndefined();
+  });
+
+  it('keeps it beside an unreadable request, end to end, and for a head oid that isn’t GitHub’s lowercase form', () => {
+    expect(via(review('APPROVED', HEAD), team, { requestedReviewer: null } as never)).toBeDefined();
+    const upper = 'A'.repeat(40);
+    expect(via({ viewerLatestReview: { state: 'APPROVED', commit: { oid: upper } }, headRefOid: upper }, team)).toBeDefined();
+  });
+
   it('keeps it when a request cannot be read, since it might name you', () => {
     expect(reviewRequestOf({ nodes: [{ requestedReviewer: { __typename: 'Team', combinedSlug: 'example/reviewers' } }, { requestedReviewer: null }] }, VIEWER, true)).toEqual({ via: 'team', team: 'example/reviewers' });
   });

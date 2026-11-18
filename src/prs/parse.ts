@@ -336,14 +336,19 @@ function newestOfYou(timeline: unknown, me: string): { request: string | null; m
  *
  * W171: a team's request stays open after you've reviewed, so `reviewed` (your latest review is a
  * verdict on the head commit, reviewedOnHead()) also gives 'none' when every request was read and
- * none names you. A request that can't be read might, so it never counts as moved on.
+ * none names you. A request that can't be read might, so it never counts as moved on, and nor does
+ * a list with more requests than were read (`pageInfo.hasNextPage`), since one past the first
+ * PRS_REVIEW_REQUESTS_MAX might name you; the moved-on rule needs `hasNextPage: false` to be read.
  */
 export function reviewRequestOf(requests: unknown, viewer: string | undefined, reviewed = false): PullRequestReviewRequest | 'none' | undefined {
   if (!isRecord(requests) || !Array.isArray(requests.nodes)) return undefined;
   const me = viewer?.toLowerCase();
   /** Each team asked: its `org/slug`, or undefined when that can't be read. */
   const teams: (string | undefined)[] = [];
-  let unreadable = false;
+  const pageInfo = isRecord(requests.pageInfo) ? requests.pageInfo : undefined;
+  // More requests than were read: one of them might name you.
+  let unreadable = pageInfo?.hasNextPage === true;
+  const complete = pageInfo?.hasNextPage === false;
   for (const node of requests.nodes) {
     const reviewer = isRecord(node) ? node.requestedReviewer : undefined;
     if (!isRecord(reviewer) || typeof reviewer.__typename !== 'string') {
@@ -360,7 +365,7 @@ export function reviewRequestOf(requests: unknown, viewer: string | undefined, r
   // A login that couldn't be read can't rule out a request of you by name.
   if (me === undefined) return undefined;
   if (teams.length === 0) return unreadable ? undefined : 'none';
-  if (reviewed && !unreadable) return 'none';
+  if (reviewed && complete && !unreadable) return 'none';
   const [only] = teams;
   return teams.length === 1 && only !== undefined ? { via: 'team', team: only } : { via: 'team' };
 }

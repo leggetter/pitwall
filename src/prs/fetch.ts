@@ -141,6 +141,7 @@ export const PRS_FRAGMENT = `fragment pr on PullRequest {
 
 /** For the review-requested search only: who was asked, so pitwall can say whether it was you or a team. */
 export const PRS_REVIEW_REQUESTS = `reviewRequests(first: ${PRS_REVIEW_REQUESTS_MAX}) {
+          pageInfo { hasNextPage }
           nodes {
             requestedReviewer {
               __typename
