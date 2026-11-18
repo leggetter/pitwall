@@ -17,6 +17,7 @@ import {
   isSafeSessionId,
   isTypedPrompt,
   readNewestEntries,
+  removePasteTags,
   setNameOf,
   stripSystemReminders,
   TITLE_MAX,
@@ -108,6 +109,13 @@ describe('userPromptOf', () => {
     expect(userPromptOf(user('<pasted_content id="50a5"></pasted_content>'))).toBeUndefined();
     // Other markup is left alone.
     expect(userPromptOf(user('keep <b>this</b> as typed'))).toBe('keep <b>this</b> as typed');
+  });
+
+  it('removePasteTags drops only the tags, keeping lines and indents (W204)', () => {
+    expect(removePasteTags('<pasted_content>\n  a\n\n    b\n</pasted_content >')).toBe('\n  a\n\n    b\n');
+    expect(removePasteTags('stray </pasted_content> close')).toBe('stray  close');
+    expect(removePasteTags('<pasted_content class="x">kept</pasted_content>')).toBe('<pasted_content class="x">kept');
+    expect(removePasteTags('no tags here')).toBe('no tags here');
   });
 
   it('truncates after unwrapping, so the tags spend none of the budget (W203)', () => {
