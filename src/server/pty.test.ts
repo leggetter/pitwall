@@ -2,7 +2,7 @@ import { chmodSync, lstatSync, mkdirSync, mkdtempSync, rmSync, statSync, symlink
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { findSpawnHelper, makeExecutable, ptySpawner, type PtyProcess } from './pty.js';
+import { closeStrayTerminals, findSpawnHelper, makeExecutable, ptySpawner, type FdTable, type PtyProcess } from './pty.js';
 
 let dir: string | undefined;
 afterEach(() => {
@@ -108,5 +108,120 @@ describe('ptySpawner', () => {
     spawn('/bin/echo', [], options);
     expect(modesAtSpawn).toEqual([0o755, 0o755]);
     expect(loads).toBe(1);
+  });
+});
+
+/**
+ * A made-up descriptor table: `open` maps each descriptor to whether it's a terminal. A spawn
+ * adds what node-pty 1.1.0's macOS spawn leaves (W202): the master, the slave and a spare /dev/ptmx.
+ */
+function fakeFds(open: Map<number, boolean>) {
+  const closed: number[] = [];
+  const fds: FdTable = {
+    list: () => [...open.keys()],
+    isTerminal: (fd) => open.get(fd) ?? false,
+    close: (fd) => {
+      closed.push(fd);
+      open.delete(fd);
+    },
+  };
+  return { fds, closed };
+}
+
+const OPTIONS = { cols: 80, rows: 24, cwd: '/', env: {}, name: 'xterm-256color' };
+
+describe('closing the terminals node-pty leaves open (W202)', () => {
+  /** A spawner whose spawn opens `opened` (descriptor, is a terminal) and returns a PTY whose master is `master`. */
+  function leakySpawner(open: Map<number, boolean>, fds: FdTable, opened: [number, boolean][], master: unknown) {
+    return ptySpawner(
+      () => ({
+        helper: undefined,
+        spawn: (() => {
+          for (const [fd, terminal] of opened) open.set(fd, terminal);
+          return { fd: master } as unknown as PtyProcess;
+        }) as never,
+      }),
+      fds,
+    );
+  }
+
+  it('closes each terminal the spawn opened except the master, and nothing else', () => {
+    // Already open: stdio, a terminal pitwall was started from, another attach's master.
+    const open = new Map<number, boolean>([[0, true], [1, true], [2, true], [5, false], [9, true]]);
+    const { fds, closed } = fakeFds(open);
+    // The spare /dev/ptmx (11), the master (12), the slave (13), and the exit watcher's kqueue (14).
+    const spawn = leakySpawner(open, fds, [[11, true], [12, true], [13, true], [14, false]], 12);
+    spawn('claude', ['attach', 'abc'], OPTIONS);
+    expect(closed.sort()).toEqual([11, 13]);
+    expect([...open.keys()].sort((a, b) => a - b)).toEqual([0, 1, 2, 5, 9, 12, 14]);
+  });
+
+  it('keeps an earlier spawn\'s master open while a second spawn runs, and closes only the new strays', () => {
+    const open = new Map<number, boolean>([[0, true], [1, true], [2, true]]);
+    const { fds, closed } = fakeFds(open);
+    let spawns = 0;
+    const spawn = ptySpawner(
+      () => ({
+        helper: undefined,
+        spawn: (() => {
+          spawns += 1;
+          // The first spawn: spare 11, master 12, slave 13. The second, while 12 is still open: spare 11 again, master 14, slave 15.
+          const opened = spawns === 1 ? [11, 12, 13] : [11, 14, 15];
+          for (const fd of opened) open.set(fd, true);
+          return { fd: opened[1] } as unknown as PtyProcess;
+        }) as never,
+      }),
+      fds,
+    );
+    spawn('claude', ['attach', 'one'], OPTIONS);
+    expect(closed.sort()).toEqual([11, 13]);
+    spawn('claude', ['attach', 'two'], OPTIONS);
+    expect(closed.sort((a, b) => a - b)).toEqual([11, 11, 13, 15]);
+    expect([...open.keys()].sort((a, b) => a - b)).toEqual([0, 1, 2, 12, 14]);
+  });
+
+  it('closes nothing when the master is not known, since it could be any of them', () => {
+    const open = new Map<number, boolean>([[0, true]]);
+    const { fds, closed } = fakeFds(open);
+    leakySpawner(open, fds, [[11, true], [12, true]], undefined)('claude', [], OPTIONS);
+    expect(closed).toEqual([]);
+  });
+
+  it('closes nothing when the descriptors cannot be listed, before the spawn or after', () => {
+    const open = new Map<number, boolean>();
+    const { fds, closed } = fakeFds(open);
+    const unlistable: FdTable = { ...fds, list: () => { throw new Error('no /dev/fd'); } };
+    expect(() => leakySpawner(open, unlistable, [[11, true], [12, true]], 12)('claude', [], OPTIONS)).not.toThrow();
+    expect(closed).toEqual([]);
+    let calls = 0;
+    const failsAfter: FdTable = { ...fds, list: () => (calls++ === 0 ? [] : (() => { throw new Error('gone'); })()) };
+    leakySpawner(open, failsAfter, [[21, true], [22, true]], 22)('claude', [], OPTIONS);
+    expect(closed).toEqual([]);
+  });
+
+  it('never throws when a check or a close fails, and still closes the rest', () => {
+    const open = new Map<number, boolean>();
+    const { fds, closed } = fakeFds(open);
+    const flaky: FdTable = {
+      ...fds,
+      isTerminal: (fd) => {
+        if (fd === 11) throw new Error('EBADF');
+        return fds.isTerminal(fd);
+      },
+      close: (fd) => {
+        if (fd === 13) throw new Error('EBADF');
+        fds.close(fd);
+      },
+    };
+    const spawn = leakySpawner(open, flaky, [[11, true], [12, true], [13, true], [15, true]], 12);
+    expect(() => spawn('claude', [], OPTIONS)).not.toThrow();
+    expect(closed).toEqual([15]);
+  });
+
+  it('closeStrayTerminals leaves everything when there was no list from before the spawn', () => {
+    const open = new Map<number, boolean>([[11, true], [12, true]]);
+    const { fds, closed } = fakeFds(open);
+    closeStrayTerminals(fds, undefined, { fd: 12 } as unknown as PtyProcess);
+    expect(closed).toEqual([]);
   });
 });
