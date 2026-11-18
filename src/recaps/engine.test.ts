@@ -1038,7 +1038,7 @@ describe('what the snapshot shows', () => {
     it("leaves someone else's offered step ahead of yours as it was, and the row's next skips an offered one (W173's review)", async () => {
       const todos = [
         { text: 'Sam could re-run the load test, if they like', owner: 'someone else', after: false, optional: true },
-        { text: 'Merge #42', owner: 'you', after: false },
+        { text: 'Merge #42', owner: 'you', after: true },
       ];
       const { h, a } = await recapped({ todos, waitingOn: 'someone else' });
       expect(h.engine.decorate({ ...a, state: 'working' })).not.toHaveProperty('needsYou');
@@ -1068,26 +1068,100 @@ describe('what the snapshot shows', () => {
       expect(later.h.engine.decorate(later.a).recap).toMatchObject({ forYou: 2, next: handoff[2]!.text });
     });
 
-    it("keeps W146's rule for a job that isn't done, an interactive session, a wait on another session and a recap from before W166", async () => {
+    it("keeps W146's rule for a recap from before W166, and since W174 a wait on another session doesn't hide your step", async () => {
       const { h, a } = await recapped({ todos: handoff, waitingOn: 'CI' });
-      for (const state of ['working', 'blocked'] as const) expect(h.engine.decorate({ ...a, state }), state).not.toHaveProperty('needsYou');
-      expect(h.engine.decorate({ ...a, alive: false })).not.toHaveProperty('needsYou');
-      expect(h.engine.decorate({ ...a, kind: 'interactive' })).not.toHaveProperty('needsYou');
+      // Phil, 2026-11-18: waiting on you means there's something you can do now, whatever else it waits on.
       const other = await recapped({ todos: handoff, waitingOn: 'another session' });
-      expect(other.h.engine.decorate(other.a)).not.toHaveProperty('needsYou');
+      expect(other.h.engine.decorate(other.a).needsYou).toEqual({ reason: 'recap', text: 'Push the hand-off commit' });
       const before = await recapped({ todos: handoff.map(({ text, owner }) => ({ text, owner })), waitingOn: 'CI' });
       expect(before.h.engine.decorate(before.a)).not.toHaveProperty('needsYou');
+      for (const state of ['working', 'blocked'] as const) expect(before.h.engine.decorate({ ...before.a, state }), state).not.toHaveProperty('needsYou');
       const mixed = await recapped({ todos: [handoff[0], { text: handoff[1]!.text, owner: 'you' }], waitingOn: 'CI' });
       expect(mixed.h.engine.decorate(mixed.a)).not.toHaveProperty('needsYou');
+      // Finished and stale sessions stay out whatever the to-dos say.
+      expect(h.engine.decorate({ ...a, finished: true })).not.toHaveProperty('needsYou');
+      expect(h.engine.decorate({ ...a, stale: true })).not.toHaveProperty('needsYou');
     });
 
-    it('not while its turn runs, nor from a stale recap', async () => {
+    it('not from a stale recap, and, since W174, also while its turn runs', async () => {
       const { h, a } = await recapped({ todos: handoff, waitingOn: 'CI' });
       const newer = new Date(Date.parse(a.lastActivityAt!) + 1000).toISOString();
       expect(h.engine.decorate({ ...a, lastActivityAt: newer })).not.toHaveProperty('needsYou');
       h.facts.set('a', { file: '/made-up/projects/a.jsonl', turnEnded: false });
       h.engine.observe(new Map(h.facts));
-      expect(h.engine.decorate(a)).not.toHaveProperty('needsYou');
+      expect(h.engine.decorate(a).needsYou).toEqual({ reason: 'recap', text: 'Push the hand-off commit' });
+    });
+  });
+
+  describe("a working session's to-dos for you (W174)", () => {
+    // Phil, 2026-11-09: the session's two to-dos, then CI's, then two of yours that follow no other.
+    const todos = [
+      { text: 'Review the build agent’s work', owner: 'session', after: false },
+      { text: 'Open the PR', owner: 'session', after: false },
+      { text: 'Check CI, then hand off', owner: 'CI', after: false },
+      { text: 'Name the post for the blog session', owner: 'you', after: false },
+      { text: 'Restart the second pitwall', owner: 'you', after: false },
+    ];
+
+    it('needs you for your first to-do that follows no other, in a working, blocked or done job, and in an interactive session', async () => {
+      const { h, a } = await recapped({ todos, waitingOn: 'CI' });
+      const want = { reason: 'recap', text: 'Name the post for the blog session' };
+      expect(h.engine.decorate({ ...a, state: 'working' }).needsYou).toEqual(want);
+      expect(h.engine.decorate({ ...a, state: 'blocked' }).needsYou).toEqual(want);
+      expect(h.engine.decorate({ ...a, state: 'done' }).needsYou).toEqual(want);
+      expect(h.engine.decorate({ ...a, kind: 'interactive' }).needsYou).toEqual(want);
+      expect(h.engine.decorate({ ...a, state: 'working' }).recap).toMatchObject({ waitingOn: 'CI', forYou: 2, next: want.text });
+    });
+
+    it('also while Claude Code says it is busy, or its transcript says the turn runs, whatever waitingOn says', async () => {
+      const { h, a } = await recapped({ todos, waitingOn: 'CI' });
+      expect(h.engine.decorate({ ...a, status: 'busy' }).needsYou).toMatchObject({ reason: 'recap' });
+      h.facts.set('a', { file: '/made-up/projects/a.jsonl', turnEnded: false });
+      h.engine.observe(new Map(h.facts));
+      expect(h.engine.decorate({ ...a, status: 'busy' }).needsYou).toMatchObject({ reason: 'recap', text: 'Name the post for the blog session' });
+      const nothing = await recapped({ todos, waitingOn: 'nothing' });
+      expect(nothing.h.engine.decorate({ ...nothing.a, state: 'working' }).needsYou).toMatchObject({ reason: 'recap' });
+    });
+
+    it("leaves W146's case out: yours after another's step", async () => {
+      const follows = [
+        { text: 'Merge #42', owner: 'someone else', after: false },
+        { text: 'Release the CLI once #42 ships', owner: 'you', after: true },
+      ];
+      const { h, a } = await recapped({ todos: follows, waitingOn: 'someone else' });
+      for (const state of ['working', 'blocked', 'done'] as const) expect(h.engine.decorate({ ...a, state }), state).not.toHaveProperty('needsYou');
+    });
+
+    it('leaves out an optional to-do of yours, and takes the next one that is not optional', async () => {
+      const offered = { text: 'Look over the diff first?', owner: 'you', after: false, optional: true };
+      const only = await recapped({ todos: [todos[2], offered], waitingOn: 'CI' });
+      expect(only.h.engine.decorate({ ...only.a, state: 'working' })).not.toHaveProperty('needsYou');
+      const both = await recapped({ todos: [todos[2], offered, todos[3]], waitingOn: 'CI' });
+      expect(both.h.engine.decorate({ ...both.a, state: 'working' }).needsYou).toEqual({ reason: 'recap', text: todos[3]!.text });
+    });
+
+    it('keeps an earlier reason, a recap from before W166 behaves as before, and a wait on another session counts', async () => {
+      const { h, a } = await recapped({ todos, waitingOn: 'CI' });
+      expect(h.engine.decorate({ ...a, state: 'working', needsYou: { reason: 'prompt' } }).needsYou).toEqual({ reason: 'prompt' });
+      const old = await recapped({ todos: todos.map(({ text, owner }) => ({ text, owner })), waitingOn: 'CI' });
+      expect(old.h.engine.decorate({ ...old.a, state: 'working' })).not.toHaveProperty('needsYou');
+      // Before W174 a working session's recap that waits on you was out too, and still is without `after`.
+      const oldYou = await recapped({ todos: [{ text: 'Pick one', owner: 'you' }], waitingOn: 'you' });
+      oldYou.h.facts.set('a', { file: '/made-up/projects/a.jsonl', turnEnded: false });
+      oldYou.h.engine.observe(new Map(oldYou.h.facts));
+      expect(oldYou.h.engine.decorate({ ...oldYou.a, state: 'working' })).not.toHaveProperty('needsYou');
+      // Phil, 2026-11-18: your step that follows no other is due whatever the session waits on.
+      const other = await recapped({ todos, waitingOn: 'another session' });
+      expect(other.h.engine.decorate({ ...other.a, state: 'working' }).needsYou).toEqual({ reason: 'recap', text: todos[3]!.text });
+      // Nothing for you to do now: a wait on another session alone isn't one on you.
+      const none = await recapped({ todos: todos.slice(0, 3), waitingOn: 'another session' });
+      expect(none.h.engine.decorate({ ...none.a, state: 'working' })).not.toHaveProperty('needsYou');
+    });
+
+    it('not from a stale recap', async () => {
+      const { h, a } = await recapped({ todos, waitingOn: 'CI' });
+      const newer = new Date(Date.parse(a.lastActivityAt!) + 1000).toISOString();
+      expect(h.engine.decorate({ ...a, state: 'working', lastActivityAt: newer })).not.toHaveProperty('needsYou');
     });
   });
 

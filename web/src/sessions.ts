@@ -122,7 +122,8 @@ export interface StatusBadge {
  * - 'restarted': "Waiting for your prompt".
  * - 'asked': "Asked you", subtle, as before W69.
  * - 'recap': "Waiting on you", subtle as Asked you is (M5, W111): its current recap says it's waiting
- *   on you, as a job Claude Code calls done can be (Phil, 2026-10-29). It takes Done's place.
+ *   on you, as a job Claude Code calls done can be (Phil, 2026-10-29). It takes Done's place. A session
+ *   that is also busy (W174) keeps Busy's 8 px dot before the label.
  * A job Claude Code calls done whose current recap says it waits on someone else, on CI or on another
  * session shows "Waiting on someone else", "Waiting on CI" or "Waiting on another session" in Done's
  * place, subtle and neutral, never needing you (W170): "it's still marked as DONE" (Phil, 2026-11-09).
@@ -155,7 +156,8 @@ function needsBadge(session: SessionSummary): StatusBadge {
     case 'asked':
       return { status: 'asked', label: 'Asked you', look: 'subtle-warning' };
     case 'recap':
-      return { status: 'recap', label: 'Waiting on you', look: 'subtle-warning' };
+      // At work too (W174): the busy dot stays, so a session that is busy and waits on you shows both.
+      return { status: 'recap', label: 'Waiting on you', look: 'subtle-warning', ...(isBusy(session) ? { dot: true } : {}) };
   }
   // A stale blocked job keeps its "Blocked" text but loses the attention styling.
   if (session.state === 'blocked' && session.stale) return { status: 'blocked-stale', label: `Blocked${reason}`, look: 'outline' };

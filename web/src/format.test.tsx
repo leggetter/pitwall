@@ -205,6 +205,18 @@ describe('session helpers', () => {
     }
   });
 
+  it("a busy session whose recap waits on you shows Waiting on you with Busy's dot (W174); an idle one has no dot", () => {
+    const recap = { reason: 'recap' as const, text: 'Name the post' };
+    const busy = statusBadge(session({ status: 'busy', needsYou: recap }));
+    expect({ status: busy.status, label: busy.label, look: busy.look, dot: busy.dot === true }).toEqual({ status: 'recap', label: 'Waiting on you', look: 'subtle-warning', dot: true });
+    const working = statusBadge(session({ kind: 'background', state: 'working', status: undefined, needsYou: recap }));
+    expect(working).toMatchObject({ status: 'recap', dot: true });
+    const idle = statusBadge(session({ status: 'idle', needsYou: recap }));
+    expect({ status: idle.status, dot: idle.dot === true }).toEqual({ status: 'recap', dot: false });
+    // Flagged, it keeps the text and the dot, outlined.
+    expect(statusBadge(session({ status: 'busy', needsYou: recap, flagged: { at: new Date(0).toISOString() } as never }))).toMatchObject({ label: 'Waiting on you', look: 'outline', dot: true });
+  });
+
   it('rowStatusBadge leaves out Idle, which only the session view shows, and nothing else', () => {
     expect(rowStatusBadge(session({ status: 'idle' }))).toBeUndefined();
     expect(rowStatusBadge(session({ status: undefined }))?.label).toBe('Unknown');
