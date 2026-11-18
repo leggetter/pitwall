@@ -97,7 +97,7 @@ import {
   type ConversationPage,
 } from '../shared/protocol.js';
 import { checkDirectory, CommandSlots, createResumeRunner, createSpawnRunner, DEFAULT_MAX_CONCURRENT_COMMANDS, registerActions, type ActionOptions } from './actions.js';
-import { createAttachServer, type AttachOptions } from './attach.js';
+import { createAttachServer, REREAD_TIMEOUT_MS, type AttachOptions } from './attach.js';
 import { AttachmentStore, registerAttachments, type AttachmentStoreOptions } from './attachments.js';
 import { createCloneRoute, type CloneOptions } from './clone.js';
 import { registerDirectories, type DirectoryOptions } from './directories.js';
@@ -123,6 +123,7 @@ import { createLineageView, LineageStore } from './lineage.js';
 import { createSnoozeView, registerSnoozes, SnoozeStore } from './snoozes.js';
 import { SessionLaunches } from './sessionLaunches.js';
 import { registerSpinOffs } from './spinOffRoutes.js';
+import { createClearAndContinue, type ClearTimings, registerClearAndContinue } from './clearAndContinue.js';
 import {
   bearerToken,
   identifyCredential,
@@ -217,6 +218,8 @@ export interface ServerInternals {
    * For the attach socket. Tests pass a fake PTY spawner and agents source,
    * so they never run `claude`.
    */
+  /** Clear and continue's waits (W168): tests shorten them. */
+  clearTimings?: Partial<ClearTimings>;
   attach?: Partial<Pick<AttachOptions, 'spawnPty' | 'env' | 'agents' | 'spawned' | 'resumed' | 'processAlive' | 'now'>>;
   /** The directory list (W70, directories.ts): tests pass a wrapped readdir, a clock and limits. */
   directories?: DirectoryOptions;
@@ -404,6 +407,15 @@ export async function startServerWithInternals(
   // (W79), spawn, stop and remove (W12), resume (W66), the editors and open in an editor (W72), whose
   // detection starts here, end session (W90), which never ends the relay or the supervisor, the relay
   // (W11), recaps (W110), the supervisor's routes and its MCP server (W112, W113), then any a test adds.
+  // Clear and continue (W168): types /clear and a hand-off's prompt into a job through its own attach PTY.
+  const clearAndContinue = createClearAndContinue({
+    spawnPty: internals.attach?.spawnPty ?? spawnPty,
+    token,
+    ...(internals.attach?.env === undefined ? {} : { env: internals.attach.env }),
+    agents: internals.attach?.agents ?? createAgentsSource({ timeoutMs: REREAD_TIMEOUT_MS }),
+    lineage,
+    ...(internals.clearTimings === undefined ? {} : { timings: internals.clearTimings }),
+  });
   const routes = (app: Hono) => {
     registerDirectories(app, indexer, internals.directories);
     registerPrs(app, prs);
@@ -424,6 +436,7 @@ export async function startServerWithInternals(
     registerFlags(app, { snapshots: flagged, store: flags, relay, recaps });
     registerSnoozes(app, { snapshots: snoozed, store: snoozes });
     registerSpinOffs(app, { snapshots: indexer });
+    registerClearAndContinue(app, { snapshots: indexer, runner: clearAndContinue, spawned, lineage });
     registerSupervisor(app, supervisor, supervisorActions);
     registerMcp(app, mcp);
     registerUsage(app, options.usage);
@@ -529,6 +542,8 @@ export async function startServerWithInternals(
           closing = true;
         }),
         attach.close(),
+        // A Clear and continue in flight types nothing further and kills its PTY (W168).
+        clearAndContinue.close(),
         relay.close(),
         // gh and git run in a session of their own, so nothing else stops them: SIGTERM, then the temp folder removed.
         clone.close(),

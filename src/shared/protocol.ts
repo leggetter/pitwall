@@ -77,6 +77,37 @@ export function spinOffPath(sessionId: string): string {
 }
 
 /**
+ * Clear and continue (W168): for a hand-off from a background job, pitwall types `/clear` into the job
+ * through the server's own attach PTY, waits until `claude agents --json` lists the job with a new
+ * session id, then types the proposal's prompt, bracketed. The body is { key }, the proposal the card
+ * showed, and the proposal is the snapshot's, never the request's. A POST: the apiKey and Origin checks hold.
+ */
+export function clearAndContinuePath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/clear-and-continue`;
+}
+
+/**
+ * The answer to a POST to clearAndContinuePath(): the job's new session id, or why nothing was typed
+ * or why it stopped. After a refusal the card still offers Start, which starts a new session instead.
+ * `typed` is true when the prompt was typed before the failure, so the card can say the job may have
+ * the prompt already; it is never set when the failure came before the prompt.
+ */
+export type ClearAndContinueResult = { ok: true; sessionId: string } | { ok: false; error: string; typed?: true };
+
+/**
+ * Tell pitwall that a session it started carries on from another (W168): the body is { shortId }, the
+ * short id `claude --bg` reported for the session just started from a hand-off card's Start. The
+ * server accepts only a short id it started a moment ago, and records the link (lineage `continue`)
+ * once the listing gives that job its session id.
+ */
+export function continuedPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/continued`;
+}
+
+/** The answer to a POST to continuedPath(). */
+export type ContinuedResult = { ok: true } | { ok: false; error: string };
+
+/**
  * Why a session needs you, judged from its context rather than from Claude
  * Code's state alone (spike 007; Phil, 2026-10-27). The first reason that
  * holds, in this order:

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { isHandoffOf } from '../shared/handoff.js';
 import { SPAWN_PROMPT_MAX, SPIN_OFF_FOLDER_MAX, SPIN_OFF_NAME_MAX } from '../shared/protocol.js';
 import { detectSpinOff } from './spinOff.js';
 
@@ -156,5 +157,38 @@ describe('the pitwall plugin’s skill (W176)', () => {
       name: 'fix-export-test',
       prompt: expect.stringMatching(/^Fix the flaky export test[\s\S]*tell me what the cause was\.$/),
     });
+  });
+});
+
+describe('the hand-off skill (W168)', () => {
+  it('ends with a block this parser reads as a hand-off: its prompt starts with the continues line', () => {
+    const skill = readFileSync(new URL('../../.claude/skills/handoff/SKILL.md', import.meta.url), 'utf8');
+    expect(skill).toMatch(/^---\nname: handoff\n/);
+    expect(skill).not.toMatch(/Run `\/clear`, then/);
+    const example = /^ {3}```spin-off\n[\s\S]*?\n {3}```$/m.exec(skill)?.[0];
+    expect(example).toBeDefined();
+    const unindented = (example as string).replace(/^ {3}/gm, '').replace('<this repo\'s absolute path, from git rev-parse --show-toplevel>', '/home/dev/code/pitwall').replace('<this session\'s id>', '00000000-0000-4000-8000-000000000001');
+    const found = read(lines('Work is committed.', '', unindented));
+    expect(found).toMatchObject({ kind: 'proposal', folder: '/home/dev/code/pitwall' });
+    expect(found).toHaveProperty('prompt', expect.stringMatching(/^Continues session 00000000-0000-4000-8000-000000000001\.\n/));
+    expect(isHandoffOf('00000000-0000-4000-8000-000000000001', (found as { prompt: string }).prompt)).toBe(true);
+  });
+
+  it('the plugin’s skill teaches the continues line too', () => {
+    const skill = readFileSync(new URL('../../plugin/skills/pitwall/SKILL.md', import.meta.url), 'utf8');
+    expect(skill).toContain('Continues session <this session\'s id>.');
+    expect(skill).toContain('Clear and continue');
+  });
+});
+
+describe('isHandoffOf', () => {
+  it('takes only the continues line with the session’s own id, as the prompt’s first line', () => {
+    const id = '00000000-0000-4000-8000-000000000001';
+    expect(isHandoffOf(id, `Continues session ${id}.\nGo on.`)).toBe(true);
+    expect(isHandoffOf(id, `Continues session ${id}.`)).toBe(true);
+    expect(isHandoffOf(id, `Continues session ${id}.x`)).toBe(false);
+    expect(isHandoffOf(id, `Continues session 00000000-0000-4000-8000-000000000002.\nGo on.`)).toBe(false);
+    expect(isHandoffOf(id, ` Continues session ${id}.`)).toBe(false);
+    expect(isHandoffOf(id, 'Fix the test.')).toBe(false);
   });
 });

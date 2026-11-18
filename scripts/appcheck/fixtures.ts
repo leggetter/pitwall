@@ -64,6 +64,18 @@ export const SPIN_OFF_PROMPT = [
   'Run npm test in web/ when it’s done, and tell me what changed.',
 ].join('\n');
 export const SPIN_OFF: SpinOff = { kind: 'proposal', key: '5f1a0c7e9b3d2a41', folder: DEMO_APP_WEB, name: 'pitwall-test-spin-off', prompt: SPIN_OFF_PROMPT };
+/** In a hand-off's prompt, the made-up server answers Clear and continue with a timeout (W168). */
+export const CLEAR_TIMEOUT_MARKER = 'pitwall-test-clear-timeout';
+/**
+ * A made-up hand-off (W168) from `sessionId`: the handoff skill's block, whose prompt starts with the continues
+ * line, in demo-app/web. `timeout` makes the made-up server fail Clear and continue.
+ */
+export const handoffProposal = (sessionId: string, timeout = false): SpinOff => ({
+  kind: 'proposal',
+  key: timeout ? '7c2e9a41d05b3f68' : '3b9d6f20a8c1e745',
+  folder: DEMO_APP_WEB,
+  prompt: `Continues session ${sessionId}.\nRead NOW.md, then start with the first item under "Next, in order".${timeout ? `\n(${CLEAR_TIMEOUT_MARKER})` : ''}`,
+});
 /** A cloned repo with no session (W106): the server places its PRs under it, so the page builds its group. */
 export const EVENT_RELAY = `${CODE}/event-relay`;
 
