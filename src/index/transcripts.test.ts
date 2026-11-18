@@ -21,6 +21,7 @@ import {
   stripSystemReminders,
   TITLE_MAX,
   turnSignalOf,
+  USER_PROMPT_MAX,
   userPromptOf,
   type Fields,
   type TranscriptReaderOptions,
@@ -94,6 +95,24 @@ describe('userPromptOf', () => {
     const content = '<system-reminder>\nnote from the harness\n</system-reminder>\n  ship it  <system-reminder>x</system-reminder>';
     expect(userPromptOf(user(content))).toBe('ship it');
     expect(userPromptOf(user('<system-reminder>only a reminder</system-reminder>'))).toBeUndefined();
+  });
+
+  it("unwraps Claude Code's paste tags and keeps the pasted text (W203)", () => {
+    expect(userPromptOf(user('<pasted_content id="50a5">\nNow looking at the diagrams.\n</pasted_content>'))).toBe(
+      'Now looking at the diagrams.',
+    );
+    expect(userPromptOf(user('see this <pasted_content id="0466">error: boom</pasted_content> and fix it'))).toBe(
+      'see this error: boom and fix it',
+    );
+    expect(userPromptOf(user('<pasted_content id="1">a</pasted_content><pasted_content id="2">b</pasted_content>'))).toBe('a b');
+    expect(userPromptOf(user('<pasted_content id="50a5"></pasted_content>'))).toBeUndefined();
+    // Other markup is left alone.
+    expect(userPromptOf(user('keep <b>this</b> as typed'))).toBe('keep <b>this</b> as typed');
+  });
+
+  it('truncates after unwrapping, so the tags spend none of the budget (W203)', () => {
+    const body = 'x'.repeat(USER_PROMPT_MAX);
+    expect(userPromptOf(user(`<pasted_content id="50a5">${body}</pasted_content>`))).toBe(body);
   });
 
   it('excludes cross-session messages', () => {
