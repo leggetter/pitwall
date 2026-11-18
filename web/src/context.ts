@@ -4,15 +4,11 @@
 // overdue. The thresholds are the protocol's, so the server and the page agree.
 
 import { CONTEXT_HIGH_TOKENS, CONTEXT_WARN_TOKENS } from '../../src/shared/protocol.js';
+import { contextLevel, type ContextLevel } from '../../src/shared/sessionState.js';
 import type { BadgeLook } from './sessions.js';
 
-export type ContextLevel = 'ok' | 'warn' | 'high';
-
-export function contextLevel(tokens: number): ContextLevel {
-  if (tokens > CONTEXT_HIGH_TOKENS) return 'high';
-  if (tokens > CONTEXT_WARN_TOKENS) return 'warn';
-  return 'ok';
-}
+export { contextLevel };
+export type { ContextLevel };
 
 /** The badge's look at each level: warning, then danger. Below the first, no badge. */
 export const CONTEXT_LOOKS: Record<Exclude<ContextLevel, 'ok'>, BadgeLook> = {
