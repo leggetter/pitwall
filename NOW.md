@@ -20,7 +20,7 @@ Last updated: 2026-11-18, on `docs/handoff-backlog-lead`: the backlog lead hands
 
 ## Open work
 
-**In flight: W174 (a working session's to-dos for you aren't hidden behind CI),** built in [#296](https://github.com/leggetter/pitwall/pull/296) on `m5.4/working-job-todos` (`.worktrees/working-job-todos`), not reviewed or merged. Phil's rule (2026-11-18), which settles its open question: "Waiting on you" means there is an action Phil can take now that moves the session on, whatever its state (busy, a background process, a sub-agent) and whatever `waitingOn` says; if there is nothing for him to do, it isn't waiting on him. So the next lead first removes `dueNow()`'s exclusion of `waitingOn: 'another session'` (`src/recaps/engine.ts`) with a test, records the rule in `PLAN.md`'s W174 bullet, then has a fresh agent review #296 and merges it on green CI. Then: a read-only sub-agent traces the "also in <repo>" marker (below), and W178 (ask the supervisor about this session) starts.
+**In flight: W174 (a working session's to-dos for you aren't hidden behind CI),** built in [#296](https://github.com/leggetter/pitwall/pull/296) on `m5.4/working-job-todos` (`.worktrees/working-job-todos`), not reviewed or merged. Phil's rule (2026-11-18), which settles its open question: "Waiting on you" means there is an action Phil can take now that moves the session on, whatever its state (busy, a background process, a sub-agent) and whatever `waitingOn` says; if there is nothing for him to do, it isn't waiting on him. So the next lead first removes `dueNow()`'s exclusion of `waitingOn: 'another session'` (`src/recaps/engine.ts`) with a test, records the rule in `PLAN.md`'s W174 bullet, then has a fresh agent review #296 and merges it on green CI. Then W178 (ask the supervisor about this session) starts; the duplicate is traced and planned as W200.
 
 **How the backlog lead works** (Phil, 2026-11-18): one item at a time in Next's order; for each, a fresh builder sub-agent in `.worktrees/<name>` on `m5.4/<name>`, the lead reads the diff and CI, a fresh reviewer (xhigh where the plan asks a security review; a live check on a `pitwall-test-*` job where real typing or processes are involved), small fixes by the lead, merge into `m5.4/integration` with a merge commit, `NOW.md` and `PLAN.md` in the same PR, a short update to Phil. Never merge to `main`, release, or restart 4518; stop and ask on a product or design decision or a second failure. Hand off at about five items or 200K. The resume part of W197's review F1 (a stopped background job wakes with no flags) merged into `main` on 2026-11-18 in [#290](https://github.com/leggetter/pitwall/pull/290), at 60c20e1; Phil restarts 4518 from `main` to pick it up. `m5.4/integration` has the same change and more, so M5.4's merge into `main` may need `src/server/actions.ts` and its tests resolved to the integration side.
 
@@ -51,6 +51,7 @@ Still to do:
 | W196 (a resume that finds the session open elsewhere stops and removes the copy it caused, and says "Not resumed") | Planned (Phil, 2026-11-17) |
 | W198 ("Added folder not trusted" says how to fix it: the hint, and a startup check that the attachments folder is trusted) | Planned (Phil, 2026-11-17). The failure itself is fixed on this machine: `~/.pitwall/attachments` is trusted |
 | W199 (a snooze holds the session's PR too: a snoozed session's row leaves Needs you even while its PR needs attention, until the PR has something new) | Planned (Phil, 2026-11-18) |
+| W200 (a mention owns a PR inside the PR's repo: no "New session for #N" row while a session in that repo works on the PR) | Planned (Phil approved fix A, 2026-11-18, via ac6ba646's investigation) |
 | W178 (ask the supervisor about this session, and why it's in its state), W179 (the supervisor keeps its conversation short) | Planned (Phil, 2026-11-09); W178 uses W165's reasons |
 | W191 (the supervisor reads through the connectors your sessions already have, with pitwall's read-only limits) | Planned (Phil, 2026-11-12); a spike first; revises W184's route |
 | Left from W164 (M5.1's security review) | F5 (a snooze trusts the relay's name, not its msg_ids), I3's note on attached files, I4 (by design); in the archive's W164 item |
@@ -63,7 +64,7 @@ Still to do:
 
 ## Next, in order
 
-1. **M5.4, the rest of M5.3** (`PLAN.md`, "M5.4 work breakdown"), one session per item (`AGENTS.md`, Efficiency): W174 (a working session's to-dos, next), W178 (ask the supervisor about a session), W179 (the supervisor keeps its conversation short), W191 (the supervisor uses your sessions' connectors), W196 (a resume's copy cleaned up), W198 (the attachments folder's trust), W194 (a resumed job's latest transcript), W195 (Not for me on a session row) and W199 (a snooze holds the session's PR too).
+1. **M5.4, the rest of M5.3** (`PLAN.md`, "M5.4 work breakdown"), one session per item (`AGENTS.md`, Efficiency): W174 (a working session's to-dos, next), W178 (ask the supervisor about a session), W179 (the supervisor keeps its conversation short), W191 (the supervisor uses your sessions' connectors), W196 (a resume's copy cleaned up), W198 (the attachments folder's trust), W194 (a resumed job's latest transcript), W195 (Not for me on a session row) and W199 (a snooze holds the session's PR too) and W200 (a mention owns a PR inside the PR's repo).
 2. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
 
 ## Open questions for Phil
@@ -74,7 +75,7 @@ Still to do:
 
 Answered (Phil, 2026-11-18, "yes to all three"): (1) **Work off `main`:** once W174 (a working session's to-dos) is in and the milestone's security review (W175, W197, W168) is done, merge `m5.4/integration` into `main` for Phil to try (his call, asked as a yes/no with the PR); after that, small items branch from `main` and each merges into `main` for him to try; an integration branch only for a significant change. (2) 1129e19e is stopped and removed; its conversation is kept. (3) The global handoff skill ends a hand-off with a `spin-off` block (W168's card); not yet changed, since it waits on where hand-off files live (Open questions).
 
-Answered (Phil, 2026-11-18): W174's "Waiting on you" rule, as in Open work. The main checkout goes back on `main` (done; it is 2 behind `origin/main`, left for Phil's 4518 restart). The f3b57341 duplicate: Phil's screenshot of 4518 shows the investigating session ac6ba646 ("f3b57341 duplicate review", in the pitwall group) with "· also in co…" on its line 2, and a finished ca4048… row with "· also in core": a session shown under its own repo and, through the "also in" marker, under hookdeck/core. ac6ba646 has no process now, so a fresh read-only sub-agent traces the rule behind "also in" and proposes a work item.
+Answered (Phil, 2026-11-18): W174's "Waiting on you" rule, as in Open work. The main checkout goes back on `main` (done; it is 2 behind `origin/main`, left for Phil's 4518 restart). The f3b57341 duplicate: not the "also in core" marker (corrected by ac6ba646's investigation, which Phil resumed): a PR row offered "New session for #N" while a session was already working on that PR, which it only mentioned; Phil approved fix A, planned as W200; fix C (a "Belongs to session…" control) is deferred.
 
 Answered (Phil, 2026-11-18, "yes"): the resume fix's PR into `main`, as shown; merged in #290.
 
@@ -82,9 +83,7 @@ Answered (Phil, 2026-11-17, "yes, to all"): bring W197's resume fix to `main` (b
 
 Answered (Phil, 2026-11-17, "yes to both"): the "Added folder not trusted" fix is planned as W198; install the pitwall plugin for terminal sessions.
 
-Answered (Phil, 2026-11-17, "yes to both"): the fix for "Claude Code started a copy instead" is planned as W196; W197 starts now.
-
-Older answers (2026-11-06 to 11-16: W165 names PRs as owner/repo#123; W191 option B, connector reads without a click; the hosted-connector question dropped (now W191), the supervisor panel pushes (W187), W184 after W176, M5.2 to `main` as drafted, no user guide for now, W163's card as built, W155 work profiles and the Usage view) were cut from here; they are in this file's git history.
+Older answers (2026-11-06 to 11-17: W196 planned and W197 started; W165 names PRs as owner/repo#123; W191 option B, connector reads without a click; the hosted-connector question dropped (now W191), the supervisor panel pushes (W187), W184 after W176, M5.2 to `main` as drafted, no user guide for now, W163's card as built, W155 work profiles and the Usage view) were cut from here; they are in this file's git history.
 
 ## Standing context
 
