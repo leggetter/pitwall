@@ -97,7 +97,7 @@ import {
   type ConversationPage,
 } from '../shared/protocol.js';
 import { checkDirectory, CommandSlots, createResumeRunner, createSpawnRunner, DEFAULT_MAX_CONCURRENT_COMMANDS, registerActions, type ActionOptions } from './actions.js';
-import { createAttachServer, type AttachOptions } from './attach.js';
+import { createAttachServer, REREAD_TIMEOUT_MS, type AttachOptions } from './attach.js';
 import { AttachmentStore, registerAttachments, type AttachmentStoreOptions } from './attachments.js';
 import { createCloneRoute, type CloneOptions } from './clone.js';
 import { registerDirectories, type DirectoryOptions } from './directories.js';
@@ -117,10 +117,13 @@ import { registerSupervisor } from './supervisorRoutes.js';
 import type { Supervisor } from '../supervisor/supervisor.js';
 import { createRelayManager } from './relay.js';
 import { registerRelay } from './relayRoute.js';
+import { DIAGNOSTICS_INTERVAL_MS, DiagnosticsLog, NeedsYouRecorder } from './diagnostics.js';
 import { createFlagView, FlagStore, registerFlags } from './flags.js';
+import { createLineageView, LineageStore } from './lineage.js';
 import { createSnoozeView, registerSnoozes, SnoozeStore } from './snoozes.js';
 import { SessionLaunches } from './sessionLaunches.js';
 import { registerSpinOffs } from './spinOffRoutes.js';
+import { createClearAndContinue, type ClearTimings, registerClearAndContinue } from './clearAndContinue.js';
 import {
   bearerToken,
   identifyCredential,
@@ -136,6 +139,8 @@ import {
 import { spawnPty } from './pty.js';
 import { RecentSpawns } from './recentSpawns.js';
 import { resolveSession } from './sessions.js';
+import { hasLinkTag, isDocumentNavigation, LinkCodes, withLinkCode } from './linkCodes.js';
+import { createPeerCheck, type PeerCheck } from './peerUid.js';
 import { BUILDING_PAGE, BUILDING_SCRIPT, BUILDING_SCRIPT_PATH, resolveStaticFile } from './static.js';
 import { HandshakeSlots } from './handshake.js';
 import { DEFAULT_AUTH_TIMEOUT_MS, handleClient, MAX_PAYLOAD_BYTES } from './websocket.js';
@@ -195,7 +200,11 @@ export class PortInUseError extends Error {
 
 /** Knobs for tests. Not part of ServerOptions, so the public contract stays as declared. */
 export interface ServerInternals {
+  /** Whether the client of a request's socket is this server's own user (peerUid.ts, W175's F2). Tests pass a stand-in so none runs lsof. */
+  peerCheck?: PeerCheck;
   authTimeoutMs?: number;
+  /** How often the diagnostics log (W165) looks for a change in Needs you. Default DIAGNOSTICS_INTERVAL_MS; tests make it short. */
+  diagnosticsIntervalMs?: number;
   /** The port tried when options.port is undefined. Default 4517. */
   defaultPort?: number;
   /**
@@ -209,6 +218,8 @@ export interface ServerInternals {
    * For the attach socket. Tests pass a fake PTY spawner and agents source,
    * so they never run `claude`.
    */
+  /** Clear and continue's waits (W168): tests shorten them. */
+  clearTimings?: Partial<ClearTimings>;
   attach?: Partial<Pick<AttachOptions, 'spawnPty' | 'env' | 'agents' | 'spawned' | 'resumed' | 'processAlive' | 'now'>>;
   /** The directory list (W70, directories.ts): tests pass a wrapped readdir, a clock and limits. */
   directories?: DirectoryOptions;
@@ -249,6 +260,9 @@ export async function startServerWithInternals(
   // server process, so it dies with the process, and a page that reconnects
   // to a restarted server gets the new one from a fresh handshake.
   const apiKey = randomSecret();
+  // The one-time codes that let a tab opened at a pitwall link get the token from a tab that has it (W175).
+  const linkCodes = new LinkCodes();
+  const peerCheck = internals.peerCheck ?? createPeerCheck();
 
   // Set once the server is listening. Until then, nothing is allowed.
   let port: number | undefined;
@@ -300,12 +314,32 @@ export async function startServerWithInternals(
   // Snoozes (W154): each snoozed session's `snoozed`, and why one came back, over flags. Ended by time or a wake.
   const snoozes = new SnoozeStore(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
   const snoozed = createSnoozeView(flagged, snoozes);
+  // Session lineage (W167): each session's `lineage`, the ids of the session it continues and the one that continues it.
+  const lineage = options.lineage ?? new LineageStore(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
+  const lineaged = createLineageView(snoozed, lineage);
   // The supervisor (M5, W113), or off. Started only when the page asks, stopped on close().
   const supervisor = options.supervisor;
   // With it, the snapshot carries its state, under W105's view.
-  const supervised = supervisor === undefined ? undefined : createSupervisorView(snoozed, supervisor);
+  const supervised = supervisor === undefined ? undefined : createSupervisorView(lineaged, supervisor);
   // The snapshot clients get: each session's PR links cut to those matching a PR in the list (D14, W105).
-  const snapshots = createSnapshotView(supervised ?? snoozed, prs);
+  const snapshots = createSnapshotView(supervised ?? lineaged, prs);
+  // The diagnostics log (W165): why each row is in Needs you, from the snapshot the page gets and the PR list, with no off switch.
+  // Written every DIAGNOSTICS_INTERVAL_MS, and on a PR list change, flag and snooze, and only when a session's state changes.
+  const diagnostics = options.diagnostics ?? new DiagnosticsLog(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
+  const recorder = new NeedsYouRecorder(diagnostics);
+  const record = () => {
+    try {
+      const snapshot = snapshots.latest();
+      if (snapshot !== undefined) recorder.observe(snapshot, prs.latest());
+    } catch {
+      // Diagnostics never break the timer, a flag or a snooze.
+    }
+  };
+  // Not a subscription to the snapshot, which would be one more listener on the index (its clients are its listeners); a timer at the index's
+  // own pace, with the PR list, flags and snoozes telling it sooner.
+  const recordTimer = setInterval(record, internals.diagnosticsIntervalMs ?? DIAGNOSTICS_INTERVAL_MS);
+  recordTimer.unref();
+  const offDiagnostics = [() => clearInterval(recordTimer), prs.subscribe(record), flags.subscribe(record), snoozes.subscribe(record)];
   // Every session this pitwall started or resumed, for its run: only those resume with the defaults for sessions (W119's review).
   const started = new Set<string>();
   // New sessions, from the spawn route and the supervisor's spawn_session (W115): one set of limits.
@@ -347,6 +381,8 @@ export async function startServerWithInternals(
               conversation: (sessionId, before) => indexer.conversation(sessionId, before),
               ...(recaps === undefined ? {} : { recaps }),
               prs,
+              // session_lineage (W167): the chain of sessions around one.
+              lineage,
               // get_usage (W160): the usage source's one report, through its reader's cache.
               ...(options.usage === undefined ? {} : { usage: options.usage }),
               ownSessionIds: () => supervisor.ownSessionIds(),
@@ -371,6 +407,15 @@ export async function startServerWithInternals(
   // (W79), spawn, stop and remove (W12), resume (W66), the editors and open in an editor (W72), whose
   // detection starts here, end session (W90), which never ends the relay or the supervisor, the relay
   // (W11), recaps (W110), the supervisor's routes and its MCP server (W112, W113), then any a test adds.
+  // Clear and continue (W168): types /clear and a hand-off's prompt into a job through its own attach PTY.
+  const clearAndContinue = createClearAndContinue({
+    spawnPty: internals.attach?.spawnPty ?? spawnPty,
+    token,
+    ...(internals.attach?.env === undefined ? {} : { env: internals.attach.env }),
+    agents: internals.attach?.agents ?? createAgentsSource({ timeoutMs: REREAD_TIMEOUT_MS }),
+    lineage,
+    ...(internals.clearTimings === undefined ? {} : { timings: internals.clearTimings }),
+  });
   const routes = (app: Hono) => {
     registerDirectories(app, indexer, internals.directories);
     registerPrs(app, prs);
@@ -391,6 +436,7 @@ export async function startServerWithInternals(
     registerFlags(app, { snapshots: flagged, store: flags, relay, recaps });
     registerSnoozes(app, { snapshots: snoozed, store: snoozes });
     registerSpinOffs(app, { snapshots: indexer });
+    registerClearAndContinue(app, { snapshots: indexer, runner: clearAndContinue, spawned, lineage });
     registerSupervisor(app, supervisor, supervisorActions);
     registerMcp(app, mcp);
     registerUsage(app, options.usage);
@@ -400,7 +446,7 @@ export async function startServerWithInternals(
     });
     internals.routes?.(app);
   };
-  const app = createApp({ snapshots, indexer, token, apiKey, webRoot, port: () => port ?? -1, routes, ...(supervisor === undefined ? {} : { supervisor }) });
+  const app = createApp({ snapshots, indexer, token, apiKey, linkCodes, peerCheck, webRoot, port: () => port ?? -1, routes, ...(supervisor === undefined ? {} : { supervisor }) });
   const honoListener = getRequestListener(app.fetch);
 
   const server = createServer((req, res) => {
@@ -449,7 +495,7 @@ export async function startServerWithInternals(
     if (!isAllowedOrigin(req.headers.origin, port!)) return rejectUpgrade(socket, 403);
     if (path === ATTACH_PATH) return attach.handleUpgrade(req, socket, head);
     wss.handleUpgrade(req, socket, head, (ws) =>
-      handleClient(ws, { indexer: snapshots, token, origin: serverOrigin(port!), apiKey, authTimeoutMs, onAuthenticated, slots, prs }),
+      handleClient(ws, { indexer: snapshots, token, origin: serverOrigin(port!), apiKey, authTimeoutMs, onAuthenticated, slots, prs, linkCodes }),
     );
   });
 
@@ -482,6 +528,7 @@ export async function startServerWithInternals(
       supervisor?.approvals().cancelAll("pitwall is closing, so this wasn't sent.");
       offRecipients?.();
       // No more fetches, and no more 'prs' messages to clients that are closing.
+      for (const off of offDiagnostics) off();
       prs.stop();
       snapshots.stop();
       supervised?.stop();
@@ -495,6 +542,8 @@ export async function startServerWithInternals(
           closing = true;
         }),
         attach.close(),
+        // A Clear and continue in flight types nothing further and kills its PTY (W168).
+        clearAndContinue.close(),
         relay.close(),
         // gh and git run in a session of their own, so nothing else stops them: SIGTERM, then the temp folder removed.
         clone.close(),
@@ -526,6 +575,8 @@ interface AppContext {
   indexer: Indexer;
   token: string;
   apiKey: string;
+  linkCodes: LinkCodes;
+  peerCheck: PeerCheck;
   webRoot: string;
   port(): number;
   routes: ServerInternals['routes'];
@@ -533,7 +584,7 @@ interface AppContext {
   supervisor?: Pick<Supervisor, 'conversation'>;
 }
 
-function createApp({ snapshots, indexer, token, apiKey, webRoot, port, routes, supervisor }: AppContext): Hono {
+function createApp({ snapshots, indexer, token, apiKey, linkCodes, peerCheck, webRoot, port, routes, supervisor }: AppContext): Hono {
   const app = new Hono();
   // Conversation pages being read now.
   let conversationReads = 0;
@@ -660,6 +711,14 @@ function createApp({ snapshots, indexer, token, apiKey, webRoot, port, routes, s
       case 'file':
         c.header('Content-Type', result.contentType);
         if (result.isIndex) c.header('Cache-Control', 'no-store');
+        // A page loaded by a navigation is given a link code (W175), and no other request is.
+        if (result.isIndex && c.req.method === 'GET' && isDocumentNavigation((name) => c.req.header(name))) {
+          const html = result.body.toString('utf8');
+          // And only when the client process is this server's own user's (W175's F2): any failure is no code.
+          if (hasLinkTag(html) && (await peerCheck(((c.env as { incoming?: IncomingMessage } | undefined)?.incoming?.socket) ?? {}))) {
+            return c.body(withLinkCode(html, linkCodes.issue()));
+          }
+        }
         return c.body(new Uint8Array(result.body));
       case 'building':
         c.header('Cache-Control', 'no-store');

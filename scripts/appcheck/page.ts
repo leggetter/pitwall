@@ -35,6 +35,8 @@ const INIT_SCRIPT = `(() => {
   const records = { csp: [], opened: [], clicks: [] };
   Object.defineProperty(window, '__appcheck', { value: records });
   document.addEventListener('securitypolicyviolation', (e) => records.csp.push(e.violatedDirective + ' ' + e.blockedURI));
+  // The real one, for a part that needs a window it can read (W175's link-new-tab).
+  Object.defineProperty(window, '__realOpen', { value: window.open.bind(window) });
   window.open = function (url, target, features) {
     records.opened.push({ url: String(url), target: String(target ?? ''), features: String(features ?? '') });
     return null;
@@ -195,11 +197,12 @@ export class Page {
   }
 
   /** The expression's value in the page. Throws, with the page's message, when it throws. */
-  async evaluate<T = unknown>(expression: string): Promise<T> {
+  async evaluate<T = unknown>(expression: string, options: { userGesture?: boolean } = {}): Promise<T> {
     const { result, exceptionDetails } = await this.send<{ result: { value?: T }; exceptionDetails?: { text: string; exception?: { description?: string } } }>('Runtime.evaluate', {
       expression,
       returnByValue: true,
       awaitPromise: true,
+      ...(options.userGesture ? { userGesture: true } : {}),
     });
     if (exceptionDetails) throw new Error(`in the page: ${exceptionDetails.exception?.description?.split('\n')[0] ?? exceptionDetails.text}`);
     return result.value as T;
@@ -370,6 +373,23 @@ export class Page {
     const result = (await start()) as { errorText?: string };
     if (result.errorText) throw new Error(`couldn't load ${what}: ${result.errorText}`);
     await loaded;
+  }
+
+  /**
+   * A second tab in the same browser, as a link clicked in a terminal opens one (W175): the window and
+   * theme set, nothing else, so it has no token and shares no storage with this tab but the origin's
+   * localStorage. The caller loads it (navigate) and closes it.
+   */
+  async sibling(viewport: Viewport, theme: Theme): Promise<Page> {
+    const other = await Page.open(this.#cdp, this.#server, this.#token, { keys: this.#keys });
+    await other.send('Emulation.setDeviceMetricsOverride', { width: viewport.width, height: viewport.height, deviceScaleFactor: 1, mobile: false });
+    await other.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }, { name: 'prefers-reduced-motion', value: 'reduce' }] });
+    return other;
+  }
+
+  /** Leaves the app for a blank page, so the tab holds no signed-in pitwall socket, and keeps its storage. */
+  async leave(): Promise<void> {
+    await this.#blank();
   }
 
   async close(): Promise<void> {

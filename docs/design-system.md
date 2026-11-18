@@ -1066,6 +1066,7 @@ A row of tabs that switches what's below them: the session view's Conversation, 
 | Resumed, or restarted after you confirmed it, in this run of pitwall, with no prompt since ('restarted') | "Waiting for your prompt" | solid warning |
 | Its last turn asked you ('asked') | "Asked you" | subtle warning |
 | Its current recap says it's waiting on you ('recap', M5, W111), as a background job Claude Code calls done can be (Phil, 2026-10-29: "A lot of them are marked as done, whereas I'm sure there are open questions in them") | "Waiting on you", in Done's place. The recap's first to-do for you is on the row's line 2, after "Next:" (W121) | subtle warning, as Asked you: a model's judgement of the transcript, as Asked is a heuristic's |
+| Busy, or a running job's state is working, not stale, and its current recap has a to-do for you that follows no other and isn't optional (W174; Phil, 2026-11-09: "Busy, but actually needs me") | "Waiting on you", with Busy's 8 px dot before the label, in the badge's text colour; the to-do is on line 2 after "Next:" | subtle warning, as the row above |
 | Any of the five above, flagged or [snoozed](#snooze) for what it needs (W153, W154) | As above, and "You flagged this" or "Snoozed until …" after it in the session view | outline, as a stale Blocked is: solid is for needing you |
 | Blocked, and nothing needs you, as a resumed session's "send a prompt to start" once pitwall has restarted | As its process is: no badge in the list and "Idle" in the session view, or "Busy", or "Not running" | as those rows |
 | Blocked and stale | "Blocked: *reason*", plus a "Stale" badge | outline, plus subtle neutral |
@@ -2300,6 +2301,7 @@ The header's dialog of settings, a section for each area they affect (W59; Phil,
 - **Card:** `--pw-surface-overlay`, `--pw-shadow-3`, `--pw-radius-md`, `--pw-toast-w` wide, padding 8 px.
   - A 28 px icon tile (`--pw-<tone>-tint` with `inset 0 0 0 1px var(--pw-<tone>-border)`, `--pw-radius-sm`, a 16 px icon in `--pw-<tone>-tint-fg`): `success`, `info`, or `error` on the danger tokens.
   - The message (m 14/20, 500), 12 px after the tile, as text.
+  - Everything is top aligned, so a message that wraps leaves the tile, an action and Dismiss at its first line: the message has 4 px above and below its lines, and the sm buttons 2 px above, which centres each on the tile.
   - A ghost sm `close` button, named "Dismiss" by its tooltip. Focus it had goes to the next toast's Dismiss, or the one before, or the session list's heading (the view's, while the view covers the list).
 - **Timing:**
   - Success and info toasts dismiss after `--pw-toast-timeout` (4 s), or after `--pw-toast-action-timeout` (10 s) with an action, below. The time stops while the pointer is over the stack or focus is inside it, and goes on from where it was.

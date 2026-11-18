@@ -17,7 +17,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { crc32, deflateSync } from 'node:zlib';
-import { API_SERVER, CODE, DEMO_APP, DEMO_APP_WEB, NAMES, SPIN_OFF, SPIN_OFF_PROMPT } from '../fixtures.js';
+import { API_SERVER, CODE, DEMO_APP, DEMO_APP_WEB, handoffProposal, NAMES, SPIN_OFF, SPIN_OFF_PROMPT } from '../fixtures.js';
 import type { Case, Part } from '../runner.js';
 import { FAIL_UPLOAD, SLOW_UPLOAD, STALLED_UPLOAD, UNAVAILABLE_UPLOAD } from '../server.js';
 import { chooseDirectory, chooseOption, DIALOG, dialogBox, dialogButton, dialogName, focused, headerButton, openDialog, openFromRow, shortPath, toasts, viewName } from './_dom.js';
@@ -633,6 +633,51 @@ const part: Part = {
       t.expectEqual(await page.evaluate(`${card}.querySelector('[role="alert"]').textContent`), "The directory /Users/example/elsewhere isn't under one of your roots.", "the server's reason");
       t.expect(await page.evaluate(`!${DIALOG}`), 'no dialog opened');
       await t.shot('spin-off-refused');
+    });
+
+    await t.step("Clear and continue on a job's hand-off sends the server its key, and the card goes; nothing is spawned (W168)", async () => {
+      const card = `document.querySelector('.session-list li.spin-off-card')`;
+      await t.fresh({ search: '?view=needs-you' });
+      const job = server.world.byName(NAMES.running);
+      const proposal = handoffProposal(job.sessionId);
+      server.world.spinOff(job.sessionId, proposal);
+      server.broadcast();
+      await page.waitFor('the card', `!!${card}`);
+      server.clearRecords();
+      await page.click('Clear and continue', `[...${card}.querySelectorAll('.approval-actions button')].find((b) => b.textContent.trim() === 'Clear and continue')`);
+      await page.waitFor('the card to go', `!${card}`);
+      t.expectEqual(server.records.clears, [{ name: NAMES.running, key: (proposal as { key: string }).key, status: 200 }], 'the server was asked, by the proposal’s key');
+      t.expectEqual(server.records.spawns, [], 'no new session was started');
+      t.expect((await page.evaluate<string[]>(toasts)).some((message) => message.startsWith(`Cleared ${NAMES.running} and sent it the prompt`)), 'a toast says it');
+      server.world.spinOff(job.sessionId, undefined);
+    });
+
+    await t.step('when Clear and continue fails, the card says why and Start new session… starts a new one, which the server is told continues it (W168)', async () => {
+      const card = `document.querySelector('.session-list li.spin-off-card')`;
+      const button = (label: string) => `[...${card}.querySelectorAll('.approval-actions button')].find((b) => b.textContent.trim() === ${q(label)})`;
+      await t.fresh({ search: '?view=needs-you' });
+      const job = server.world.byName(NAMES.running);
+      t.allow(new RegExp(`/api/sessions/${job.sessionId}/clear-and-continue$`), 'the timeout this step asks for');
+      server.world.spinOff(job.sessionId, handoffProposal(job.sessionId, true));
+      server.broadcast();
+      await page.waitFor('the card', `!!${card}`);
+      server.clearRecords();
+      await page.click('Clear and continue', button('Clear and continue'));
+      await page.waitFor('its alert', `!!${card}?.querySelector('[role="alert"]')`);
+      const alert = await page.evaluate<string>(`${card}.querySelector('[role="alert"]').textContent`);
+      t.expect(alert.includes('the prompt was not typed') && alert.includes('Start new session…'), 'it says nothing was typed, and what to do', alert);
+      t.expect(await page.evaluate(`!!${card}`), 'the card stays');
+      t.expect(server.records.clears.length === 1 && server.records.clears[0]!.status === 504, 'the server answered 504', server.records.clears);
+      await t.shot('handoff-failed');
+      await page.click('Start new session…', button('Start new session…'));
+      await page.waitFor('the dialog', `${dialogName} === 'New session'`);
+      t.expectEqual(server.records.spawns, [], 'nothing started yet');
+      await page.click('Start session', dialogButton('Start session'));
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+      t.expectEqual(server.records.spawns.length, 1, 'Start session started one');
+      await page.waitFor('the link to be noted', `true`);
+      t.expectEqual(server.records.continued.map((c) => c.name), [NAMES.running], 'the server was told it continues the old job’s session');
+      server.world.spinOff(job.sessionId, undefined);
     });
 
     await t.step('with a view selected and a session open, no directory is chosen, and Start session asks for one', async () => {

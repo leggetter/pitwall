@@ -101,7 +101,7 @@ import { checkClaudeVersion, prepareRelayDir } from '../server/relay.js';
 import { budgetFile, type BudgetStore } from './budget.js';
 import { runRecapCall, spawnRecapChild, type CallOutcome, type RecapSpawner } from './call.js';
 import { recapStoreDir, type RecapStore } from './store.js';
-import { firstRecapInput, sessionPrs, TurnCollector, updateRecapInput, type RelayMessages, type SessionPrs } from './input.js';
+import { firstRecapInput, sessionPrs, TurnCollector, updateRecapInput, type PredecessorRecap, type RelayMessages, type SessionPrs } from './input.js';
 import {
   MIN_RECAP_CLAUDE_VERSION,
   parseEnvelope,
@@ -215,6 +215,11 @@ export interface RecapEngineOptions {
   log?: (message: string) => void;
   /** Frame ids, for tests. */
   randomId?: () => string;
+  /**
+   * The session `sessionId` continues, from the lineage log (W167), or undefined. Its last recap of
+   * pitwall's own goes into this session's first recap as data. Never given session content.
+   */
+  predecessorOf?: (sessionId: string) => string | undefined;
 }
 
 /** A failed call isn't tried again automatically, for the same activity, sooner than this. */
@@ -375,6 +380,18 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   sync();
 
   /** The recaps kept on disk (W132), with what couldn't be used counted in the log, never shown. */
+  /** W167: the recap of the session `sessionId` continues, for a first recap's input, or nothing. A throwing hook adds nothing. */
+  function predecessorOf(sessionId: string): { predecessor: PredecessorRecap } | Record<string, never> {
+    let from: string | undefined;
+    try {
+      from = options.predecessorOf?.(sessionId);
+    } catch {
+      return {};
+    }
+    const recap = from === undefined || from === sessionId ? undefined : recaps.get(from);
+    return recap === undefined ? {} : { predecessor: { title: recap.title, summary: recap.summary, at: recap.at } };
+  }
+
   function loadKept(): Map<string, SessionRecap> {
     const loaded = kept.load(now());
     if (loaded.ignored > 0) log(`ignored ${loaded.ignored} kept recap${loaded.ignored === 1 ? '' : 's'} pitwall couldn't use; those sessions get new ones.`);
@@ -633,6 +650,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
       : firstRecapInput(
           {
             ...about,
+            ...predecessorOf(job.sessionId),
             ...(read.firstPrompt === undefined ? {} : { firstPrompt: read.firstPrompt }),
             ...(read.awaySummary === undefined ? {} : { awaySummary: read.awaySummary }),
             ...(read.compaction === undefined ? {} : { compaction: read.compaction }),
@@ -778,37 +796,61 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     return isStale(chosen) ? { ...chosen, stale: true } : { ...chosen };
   }
 
-  function summaryOf(session: SessionSummary, recap: SessionRecap): RecapSummary {
+  function summaryOf(recap: SessionRecap): RecapSummary {
     const yours = recap.todos.filter((todo) => todo.owner === 'you');
     const summary: RecapSummary = { waitingOn: recap.waitingOn, title: recap.title, forYou: yours.length, at: recap.at, source: recap.source };
-    // Your step that's due, as Needs you says it (W166), else your first.
-    const next = yourNext(session, recap) ?? yours[0]?.text;
+    // Your step that's due, as Needs you says it (W166), else your first one the session didn't only
+    // offer (W173's review), else your first.
+    const next = yourNext(recap) ?? (yours.find((todo) => todo.optional !== true) ?? yours[0])?.text;
     if (next !== undefined) summary.next = next;
     if (recap.stale === true) summary.stale = true;
     return summary;
   }
 
   /**
-   * Your step that's due now, for Needs you's 'recap' reason. Only when your step is the next one, not
-   * a later to-do of yours behind someone else's (W146). But a background job that says it's done
-   * takes no other turn until you prompt it, so CI or someone else's step ahead of yours is checked by
-   * nobody: there, your first to-do that doesn't follow an earlier one is due (W166). Not when it waits
-   * on another session, whose message would start its next turn, nor from a recap made before W166,
-   * which doesn't say which to-dos follow others.
+   * Your step that's due now, for Needs you's 'recap' reason. Two ways:
+   * - Your step is the next one, the first to-do someone other than the session owns, and the recap
+   *   says it waits on you. Not a later to-do of yours behind someone else's (W146).
+   * - Your first to-do that doesn't follow an earlier one (`after: false`), whatever the recap says it
+   *   waits on (dueNow()): W166 for a job Claude Code calls done, which takes no other turn until you
+   *   prompt it, and W174 for any other session.
    */
-  function yourNext(session: SessionSummary, recap: SessionRecap): string | undefined {
+  function yourNext(full: SessionRecap): string | undefined {
+    return leadYours(full) ?? dueNow(full);
+  }
+
+  /** The recap without the to-dos of yours the session only offered (W173), which never put it in Needs you. Only yours: an offered step of someone else's ahead of yours still keeps yours behind it (W173's review). */
+  function withoutOffered(full: SessionRecap): SessionRecap {
+    return { ...full, todos: full.todos.filter((todo) => todo.owner !== 'you' || todo.optional !== true) };
+  }
+
+  /** Your step when it's the next one and the recap says it waits on you (W146). */
+  function leadYours(full: SessionRecap): string | undefined {
+    const recap = withoutOffered(full);
     const lead = leadTodo(recap.todos);
-    if (lead?.owner === 'you' && recap.waitingOn === 'you') return lead.text;
-    if (!jobDone(session) || recap.waitingOn === 'another session') return undefined;
+    return lead?.owner === 'you' && recap.waitingOn === 'you' ? lead.text : undefined;
+  }
+
+  /**
+   * Your first to-do that follows no other, so it's due now whatever the lead to-do is (W166, W174): a
+   * step of the session's, CI's or someone else's ahead of it doesn't hide it. Phil, 2026-11-09: a session
+   * showed Busy while two of his steps sat behind CI's. Whatever `waitingOn` says, another session
+   * included: Phil, 2026-11-18, "Waiting on you" means there's an action you can take now that moves the
+   * session on. Not from a recap made before W166, which doesn't say which to-dos follow others.
+   */
+  function dueNow(full: SessionRecap): string | undefined {
+    const recap = withoutOffered(full);
     if (recap.todos.some((todo) => todo.after === undefined)) return undefined;
     return recap.todos.find((todo) => todo.owner === 'you' && todo.after === false)?.text;
   }
 
   /** Needs you's 'recap' reason, when it holds and no earlier reason does (NeedsYou's order). */
   function needsYouOf(session: SessionSummary, recap: SessionRecap): NeedsYou | undefined {
-    const next = yourNext(session, recap);
-    if (recap.source !== 'pitwall' || recap.stale === true || next === undefined || next === '') return undefined;
-    if (session.stale || session.finished || working(session)) return undefined;
+    if (recap.source !== 'pitwall' || recap.stale === true || session.stale || session.finished) return undefined;
+    // While its turn runs, only a step that is due whatever it waits on counts (W174): the session may be
+    // about to ask you itself, so a waitingOn of 'you' alone isn't enough, as before.
+    const next = working(session) ? dueNow(recap) : yourNext(recap);
+    if (next === undefined || next === '') return undefined;
     const reason = session.needsYou?.reason;
     if (reason !== undefined && reason !== 'restarted' && reason !== 'blocked') return undefined;
     return { reason: 'recap', text: next };
@@ -858,7 +900,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     decorate(session) {
       const recap = shown(session);
       if (recap === undefined) return session;
-      const decorated: SessionSummary = { ...session, recap: summaryOf(session, recap) };
+      const decorated: SessionSummary = { ...session, recap: summaryOf(recap) };
       // pitwall's title, even while Claude Code's away_summary stands in for its recap.
       const title = recaps.get(session.sessionId)?.title;
       if (title !== undefined && !sameTitle(title, session.name)) {

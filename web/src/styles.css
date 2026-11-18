@@ -2501,6 +2501,22 @@ mark.match {
   line-height: var(--pw-leading-s);
 }
 
+.session-view-lineage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pw-space-1) var(--pw-space-3);
+  margin: 0;
+  min-width: 0;
+  color: var(--pw-text-subtle);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+}
+
+.session-view-lineage-item {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .session-view-worked-text {
   min-width: 0;
   overflow-wrap: anywhere;

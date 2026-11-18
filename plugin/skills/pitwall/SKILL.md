@@ -46,3 +46,18 @@ Write plain text. pitwall won't show a block with a control, zero-width, bidi or
 ## One at a time
 
 pitwall shows the last block of your newest message, and only while it ends the message. A later message without one clears it. To propose two sessions, propose one, and the next in a later turn.
+
+## A hand-off is a proposal too (W168)
+
+When a session finishes a piece of work and its user will carry on in a fresh context (a hand-off, a `/clear` and "Read NOW.md"), end the message with a `spin-off` block whose prompt starts with this exact line, naming this session by its own id (the `?session=` link in the pitwall note at the start of this session):
+
+```
+Continues session <this session's id>.
+```
+
+pitwall then shows the card with **Clear and continue**, for a background job: on the user's click it types `/clear` into this job and then the prompt, as one message, so the job keeps its name and its pull requests. For any other session the card offers Start, a new session in the folder, with End session beside it. Either way nothing happens until the user clicks.
+
+- Give `folder:` as the repo's absolute path, and leave out `name:`.
+- After the first line, say what to read and what to do next; the same rules as any prompt above apply.
+- The prompt can't start with `/` or `!`, and can't have invisible characters: pitwall won't type it. Starting with `Continues session` is fine.
+- If you don't know your own id, write an ordinary proposal without that line: it gets Start only.

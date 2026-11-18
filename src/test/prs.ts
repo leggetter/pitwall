@@ -89,6 +89,7 @@ export function fetchFailed(reason: Extract<SearchResult, { ok: false }>['reason
 /** A PR's review requests, as the review-requested search asks for them: each a User's login or a Team's `org/slug`. */
 export function reviewRequests(...reviewers: ({ user: unknown } | { team: unknown } | Record<string, unknown>)[]): Record<string, unknown> {
   return {
+    pageInfo: { hasNextPage: false },
     nodes: reviewers.map((reviewer) =>
       'user' in reviewer
         ? { requestedReviewer: { __typename: 'User', login: reviewer.user } }

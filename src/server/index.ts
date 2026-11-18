@@ -3,6 +3,8 @@ import type { PrSource } from '../prs/index.js';
 import type { RecapEngine } from '../recaps/engine.js';
 import type { Supervisor } from '../supervisor/supervisor.js';
 import type { UsageSource } from '../usage/service.js';
+import type { DiagnosticsLog } from './diagnostics.js';
+import type { LineageStore } from './lineage.js';
 import type { RelayManager } from './relay.js';
 import { startServerWithInternals } from './server.js';
 import type { WorkStore } from './work.js';
@@ -39,6 +41,16 @@ export interface ServerOptions {
    * the real ~/.pitwall.
    */
   pitwallHome?: string;
+  /**
+   * The diagnostics log (W165), which the CLI also gives the PR poller. Without one, the server makes
+   * its own in `pitwallHome`, and without that, nothing is written.
+   */
+  diagnostics?: DiagnosticsLog;
+  /**
+   * The lineage store (W167), which the CLI also gives the indexer's listing hook. Without one, the
+   * server makes its own in `pitwallHome`, and without that, links are held in memory only.
+   */
+  lineage?: LineageStore;
   /**
    * Your open pull requests (M4): the poller the CLI makes with createPrPoller(), which the
    * server starts once it's listening and stops on close(). Without it, pull requests are off, as

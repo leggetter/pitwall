@@ -2,35 +2,13 @@
 // badge it gets, where it sorts, and whether it passes the filters.
 
 import { ENDED_SHOWN_DAYS, type RecapWaitingOn, type SessionGroup, type SessionKind, type SessionSummary } from '../../src/shared/protocol.js';
+import { indexNeedsYou, isBusy, needsAttention } from '../../src/shared/needsYou.js';
 import { shortenHome } from './format.js';
 
-/**
- * A session the index says needs Phil (SessionSummary.needsYou, W69), for one of NeedsYou's reasons,
- * judged from its context: a prompt on screen, a background job's own line on what it needs, a last
- * turn that asked him something, a restart he asked for, or blocked where pitwall couldn't read why.
- * `state: 'blocked'` alone isn't one. Never a stale or finished one, which the index never marks,
- * checked here too: a finished session's question still shows on its row, muted, but it isn't
- * counted anywhere. Nor an ended interactive session (W67), which is finished too, whatever it asked.
- *
- * Nor one you flagged as not needing you (W153, SessionSummary.flagged), which the server sets only
- * while it still needs what it needed when you flagged it, nor one you snoozed (W154,
- * SessionSummary.snoozed), which the server keeps until its time or a wake: Needs you, every need-you
- * count and the urgency sort leave them out. For what a row says it needs, whether the index says it
- * needs you, flagged or snoozed, is indexNeedsYou().
- */
-export function needsAttention(session: SessionSummary): boolean {
-  return indexNeedsYou(session) && session.flagged === undefined && session.snoozed === undefined;
-}
+// needsAttention(), indexNeedsYou() and isBusy() live in src/shared/needsYou.ts (W165), so the server
+// logs the reason a row is in Needs you from the same code the page uses.
+export { indexNeedsYou, isBusy, needsAttention };
 
-/**
- * Whether the index says it needs you, whatever you flagged or snoozed: for what its row says it needs,
- * its badge's status, and the controls that hide it (W153's flag, W154's snooze). Never a stale,
- * finished or ended one.
- */
-export function indexNeedsYou(session: SessionSummary): boolean {
-  if (session.stale || session.finished || session.ended) return false;
-  return session.needsYou !== undefined;
-}
 
 /**
  * A session that needs you, by the index, but that you flagged as not needing you (W153), for what
@@ -144,7 +122,8 @@ export interface StatusBadge {
  * - 'restarted': "Waiting for your prompt".
  * - 'asked': "Asked you", subtle, as before W69.
  * - 'recap': "Waiting on you", subtle as Asked you is (M5, W111): its current recap says it's waiting
- *   on you, as a job Claude Code calls done can be (Phil, 2026-10-29). It takes Done's place.
+ *   on you, as a job Claude Code calls done can be (Phil, 2026-10-29). It takes Done's place. A session
+ *   that is also busy (W174) keeps Busy's 8 px dot before the label.
  * A job Claude Code calls done whose current recap says it waits on someone else, on CI or on another
  * session shows "Waiting on someone else", "Waiting on CI" or "Waiting on another session" in Done's
  * place, subtle and neutral, never needing you (W170): "it's still marked as DONE" (Phil, 2026-11-09).
@@ -177,7 +156,8 @@ function needsBadge(session: SessionSummary): StatusBadge {
     case 'asked':
       return { status: 'asked', label: 'Asked you', look: 'subtle-warning' };
     case 'recap':
-      return { status: 'recap', label: 'Waiting on you', look: 'subtle-warning' };
+      // At work too (W174): the busy dot stays, so a session that is busy and waits on you shows both.
+      return { status: 'recap', label: 'Waiting on you', look: 'subtle-warning', ...(isBusy(session) ? { dot: true } : {}) };
   }
   // A stale blocked job keeps its "Blocked" text but loses the attention styling.
   if (session.state === 'blocked' && session.stale) return { status: 'blocked-stale', label: `Blocked${reason}`, look: 'outline' };
@@ -228,17 +208,6 @@ export function rowStatusBadge(session: SessionSummary): StatusBadge | undefined
   return badge.status === 'idle' ? undefined : badge;
 }
 
-/**
- * Whether it's at work (W161): Claude Code says it's busy, or its running background job is working,
- * as quietWaitingOn() has it, and it hasn't finished or ended. Not when the transcript says its turn has
- * ended (turnEnded), since a plugin's monitor can keep the status at busy (spike 007, finding 6), nor when
- * it's stale, as a job blocked for days. A PR it owns doesn't put it in Needs you
- * while it is (work.ts' prNeeding()): it may be doing what the PR needs, and its own needs still do.
- */
-export function isBusy(session: SessionSummary): boolean {
-  if (session.finished || session.ended || session.stale === true || session.turnEnded === true) return false;
-  return session.status === 'busy' || (session.alive && session.state === 'working');
-}
 
 /**
  * The `claude attach` command for a background session, or undefined. The

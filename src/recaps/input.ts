@@ -435,8 +435,21 @@ export interface SessionInfo {
 /** The longest name or repo label sent. */
 const INFO_MAX = 200;
 
+/**
+ * The last recap of the session this one continues (W167): after `/clear` or a hand-off the new
+ * session starts with an empty context, so the first recap would otherwise say nothing of why the
+ * work began.
+ */
+export interface PredecessorRecap {
+  title?: string | undefined;
+  summary: string;
+  at?: string | undefined;
+}
+
 /** What a first recap reads. */
 export interface FirstInput extends SessionInfo {
+  /** The recap of the session this one continues (W167), as data. */
+  predecessor?: PredecessorRecap;
   firstPrompt?: string;
   /** Your messages, oldest first (W189): recapSources' `prompts`. */
   prompts?: readonly RecapPrompt[];
@@ -539,6 +552,18 @@ export function yourMessagesBlock(prompts: readonly RecapPrompt[] | undefined, f
   return [block('your-messages', lines.reverse().join('\n'))];
 }
 
+/** `<previous-session-recap>` (W167): the continued session's title and summary, plain lines, inside the frame as data. */
+function predecessorBlock(predecessor: PredecessorRecap | undefined): string[] {
+  if (predecessor === undefined) return [];
+  const title = predecessor.title === undefined ? '' : plainLine(predecessor.title, INFO_MAX);
+  const summary = startAndEnd(plainBlock(predecessor.summary), PREDECESSOR_SUMMARY_MAX);
+  if (summary === '') return [];
+  return [block('previous-session-recap', [title === '' ? '' : `Title: ${title}`, summary].filter((line) => line !== '').join('\n'), atAttribute(predecessor.at))];
+}
+
+/** The most of a continued session's recap summary a first recap reads. */
+export const PREDECESSOR_SUMMARY_MAX = 1500;
+
 /** The newest compaction summary, whole, at most PLAN_COMPACTION_CAP characters, its start and end. */
 function compactionBlock(compaction: CompactionSummary | undefined): string[] {
   const text = compaction === undefined ? '' : startAndEnd(plainBlock(compaction.text), PLAN_COMPACTION_CAP);
@@ -555,6 +580,7 @@ export function firstRecapInput(input: FirstInput, random?: () => string): strin
   const away = input.awaySummary === undefined ? '' : plainBlock(input.awaySummary.text);
   if (away !== '') parts.push(block('claude-code-recap', away, atAttribute(input.awaySummary?.at)));
   parts.push(...compactionBlock(input.compaction));
+  parts.push(...predecessorBlock(input.predecessor));
   parts.push(block('latest-turns', input.turns));
   const prs = prsBlock(input.prs);
   parts.push(...prs);

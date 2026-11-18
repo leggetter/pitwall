@@ -149,6 +149,8 @@ export function noteFor(url, sessionId) {
     `pitwall (${url}) watches this machine's Claude Code sessions, this one included${self}.`,
     `When you mention a session, say in a few words what it is, then link its short ID (the first 8 characters): [<short id>](${url}/?session=<full session ID>).`,
     'To propose a new, separate session, use the pitwall skill; the user starts it from pitwall.',
+    "Give each piece of work to a fresh sub-agent (a new Agent call with a brief from the repo and the last agent's report), not another message to a finished one: pitwall refuses that past 200K tokens of its context.",
+    'If a hook tells you your context is large, finish the piece to a safe point, then hand off or report.',
     'This replaces any earlier pitwall note in this conversation.',
   ].join('\n');
 }

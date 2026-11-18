@@ -162,7 +162,7 @@ import { pendingLink, prPrefill, withPendingLinks, type PendingLinks } from '../
 import { createPanelWidthStore } from '../panelWidth.js';
 import { relayAlertText } from '../relay.js';
 import { tabAttention, tabGroups, writeStoredTab } from '../rootTabs.js';
-import { openSpinOffs, spinOffCount, useDismissedSpinOffs } from '../spinOff.js';
+import { clearedText, isHandoffProposal, noteContinued, openSpinOffs, spinOffCount, useDismissedSpinOffs } from '../spinOff.js';
 import {
   browserNavigation,
   findGroup,
@@ -1599,7 +1599,14 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const needsYouNotices =
     tabSpinOffs.length > 0 || approvals > 0 ? (
       <>
-        <SpinOffCards items={tabSpinOffs} onStart={setSpinOffStart} onDismiss={dismissedSpinOffs.dismiss} onOpen={(sessionId) => openSession(sessionId)} />
+        <SpinOffCards items={tabSpinOffs} onStart={setSpinOffStart} onDismiss={dismissedSpinOffs.dismiss}
+          onOpen={(sessionId) => openSession(sessionId)}
+          onCleared={(sessionId, key, from) => {
+            // The job has its new session and the prompt: the card goes, as a started one does (W168).
+            dismissedSpinOffs.dismiss(sessionId, key);
+            toasts.show({ tone: 'success', key: `cleared:${sessionId}`, message: clearedText(from) });
+          }}
+        />
         {approvals > 0 && supervisorNotice}
       </>
     ) : undefined;
@@ -1905,6 +1912,15 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       openedBy={hiddenIn === undefined && opener.current?.sessionId === session.sessionId ? opener.current.gesture : undefined}
       terminalFocus={terminalFocus}
       polledAt={updatedAt}
+      lineage={
+        session.lineage === undefined
+          ? undefined
+          : {
+              ...(session.lineage.from === undefined ? {} : { from: { sessionId: session.lineage.from, name: listedSession(session.lineage.from)?.name } }),
+              ...(session.lineage.to === undefined ? {} : { to: { sessionId: session.lineage.to, name: listedSession(session.lineage.to)?.name } }),
+              onOpen: openSession,
+            }
+      }
       recaps={snapshot?.recaps}
       backLabel={hiddenIn === undefined ? backLabel : undefined}
       prs={{
@@ -2234,7 +2250,10 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
           subtitle={spinOffSubtitle(spinOffStart.from)}
           onClose={() => setSpinOffStart(undefined)}
           onStarted={(session) => {
-            // Started: its card goes, as a dismissed one does.
+            // Started: its card goes, as a dismissed one does. A hand-off's session continues the old one (W168): the server records it.
+            if (api && isHandoffProposal({ sessionId: spinOffStart.sessionId }, { kind: 'proposal', key: spinOffStart.key, folder: spinOffStart.cwd, prompt: spinOffStart.prompt })) {
+              void noteContinued(api, spinOffStart.sessionId, session.shortId);
+            }
             dismissedSpinOffs.dismiss(spinOffStart.sessionId, spinOffStart.key);
             setSpinOffStart(undefined);
             started.wait(session);

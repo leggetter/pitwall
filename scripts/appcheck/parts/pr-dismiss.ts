@@ -78,6 +78,14 @@ const part: Part = {
       t.expectEqual(server.records.prDismissals, [{ action: 'dismiss', key: PRS.review, status: 200 }], 'one dismissal, of the state the page showed');
       await page.waitFor('the toast', `${toasts}.includes(${q(DISMISSED_TOAST(PRS.review))})`);
       t.expect(await page.evaluate<boolean>(`${undoIn(PRS.review)}?.textContent === 'Undo'`), 'with Undo');
+      // Top aligned: the tile, Undo and Dismiss stay at the message's first line however many lines it wraps to.
+      const tops = await page.evaluate<Record<string, number>>(`(() => {
+        const toast = ${undoIn(PRS.review)}.closest('.toast');
+        const top = (sel) => toast.querySelector(sel).getBoundingClientRect().top - toast.getBoundingClientRect().top;
+        const lines = Math.round(parseFloat(getComputedStyle(toast.querySelector('.toast-message')).height) / parseFloat(getComputedStyle(toast.querySelector('.toast-message')).lineHeight));
+        return { tile: top('.toast-tile'), message: top('.toast-message'), undo: top('.toast-action'), dismiss: top('.toast-dismiss'), lines };
+      })()`);
+      t.expectEqual([tops.tile, tops.message, tops.undo, tops.dismiss], [8, 8, 10, 10], `the tile, message, Undo and Dismiss top aligned (${tops.lines} lines)`);
       t.expectEqual(await page.evaluate(`${SECTION}?.textContent`), 'Dismissed (1)', 'the Dismissed section, with its count');
       t.expectEqual(await page.evaluate(`${SECTION}?.getAttribute('aria-expanded')`), 'false', 'collapsed');
       t.expect(await page.evaluate<boolean>(`!!document.activeElement?.closest('main.session-list li.session:not([data-dismissed])')`), 'focus on the row that took its place', await page.evaluate<string>(focused));

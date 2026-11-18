@@ -16,7 +16,7 @@ M3.1 was built on `m3.1/integration` ([PR #69](https://github.com/leggetter/pitw
 
 M4, Phil's open pull requests, was built on `m4/integration` (W92 to W117) and merged into `main` on 2026-11-02 in [PR #117](https://github.com/leggetter/pitwall/pull/117), after Phil's try-out and W108's security review.
 
-M5, the supervisor, was built on `m5/integration` (W109 to W129) and merged into `main` on 2026-11-02 in [PR #138](https://github.com/leggetter/pitwall/pull/138), after Phil's try-out, W116's security review and the re-review of W124 to W128: per-session recaps, pitwall's MCP server, the supervisor and its panel, approvals for messages, new sessions and resumes, New session from here (since taken out, W130, D27), and model and effort per kind of work. M5.1, the work after M5, was built on `m5.1/integration` (W130 to W164) and merged into `main` on 2026-11-09 in [PR #197](https://github.com/leggetter/pitwall/pull/197), after W164's security review: Needs you narrowed to sessions blocked on you now, with flag and snooze, recaps that give the picture, spin-off proposals' first piece, and fixes from daily use. M5.2, efficiency, was built on `m5.2/integration` (W155 to W160, W166, W169, W170, W172, W177, W180 to W182) and merged into `main` on 2026-11-10 in [PR #234](https://github.com/leggetter/pitwall/pull/234), after W180's security review: work profiles, the Usage view and run rate, the supervisor reading them, the supervisor over the page, and fixes from daily use. M5.3, the rest, starts with W176 (the pitwall plugin), on `m5.3/integration`. See `NOW.md`.
+M5, the supervisor, was built on `m5/integration` (W109 to W129) and merged into `main` on 2026-11-02 in [PR #138](https://github.com/leggetter/pitwall/pull/138), after Phil's try-out, W116's security review and the re-review of W124 to W128: per-session recaps, pitwall's MCP server, the supervisor and its panel, approvals for messages, new sessions and resumes, New session from here (since taken out, W130, D27), and model and effort per kind of work. M5.1, the work after M5, was built on `m5.1/integration` (W130 to W164) and merged into `main` on 2026-11-09 in [PR #197](https://github.com/leggetter/pitwall/pull/197), after W164's security review: Needs you narrowed to sessions blocked on you now, with flag and snooze, recaps that give the picture, spin-off proposals' first piece, and fixes from daily use. M5.2, efficiency, was built on `m5.2/integration` (W155 to W160, W166, W169, W170, W172, W177, W180 to W182) and merged into `main` on 2026-11-10 in [PR #234](https://github.com/leggetter/pitwall/pull/234), after W180's security review: work profiles, the Usage view and run rate, the supervisor reading them, the supervisor over the page, and fixes from daily use. M5.3, the rest, was built on `m5.3/integration` (W176 to W192) and merged into `main` on 2026-11-13 in [PR #265](https://github.com/leggetter/pitwall/pull/265), after W192's security review: the pitwall plugin, the supervisor's read-only connectors, Not for me, recaps a cold reader can act on, and fixes from daily use. M5.4, the items M5.3 didn't build, is on `m5.4/integration`. See `NOW.md`.
 
 ## Rules
 
@@ -45,7 +45,7 @@ Usage limits are weekly, and pitwall's own work should leave room for the weeken
 - **Read what you need:** excerpts and `grep`, not whole large files, and counts, not full outputs. Some lines are very long (`docs/decisions.md`'s entries, up to 3,200 characters; `PLAN.md`'s are under 1,100 since its Security bullets and M5.1 work breakdown were split into sub-bullets), so a `grep` that matches one prints all of it: cut it, `grep -n … | cut -c1-200`, or `grep -o '.\{0,80\}word.\{0,80\}'`, and read the whole line only when you need it.
 - **Keep the starting context small:** `.claude/settings.json` turns off claude.ai connectors in this repo (`disableClaudeAiConnectors`), and an untracked `.claude/settings.local.json` turns off the plugins and skills a person's setup adds that pitwall work doesn't use (`enabledPlugins`, `skillOverrides`, `syncClaudeAiSkills`). Either applies only to sessions whose folder is this repo or one of its worktrees, never to the sessions pitwall watches or starts elsewhere. On 2026-11-04 the two cut a fresh session's first call from 53.1K to 28.6K. Measure it with `claude -p "Reply with OK." --output-format json --no-session-persistence --max-turns 1` and its `usage`, not `/context`: its output stays in the conversation, about 56K a run.
 - **One session per work item:** hand off with the `handoff` skill after each merge, not only at 200K. A session starts at about 29K of context before any work (measured 2026-11-04, after the settings above), and every call re-reads all of it. A coordinator that reviews and merges two items in a row reached 209K over 103 calls.
-- **Long sessions get compacted or handed off:** a session whose every turn re-reads a very large context should hand off with the `handoff` skill (`.claude/skills/handoff/SKILL.md`), which updates `NOW.md` and commits, then `/clear` and start the next session with "Read NOW.md". Or compact. Past 200K tokens of context, the hand-off hook in `.claude/settings.json` says so after a turn.
+- **Long sessions get compacted or handed off:** a session whose every turn re-reads a very large context should hand off with the `handoff` skill (`.claude/skills/handoff/SKILL.md`), which updates `NOW.md` and commits, then `/clear` and start the next session with "Read NOW.md". Or compact. Past 200K tokens of context, the hand-off hook (`plugin/hooks/handoffNudge.mjs`, W133, moved there by W197) says so after a turn, while pitwall runs. `.claude/settings.json` runs it for every session in this repo; the plugin runs it for the sessions pitwall starts and, once installed, every other session (README).
 
 ## Commands
 
@@ -53,7 +53,7 @@ Use Node 22 (CI runs 22.x) and npm.
 
 ```
 npm ci                   install exactly what package-lock.json records
-npm run build            server with tsc to dist/, web UI with Vite to dist/web
+npm run build            server with tsc to dist/, the plugin copied to dist/plugin, web UI with Vite to dist/web
 npm run dev -- [root...] rebuild the web UI and restart the server on change. Uses port 4517
                          (PITWALL_DEV_PORT overrides it), refuses to start if it's busy, and opens
                          the browser once, through the launch file, after the server listens.
@@ -90,12 +90,17 @@ plugin/                  the pitwall plugin (W176), for the sessions pitwall wat
                          SessionStart hook, hooks/sessionNote.mjs, that adds a short note while pitwall runs (found
                          through $PITWALL_HOME/server.json, src/server/serverFile.ts), and the `pitwall` skill, W163's
                          spin-off proposals. Outside .claude/, so it isn't one of this repo's project plugins. Its
-                         test is src/plugin/sessionNote.test.ts; typechecked, not built
-.claude/settings.json    pitwall's own project settings, checked in: the hand-off hook and disableClaudeAiConnectors.
+                         test is src/plugin/sessionNote.test.ts; typechecked, not built. W197 (fresh sub-agents) added
+                         hooks/subagentGuard.mjs (PreToolUse on SendMessage: refuses a message to a finished sub-agent past
+                         200K tokens of context), hooks/subagentNudge.mjs (PostToolUse: tells a sub-agent past 200K, and
+                         400K, to finish and report), hooks/handoffNudge.mjs (the Stop hook W133 had in .claude/hooks/)
+                         and hooks/common.mjs (what they share: is pitwall running, safe tail reads, the nudge state);
+                         their tests and kit are src/plugin/*.test.ts and pluginHookKit.ts. The server adds
+                         `--plugin-dir=<dist/plugin>`, the copy `npm run build` makes (scripts/copy-plugin.mjs), to the
+                         sessions it starts or resumes, except a stopped job's wake (src/server/pluginDir.ts)
+.claude/settings.json    pitwall's own project settings, checked in: disableClaudeAiConnectors, and the Stop hook that runs the
+                         plugin's hand-off nudge, plugin/hooks/handoffNudge.mjs, for every session in this repo
                          .claude/settings.local.json, untracked, is a person's own (Efficiency)
-.claude/hooks/           handoffNudge.mjs, a Stop hook that tells a session past 200K tokens of context, and again
-                         past 400K, to finish safely and use the handoff skill (W133, spike 012); fails soft, leaves
-                         sub-agents alone. Its test sits beside it; typechecked and in npm test, not built
 README.md                for newcomers: what pitwall is, how to run it, how it works, the roadmap
 docs/decisions.md        settled decisions, D1 to D28, with their reasoning
 docs/design-system.md    the web UI's design system: tokens, layout, components, content, accessibility
@@ -156,6 +161,13 @@ scripts/usage-report.ts  npx tsx scripts/usage-report.ts [--days 14] [--json]: a
                          repo's transcripts, read-only, totals only, to test the efficiency rules (W131)
 scripts/flag-report.ts   npx tsx scripts/flag-report.ts [--days 30] [--json]: counts and texts from the flag log,
                          ~/.pitwall/flags.jsonl (W153), read-only; the texts are session content, so it stays local
+scripts/diagnostics-report.ts
+                         npx tsx scripts/diagnostics-report.ts [--days 7] [--session <id>] [--json]: why sessions were in
+                         Needs you and for how long, from ~/.pitwall/diagnostics.jsonl (W165, written by
+                         src/server/diagnostics.ts; ids and reasons only), read-only
+scripts/lineage.ts       npx tsx scripts/lineage.ts <session id> [--json]: the sessions one continues and is continued by, with
+                         each transcript's path, from ~/.pitwall/lineage.jsonl (W167, written by src/server/lineage.ts; ids and
+                         paths only), read-only
 scripts/extract-icons.ts regenerates web/src/icons/paths.ts from a pinned Material Symbols commit
 scripts/readme-screenshot.ts
                          writes <outDir>/hero-<theme>.png from made-up sessions on the app check's fake
@@ -167,7 +179,7 @@ THIRD_PARTY_NOTICES.md   licences for the bundled fonts and icons
 .env.example             how to make a fixed PITWALL_TOKEN for npm run dev (D7), and PITWALL_DEV_RECAPS;
                          .env is gitignored
 CLAUDE.md                imports this file for Claude Code
-tsconfig.json            server typecheck: src/ with tests, .claude/hooks/, plugin/hooks/, scripts/, config files
+tsconfig.json            server typecheck: src/ with tests, plugin/hooks/, scripts/, config files
 tsconfig.build.json      server build: src/ to dist/, without tests
 web/tsconfig.json        web UI typecheck (DOM, react-jsx, bundler resolution)
 vite.config.ts           web UI build

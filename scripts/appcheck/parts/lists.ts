@@ -7,7 +7,7 @@
 // changed another root's repo most kept in its own root's tab, its row "also in" that repo (W149);
 // and a session's proposal for a new session, a card over Needs you's rows, counted there (W163).
 
-import { API_SERVER, CODE, DEMO_APP, DEMO_APP_WEB, DOCS_SITE, NAMES, OSS, SDK_CLI, SPIN_OFF, SPIN_OFF_PROMPT } from '../fixtures.js';
+import { API_SERVER, CODE, DEMO_APP, DEMO_APP_WEB, DOCS_SITE, handoffProposal, NAMES, OSS, SDK_CLI, SPIN_OFF, SPIN_OFF_PROMPT } from '../fixtures.js';
 import type { Part } from '../runner.js';
 import { chooseInRepoList, focused, listHeading, openFromRow, openRepoList, repoItem, repoLabels, row, rowNames, selectedRepo, viewName, VIEW } from './_dom.js';
 
@@ -133,6 +133,25 @@ const part: Part = {
       t.expect(await page.evaluate(`[...document.querySelectorAll('.session-list li.session')].every((li) => li.dataset.attention === 'true')`), 'each row is marked as needing you');
     });
 
+    await t.step("a busy session whose recap has a to-do for you shows Waiting on you with Busy's dot, in Needs you, and the dot goes when it stops (W174)", async () => {
+      const job = t.server.world.byName(NAMES.running);
+      t.server.world.need(job.sessionId, { status: 'busy', needsYou: { reason: 'recap', text: 'Name the made-up post' } });
+      t.server.broadcast();
+      const badgeOf = `(() => { const el = (${row(NAMES.running)})?.closest('li.session')?.querySelector('.session-badges [data-status]'); return el ? { status: el.dataset.status, text: el.textContent.trim(), dot: !!el.querySelector('.status-dot'), warning: getComputedStyle(el).color } : null; })()`;
+      const shown = await page.waitFor<{ status: string; text: string; dot: boolean; warning: string }>('its badge', `(() => { const b = ${badgeOf}; return b?.status === 'recap' ? b : null; })()`);
+      t.expectEqual({ text: shown.text, dot: shown.dot }, { text: 'Waiting on you', dot: true }, 'Waiting on you, with the dot');
+      t.expect(await page.evaluate(`${row(NAMES.running)}.closest('li.session').dataset.attention === 'true'`), 'the row is in Needs you');
+      t.expect(((await page.evaluate<string | null>(`(${row(NAMES.running)})?.closest('li.session')?.querySelector('.session-what-text')?.textContent ?? null`)) ?? '').includes('Name the made-up post'), 'its to-do on line 2');
+      await t.shot('busy-waiting-on-you');
+      // Idle, the same recap reason has no dot.
+      t.server.world.need(job.sessionId, { status: 'idle', state: 'blocked' });
+      t.server.broadcast();
+      await page.waitFor('no dot', `(() => { const b = ${badgeOf}; return b?.status === 'recap' && !b.dot; })()`);
+      t.server.world.need(job.sessionId, { status: job.status, state: job.state, needsYou: undefined });
+      t.server.broadcast();
+      await page.waitFor('the row back as it was', `(() => { const b = ${badgeOf}; return b?.status !== 'recap'; })()`);
+    });
+
     await t.step("a session's proposal for a new session is a card over Needs you's rows, counted in Needs you and the title, until dismissed (W163)", async () => {
       const card = `document.querySelector('.session-list li.spin-off-card')`;
       const titleCount = `Number(/^\\((\\d+)\\)/.exec(document.title)?.[1] ?? 0)`;
@@ -175,6 +194,41 @@ const part: Part = {
       await page.click('Dismiss', `${card}.querySelector('.approval-actions button:last-child')`);
       await page.waitFor('the card to go', `!${card}`);
       t.expectEqual(await page.evaluate(titleCount), before, 'and leaves the count when dismissed');
+    });
+
+    await t.step("a hand-off's card offers Clear and continue for a running job, and End session for an interactive one, and sends nothing (W168)", async () => {
+      const card = `document.querySelector('.session-list li.spin-off-card')`;
+      const look = (): Promise<{ buttons: string[]; note: string; left: number; right: number; listScrollsSideways: boolean }> =>
+        page.evaluate(`(() => {
+          const li = ${card};
+          const r = li.getBoundingClientRect();
+          const list = document.querySelector('.session-list');
+          return { buttons: [...li.querySelectorAll('.approval-actions button')].map((b) => b.textContent.trim()), note: li.querySelector('.approval-note').textContent, left: r.left, right: r.right, listScrollsSideways: list.scrollWidth > list.clientWidth + 0.5 };
+        })()`);
+      t.server.clearRecords();
+      const job = t.server.world.byName(NAMES.running);
+      t.server.world.spinOff(job.sessionId, handoffProposal(job.sessionId));
+      t.server.broadcast();
+      await page.waitFor('the card', `!!${card}`);
+      const background = await look();
+      t.expectEqual(background.buttons, ['Clear and continue', 'Start new session…', 'Open session', 'Dismiss'], 'Clear and continue, Start new session, Open session and Dismiss');
+      t.expect(background.note.startsWith('Clear and continue types /clear'), 'its note says what it types', background);
+      t.expect(background.left >= 0 && background.right <= t.viewport.width && !background.listScrollsSideways, 'inside the window, nothing scrolls sideways', background);
+      await t.shot('handoff-job');
+      t.server.world.spinOff(job.sessionId, undefined);
+      const talker = t.server.world.byName(NAMES.conversation);
+      t.server.world.spinOff(talker.sessionId, handoffProposal(talker.sessionId));
+      t.server.broadcast();
+      await page.waitFor('the interactive session’s card', `${card}?.querySelector('h4')?.textContent.startsWith(${JSON.stringify(NAMES.conversation)})`);
+      const interactive = await look();
+      t.expectEqual(interactive.buttons, ['Start new session…', 'End session…', 'Open session', 'Dismiss'], 'Start new session, End session, Open session and Dismiss');
+      t.expect(interactive.left >= 0 && interactive.right <= t.viewport.width && !interactive.listScrollsSideways, 'inside the window, nothing scrolls sideways', interactive);
+      await t.shot('handoff-interactive');
+      t.expectEqual(t.server.records.clears, [], 'nothing was sent to a session');
+      t.expectEqual(t.server.records.actions, [], 'and nothing was ended');
+      t.server.world.spinOff(talker.sessionId, undefined);
+      t.server.broadcast();
+      await page.waitFor('the card to go', `!${card}`);
     });
 
     await t.step('rows are two lines: name, title and status; then where and what', async () => {

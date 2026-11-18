@@ -26,7 +26,10 @@ import { DEFAULT_PORT, PortInUseError, startServer, type RunningServer } from '.
 import { securityHeaders } from './security.js';
 import { BUILDING_SCRIPT, BUILDING_SCRIPT_PATH } from './static.js';
 import { MAX_CONVERSATION_READS, STALE_CURSOR_STATUS, startServerWithInternals, type ServerInternals } from './server.js';
+import { DIAGNOSTICS_LOG_NAME, DiagnosticsLog, readDiagnosticsLog } from './diagnostics.js';
 import { MAX_PENDING_HANDSHAKES, WS_CLOSE_TRY_AGAIN } from './handshake.js';
+import { linkCodeHash } from './linkCodes.js';
+import { linkConfirmMac } from './security.js';
 import { DEFAULT_AUTH_TIMEOUT_MS } from './websocket.js';
 import { pitwallOrigin, proofFor as contractProof, version2ProofFor } from '../test/proof.js';
 
@@ -1672,5 +1675,173 @@ describe('startServer', () => {
       await Promise.all([server.close(), server.close()]);
       await server.close();
     });
+  });
+});
+
+describe('the diagnostics log (W165)', () => {
+  it('writes when a session enters Needs you, on its own timer, and stops writing on close()', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'pitwall-test-diag-server-'));
+    try {
+      const file = join(home, DIAGNOSTICS_LOG_NAME);
+      const needing = withSession('2026-10-16T00:00:00.000Z');
+      needing.groups[0]!.sessions[0]!.needsYou = { reason: 'asked' };
+      const indexer = fakeIndexer(needing);
+      const server = await startServerWithInternals(
+        { indexer, token: TOKEN, webRoot, port: 0, diagnostics: new DiagnosticsLog({ home }) },
+        { diagnosticsIntervalMs: 10 },
+      );
+      running.push(server);
+      await waitFor(() => readDiagnosticsLog(file).some((line) => line.kind === 'enter'));
+      expect(readDiagnosticsLog(file)).toMatchObject([{ kind: 'start' }, { kind: 'enter', sessionId: '99999999-9999-4999-8999-999999999999', own: 'asked', won: 'own' }]);
+      await server.close();
+      indexer.push(withSession('2026-10-16T00:01:00.000Z'));
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(readDiagnosticsLog(file).map((line) => line.kind)).toEqual(['start', 'enter']);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+});
+
+// A pitwall link opened in a new tab (W175, D7, linkCodes.ts): the page gets a one-time code only when a
+// browser navigates to it, and a signed-in socket redeems its hash once.
+describe('link codes', () => {
+  const NAVIGATION = { 'sec-fetch-dest': 'document', 'sec-fetch-mode': 'navigate', 'sec-fetch-site': 'none' };
+  const TAG_PAGE = '<!doctype html><meta name="pitwall-link" content=""><title>pitwall</title>';
+
+  async function startWithTag(): Promise<RunningServer> {
+    const root = join(tmp, 'web-with-tag');
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, 'index.html'), TAG_PAGE);
+    return start(fakeIndexer(), { webRoot: root }, { peerCheck: async () => true });
+  }
+
+  const codeIn = (body: string) => /name="pitwall-link" content="([^"]*)"/.exec(body)?.[1] ?? '';
+
+  /** Sends link-confirm on a signed-in socket and returns the server's reply. */
+  async function confirm(client: Client, hash: string): Promise<ServerMessage> {
+    client.ws.send(JSON.stringify({ type: 'link-confirm', hash }));
+    for (;;) {
+      const message = await client.nextMessage();
+      if (message.type === 'link-confirmed' || message.type === 'link-denied') return message;
+    }
+  }
+
+  it('puts a fresh code in the page for a navigation, and none for a fetch, a frame or a client with no fetch metadata', async () => {
+    const server = await startWithTag();
+
+    const first = codeIn((await get(server.port, '/', NAVIGATION)).body);
+    const second = codeIn((await get(server.port, '/', NAVIGATION)).body);
+    expect(first).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(second).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(second).not.toBe(first);
+
+    expect(codeIn((await get(server.port, '/', { 'sec-fetch-dest': 'empty', 'sec-fetch-mode': 'cors' })).body)).toBe('');
+    expect(codeIn((await get(server.port, '/', { 'sec-fetch-dest': 'iframe', 'sec-fetch-mode': 'navigate' })).body)).toBe('');
+    expect(codeIn((await get(server.port, '/')).body)).toBe('');
+    expect(codeIn((await get(server.port, '/', NAVIGATION, 'HEAD')).body)).toBe('');
+  });
+
+  it('gives no code, and the sign-in page as before, when the check says the client is not this user’s', async () => {
+    const root = join(tmp, 'web-with-tag-refused');
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, 'index.html'), TAG_PAGE);
+    const seen: Array<number | undefined> = [];
+    const server = await start(fakeIndexer(), { webRoot: root }, { peerCheck: async (socket) => (seen.push(socket.remotePort), false) });
+    const res = await get(server.port, '/', NAVIGATION);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toContain('name="pitwall-link"');
+    expect(codeIn(res.body)).toBe('');
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBeGreaterThan(0);
+    // A request that isn't a navigation never reaches the check.
+    await get(server.port, '/', { 'sec-fetch-dest': 'empty' });
+    expect(seen).toHaveLength(1);
+  });
+
+  it('gives no code to a navigation a page started, or a prefetch', async () => {
+    const server = await startWithTag();
+    for (const site of ['same-origin', 'same-site', 'cross-site']) {
+      expect(codeIn((await get(server.port, '/', { ...NAVIGATION, 'sec-fetch-site': site })).body)).toBe('');
+    }
+    expect(codeIn((await get(server.port, '/', { ...NAVIGATION, 'sec-purpose': 'prefetch' })).body)).toBe('');
+    expect(codeIn((await get(server.port, '/', { ...NAVIGATION, 'sec-purpose': 'prefetch;prerender' })).body)).toBe('');
+    expect(codeIn((await get(server.port, '/', { 'sec-fetch-dest': 'document', 'sec-fetch-mode': 'navigate' })).body)).toBe('');
+    expect(codeIn((await get(server.port, '/', NAVIGATION)).body)).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  });
+
+  it('sends the page uncached, with the opener policy that stops a window opened by another page reading it', async () => {
+    const server = await startWithTag();
+    const res = await get(server.port, '/', NAVIGATION);
+
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.headers['cross-origin-opener-policy']).toBe('same-origin');
+    expect(res.headers['content-security-policy']).toContain("frame-ancestors 'none'");
+  });
+
+  it('checks Host before a page is served or a code issued', async () => {
+    const server = await startWithTag();
+    const res = await get(server.port, '/', { ...NAVIGATION, host: 'localhost' });
+
+    expect(res.status).toBe(403);
+    expect(res.body).not.toContain('pitwall-link');
+  });
+
+  it('gives a signed-in socket the code for a hash once, then denies it', async () => {
+    const server = await startWithTag();
+    const code = codeIn((await get(server.port, '/', NAVIGATION)).body);
+    const hash = linkCodeHash(code);
+    const client = await authedClient(server.port);
+
+    expect(await confirm(client, hash)).toEqual({ type: 'link-confirmed', hash, code, mac: linkConfirmMac(TOKEN, hash, code, `http://127.0.0.1:${server.port}`) });
+    expect(await confirm(client, hash)).toEqual({ type: 'link-denied', hash });
+  });
+
+  it('denies a hash the server never issued, and a hash that is not one', async () => {
+    const server = await startWithTag();
+    const client = await authedClient(server.port);
+    const stranger = linkCodeHash('a code another process made up');
+
+    expect(await confirm(client, stranger)).toEqual({ type: 'link-denied', hash: stranger });
+    client.ws.send(JSON.stringify({ type: 'link-confirm', hash: 'short' }));
+    client.ws.send(JSON.stringify({ type: 'link-confirm', hash: stranger, token: TOKEN }));
+    client.ws.send('not json');
+    // Still working, and still silent about the malformed ones.
+    expect(await confirm(client, stranger)).toEqual({ type: 'link-denied', hash: stranger });
+    expect(client.messages.filter((message) => message.type === 'link-denied' || message.type === 'link-confirmed')).toEqual([]);
+  });
+
+  it('does not redeem for a socket that has not signed in, and closes it as any other message before auth', async () => {
+    const server = await startWithTag();
+    const code = codeIn((await get(server.port, '/', NAVIGATION)).body);
+    const { client } = await challenged(server.port);
+
+    client.ws.send(JSON.stringify({ type: 'link-confirm', hash: linkCodeHash(code) }));
+    expect((await client.closed).code).toBe(4401);
+
+    // The code is still there for a tab that has signed in.
+    const signedIn = await authedClient(server.port);
+    expect((await confirm(signedIn, linkCodeHash(code))).type).toBe('link-confirmed');
+  });
+
+  it('lets only one of two tabs that ask at once have the code', async () => {
+    const server = await startWithTag();
+    const code = codeIn((await get(server.port, '/', NAVIGATION)).body);
+    const hash = linkCodeHash(code);
+    const [a, b] = await Promise.all([authedClient(server.port), authedClient(server.port)]);
+
+    const replies = await Promise.all([confirm(a, hash), confirm(b, hash)]);
+
+    expect(replies.map((reply) => reply.type).sort()).toEqual(['link-confirmed', 'link-denied']);
+  });
+
+  it('denies a socket that asks too often', async () => {
+    const server = await startWithTag();
+    const code = codeIn((await get(server.port, '/', NAVIGATION)).body);
+    const client = await authedClient(server.port);
+
+    for (let i = 0; i < 10; i += 1) await confirm(client, linkCodeHash(`nothing-${i}`));
+    expect((await confirm(client, linkCodeHash(code))).type).toBe('link-denied');
   });
 });

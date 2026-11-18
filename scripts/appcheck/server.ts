@@ -53,13 +53,14 @@ import type {
   SupervisorDecision,
   UsageWindowKey,
 } from '../../src/shared/protocol.js';
-import { COPY_SHORT_ID, NAMES, RECAP_CALL_MS, SUPERVISOR_HELD_ERROR, SUPERVISOR_STEP_MS, terminalScreen, World, type ResetOptions, type TerminalSize } from './fixtures.js';
+import { CLEAR_TIMEOUT_MARKER, COPY_SHORT_ID, NAMES, RECAP_CALL_MS, SUPERVISOR_HELD_ERROR, SUPERVISOR_STEP_MS, terminalScreen, World, type ResetOptions, type TerminalSize } from './fixtures.js';
 
 type Security = typeof import('../../src/server/security.js');
 type Static = typeof import('../../src/server/static.js');
 type Protocol = typeof import('../../src/shared/protocol.js');
 type Work = typeof import('../../src/server/work.js');
 type ClaudeDefaultsModule = typeof import('../../src/server/claudeDefaults.js');
+type LinkCodesModule = typeof import('../../src/server/linkCodes.js');
 
 /** pitwall's own modules, from the build. */
 export interface Built {
@@ -70,19 +71,22 @@ export interface Built {
   work: Work;
   /** Claude Code's defaults (W122), worked out from made-up settings files, never this machine's. */
   claudeDefaults: ClaudeDefaultsModule;
+  /** The one-time codes for a pitwall link opened in a new tab (W175), so the fake issues and redeems them as the real server does. */
+  linkCodes: LinkCodesModule;
 }
 
 /** Imports the five modules the fake server uses from a server build, such as dist. */
 export async function importBuilt(dist: string): Promise<Built> {
   const load = (path: string) => import(pathToFileURL(join(dist, path)).href);
-  const [security, staticFiles, protocol, work, claudeDefaults] = await Promise.all([
+  const [security, staticFiles, protocol, work, claudeDefaults, linkCodes] = await Promise.all([
     load('server/security.js'),
     load('server/static.js'),
     load('shared/protocol.js'),
     load('server/work.js'),
     load('server/claudeDefaults.js'),
+    load('server/linkCodes.js'),
   ]);
-  return { security: security as Security, static: staticFiles as Static, protocol: protocol as Protocol, work: work as Work, claudeDefaults: claudeDefaults as ClaudeDefaultsModule };
+  return { security: security as Security, static: staticFiles as Static, protocol: protocol as Protocol, work: work as Work, claudeDefaults: claudeDefaults as ClaudeDefaultsModule, linkCodes: linkCodes as LinkCodesModule };
 }
 
 export interface Records {
@@ -121,6 +125,10 @@ export interface Records {
   snoozes: Array<{ action: 'snooze' | 'unsnooze'; name: string; until?: string }>;
   /** Each spin-off check the server answered (W163), by the asking session's name, with the key asked for and the status. */
   spinOffChecks: Array<{ name: string; key: unknown; status: number }>;
+  /** Each Clear and continue the server answered (W168), by the asking session's name, with the key asked for and the status. */
+  clears: Array<{ name: string; key: unknown; status: number }>;
+  /** Each started session the page said continues another (W168), by the old session's name. */
+  continued: Array<{ name: string; shortId: unknown }>;
   actions: Array<{ action: 'stop' | 'remove'; name: string }>;
   /** Each resume of an ended session the server answered (W67), by the session's name. */
   resumes: string[];
@@ -146,6 +154,8 @@ export interface Records {
   decisions: Array<{ id: string; decision: string; length?: number; profile?: string | null; status: number }>;
   /** Every HTTP request and upgrade, as `METHOD /path status`. */
   requests: string[];
+  /** Every `link-confirm` a signed-in tab sent (W175), and whether this server had issued that code and not seen it used. */
+  linkConfirms: Array<{ hash: string; confirmed: boolean }>;
 }
 
 const emptyRecords = (): Records => ({
@@ -159,6 +169,8 @@ const emptyRecords = (): Records => ({
   prDismissals: [],
   snoozes: [],
   spinOffChecks: [],
+  clears: [],
+  continued: [],
   actions: [],
   resumes: [],
   opens: [],
@@ -175,6 +187,7 @@ const emptyRecords = (): Records => ({
   uploads: [],
   deletes: [],
   requests: [],
+  linkConfirms: [],
 });
 
 /** How long a made-up clone takes, so Clone shows it's busy (W107). */
@@ -279,9 +292,13 @@ const SUPERVISOR_MESSAGE_BODY_BYTES = 800 * 1024;
 /** The real server's handshake limit (DEFAULT_AUTH_TIMEOUT_MS). */
 const AUTH_TIMEOUT_MS = 5000;
 
+/** A page the fake serves as another process's stale page (W175's app check part, link-new-tab). */
+export const STALE_PAGE_PATH = '/__stale.html';
+
 export async function startFakeServer(options: FakeServerOptions): Promise<FakeServer> {
   const { port, webRoot, token, built } = options;
   const { security, protocol } = built;
+  const codes = new built.linkCodes.LinkCodes();
   const origin = security.serverOrigin(port);
   const apiKey = security.randomSecret();
   const headers = Object.entries(security.securityHeaders(port));
@@ -338,6 +355,13 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (path.startsWith('/api/')) return void api(req, res).catch(() => end(res, 500));
     if (path === protocol.WS_PATH || path === protocol.ATTACH_PATH) return end(res, 426);
     if (req.method !== 'GET' && req.method !== 'HEAD') return end(res, 405);
+    // Only in this fake (W175's check): a stale page another process served on this origin, which sends the
+    // opener policy itself so a window it opens onto pitwall keeps its handle. The real server has no such path.
+    if (path === STALE_PAGE_PATH) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+      return void res.end('<!doctype html><title>stale</title>');
+    }
     void serveStatic(req, res).catch(() => end(res, 500));
   });
 
@@ -346,6 +370,12 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (result.kind !== 'file') return end(res, 404);
     res.setHeader('Content-Type', result.contentType);
     if (result.isIndex) res.setHeader('Cache-Control', 'no-store');
+    // As the real server: a page loaded by a navigation, and no other request, is given a link code (W175).
+    const { linkCodes } = built;
+    if (result.isIndex && req.method === 'GET' && linkCodes.isDocumentNavigation((name) => [req.headers[name]].flat()[0])) {
+      const html = result.body.toString('utf8');
+      if (linkCodes.hasLinkTag(html)) return void res.end(linkCodes.withLinkCode(html, codes.issue()));
+    }
     res.end(result.body);
   }
 
@@ -423,7 +453,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     const recapRefresh = /^\/api\/sessions\/([^/]+)\/recap\/refresh$/.exec(url.pathname);
     if (recapRefresh && method === 'POST') return refreshRecap(req, res, decodeURIComponent(recapRefresh[1]!));
 
-    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|flag|unflag|snooze|unsnooze|spin-off|stop|remove|resume|open|subagents|end|recap)$/.exec(url.pathname);
+    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|flag|unflag|snooze|unsnooze|spin-off|clear-and-continue|continued|stop|remove|resume|open|subagents|end|recap)$/.exec(url.pathname);
     if (!match) return end(res, 404);
     const session = world.session(decodeURIComponent(match[1]!));
     if (!session) return end(res, 404);
@@ -479,6 +509,28 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       if (proposal.kind !== 'proposal') return answer(409, { ok: false, error: proposal.problem });
       if (world.rootFor(proposal.folder) === undefined) return answer(409, { ok: false, error: `The directory ${proposal.folder} isn't under one of your roots.` });
       return answer(200, { ok: true, cwd: proposal.folder, prompt: proposal.prompt, ...(proposal.name === undefined ? {} : { name: proposal.name }) });
+    }
+    if (route === 'clear-and-continue' && method === 'POST') {
+      // clearAndContinuePath(id) (W168): the session's own hand-off, by its key; a made-up job that clears at once,
+      // or one that times out when the prompt holds CLEAR_TIMEOUT_MARKER. Never the request's text.
+      const body = await readJson(req);
+      const key = isRecord(body) ? body.key : undefined;
+      const answer = (status: number, result: Record<string, unknown>) => {
+        records.clears.push({ name: session.name, key, status });
+        return json(res, status, result);
+      };
+      const proposal = session.spinOff;
+      if (typeof key !== 'string') return answer(400, { ok: false, error: 'The body must be { key }, the proposal’s key.' });
+      if (proposal === undefined || proposal.key !== key) return answer(409, { ok: false, error: 'That session has proposed something else since. Read its new proposal first.' });
+      if (proposal.kind !== 'proposal') return answer(409, { ok: false, error: proposal.problem });
+      if (session.kind !== 'background' || !proposal.prompt.startsWith(`Continues session ${session.sessionId}.`)) return answer(409, { ok: false, error: 'Clear and continue is for a running background session. Start a new session instead.' });
+      if (proposal.prompt.includes(CLEAR_TIMEOUT_MARKER)) return answer(504, { ok: false, error: 'The job didn’t list a new session id in time, so the prompt was not typed. /clear may or may not have run: check the job.' });
+      return answer(200, { ok: true, sessionId: '00000000-0000-4000-8000-0000000168ff' });
+    }
+    if (route === 'continued' && method === 'POST') {
+      const body = await readJson(req);
+      records.continued.push({ name: session.name, shortId: isRecord(body) ? body.shortId : undefined });
+      return json(res, 200, { ok: true });
     }
     if (route === 'snooze' && method === 'POST') {
       // snoozePath(id) (W154): snoozed at once, as the real route says, with `until` or Later.
@@ -1002,7 +1054,13 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
         ws.send(JSON.stringify({ type: 'prs', prs: world.prList() }));
         indexSockets.add(ws);
       },
-      () => {},
+      (message) => {
+        // A signed-in tab asking whether a link code is one this server issued (W175), as websocket.ts answers.
+        if (!isRecord(message) || message.type !== 'link-confirm' || !built.linkCodes.isLinkCodeHash(message.hash)) return;
+        const code = codes.redeem(message.hash);
+        records.linkConfirms.push({ hash: message.hash, confirmed: code !== undefined });
+        ws.send(JSON.stringify(code === undefined ? { type: 'link-denied', hash: message.hash } : { type: 'link-confirmed', hash: message.hash, code, mac: security.linkConfirmMac(token, message.hash, code, origin) }));
+      },
     );
   }
 

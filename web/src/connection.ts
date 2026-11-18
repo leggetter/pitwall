@@ -25,6 +25,7 @@ import {
 import type { ApiKeys } from './api.js';
 import { computeProof, parseChallenge, SECRET_SHAPE, type Prover } from './proof.js';
 import { parsePullRequestList } from './prs.js';
+import type { LinkConfirmer } from './tokenLink.js';
 
 export { computeProof, type Prover };
 
@@ -85,6 +86,8 @@ export interface ConnectionOptions {
   keys?: ApiKeys;
   /** Default computeProof, with WebCrypto. Tests wrap it so they can wait for it. */
   prove?: Prover;
+  /** Told when a socket signs in and when it goes (W175), and handed the server's replies to its link confirmations. */
+  links?: LinkConfirmer;
 }
 
 export interface Connection {
@@ -146,6 +149,15 @@ export function parseServerMessage(data: unknown): ServerMessage | undefined {
     const prs = parsePullRequestList(candidate.prs);
     return prs ? { type: 'prs', prs } : undefined;
   }
+  if (candidate.type === 'link-confirmed') {
+    if (typeof candidate.hash === 'string' && typeof candidate.code === 'string' && typeof candidate.mac === 'string') {
+      return { type: 'link-confirmed', hash: candidate.hash, code: candidate.code, mac: candidate.mac };
+    }
+    return undefined;
+  }
+  if (candidate.type === 'link-denied') {
+    return typeof candidate.hash === 'string' ? { type: 'link-denied', hash: candidate.hash } : undefined;
+  }
   if (candidate.type === 'error' && typeof candidate.error === 'string') {
     return { type: 'error', error: candidate.error };
   }
@@ -159,7 +171,7 @@ function isSourceHealth(value: unknown): value is SourceHealth {
 }
 
 export function createConnection(options: ConnectionOptions): Connection {
-  const { url, token, onChange, keys } = options;
+  const { url, token, onChange, keys, links } = options;
   const createSocket = options.createSocket ?? defaultSocketFactory;
   const prove = options.prove ?? computeProof;
 
@@ -195,7 +207,10 @@ export function createConnection(options: ConnectionOptions): Connection {
     current.onerror = null;
     current.close();
     if (socket === current) socket = undefined;
-    if (authenticated === current) authenticated = undefined;
+    if (authenticated === current) {
+      authenticated = undefined;
+      links?.close();
+    }
     keys?.clear();
   };
 
@@ -250,11 +265,16 @@ export function createConnection(options: ConnectionOptions): Connection {
         if (!answered || authenticated === current) return;
         authenticated = current;
         keys?.set(message.apiKey);
+        links?.open((request) => current.send(JSON.stringify(request satisfies ClientMessage)));
         return;
       }
 
       // Nothing else counts until the server has accepted this socket's proof.
       if (authenticated !== current) return;
+      if (message.type === 'link-confirmed' || message.type === 'link-denied') {
+        links?.handle(message);
+        return;
+      }
       if (message.type === 'snapshot') {
         attempt = 0;
         const { generatedAt, source } = message.snapshot;
@@ -276,7 +296,10 @@ export function createConnection(options: ConnectionOptions): Connection {
     current.onclose = (event) => {
       if (stopped || socket !== current) return;
       socket = undefined;
-      if (authenticated === current) authenticated = undefined;
+      if (authenticated === current) {
+        authenticated = undefined;
+        links?.close();
+      }
       if (event.code === WS_CLOSE_UNAUTHORIZED) {
         stop();
         keys?.reject();
@@ -324,18 +347,20 @@ export interface UseConnectionOptions {
   host?: string;
   /** Gets each apiKey. Usually the app's createApiClient().keys. */
   keys?: ApiKeys;
+  /** Confirms link codes over the signed-in socket (W175). */
+  links?: LinkConfirmer;
 }
 
 /** Holds a connection open for as long as the component is mounted and the token stays the same. */
 export function useConnection(token: string | null, options: UseConnectionOptions = {}): ConnectionView {
-  const { createSocket = defaultSocketFactory, host = window.location.host, keys } = options;
+  const { createSocket = defaultSocketFactory, host = window.location.host, keys, links } = options;
   const [view, setView] = useState<ConnectionView>({ state: 'connecting' });
 
   useEffect(() => {
     if (!token) return;
-    const connection = createConnection({ url: socketUrl(host), token, createSocket, onChange: setView, ...(keys ? { keys } : {}) });
+    const connection = createConnection({ url: socketUrl(host), token, createSocket, onChange: setView, ...(keys ? { keys } : {}), ...(links ? { links } : {}) });
     return () => connection.close();
-  }, [token, createSocket, host, keys]);
+  }, [token, createSocket, host, keys, links]);
 
   return view;
 }

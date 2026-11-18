@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from 'node:fs/p
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CACHE_SETTLE_MS, CHILDREN_MAX, createJobReader, JOB_FILE_MAX_BYTES, NEEDS_MAX, needsText, onlyPrOf, parseJobState, parseSavedPermission, readSavedPermission } from './jobs.js';
+import { CACHE_SETTLE_MS, CHILDREN_MAX, createJobReader, JOB_FILE_MAX_BYTES, NEEDS_MAX, needsText, onlyPrOf, parseJobState, parseJobSessionIds, parseSavedPermission, readJobSessionIds, readSavedPermission } from './jobs.js';
 
 // Synthetic job folders, shaped like Claude Code 2.1.311's `~/.claude/jobs/<shortId>/state.json`
 // (spike 007, finding 1). Made up: never a real job's file.
@@ -353,5 +353,34 @@ describe('readSavedPermission', () => {
     // A symlinked job folder isn't followed.
     await symlink(path.join(jobsDir, SHORT), path.join(jobsDir, 'linked00'));
     expect(await readSavedPermission('linked00', SID, { jobsDir })).toEqual({ kind: 'unknown' });
+  });
+});
+
+describe('the job’s session ids (W167)', () => {
+  const FIRST = '11111111-1111-4111-8111-111111111111';
+  const LATEST = '22222222-2222-4222-8222-222222222222';
+
+  it('takes the first and the latest id, only when each is a canonical UUID', () => {
+    expect(parseJobSessionIds(JSON.stringify({ sessionId: FIRST, resumeSessionId: LATEST }))).toEqual({ first: FIRST, latest: LATEST });
+    expect(parseJobSessionIds(JSON.stringify({ sessionId: FIRST }))).toEqual({ first: FIRST });
+    expect(parseJobSessionIds(JSON.stringify({ sessionId: FIRST, resumeSessionId: FIRST }))).toEqual({ first: FIRST });
+    // An id that would be a file name or a path is never taken.
+    expect(parseJobSessionIds(JSON.stringify({ sessionId: FIRST, resumeSessionId: '../../x' }))).toEqual({ first: FIRST });
+    expect(parseJobSessionIds(JSON.stringify({ sessionId: 'deploy', resumeSessionId: LATEST }))).toBeUndefined();
+    expect(parseJobSessionIds('not json')).toBeUndefined();
+    expect(parseJobSessionIds('[]')).toBeUndefined();
+  });
+
+  it('reads a job’s file, and nothing for a missing job or an unsafe short id', async () => {
+    const jobsDir = await mkdtemp(path.join(os.tmpdir(), 'pitwall-test-job-ids-'));
+    try {
+      await mkdir(path.join(jobsDir, 'abc12345'));
+      await writeFile(path.join(jobsDir, 'abc12345', 'state.json'), JSON.stringify({ sessionId: FIRST, resumeSessionId: LATEST, linkScanPath: '/etc/passwd' }));
+      expect(await readJobSessionIds('abc12345', { jobsDir })).toEqual({ first: FIRST, latest: LATEST });
+      expect(await readJobSessionIds('missing1', { jobsDir })).toBeUndefined();
+      expect(await readJobSessionIds('../abc12345', { jobsDir })).toBeUndefined();
+    } finally {
+      await rm(jobsDir, { recursive: true, force: true });
+    }
   });
 });

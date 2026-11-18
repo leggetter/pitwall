@@ -101,6 +101,23 @@ describe('the file', () => {
     expect(parseStoredRecap(`${JSON.stringify(odd)}\n`, A, NOW)).toBeUndefined();
   });
 
+  it("reads back each to-do's `optional` (W173), and refuses a file whose `optional` isn't a boolean", () => {
+    const todos = [
+      { text: 'Push the hand-off commit', owner: 'you' as const, after: false },
+      { text: 'Look over the diff', owner: 'you' as const, after: false, optional: true },
+      { text: 'Check the chips', owner: 'you' as const, optional: false },
+    ];
+    const kept = recap({ todos, waitingOn: 'you' });
+    expect(parseStoredRecap(storedText(A, kept), A, NOW)).toEqual(kept);
+    expect(storedText(A, kept)).toContain('"optional":true');
+    expect(storedText(A, recap())).not.toContain('"optional"');
+    for (const value of ['yes', 1, null]) {
+      const odd = JSON.parse(storedText(A, kept));
+      odd.recap.todos[1].optional = value;
+      expect(parseStoredRecap(`${JSON.stringify(odd)}\n`, A, NOW), String(value)).toBeUndefined();
+    }
+  });
+
   it.each<[string, string]>([
     ['not JSON', '{"version":1,'],
     ['not an object', '[]'],

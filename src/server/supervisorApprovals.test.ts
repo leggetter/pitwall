@@ -170,7 +170,7 @@ async function start(
   };
   // Never the user's jobs folder (W129): a stopped job's saved mode is the test's.
   const savedPermission = options.savedPermission ?? (async (): Promise<SavedPermission> => ({ kind: 'unset' }));
-  const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0, supervisor, ...(options.work === undefined ? {} : { work: options.work }) }, { actions: { run, agents, ...(options.launches === undefined ? {} : { launches: options.launches }) }, savedPermission });
+  const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0, supervisor, ...(options.work === undefined ? {} : { work: options.work }) }, { actions: { pluginDir: false, run, agents, ...(options.launches === undefined ? {} : { launches: options.launches }) }, savedPermission });
   running.push(server);
   return { server, supervisor, queue, indexer, state, runs };
 }

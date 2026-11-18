@@ -6,7 +6,7 @@
     {
       "name": "pitwall",
       "source": "./",
-      "description": "While pitwall runs, every session knows it's watched, links sessions in pitwall, and can propose a new one."
+      "description": "While pitwall runs, every session knows it's watched, links sessions in pitwall, can propose a new one, and keeps big finished sub-agents from being reused."
     }
   ]
 }

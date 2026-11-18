@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Close out a piece of pitwall work so a fresh session can start cheaply. Use when a work item or PR is finished, or when this session's context is large. Updates NOW.md, updates PLAN.md only where the design changed, commits, then tells the user to /clear.
+description: Close out a piece of pitwall work so a fresh session can start cheaply. Use when a work item or PR is finished, or when this session's context is large. Updates NOW.md, updates PLAN.md only where the design changed, commits, then ends with a spin-off block (W168) that pitwall shows as a Clear and continue card.
 ---
 
 # Handoff
@@ -16,7 +16,21 @@ Leave the repo so the next session can start from `NOW.md` alone. Do the steps i
 2. **Update `PLAN.md` only where the design changed:** a new interface, a security rule, a milestone's scope, a row in the open milestone's work breakdown. Not for status; status lives in `NOW.md`. A settled decision moves to `docs/decisions.md` under its ID. Finished milestones' detail goes to `docs/plan-archive.md`, verbatim, under the same heading.
 3. **Check the docs:** `NOW.md` is under 100 lines, and `PLAN.md` hasn't grown past what the change needs.
 4. **Commit** with a conventional message, such as `docs: hand off after W123`. Docs only, so no tests. Use the commit attribution the session was given. Don't push or merge unless asked.
-5. **End with this to the user, and nothing after it:** work is committed; run `/clear`, then start the next session with "Read NOW.md". If any questions are open, say how many, and that they're in `NOW.md` and the next session asks them first, so there's no need to answer before `/clear`. Don't list them again in the message: one place, `NOW.md`.
+5. **End with a hand-off block, and nothing after it (W168).** Say in a sentence that the work is committed and that the next session starts from `NOW.md`. If questions are open, say how many, and that they're in `NOW.md` and the next session asks them first, so there's no need to answer before continuing. Don't list them again: one place, `NOW.md`. Then end the message with one `spin-off` block (the pitwall plugin's `pitwall` skill describes it), as the very last thing in it:
+
+   ````
+   ```spin-off
+   folder: <this repo's absolute path, from git rev-parse --show-toplevel>
+   prompt:
+   Continues session <this session's id>.
+   Read NOW.md, then start with the first item under "Next, in order". Ask the open questions in NOW.md first.
+   ```
+   ````
+
+   - **This session's id** is the one in the pitwall note at the start of this session (its `?session=` link). The prompt's first line must be exactly `Continues session <id>.`: pitwall shows the block as a card with Clear and continue only for that line.
+   - **Leave out `name:`.** For a background job, Clear and continue keeps the job's name.
+   - **Don't type `/clear` yourself and don't start anything.** pitwall's card does it when the user clicks, and the prompt is typed as one message.
+   - **No block if pitwall isn't running** (the session has no pitwall note), or you can't find your id: end with "run `/clear`, then start the next session with 'Read NOW.md'" instead.
 
 ## Open questions across a `/clear`
 

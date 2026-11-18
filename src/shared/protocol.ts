@@ -77,6 +77,37 @@ export function spinOffPath(sessionId: string): string {
 }
 
 /**
+ * Clear and continue (W168): for a hand-off from a background job, pitwall types `/clear` into the job
+ * through the server's own attach PTY, waits until `claude agents --json` lists the job with a new
+ * session id, then types the proposal's prompt, bracketed. The body is { key }, the proposal the card
+ * showed, and the proposal is the snapshot's, never the request's. A POST: the apiKey and Origin checks hold.
+ */
+export function clearAndContinuePath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/clear-and-continue`;
+}
+
+/**
+ * The answer to a POST to clearAndContinuePath(): the job's new session id, or why nothing was typed
+ * or why it stopped. After a refusal the card still offers Start, which starts a new session instead.
+ * `typed` is true when the prompt was typed before the failure, so the card can say the job may have
+ * the prompt already; it is never set when the failure came before the prompt.
+ */
+export type ClearAndContinueResult = { ok: true; sessionId: string } | { ok: false; error: string; typed?: true };
+
+/**
+ * Tell pitwall that a session it started carries on from another (W168): the body is { shortId }, the
+ * short id `claude --bg` reported for the session just started from a hand-off card's Start. The
+ * server accepts only a short id it started a moment ago, and records the link (lineage `continue`)
+ * once the listing gives that job its session id.
+ */
+export function continuedPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/continued`;
+}
+
+/** The answer to a POST to continuedPath(). */
+export type ContinuedResult = { ok: true } | { ok: false; error: string };
+
+/**
  * Why a session needs you, judged from its context rather than from Claude
  * Code's state alone (spike 007; Phil, 2026-10-27). The first reason that
  * holds, in this order:
@@ -221,6 +252,13 @@ export interface SessionSummary {
    * not needed now (W88). Gone once what it needs changes, or you undo the flag.
    */
   flagged?: SessionFlag;
+  /**
+   * Session lineage (W167): the session this one continues (`from`, the newest line that names this
+   * one as its successor) and the session that continues it (`to`, the newest line that names this
+   * one as its predecessor), as pitwall's lineage log records them. Ids only; the web UI links an id
+   * pitwall lists. Left out when it has neither.
+   */
+  lineage?: SessionLineageLinks;
   /**
    * You snoozed it (W154): Needs you is right about it, but not now. The web UI leaves a snoozed
    * session out of Needs you and every count, as it does a flagged one; `needsYou` stays set. Kept on
@@ -626,6 +664,11 @@ export const PROTOCOL_VERSION = 3;
  * - 'prs' (M4): your open pull requests, sent right after the first
  *   'snapshot', and again whenever anything in the list changes, `refreshing`
  *   included. Its own poller sends it, never the session poll.
+ * - 'link-confirmed' / 'link-denied' (W175): the answer to a signed-in client's
+ *   `link-confirm`. `code` is the one-time code whose SHA-256 `hash` the client
+ *   sent, returned once and only if this server issued it and hasn't seen it
+ *   used (src/server/linkCodes.ts). `mac` is linkConfirmMac(): HMAC-SHA256 under the token over the
+ *   hash, the code and the server's origin, which the tab checks before it uses the code.
  */
 export type ServerMessage =
   | { type: 'challenge'; version: number; nonce: string }
@@ -633,7 +676,9 @@ export type ServerMessage =
   | { type: 'snapshot'; snapshot: IndexSnapshot }
   | { type: 'heartbeat'; generatedAt: string; source: SourceHealth }
   | { type: 'prs'; prs: PullRequestList }
-  | { type: 'error'; error: string };
+  | { type: 'error'; error: string }
+  | { type: 'link-confirmed'; hash: string; code: string; mac: string }
+  | { type: 'link-denied'; hash: string };
 
 /**
  * Client → server WebSocket messages. The client's first message must be
@@ -645,8 +690,12 @@ export type ServerMessage =
  * origin is `location.origin`, such as `http://127.0.0.1:4517`; the server uses
  * the one origin it allows. The browser computes the proof with WebCrypto.
  * The server compares it in constant time, and accepts each nonce only once.
+ *
+ * After 'authenticated', `link-confirm` (W175) is the one message the server
+ * reads: `hash` is base64url(SHA-256(a link code)), 43 characters; anything
+ * else, and any other message, is ignored.
  */
-export type ClientMessage = { type: 'auth'; proof: string };
+export type ClientMessage = { type: 'auth'; proof: string } | { type: 'link-confirm'; hash: string };
 
 /**
  * WebSocket close code for a missing or wrong proof, an expired challenge, or
@@ -980,6 +1029,12 @@ export interface RelayResult {
 /** Relay a message to an interactive session, through pitwall's headless relay session (D8). */
 export function relayPath(sessionId: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/relay`;
+}
+
+/** What continues a session, and what it continues (W167): session ids from the lineage log. */
+export interface SessionLineageLinks {
+  from?: string;
+  to?: string;
 }
 
 /** A flag you put on a session in Needs you (W153): it doesn't need you. */
@@ -1968,6 +2023,12 @@ export interface RecapTodo {
    * W146's rule alone (needsYouOf(), src/recaps/engine.ts).
    */
   after?: boolean;
+  /**
+   * W173: true when the session only offered it ("if you want", "worth a look") and nothing needs it
+   * to carry on. It never puts the session in Needs you (needsYouOf(), src/recaps/engine.ts); the
+   * row may still show it. Absent from a recap made before W173.
+   */
+  optional?: boolean;
 }
 
 /** The most to-dos a recap keeps: the first ones, in order. */
@@ -2463,6 +2524,7 @@ export const MCP_TOOLS = {
   listPrs: 'list_prs',
   getRecap: 'get_recap',
   getUsage: 'get_usage',
+  sessionLineage: 'session_lineage',
   spawnSession: 'spawn_session',
   resumeSession: 'resume_session',
   approve: 'approve',

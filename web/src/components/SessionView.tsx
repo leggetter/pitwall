@@ -92,6 +92,7 @@ import { Icon } from './Icon.js';
 import { InfoTip } from './InfoTip.js';
 import { ContextMeta, ContextNote } from './ContextGauge.js';
 import { PrNeedNote, SessionPrLinks } from './PrBadges.js';
+import { SessionLineage, type LineageTarget } from './SessionLineage.js';
 import { SessionPrsPanel, sessionPrsCount, type LinkedPr } from './SessionPrs.js';
 import { MenuButton, type MenuEntry } from './Menu.js';
 import { MiddleEllipsis } from './MiddleEllipsis.js';
@@ -436,6 +437,11 @@ export interface SessionViewProps {
    * gallery and the tests of a view alone, it follows the session's activity instead.
    */
   polledAt?: string | undefined;
+  /**
+   * What the session continues and what continues it (W167): shown as "Continued from" and
+   * "Continued in" under the header's other lines. A session pitwall doesn't list has no name and no link.
+   */
+  lineage?: { from?: LineageTarget | undefined; to?: LineageTarget | undefined; onOpen: (sessionId: string) => void } | undefined;
 }
 
 type Tab = 'conversation' | 'terminal' | 'subagents' | 'prs';
@@ -466,6 +472,7 @@ export function SessionView({
   openedBy,
   terminalFocus = DEFAULT_TERMINAL_FOCUS,
   polledAt,
+  lineage,
   backLabel,
   prs,
   recaps,
@@ -1073,6 +1080,7 @@ export function SessionView({
             <InfoTip text={WORKED_IN_NOTE} className="session-view-info" />
           </p>
         )}
+        {lineage && <SessionLineage from={lineage.from} to={lineage.to} onOpen={lineage.onOpen} />}
         {prs && prNeed !== undefined && <PrNeedNote pr={prNeed} onOpen={prs.onOpen} />}
         {prs && prs.owned.length > 0 && <SessionPrLinks linked={prs.owned} onOpen={prs.onOpen} />}
         {refused && (
