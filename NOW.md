@@ -38,6 +38,7 @@ Still to do:
 | W205 (npm's allowScripts covers node-pty and esbuild, so `npm ci` doesn't depend on pitwall's own execute-bit fix) | Planned (Phil, 2026-11-20) |
 | W206 (a detached terminal attaches again when you click or type in it; the key that starts it is never sent) | Planned (Phil, 2026-11-20) |
 | W207 (a message box on a running background session's Conversation tab, sent as you; #108's part A, a spike on Claude Code 2.1.329 first) and W208 (which views you use: a local count in the diagnostics log, built with W207) | Planned (Phil, 2026-11-20): Phil uses the Terminal tab for sessions and the conversation view only for the supervisor |
+| W209 (a spin-off block in the Conversation tab is a card with Start, for any block in the history; the Needs you card still clears on your next prompt) | Planned (Phil, 2026-11-20) |
 | W179 (the supervisor keeps its conversation short; its lower limit applies when W178's button asks about a different session) | Planned (Phil, 2026-11-09) |
 | W191 (the supervisor reads through the connectors your sessions already have, with pitwall's read-only limits) | Planned (Phil, 2026-11-12); a spike first; revises W184's route |
 | Left from W164 (M5.1's security review) | F5 (a snooze trusts the relay's name, not its msg_ids), I3's note on attached files, I4 (by design); in the archive's W164 item |
@@ -52,14 +53,14 @@ Still to do:
 
 1. **W179 (the supervisor keeps its conversation short),** from `main` (`PLAN.md`, W179): a new conversation when its context is over a limit, or over a lower one when Ask the supervisor (W178) names a different session.
 2. **W207 (a message box on a running background session's Conversation tab, sent as you), with W208 (which views you use: a local count),** from `main` (`PLAN.md`, W207 and W208): the spike first, then Phil's call, then the build and a security review.
-3. **The other open items** (`PLAN.md`, "Open items"), one at a time: W191 (the supervisor uses your sessions' connectors; a spike first), W196 (a resume's copy cleaned up), W198 (the attachments folder's trust), W194 (a resumed job's latest transcript), W195 (Not for me on a session row), W199 (a snooze holds the session's PR too), W200 (a mention owns a PR inside the PR's repo), W205 (npm's allowScripts covers node-pty and esbuild) and W206 (a detached terminal attaches again when you click or type in it).
+3. **The other open items** (`PLAN.md`, "Open items"), one at a time: W191 (the supervisor uses your sessions' connectors; a spike first), W196 (a resume's copy cleaned up), W198 (the attachments folder's trust), W194 (a resumed job's latest transcript), W195 (Not for me on a session row), W199 (a snooze holds the session's PR too), W200 (a mention owns a PR inside the PR's repo), W205 (npm's allowScripts covers node-pty and esbuild), W206 (a detached terminal attaches again when you click or type in it) and W209 (a spin-off block in the Conversation tab is a card you can start).
 4. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
 
 ## Open questions for Phil
 
 None.
 
-Answered (Phil, 2026-11-20): add W205 (npm's allowScripts) ("yes"); W206 is for the Terminal tab only ("terminal"). Answered (Phil, 2026-11-18): merge W178 into `main`, keep its session-view button as a menu item, and remove the W202 worktree ("yes to all three"; done); merge M5.4 into `main` ("yes", #302); remove the W174 worktree ("if it's completed, yes", done). Where hand-off files live was answered earlier that day ("go with it": committed at the root in Phil's own repos, untracked `.handoff/` in team repos, a dated `handoffs/` folder for cross-repo work), with the `spin-off` ending, in [leggetter/phil-skills#10](https://github.com/leggetter/phil-skills/pull/10). Older answers are in this file's git history.
+Answered (Phil, 2026-11-20): add W209 (a spin-off block in the Conversation tab is a card you can start) ("add a work item"), and keep clearing the Needs you card on your next prompt (the recommendation); add W205 (npm's allowScripts) ("yes"); W206 is for the Terminal tab only ("terminal"). Answered (Phil, 2026-11-18): merge W178 into `main`, keep its session-view button as a menu item, and remove the W202 worktree ("yes to all three"; done); merge M5.4 into `main` ("yes", #302); remove the W174 worktree ("if it's completed, yes", done). Where hand-off files live was answered earlier that day ("go with it": committed at the root in Phil's own repos, untracked `.handoff/` in team repos, a dated `handoffs/` folder for cross-repo work), with the `spin-off` ending, in [leggetter/phil-skills#10](https://github.com/leggetter/phil-skills/pull/10). Older answers are in this file's git history.
 
 ## Standing context
 
