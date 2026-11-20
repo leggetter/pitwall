@@ -400,6 +400,14 @@ Branch from `main`, merge into `main` (Phil, 2026-11-18). Planned during M5.4; b
   - Measured with a `pitwall-test-*` session against a pitwall on its own `PITWALL_HOME`: 5 attaches and detaches left 5 `/dev/ptmx` and 5 "(revoked)" before, 0 and 0 after; a session stopped while attached, 0 after.
   - Left: node-pty 1.1.0 also leaves one kqueue descriptor per spawn (its exit watcher), not a PTY; it counts against the process's descriptor limit (macOS `kern.maxfilesperproc`, 122,880 here), not the machine's PTYs, and only node-pty can close it safely. The 1.2.0 betas close it too.
   - Status: built, PR into `main`.
+- **W206, A detached terminal attaches again when you click or type in it** (`w206-terminal-reattach`, S). Phil, 2026-11-20: "When a session is detached, but the user is clicking or clearly interacting with the session, could it auto-attach?"
+  - Today: once an attach ends, the Terminal tab keeps the last screen with a "Detached" badge and Attach again (`web/src/components/Terminal.tsx`). Keys typed into that screen still go to `session.current?.input()`, whose socket is closed, so they're dropped without a word.
+  - What: a click in the screen, or a key press while it has focus, does what Attach again does, when the attach ended cleanly (`claude attach` exited 0, or you detached inside it) or the connection to pitwall closed (`'closed'`).
+  - The key that starts the attach is swallowed, never sent: W57's rule (the terminal takes the keyboard only after a gesture) is there so a stray Enter can't approve a permission prompt. Only keys typed once it's attached reach the session. The click or key counts as the gesture (`focusGesture.ts`), so the terminal then takes focus.
+  - Unchanged: a failed attach (a non-zero exit, the server refusing, the proof refused) keeps Attach again, since a retry fails the same way; "4 sessions are already attached" (D9: at most four attached sessions) never detaches another; a session that isn't running still asks before restarting (D9).
+  - Open: whether a click or typing on the Conversation tab of a running background session should switch to the Terminal tab and attach. That changes D9's rule that the Terminal tab is the deliberate way in, so not in W206 unless Phil asks.
+  - Checks: `Terminal.test.tsx` (a key after a clean end attaches and isn't sent; a failed end doesn't attach), the app check's terminal part, and a live check on a `pitwall-test-*` background job that the swallowed key never reaches the session.
+  - Status: Planned (Phil, 2026-11-20).
 
 ## Open questions
 

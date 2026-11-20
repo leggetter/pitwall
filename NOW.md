@@ -35,6 +35,7 @@ Still to do:
 | W198 ("Added folder not trusted" says how to fix it: the hint, and a startup check that the attachments folder is trusted) | Planned (Phil, 2026-11-17). The failure itself is fixed on this machine: `~/.pitwall/attachments` is trusted |
 | W199 (a snooze holds the session's PR too: a snoozed session's row leaves Needs you even while its PR needs attention, until the PR has something new) | Planned (Phil, 2026-11-18) |
 | W200 (a mention owns a PR inside the PR's repo: no "New session for #N" row while a session in that repo works on the PR) | Planned (Phil approved fix A, 2026-11-18, via ac6ba646's investigation) |
+| W206 (a detached terminal attaches again when you click or type in it; the key that starts it is never sent) | Planned (Phil, 2026-11-20) |
 | W179 (the supervisor keeps its conversation short; its lower limit applies when W178's button asks about a different session) | Planned (Phil, 2026-11-09) |
 | W191 (the supervisor reads through the connectors your sessions already have, with pitwall's read-only limits) | Planned (Phil, 2026-11-12); a spike first; revises W184's route |
 | Left from W164 (M5.1's security review) | F5 (a snooze trusts the relay's name, not its msg_ids), I3's note on attached files, I4 (by design); in the archive's W164 item |
@@ -48,7 +49,7 @@ Still to do:
 ## Next, in order
 
 1. **W179 (the supervisor keeps its conversation short),** from `main` (`PLAN.md`, W179): a new conversation when its context is over a limit, or over a lower one when Ask the supervisor (W178) names a different session.
-2. **The other open items** (`PLAN.md`, "Open items"), one at a time: W191 (the supervisor uses your sessions' connectors; a spike first), W196 (a resume's copy cleaned up), W198 (the attachments folder's trust), W194 (a resumed job's latest transcript), W195 (Not for me on a session row), W199 (a snooze holds the session's PR too) and W200 (a mention owns a PR inside the PR's repo).
+2. **The other open items** (`PLAN.md`, "Open items"), one at a time: W191 (the supervisor uses your sessions' connectors; a spike first), W196 (a resume's copy cleaned up), W198 (the attachments folder's trust), W194 (a resumed job's latest transcript), W195 (Not for me on a session row), W199 (a snooze holds the session's PR too), W200 (a mention owns a PR inside the PR's repo) and W206 (a detached terminal attaches again when you click or type in it).
 3. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
 
 ## Open questions for Phil
