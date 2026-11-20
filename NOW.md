@@ -36,6 +36,7 @@ Still to do:
 | W199 (a snooze holds the session's PR too: a snoozed session's row leaves Needs you even while its PR needs attention, until the PR has something new) | Planned (Phil, 2026-11-18) |
 | W200 (a mention owns a PR inside the PR's repo: no "New session for #N" row while a session in that repo works on the PR) | Planned (Phil approved fix A, 2026-11-18, via ac6ba646's investigation) |
 | W206 (a detached terminal attaches again when you click or type in it; the key that starts it is never sent) | Planned (Phil, 2026-11-20) |
+| W207 (a message box on a running background session's Conversation tab, sent as you; #108's part A, a spike on Claude Code 2.1.329 first) and W208 (which views you use: a local count in the diagnostics log, built with W207) | Planned (Phil, 2026-11-20): Phil uses the Terminal tab for sessions and the conversation view only for the supervisor |
 | W179 (the supervisor keeps its conversation short; its lower limit applies when W178's button asks about a different session) | Planned (Phil, 2026-11-09) |
 | W191 (the supervisor reads through the connectors your sessions already have, with pitwall's read-only limits) | Planned (Phil, 2026-11-12); a spike first; revises W184's route |
 | Left from W164 (M5.1's security review) | F5 (a snooze trusts the relay's name, not its msg_ids), I3's note on attached files, I4 (by design); in the archive's W164 item |
@@ -49,8 +50,9 @@ Still to do:
 ## Next, in order
 
 1. **W179 (the supervisor keeps its conversation short),** from `main` (`PLAN.md`, W179): a new conversation when its context is over a limit, or over a lower one when Ask the supervisor (W178) names a different session.
-2. **The other open items** (`PLAN.md`, "Open items"), one at a time: W191 (the supervisor uses your sessions' connectors; a spike first), W196 (a resume's copy cleaned up), W198 (the attachments folder's trust), W194 (a resumed job's latest transcript), W195 (Not for me on a session row), W199 (a snooze holds the session's PR too), W200 (a mention owns a PR inside the PR's repo) and W206 (a detached terminal attaches again when you click or type in it).
-3. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
+2. **W207 (a message box on a running background session's Conversation tab, sent as you), with W208 (which views you use: a local count),** from `main` (`PLAN.md`, W207 and W208): the spike first, then Phil's call, then the build and a security review.
+3. **The other open items** (`PLAN.md`, "Open items"), one at a time: W191 (the supervisor uses your sessions' connectors; a spike first), W196 (a resume's copy cleaned up), W198 (the attachments folder's trust), W194 (a resumed job's latest transcript), W195 (Not for me on a session row), W199 (a snooze holds the session's PR too), W200 (a mention owns a PR inside the PR's repo) and W206 (a detached terminal attaches again when you click or type in it).
+4. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
 
 ## Open questions for Phil
 

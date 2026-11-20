@@ -261,7 +261,7 @@ In the order they'll be built. Each starts when the one before it has merged int
 
 ### After M5.4: small items off `main` (next)
 
-M5.4 merged into `main` on 2026-11-18 in [#302](https://github.com/leggetter/pitwall/pull/302); its done items are in the [archive](docs/plan-archive.md#m54-work-breakdown). By Phil's answer of 2026-11-18 ("work off `main`"), each item now branches from `main` and merges into `main` for him to try; an integration branch only for a significant change. The open items are in "Open items" below: W178 (ask the supervisor about a session), W179 (the supervisor keeps its conversation short), W191 (the supervisor uses your sessions' connectors), W194 (a resumed job's latest transcript), W195 (Not for me on a session row), W196 (a resume's copy cleaned up), W198 (the attachments folder's trust), W199 (a snooze holds the session's PR too) and W200 (a mention owns a PR inside the PR's repo).
+M5.4 merged into `main` on 2026-11-18 in [#302](https://github.com/leggetter/pitwall/pull/302); its done items are in the [archive](docs/plan-archive.md#m54-work-breakdown). By Phil's answer of 2026-11-18 ("work off `main`"), each item now branches from `main` and merges into `main` for him to try; an integration branch only for a significant change. The open items are in "Open items" below: W178 (ask the supervisor about a session), W179 (the supervisor keeps its conversation short), W191 (the supervisor uses your sessions' connectors), W194 (a resumed job's latest transcript), W195 (Not for me on a session row), W196 (a resume's copy cleaned up), W198 (the attachments folder's trust), W199 (a snooze holds the session's PR too), W200 (a mention owns a PR inside the PR's repo), W207 (a message box on a running background session's Conversation tab, sent as you) and W208 (which views you use: a local count).
 
 ### M6 - Triage
 
@@ -299,7 +299,7 @@ The bullets (what already happens, the research, the leans) are in "Consideratio
 
 ### Later: chatting with a session, and sessions pitwall hosts ([#108](https://github.com/leggetter/pitwall/issues/108))
 
-Phil, 2026-10-29: the Terminal tab takes input, so why can't a more chat-like view? A lean yes to both parts, but not a priority: after M5.
+Phil, 2026-10-29: the Terminal tab takes input, so why can't a more chat-like view? A lean yes to both parts, but not a priority: after M5. Part A, a message box for background sessions, is W207 since 2026-11-20 ("Open items"); part B, sessions pitwall hosts, stays here.
 
 The bullets (what already happens, the research, the leans) are in "Considerations, detail" in the [archive](docs/plan-archive.md).
 
@@ -407,6 +407,18 @@ Branch from `main`, merge into `main` (Phil, 2026-11-18). Planned during M5.4; b
   - Unchanged: a failed attach (a non-zero exit, the server refusing, the proof refused) keeps Attach again, since a retry fails the same way; "4 sessions are already attached" (D9: at most four attached sessions) never detaches another; a session that isn't running still asks before restarting (D9).
   - Open: whether a click or typing on the Conversation tab of a running background session should switch to the Terminal tab and attach. That changes D9's rule that the Terminal tab is the deliberate way in, so not in W206 unless Phil asks.
   - Checks: `Terminal.test.tsx` (a key after a clean end attaches and isn't sent; a failed end doesn't attach), the app check's terminal part, and a live check on a `pitwall-test-*` background job that the swallowed key never reaches the session.
+  - Status: Planned (Phil, 2026-11-20).
+- **W207, A message box on a running background session's Conversation tab, sent as you** (`w207-conversation-composer`, M). #108's part A ([#108](https://github.com/leggetter/pitwall/issues/108), chat with a session from the Conversation tab), brought forward (Phil, 2026-11-20: yes).
+  - Why: Phil, 2026-11-20: he uses the Terminal tab for sessions and the conversation view only for the supervisor. Of 46 running sessions that day, 43 were background sessions, where the Conversation tab is read-only (D3, W47); messages from its box, which only interactive sessions get, went 135 in 30 days, 29 in 14, 0 in the last 7 (counted from the relay's transcripts). The two tabs should be two ways into one session, not a terminal and a read-out.
+  - What: the box interactive sessions have, on a running background session's Conversation tab, sending your text as a prompt typed by you, through Claude Code's own path for a running background session: `claude --resume <id> "<prompt>"` in a short-lived PTY that pitwall closes once the prompt is accepted (spike 003, candidate B). Not typing into the attached terminal (#108's B). It doesn't take one of D9's four attached sessions. Permission prompts, question dialogs and `/` menus stay in the Terminal tab, and the box says so while the session waits on one.
+  - First, a spike on Claude Code 2.1.329 (spike 003 ran on 2.1.301), with `pitwall-test-*` background jobs only: candidate B still reaches the running session as a typed prompt; what it does while the session works, waits on a permission prompt, or is attached in the Terminal tab; when the PTY can close; whether the text can avoid the process arguments (`ps`); and the latency.
+  - Security: a new way to send input as you, with your full authority, so the server checks it as the relay's route does (token, `Host`, `Origin`, the session listed and running in the background, a length cap), and a security review at xhigh before it merges.
+  - Checks: the route's tests with a fake spawner (no `claude`, `src/test/noClaude.ts`), the box's tests, the app check's session part, and a live check on a `pitwall-test-*` background job.
+  - Status: Planned (Phil, 2026-11-20); after the spike, Phil's call on what it found.
+- **W208, Which views you use: a local count** (`w208-view-usage`, S). Phil, 2026-11-20: yes, though "I know for a fact I'm not using the conversation views for sessions right now. Just the supervisor."
+  - Why: pitwall records nothing about which tab you open, so whether W207 changes that can't be seen. With W207, so the count starts the day the box ships.
+  - What: the web UI tells the server when a session's Conversation or Terminal tab, or the supervisor's view, is opened and for how long it's shown, and the server appends it to `~/.pitwall/diagnostics.jsonl` (W165) as a new kind: the session id, the view, the time and a duration, never any text. Messages sent from W207's box are counted too. `scripts/diagnostics-report.ts` gets a views table: opens and time per view, by day.
+  - Checks: the diagnostics writer's and the report's tests, and the route through the server's checks.
   - Status: Planned (Phil, 2026-11-20).
 
 ## Open questions
