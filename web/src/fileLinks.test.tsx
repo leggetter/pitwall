@@ -56,6 +56,7 @@ describe('isOwnFileTarget', () => {
     expect(isOwnFileTarget('NOW.md', '../../elsewhere/NOW.md', { path: '../../elsewhere/NOW.md' })).toBe(false);
     expect(isOwnFileTarget('../../elsewhere/NOW.md', '../../elsewhere/NOW.md', { path: '../../elsewhere/NOW.md' })).toBe(true);
     expect(isOwnFileTarget('NOW.md', 'docs/NOW.md', { path: 'docs/NOW.md' })).toBe(true);
+    expect(isOwnFileTarget('NOW.md', '%2e%2e/%2e%2e/elsewhere/NOW.md', { path: '../../elsewhere/NOW.md' })).toBe(false);
   });
 });
 
