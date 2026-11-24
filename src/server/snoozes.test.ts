@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SNOOZE_ENDED_SHOWN_MS, SNOOZE_MAX_MS, snoozePath, unsnoozePath, type IndexSnapshot, type SessionSummary, type SnoozeResult } from '../shared/protocol.js';
+import { SNOOZE_ENDED_SHOWN_MS, SNOOZE_MAX_MS, snoozePath, unsnoozePath, type IndexSnapshot, type PullRequestList, type PullRequestSummary, type SessionSummary, type SnoozeResult } from '../shared/protocol.js';
+import { needsAttention } from '../shared/needsYou.js';
 import { createSnoozeView, readSnoozeFile, registerSnoozes, SNOOZE_FILE_NAME, SnoozeStore, SNOOZES_HELD_MAX, validateSnoozeRequest } from './snoozes.js';
 
 const ID = '22222222-2222-4222-8222-222222222222';
@@ -364,6 +365,165 @@ describe('the snooze routes', () => {
     expect(await res.json()).toEqual({ ok: true });
     expect(first(view.latest()!).snoozed).toBeUndefined();
     expect((await unsnooze(OTHER)).status).toBe(404);
+    store.close();
+  });
+});
+
+describe('a snooze holds the session’s PR too (W199)', () => {
+  const HASH_A = '0123456789abcdef';
+  const HASH_B = 'fedcba9876543210';
+  const RED_A = 'aaaaaaaaaaaaaaaa';
+  const RED_B = 'bbbbbbbbbbbbbbbb';
+
+  const owner = (): SessionSummary => session({ prLinks: [{ kind: 'opened', repo: 'example/demo-app', number: 7, lastAt: '2026-11-06T09:00:00.000Z' }] });
+  const pr = (number: number, overrides: Partial<PullRequestSummary> = {}): PullRequestSummary => ({
+    url: `https://github.com/example/demo-app/pull/${number}`,
+    repo: 'example/demo-app',
+    repoLabel: 'example/demo-app',
+    number,
+    title: 'Add a demo feature',
+    draft: false,
+    createdAt: '2026-11-01T09:00:00Z',
+    updatedAt: '2026-11-05T09:00:00Z',
+    checks: 'failing',
+    mergeable: 'clean',
+    relation: 'authored',
+    stateHash: HASH_A,
+    redHash: RED_A,
+    ...overrides,
+  });
+  function source(prs: PullRequestSummary[], loaded = true) {
+    let list: PullRequestList = { source: { ok: true }, refreshing: false, prs, ...(loaded ? { fetchedAt: '2026-11-06T09:59:00.000Z' } : {}) };
+    const listeners = new Set<(list: PullRequestList) => void>();
+    return {
+      latest: () => list,
+      subscribe: (listener: (list: PullRequestList) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      set: (prs: PullRequestSummary[]) => {
+        list = { ...list, prs };
+        for (const listener of listeners) listener(list);
+      },
+    };
+  }
+  const decorated = (store: SnoozeStore, ...sessions: SessionSummary[]) => first(store.decorate(snapshotOf(...sessions)));
+
+  it('records the hashes of each needing PR it owns, and not one with no stateHash or one that needs nothing', () => {
+    const prs = source([pr(7), pr(8, { stateHash: undefined }), pr(9, { checks: 'passing' })]);
+    const store = new SnoozeStore({ prs, now: fakeTime().now });
+    const snoozed = store.snooze(ID, undefined, undefined, owner(), [owner()]);
+    expect(snoozed.heldPrs).toEqual([{ key: 'example/demo-app#7', stateHash: HASH_A, redHash: RED_A }]);
+  });
+
+  it('records nothing before the PR list has loaded, so it holds none and ends on none', () => {
+    const prs = source([], false);
+    const store = new SnoozeStore({ prs, now: fakeTime().now });
+    expect(store.snooze(ID, undefined, undefined, owner(), [owner()]).heldPrs).toBeUndefined();
+    prs.set([pr(7)]);
+    expect(decorated(store, owner()).snoozed).toBeDefined();
+    expect(decorated(store, owner()).snoozeEnded).toBeUndefined();
+  });
+
+  it('holds while the PRs are unchanged: the snooze stays, and the PR no longer needs you (the row is out of Needs you)', () => {
+    const prs = source([pr(7)]);
+    const store = new SnoozeStore({ prs, now: fakeTime().now });
+    store.snooze(ID, undefined, undefined, owner(), [owner()]);
+    const row = decorated(store, owner());
+    expect(row.snoozed?.heldPrs).toHaveLength(1);
+    expect(needsAttention(row)).toBe(false);
+  });
+
+  it.each([
+    ['its stateHash changes', { stateHash: HASH_B }],
+    ['its head goes red on a new commit', { redHash: RED_B }],
+  ])('ends with why pr when %s', (_name, change) => {
+    const prs = source([pr(7)]);
+    const store = new SnoozeStore({ prs, now: fakeTime().now });
+    store.snooze(ID, undefined, undefined, owner(), [owner()]);
+    prs.set([pr(7, change)]);
+    const row = decorated(store, owner());
+    expect(row.snoozed).toBeUndefined();
+    expect(row.snoozeEnded).toMatchObject({ why: 'pr', pr: { ref: 'example/demo-app#7', need: 'checks-failing' } });
+  });
+
+  it('ends when another PR the session owns starts to need you, but not for one with no hash', () => {
+    const prs = source([pr(7)]);
+    const store = new SnoozeStore({ prs, now: fakeTime().now });
+    store.snooze(ID, undefined, undefined, owner(), [owner()]);
+    const both = { ...owner(), prLinks: [...owner().prLinks!, { kind: 'opened' as const, repo: 'example/demo-app', number: 8, lastAt: '2026-11-06T09:00:00.000Z' }] };
+    prs.set([pr(7), pr(8, { stateHash: undefined })]);
+    expect(decorated(store, both).snoozed).toBeDefined();
+    prs.set([pr(7), pr(8, { stateHash: HASH_B })]);
+    expect(decorated(store, both).snoozeEnded).toMatchObject({ why: 'pr', pr: { ref: 'example/demo-app#8' } });
+  });
+
+  it('does not end a snooze while the session is busy, and a snooze without heldPrs never ends on a PR', () => {
+    const prs = source([pr(7)]);
+    const store = new SnoozeStore({ prs, now: fakeTime().now });
+    store.snooze(ID, undefined, undefined, owner(), [owner()]);
+    prs.set([pr(7, { stateHash: HASH_B })]);
+    expect(decorated(store, { ...owner(), status: 'busy' }).snoozed).toBeDefined();
+    const plain = new SnoozeStore({ now: fakeTime().now });
+    plain.snooze(ID);
+    expect(decorated(plain, owner()).snoozed).toBeDefined();
+  });
+
+  it('tells the views when the PR list changes, only while a snooze holds PRs', () => {
+    const prs = source([pr(7)]);
+    const store = new SnoozeStore({ prs, now: fakeTime().now });
+    let heard = 0;
+    store.subscribe(() => (heard += 1));
+    prs.set([pr(7)]);
+    expect(heard).toBe(0);
+    store.snooze(ID, undefined, undefined, owner(), [owner()]);
+    heard = 0;
+    prs.set([pr(7, { stateHash: HASH_B })]);
+    expect(heard).toBe(1);
+  });
+
+  it('reads the hashes and the PR end back from the file, checking each', () => {
+    const file = join(home, SNOOZE_FILE_NAME);
+    const at = '2026-11-06T09:00:00.000Z';
+    writeFileSync(
+      file,
+      JSON.stringify({
+        v: 1,
+        snoozes: [
+          { id: ID, at, heldPrs: [{ key: 'example/demo-app#7', stateHash: HASH_A, redHash: RED_A }, { key: 'not a key', stateHash: HASH_A }, { key: 'example/demo-app#8', stateHash: 'XYZ' }, 'x'] },
+          { id: OTHER, at, heldPrs: 'nope' },
+        ],
+        ended: [
+          { id: ID, at, why: 'pr', pr: { ref: 'example/demo-app#7', need: 'conflicts' } },
+          { id: OTHER, at, why: 'pr', pr: { ref: 'example/demo-app#7', need: 'made up' } },
+        ],
+      }),
+      { mode: 0o600 },
+    );
+    const read = readSnoozeFile(file, new Date(START));
+    expect(read.snoozes[0]!.heldPrs).toEqual([{ key: 'example/demo-app#7', stateHash: HASH_A, redHash: RED_A }]);
+    expect(read.snoozes[1]!.heldPrs).toBeUndefined();
+    expect(read.ended).toEqual([{ id: ID, at, why: 'pr', pr: { ref: 'example/demo-app#7', need: 'conflicts' } }]);
+  });
+
+  it('keeps hashes across a restart', () => {
+    const prs = source([pr(7)]);
+    const first = new SnoozeStore({ home, prs, now: fakeTime().now });
+    first.snooze(ID, undefined, undefined, owner(), [owner()]);
+    first.close();
+    const again = new SnoozeStore({ home, prs, now: fakeTime().now });
+    expect(decorated(again, owner()).snoozed?.heldPrs).toEqual([{ key: 'example/demo-app#7', stateHash: HASH_A, redHash: RED_A }]);
+    again.close();
+  });
+
+  it('the route records them from the PR list', async () => {
+    const prs = source([pr(7)]);
+    const store = new SnoozeStore({ prs, now: () => new Date(START) });
+    const view = createSnoozeView({ latest: () => snapshotOf(owner()), subscribe: () => () => {} }, store);
+    const app = new Hono();
+    registerSnoozes(app, { snapshots: view, store, now: () => new Date(START) });
+    const res = await app.request(snoozePath(ID), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    expect(((await res.json()) as { snoozed: { heldPrs: unknown } }).snoozed.heldPrs).toEqual([{ key: 'example/demo-app#7', stateHash: HASH_A, redHash: RED_A }]);
     store.close();
   });
 });

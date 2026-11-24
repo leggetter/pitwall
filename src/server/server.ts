@@ -313,7 +313,7 @@ export async function startServerWithInternals(
   const flags = new FlagStore(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
   const flagged = createFlagView(recapped ?? linked, flags);
   // Snoozes (W154): each snoozed session's `snoozed`, and why one came back, over flags. Ended by time or a wake.
-  const snoozes = new SnoozeStore(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
+  const snoozes = new SnoozeStore({ prs, ...(options.pitwallHome === undefined ? {} : { home: options.pitwallHome }) });
   const snoozed = createSnoozeView(flagged, snoozes);
   // Session lineage (W167): each session's `lineage`, the ids of the session it continues and the one that continues it.
   const lineage = options.lineage ?? new LineageStore(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });

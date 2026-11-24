@@ -11,7 +11,8 @@ import type { StorageSource } from '../groupState.js';
 import { memoryNavigation } from '../selection.js';
 import { canSnooze, isSnoozed, needsAttention, snoozeBack, statusBadge } from '../sessions.js';
 import { createShortcutsStore, ShortcutsStoreContext } from '../shortcuts.js';
-import { asSnoozeResult, OLD_MARKS_KEY, SNOOZE_BACK_TEXT, SNOOZE_CHOICES, snoozedText, snoozedToast, snoozeLabel, UNDO_SNOOZE, WAKE_ITEM, whenText, wokenText } from '../snooze.js';
+import { asideText } from './SessionRow.js';
+import { asSnoozeResult, snoozeBackPrText, OLD_MARKS_KEY, SNOOZE_BACK_TEXT, SNOOZE_CHOICES, snoozedText, snoozedToast, snoozeLabel, UNDO_SNOOZE, WAKE_ITEM, whenText, wokenText } from '../snooze.js';
 import { group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
 import { toastMessages, toastSaying } from '../test/toasts.js';
 import { Dashboard } from './Dashboard.js';
@@ -121,6 +122,21 @@ describe('sessions.ts', () => {
     expect(snoozeBack({ ...review, snoozeEnded: { at: LATER.at, why: 'woken' } })).toBe('woken');
     expect(snoozeBack({ ...idle, snoozeEnded: { at: LATER.at, why: 'time' } })).toBeUndefined();
     expect(snoozeBack({ ...review, snoozed: LATER, snoozeEnded: { at: LATER.at, why: 'time' } })).toBeUndefined();
+  });
+
+  it('says a PR brought it back, which PR and why, even when the session needs nothing itself (W199)', () => {
+    const { review, idle } = sessions();
+    const ended = { at: LATER.at, why: 'pr' as const, pr: { ref: 'example/demo-app#7', need: 'checks-failing' as const } };
+    expect(snoozeBack({ ...review, snoozeEnded: ended })).toBe('pr');
+    expect(snoozeBack({ ...idle, snoozeEnded: ended })).toBe('pr');
+    expect(snoozeBack({ ...review, snoozed: LATER, snoozeEnded: ended })).toBeUndefined();
+    expect(snoozeBackPrText(ended)).toBe('Snooze ended: example/demo-app#7 CI failing');
+    expect(asideText({ ...review, snoozeEnded: ended })).toBe('Snooze ended: example/demo-app#7 CI failing');
+  });
+
+  it('reads the held PRs back from the snooze route’s answer', () => {
+    const heldPrs = [{ key: 'example/demo-app#7', stateHash: '0123456789abcdef' }];
+    expect(asSnoozeResult({ ok: true, snoozed: { at: LATER.at, heldPrs } })).toEqual({ ok: true, snoozed: { at: LATER.at, heldPrs } });
   });
 });
 

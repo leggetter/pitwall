@@ -14,7 +14,7 @@ export const BUSY_RULE =
 
 /** What flag and snooze do to Needs you, in words. */
 export const SET_ASIDE_RULE =
-  "A flag (you said it doesn't need you, kept only while it needs what it needed then) or a snooze (until a time, or Later until woken) takes a session the index says needs you out of Needs you and the counts. Its badge keeps its text, outlined.";
+  "A flag (you said it doesn't need you, kept only while it needs what it needed then) or a snooze (until a time, or Later until woken, holding the PRs the session owned that needed you then until one has something new) takes a session the index says needs you out of Needs you and the counts. Its badge keeps its text, outlined.";
 
 /** The explanation of one session: the answer's JSON, apart from `untrusted`, which the caller fills with capped text. */
 export interface StateExplanation {
@@ -34,7 +34,7 @@ export interface StateExplanation {
     won?: 'own' | 'pr';
   };
   flag: { flagged: boolean; at?: string; rule: string };
-  snooze: { snoozed: boolean; at?: string; until?: string; endedAt?: string; endedBy?: 'time' | 'woken'; backInNeedsYou?: 'time' | 'woken' };
+  snooze: { snoozed: boolean; at?: string; until?: string; endedAt?: string; endedBy?: 'time' | 'woken' | 'pr'; endedByPr?: string; heldPrs?: string[]; backInNeedsYou?: 'time' | 'woken' | 'pr' };
   context: { tokens?: number; level?: 'ok' | 'warn' | 'high'; warnAbove: number; highAbove: number };
   inputs: Record<string, unknown>;
   /** The text the verdicts came from, for the caller to put under `untrusted`. */
@@ -66,10 +66,12 @@ export function explainState(session: SessionSummary, everyone: readonly Session
   if (session.snoozed !== undefined) {
     snooze.at = session.snoozed.at;
     if (session.snoozed.until !== undefined) snooze.until = session.snoozed.until;
+    if (session.snoozed.heldPrs !== undefined && session.snoozed.heldPrs.length > 0) snooze.heldPrs = session.snoozed.heldPrs.map((held) => held.key);
   }
   if (session.snoozeEnded !== undefined) {
     snooze.endedAt = session.snoozeEnded.at;
     snooze.endedBy = session.snoozeEnded.why;
+    if (session.snoozeEnded.pr !== undefined) snooze.endedByPr = session.snoozeEnded.pr.ref;
   }
   const back = snoozeBack(session);
   if (back !== undefined) snooze.backInNeedsYou = back;

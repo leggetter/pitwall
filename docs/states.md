@@ -70,6 +70,7 @@ A PR you dismissed with Not for me needs you nowhere. When a session needs you i
 
 - **Flag:** you said a session does not need you. It holds only while the session needs what it needed when you flagged it; then it is cleared.
 - **Snooze:** until a time, or Later until the session is woken by a turn you did not start. Its time ending, or a wake, puts it back in Needs you, and its row says why.
+  It holds the PRs the session owned that needed you when you snoozed it (W199): while they are unchanged they don't keep the row in Needs you. Something new on one of them (its hash changes, or its head goes red), or another PR the session owns starting to need you, ends the snooze, and the row says which PR and why.
 
 Either takes a session the index says needs you out of Needs you and every count. Its badge keeps its text and is outlined.
 

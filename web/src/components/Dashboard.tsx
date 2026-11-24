@@ -1344,7 +1344,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         return;
       }
       snoozeToasts.current.set(sessionId, outcome.snoozed.at);
-      const message = snoozedToast(session.name, outcome.snoozed, new Date(), prNeeding(session, work)?.number);
+      const message = snoozedToast(session.name, outcome.snoozed, new Date(), prNeeding({ ...session, snoozed: outcome.snoozed }, work)?.number);
       toasts.show({ tone: 'success', key, message, action: { label: UNDO_SNOOZE, onAction: () => setSnooze(session, false, 'toast') } });
     });
   };

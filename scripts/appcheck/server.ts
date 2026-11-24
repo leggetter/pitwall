@@ -53,6 +53,7 @@ import type {
   SupervisorDecision,
   UsageWindowKey,
 } from '../../src/shared/protocol.js';
+import { ownedPrsBySession, prNeedKind } from '../../src/shared/needsYou.js';
 import { CLEAR_TIMEOUT_MARKER, COPY_SHORT_ID, NAMES, RECAP_CALL_MS, SUPERVISOR_HELD_ERROR, SUPERVISOR_STEP_MS, terminalScreen, World, type ResetOptions, type TerminalSize } from './fixtures.js';
 
 type Security = typeof import('../../src/server/security.js');
@@ -537,7 +538,12 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       const body = await readJson(req);
       if (!isRecord(body) || (body.until !== undefined && (typeof body.until !== 'string' || Number.isNaN(Date.parse(body.until))))) return json(res, 400, { ok: false, error: 'Made up: not a SnoozeRequest.' });
       if (session.needsYou === undefined) return json(res, 409, { ok: false, error: "It doesn't need you now, so there's nothing to snooze." });
-      const snoozed = { at: new Date().toISOString(), ...(typeof body.until === 'string' ? { until: body.until } : {}) };
+      // W199: it holds the PRs the session owns that need you, with their hashes, as the real store does.
+      const owned = ownedPrsBySession(world.snapshot().groups.flatMap((group) => group.sessions), world.prList().prs).get(session.sessionId) ?? [];
+      const heldPrs = owned
+        .filter((pr) => prNeedKind(pr) !== undefined && pr.stateHash !== undefined)
+        .map((pr) => ({ key: `${pr.repo}#${pr.number}`, stateHash: pr.stateHash!, ...(pr.redHash === undefined ? {} : { redHash: pr.redHash }) }));
+      const snoozed = { at: new Date().toISOString(), ...(typeof body.until === 'string' ? { until: body.until } : {}), heldPrs };
       records.snoozes.push({ action: 'snooze', name: session.name, ...(typeof body.until === 'string' ? { until: body.until } : {}) });
       world.snooze(session.sessionId, snoozed);
       broadcast();

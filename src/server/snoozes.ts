@@ -16,6 +16,13 @@
 //     notification; never one you typed or pitwall's relay sent), is after the snooze. Not W88's rule,
 //     where a change in what it needs brought it back, since a recap rewording the same to-do would
 //     wake every Later (settled with Phil, 2026-11-06);
+//   - when a PR the session owns has something new, or another starts to need you ('pr', W199): at
+//     snooze time the store records each owned PR that needs you, with its stateHash and redHash
+//     (W188), `heldPrs`; while they're unchanged those PRs don't keep the row in Needs you
+//     (needsYou.ts, prHeldBy()), and one that changes, or a PR that wasn't there, ends it (prWakeOf()).
+//     Phil, 2026-11-24: "Snoozed items should never be 'needs me' unless something has triggered
+//     that after the snooze." Only once the PR list has loaded, or a snooze would end on the list's
+//     first fetch;
 //   - when you take it off, or start or join a turn in it: its `attendedAt` (a prompt, or a message
 //     from pitwall's relay, which you sent or approved) is after the snooze. Then nothing is said:
 //     you've been there, so a need it shows after that is a new one, not the one you snoozed.
@@ -55,16 +62,23 @@ import { bodyLimit } from 'hono/body-limit';
 import { isRecord } from '../index/guards.js';
 import { isSafeSessionId } from '../index/index.js';
 import {
+  GITHUB_OWNER_PATTERN,
+  GITHUB_REPO_NAME_PATTERN,
+  PR_STATE_HASH_PATTERN,
   SNOOZE_ENDED_SHOWN_MS,
   SNOOZE_MAX_MS,
   snoozePath,
   unsnoozePath,
   type IndexSnapshot,
+  type PullRequestSummary,
   type SessionSnooze,
   type SessionSummary,
   type SnoozeEnded,
+  type SnoozeHeldPr,
   type SnoozeResult,
 } from '../shared/protocol.js';
+import { ownedPrsBySession, prNeedKind, prWakeOf } from '../shared/needsYou.js';
+import type { PrSource } from '../prs/index.js';
 import { ensureLaunchDir } from './launch.js';
 import type { SnapshotView } from './snapshotLinks.js';
 import { createDecoratedView } from './snapshotRecaps.js';
@@ -93,6 +107,8 @@ export interface SnoozeStoreOptions {
   /** pitwall's home. Without one, snoozes are held in memory only. */
   home?: string;
   now?: () => Date;
+  /** Your open PRs (W199), for the PRs a snooze holds and what ends it. Without it, a snooze holds none. */
+  prs?: Pick<PrSource, 'latest' | 'subscribe'>;
   /** For tests: a stand-in for setTimeout and clearTimeout. */
   timers?: { set: (fn: () => void, ms: number) => unknown; clear: (handle: unknown) => void };
 }
@@ -106,6 +122,9 @@ const DEFAULT_TIMERS = {
   clear: (handle: unknown) => clearTimeout(handle as NodeJS.Timeout),
 };
 
+/** The most PRs one snooze holds. */
+const HELD_PRS_MAX = 20;
+
 const ms = (iso: string | undefined): number => (iso === undefined ? NaN : Date.parse(iso));
 
 /** The snoozes held, their file, their timer and the snapshot's decoration. */
@@ -114,40 +133,62 @@ export class SnoozeStore {
   readonly #home: string | undefined;
   readonly #now: () => Date;
   readonly #timers: NonNullable<SnoozeStoreOptions['timers']>;
+  readonly #prs: SnoozeStoreOptions['prs'];
   readonly #snoozes = new Map<string, SessionSnooze>();
   readonly #ended = new Map<string, SnoozeEnded>();
   readonly #listeners = new Set<() => void>();
   #version = 0;
   #timer: unknown;
   #closed = false;
+  #offPrs: (() => void) | undefined;
 
   constructor(options: SnoozeStoreOptions = {}) {
     this.#home = options.home === undefined ? undefined : path.resolve(options.home);
     this.#file = this.#home === undefined ? undefined : path.join(this.#home, SNOOZE_FILE_NAME);
     this.#now = options.now ?? (() => new Date());
     this.#timers = options.timers ?? DEFAULT_TIMERS;
+    this.#prs = options.prs;
     const stored = this.#file === undefined ? { snoozes: [], ended: [] } : readSnoozeFile(this.#file, this.#now());
     for (const { id, ...snooze } of stored.snoozes) this.#snoozes.set(id, snooze);
     for (const { id, ...end } of stored.ended) if (!this.#snoozes.has(id)) this.#ended.set(id, end);
     this.#cap();
     this.#schedule();
+    // A new PR list can end a snooze that holds PRs, so the views decorate again on each.
+    this.#offPrs = options.prs?.subscribe(() => {
+      if ([...this.#snoozes.values()].some((snooze) => snooze.heldPrs !== undefined)) this.#changed();
+    });
   }
 
   /**
    * Snoozes `sessionId` until `until`, or, without it, until it's woken. Replaces a snooze it had.
    * `seenAt` is the time of the snapshot it was snoozed from; `at` is that, if it's earlier than now.
    */
-  snooze(sessionId: string, until?: Date, seenAt?: string): SessionSnooze {
+  snooze(sessionId: string, until?: Date, seenAt?: string, session?: SessionSummary, everyone: readonly SessionSummary[] = []): SessionSnooze {
     const now = this.#now().getTime();
     const seen = ms(seenAt);
     const at = new Date(seen < now ? seen : now).toISOString();
-    const snooze: SessionSnooze = { at, ...(until === undefined ? {} : { until: until.toISOString() }) };
+    const heldPrs = session === undefined ? undefined : this.#heldNow(session, everyone);
+    const snooze: SessionSnooze = { at, ...(until === undefined ? {} : { until: until.toISOString() }), ...(heldPrs === undefined ? {} : { heldPrs }) };
     this.#snoozes.delete(sessionId);
     this.#snoozes.set(sessionId, snooze);
     this.#ended.delete(sessionId);
     this.#cap();
     this.#saved();
     return snooze;
+  }
+
+  /**
+   * The PRs `session` owns that need you now and have a stateHash (W199), or undefined while the PR
+   * list hasn't loaded, so the snooze holds none and ends on none. A PR with no hash isn't held.
+   */
+  #heldNow(session: SessionSummary, everyone: readonly SessionSummary[]): SnoozeHeldPr[] | undefined {
+    const list = this.#prs?.latest();
+    if (list === undefined || list.fetchedAt === undefined) return undefined;
+    const owned = ownedPrsBySession(everyone.some((each) => each.sessionId === session.sessionId) ? everyone : [...everyone, session], list.prs).get(session.sessionId) ?? [];
+    return owned
+      .filter((pr) => prNeedKind(pr) !== undefined && pr.stateHash !== undefined)
+      .slice(0, HELD_PRS_MAX)
+      .map((pr) => ({ key: `${pr.repo}#${pr.number}`, stateHash: pr.stateHash!, ...(pr.redHash === undefined ? {} : { redHash: pr.redHash }) }));
   }
 
   /** Takes `sessionId`'s snooze off, and any end still shown. False when it had neither. */
@@ -170,6 +211,15 @@ export class SnoozeStore {
     const now = this.#now().getTime();
     let dirty = this.#expire(now);
     let changed = false;
+    // Which PR each session owns depends on the others, so it's worked out once, and only for a snooze that holds PRs.
+    let owned: Map<string, PullRequestSummary[]> | undefined;
+    const ownedBy = (sessionId: string) => {
+      if (owned === undefined) {
+        const list = this.#prs?.latest();
+        owned = list?.fetchedAt === undefined ? new Map() : ownedPrsBySession(snapshot.groups.flatMap((group) => group.sessions), list.prs);
+      }
+      return owned.get(sessionId);
+    };
     const groups = snapshot.groups.map((group) => {
       let groupChanged = false;
       const sessions = group.sessions.map((session) => {
@@ -182,7 +232,8 @@ export class SnoozeStore {
             return session;
           }
           const why = endOf(snooze, session, now);
-          if (why === undefined) {
+          const pr = why === undefined && snooze.heldPrs !== undefined ? prWakeOf(session, snooze, ownedBy(id)) : undefined;
+          if (why === undefined && pr === undefined) {
             groupChanged = true;
             return { ...session, snoozed: { ...snooze } };
           }
@@ -193,7 +244,7 @@ export class SnoozeStore {
           }
           // Not #changed(): this view already says so, and the next one has nothing to add.
           this.#snoozes.delete(id);
-          this.#ended.set(id, { at: new Date(now).toISOString(), why });
+          this.#ended.set(id, { at: new Date(now).toISOString(), why: why ?? 'pr', ...(pr === undefined ? {} : { pr }) });
           dirty = true;
         }
         const end = this.#ended.get(id);
@@ -226,6 +277,8 @@ export class SnoozeStore {
   /** Stops the timer. The snoozes stay on disk for the next run. */
   close(): void {
     this.#closed = true;
+    this.#offPrs?.();
+    this.#offPrs = undefined;
     if (this.#timer !== undefined) this.#timers.clear(this.#timer);
     this.#timer = undefined;
   }
@@ -329,6 +382,30 @@ function endOf(snooze: SessionSnooze, session: SessionSummary, now: number): Sno
 
 const isTime = (value: unknown): value is string => typeof value === 'string' && value.length <= 40 && !Number.isNaN(Date.parse(value));
 
+const KEY_PATTERN = new RegExp(`^${GITHUB_OWNER_PATTERN}/${GITHUB_REPO_NAME_PATTERN}#[1-9][0-9]{0,8}$`);
+const HASH_PATTERN = new RegExp(`^${PR_STATE_HASH_PATTERN}$`);
+const PR_NEEDS: readonly string[] = ['review-requested', 'checks-failing', 'conflicts', 'changes-requested'];
+
+/** The PRs a snooze holds, made again from the fields that check out; undefined when `value` isn't a list or has none that do. */
+function readHeldPrs(value: unknown): SnoozeHeldPr[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const held: SnoozeHeldPr[] = [];
+  for (const entry of value.slice(0, HELD_PRS_MAX) as unknown[]) {
+    if (!isRecord(entry) || typeof entry.key !== 'string' || !KEY_PATTERN.test(entry.key)) continue;
+    if (typeof entry.stateHash !== 'string' || !HASH_PATTERN.test(entry.stateHash)) continue;
+    if (entry.redHash !== undefined && (typeof entry.redHash !== 'string' || !HASH_PATTERN.test(entry.redHash))) continue;
+    held.push({ key: entry.key, stateHash: entry.stateHash, ...(entry.redHash === undefined ? {} : { redHash: entry.redHash }) });
+  }
+  // An array with nothing valid in it is still a snooze made with the list loaded: what it held can't be told, so it holds nothing.
+  return held;
+}
+
+function readEndPr(value: unknown): SnoozeEnded['pr'] {
+  if (!isRecord(value) || typeof value.ref !== 'string' || !KEY_PATTERN.test(value.ref)) return undefined;
+  if (typeof value.need !== 'string' || !PR_NEEDS.includes(value.need)) return undefined;
+  return { ref: value.ref, need: value.need as NonNullable<SnoozeEnded['pr']>['need'] };
+}
+
 /**
  * The snoozes and ends in the file at `file` that check out; none when there's no file or it can't be
  * trusted: not a regular file of this user's, a link, writable by group or others, or over
@@ -369,12 +446,15 @@ export function readSnoozeFile(file: string, now: Date = new Date()): { snoozes:
     const at = notAfterNow(entry.at);
     const longest = Date.parse(at) + SNOOZE_MAX_MS;
     const until = entry.until === undefined ? undefined : Date.parse(entry.until) > longest ? new Date(longest).toISOString() : entry.until;
-    snoozes.push({ id: entry.id, at, ...(until === undefined ? {} : { until }) });
+    const heldPrs = readHeldPrs(entry.heldPrs);
+    snoozes.push({ id: entry.id, at, ...(until === undefined ? {} : { until }), ...(heldPrs === undefined ? {} : { heldPrs }) });
   }
   for (const entry of Array.isArray(value.ended) ? (value.ended as unknown[]) : []) {
     if (!isRecord(entry) || typeof entry.id !== 'string' || !isSafeSessionId(entry.id) || !isTime(entry.at)) continue;
-    if (entry.why !== 'time' && entry.why !== 'woken') continue;
-    ended.push({ id: entry.id, at: notAfterNow(entry.at), why: entry.why });
+    if (entry.why !== 'time' && entry.why !== 'woken' && entry.why !== 'pr') continue;
+    const pr = entry.why === 'pr' ? readEndPr(entry.pr) : undefined;
+    if (entry.why === 'pr' && pr === undefined) continue;
+    ended.push({ id: entry.id, at: notAfterNow(entry.at), why: entry.why, ...(pr === undefined ? {} : { pr }) });
   }
   return { snoozes, ended };
 }
@@ -439,7 +519,13 @@ export function registerSnoozes(app: Hono, sources: SnoozeRouteSources): void {
       const { session } = lookup;
       if (session.finished || session.ended === true) return answer(c, { ok: false, error: "It has finished, so there's nothing to snooze." }, 409);
       if (session.needsYou === undefined) return answer(c, { ok: false, error: "It doesn't need you now, so there's nothing to snooze." }, 409);
-      const snoozed = sources.store.snooze(session.sessionId, request.until, sources.snapshots.latest()?.generatedAt);
+      const snoozed = sources.store.snooze(
+        session.sessionId,
+        request.until,
+        sources.snapshots.latest()?.generatedAt,
+        session,
+        sources.snapshots.latest()?.groups.flatMap((group) => group.sessions),
+      );
       return answer(c, { ok: true, snoozed }, 200);
     },
   );

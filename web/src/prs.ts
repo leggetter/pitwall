@@ -38,7 +38,7 @@ import {
   type RootOwners,
   type SessionSummary,
 } from '../../src/shared/protocol.js';
-import { comparePrs } from '../../src/shared/needsYou.js';
+import { comparePrs, type PrNeedKind } from '../../src/shared/needsYou.js';
 import { plainText } from './format.js';
 import type { BadgeLook } from './sessions.js';
 
@@ -457,6 +457,14 @@ export function prStateBadges(pr: PullRequestSummary): PrStateBadge[] {
 const BADGE_STATES: Readonly<Partial<Record<PrStateBadge['state'], string>>> = {
   'review-requested': 'review requested',
   failing: 'CI failing',
+  conflicts: 'conflicts',
+  'changes-requested': 'changes requested',
+};
+
+/** The PR badge's words for each reason a PR needs you (BADGE_STATES), by PrNeedKind, for a snooze that ended on one (W199). */
+export const PR_NEED_WORDS: Readonly<Record<PrNeedKind, string>> = {
+  'review-requested': 'review requested',
+  'checks-failing': 'CI failing',
   conflicts: 'conflicts',
   'changes-requested': 'changes requested',
 };
