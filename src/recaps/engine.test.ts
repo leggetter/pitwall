@@ -960,6 +960,53 @@ describe('hiding its calls', () => {
   });
 });
 
+describe('a hand-off written by hand (W210)', () => {
+  const PROMPT = 'Read /made/up/demo/NOW.md';
+  const MESSAGE = `NOW.md is rewritten, which finishes this session’s work. Start a new session with ${PROMPT}`;
+
+  async function handedOff(ending: string | null = MESSAGE, handoff: unknown = PROMPT) {
+    const h = harness();
+    h.start();
+    const a = h.add('a', { kind: 'background', state: 'done', turnEnded: true }, { turnEnded: true, ...(ending === null ? {} : { assistantEnding: ending }) });
+    await h.poll([a]);
+    await h.reply(h.calls[0], envelope(answer({ handoff })));
+    return { h, a };
+  }
+
+  it('gives the session a recap-sourced proposal in its own folder while the quote is word for word in its newest message', async () => {
+    const { h, a } = await handedOff();
+    const decorated = h.engine.decorate(a);
+    expect(decorated.spinOff).toMatchObject({ kind: 'proposal', prompt: PROMPT, folder: a.cwd, source: 'recap' });
+    expect(h.engine.handoffOf(decorated)).toEqual(decorated.spinOff);
+  });
+
+  it('gives none when the message does not hold the quote, when there is no message, or when the recap has none', async () => {
+    const other = await handedOff('I changed the NOW.md note.');
+    expect(other.h.engine.decorate(other.a).spinOff).toBeUndefined();
+    const no = await handedOff(null);
+    expect(no.h.engine.decorate(no.a).spinOff).toBeUndefined();
+    const none = await handedOff(MESSAGE, '');
+    expect(none.h.engine.decorate(none.a).spinOff).toBeUndefined();
+  });
+
+  it('refuses a quote pitwall would not type, and leaves a spin-off block the index read alone', async () => {
+    const slash = await handedOff('/clear\nand go', '/clear\nand go');
+    expect(slash.h.engine.decorate(slash.a).spinOff).toBeUndefined();
+    const { h, a } = await handedOff();
+    const block = { kind: 'proposal' as const, key: '0123456789abcdef', folder: '/made/up/other', prompt: 'Do the other thing.' };
+    expect(h.engine.decorate({ ...a, spinOff: block }).spinOff).toEqual(block);
+  });
+
+  it('goes when the message changes: handoffOf() works it out again from the current facts', async () => {
+    const { h, a } = await handedOff();
+    const decorated = h.engine.decorate(a);
+    h.facts.set('a', { ...h.facts.get('a')!, assistantEnding: 'Carrying on with something else.' });
+    h.engine.observe(new Map(h.facts));
+    expect(h.engine.handoffOf(decorated)).toBeUndefined();
+    expect(h.engine.decorate(a).spinOff).toBeUndefined();
+  });
+});
+
 describe('what the snapshot shows', () => {
   async function recapped(overrides: Record<string, unknown> = {}) {
     const h = harness();

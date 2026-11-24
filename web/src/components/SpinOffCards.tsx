@@ -19,6 +19,7 @@ import {
   canClearAndContinue,
   checkSpinOff,
   clearAndContinue,
+  handoffTitle,
   isHandoffProposal,
   SPIN_OFF_CLEAR_NOTE,
   SPIN_OFF_HANDOFF_START_NOTE,
@@ -44,6 +45,8 @@ export interface CheckedSpinOff {
   cwd: string;
   name?: string;
   prompt: string;
+  /** It is the session's own hand-off (W168, W210), so its Start is noted as continuing it. */
+  handoff?: boolean;
 }
 
 export interface SpinOffCardsProps {
@@ -99,7 +102,7 @@ function SpinOffCard({ item, onStart, onDismiss, onOpen, onCleared }: { item: Li
       setError(outcome.error);
       return;
     }
-    onStart({ sessionId: session.sessionId, key: spinOff.key, from, cwd: outcome.cwd, prompt: outcome.prompt, ...(outcome.name === undefined ? {} : { name: outcome.name }) });
+    onStart({ sessionId: session.sessionId, key: spinOff.key, from, cwd: outcome.cwd, prompt: outcome.prompt, ...(isHandoffProposal(session, spinOff) ? { handoff: true } : {}), ...(outcome.name === undefined ? {} : { name: outcome.name }) });
   };
 
   const clear = async () => {
@@ -125,7 +128,7 @@ function SpinOffCard({ item, onStart, onDismiss, onOpen, onCleared }: { item: Li
   return (
     <li className="approval-card spin-off-card" data-session={session.sessionId} data-kind={spinOff.kind} aria-labelledby={ids.heading} aria-busy={busy || clearing || undefined}>
       <h4 className="approval-title" id={ids.heading}>
-        <bdi>{spinOffTitle(from)}</bdi>
+        <bdi>{handoff ? handoffTitle(from) : spinOffTitle(from)}</bdi>
       </h4>
       {session.lastActivityAt !== undefined && (
         <p className="approval-meta">

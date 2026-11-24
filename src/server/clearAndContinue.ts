@@ -34,15 +34,15 @@ import type { Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { AgentRow, AgentsSource } from '../index/agents.js';
 import { isRecord } from '../index/guards.js';
-import { endsWithBackslash, isHandoffOf } from '../shared/handoff.js';
-import { describeCodePoint, hiddenCharacter } from '../shared/hiddenText.js';
+import { isOwnHandoff, typedPromptProblem } from '../shared/handoff.js';
 import {
   clearAndContinuePath,
   continuedPath,
-  SPAWN_PROMPT_MAX,
   type ClearAndContinueResult,
   type ContinuedResult,
   type IndexSnapshot,
+  type SessionSummary,
+  type SpinOff,
 } from '../shared/protocol.js';
 import { childEnvironment } from './command.js';
 import { LOOKUP_ERRORS } from './actions.js';
@@ -124,21 +124,7 @@ export interface ClearAndContinue {
   close(): Promise<void>;
 }
 
-/**
- * Why `prompt` can't be typed into a job, in pitwall's words, or undefined when it can. The hidden
- * character rule is W163's own (hiddenCharacter()), not a second one.
- */
-export function typedPromptProblem(prompt: string): string | undefined {
-  if (prompt.trim() === '') return 'The prompt is empty.';
-  if (prompt.length > SPAWN_PROMPT_MAX) return `The prompt is over ${SPAWN_PROMPT_MAX.toLocaleString('en-US')} characters.`;
-  const hidden = hiddenCharacter(prompt);
-  if (hidden !== undefined) return `The prompt has a character that doesn’t show as itself on screen (${describeCodePoint(hidden.codePoint)}), so pitwall won’t type it.`;
-  const first = prompt.trimStart()[0];
-  if (first === '/') return 'The prompt starts with /, so Claude Code would run it as a slash command. Start a new session instead.';
-  if (first === '!') return 'The prompt starts with !, so Claude Code would run it as a shell line. Start a new session instead.';
-  if (endsWithBackslash(prompt)) return 'The prompt ends with \\, which Claude Code reads with Enter as a new line, so it would sit unsent in the input box. Start a new session instead.';
-  return undefined;
-}
+export { typedPromptProblem };
 
 export function createClearAndContinue(options: ClearAndContinueOptions): ClearAndContinue {
   const timings: ClearTimings = { ...CLEAR_TIMINGS, ...options.timings };
@@ -362,6 +348,13 @@ export interface ClearRouteSources {
   /** The short ids this pitwall started a moment ago (actions.ts). */
   spawned?: Pick<RecentSpawns, 'has'>;
   lineage?: Pick<LineageStore, 'expectContinue'>;
+  /**
+   * W210: the session's hand-off from its recap, worked out again now from the recap and the transcript's
+   * newest assistant message (RecapEngine.handoffOf()). A proposal with source 'recap' is typed only
+   * when this gives the same key and prompt, so a message that has changed since the snapshot was
+   * drawn is refused. Without it, no recap-sourced proposal is typed.
+   */
+  recapHandoff?: (session: SessionSummary) => SpinOff | undefined;
 }
 
 export function registerClearAndContinue(app: Hono, sources: ClearRouteSources): void {
@@ -405,8 +398,16 @@ export function registerClearAndContinue(app: Hono, sources: ClearRouteSources):
     if (session.kind !== 'background' || session.shortId === undefined || session.ended === true || session.stale) {
       return clearAnswer(c, { ok: false, error: 'Clear and continue is for a running background session. Start a new session instead.' }, 409);
     }
-    if (!isHandoffOf(session.sessionId, proposal.prompt)) {
+    if (!isOwnHandoff(session.sessionId, proposal)) {
       return clearAnswer(c, { ok: false, error: 'That proposal isn’t a hand-off from this session: its prompt doesn’t start with “Continues session” and this session’s id.' }, 409);
+    }
+    // A hand-off from the recap (W210) is worked out again, now, from the transcript: the text typed is the
+    // server's own, word for word in the session's newest message as it is this moment, never the request's.
+    if (proposal.source === 'recap') {
+      const current = sources.recapHandoff?.(session);
+      if (current?.kind !== 'proposal' || current.key !== proposal.key || current.prompt !== proposal.prompt) {
+        return clearAnswer(c, { ok: false, error: 'That session’s newest message has changed since the card was drawn. Read its new state first.' }, 409);
+      }
     }
     const outcome = await sources.runner.run({ sessionId: session.sessionId, shortId: session.shortId, cwd: session.cwd }, proposal.prompt);
     if (outcome.ok) return clearAnswer(c, { ok: true, sessionId: outcome.sessionId }, 200);
@@ -422,7 +423,7 @@ export function registerClearAndContinue(app: Hono, sources: ClearRouteSources):
     if (!JOB_ID.test(shortId)) return continuedAnswer(c, { ok: false, error: 'The body must be { shortId }, a job’s short id.' }, 400);
     // Only for a session that proposes its own hand-off now, so the link can't name just any session.
     const proposed = lookup.session.spinOff;
-    if (proposed?.kind !== 'proposal' || !isHandoffOf(lookup.session.sessionId, proposed.prompt)) {
+    if (!isOwnHandoff(lookup.session.sessionId, proposed)) {
       return continuedAnswer(c, { ok: false, error: 'That session doesn’t propose a hand-off now, so pitwall won’t link a session to it.' }, 409);
     }
     // Only a session this pitwall started a moment ago, so the page can't link two sessions that merely exist.

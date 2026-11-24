@@ -93,11 +93,13 @@ import {
   type RecapSummary,
   type SessionRecap,
   type SessionSummary,
+  type SpinOff,
   type WorkChoice,
 } from '../shared/protocol.js';
 import { pitwallHome } from '../server/launch.js';
 import { modelRejectedMessage } from '../server/work.js';
 import { checkClaudeVersion, prepareRelayDir } from '../server/relay.js';
+import { recapHandoff } from './handoff.js';
 import { budgetFile, type BudgetStore } from './budget.js';
 import { runRecapCall, spawnRecapChild, type CallOutcome, type RecapSpawner } from './call.js';
 import { recapStoreDir, type RecapStore } from './store.js';
@@ -158,6 +160,12 @@ export interface RecapEngine {
   refresh(session: SessionSummary): RefreshResult;
   /** The session's recap as GET recapPath() answers it, or undefined when there's none. */
   recap(session: SessionSummary): SessionRecap | undefined;
+  /**
+   * The hand-off the session's recap quotes (W210), worked out now from the recap and the end of its
+   * newest assistant message: the proposal decorate() would give it, or undefined. For the route that
+   * types it (clearAndContinue.ts), which refuses a card whose message has changed since.
+   */
+  handoffOf(session: SessionSummary): SpinOff | undefined;
   /** `session` as the snapshot carries it: with its recap, its title from the recap and Needs you's 'recap' reason. The same object when there's no recap. */
   decorate(session: SessionSummary): SessionSummary;
   /** How recaps are doing today (IndexSnapshot.recaps). */
@@ -897,6 +905,13 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     recap(session) {
       return shown(session);
     },
+    handoffOf(session) {
+      // The same check, from the current recap and facts, for the route that types it.
+      // `session` is a decorated one, so its own recap-sourced proposal is set aside before the check.
+      const { spinOff, ...rest } = session;
+      const plain = spinOff?.kind === 'proposal' && spinOff.source === 'recap' ? rest : session;
+      return recapHandoff(plain, shown(session), facts.get(session.sessionId)?.assistantEnding);
+    },
     decorate(session) {
       const recap = shown(session);
       if (recap === undefined) return session;
@@ -909,6 +924,9 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
       }
       const needsYou = needsYouOf(session, recap);
       if (needsYou !== undefined) decorated.needsYou = needsYou;
+      // A hand-off written by hand (W210), as the card for a spin-off block's is.
+      const handoff = recapHandoff(session, recap, facts.get(session.sessionId)?.assistantEnding);
+      if (handoff !== undefined) decorated.spinOff = handoff;
       return decorated;
     },
     health() {

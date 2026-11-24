@@ -38,6 +38,8 @@ export interface SessionFacts {
   turnEnded?: boolean;
   /** Claude Code's newest recap of it (TranscriptInfo.awaySummary). */
   awaySummary?: AwaySummary;
+  /** The end of its newest assistant message, with no prompt since (TranscriptInfo.assistantEnding, W210): the recap engine's word-for-word check of a hand-off. */
+  assistantEnding?: string;
 }
 
 export interface IndexerOptions {
@@ -486,6 +488,7 @@ function factsOf(file: string | undefined, transcript: TranscriptInfo): SessionF
   if (file !== undefined) facts.file = file;
   if (transcript.turnEnded !== undefined) facts.turnEnded = transcript.turnEnded;
   if (transcript.awaySummary !== undefined) facts.awaySummary = { ...transcript.awaySummary };
+  if (transcript.assistantEnding !== undefined) facts.assistantEnding = transcript.assistantEnding;
   return facts;
 }
 
