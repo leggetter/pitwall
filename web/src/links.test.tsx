@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { confirmMessage, openTerminalLink, terminalLinkHandler } from './links.js';
+import { confirmMessage, createLinkHandler, openTerminalLink, terminalLinkHandler } from './links.js';
 
 const RANGE = { start: { x: 1, y: 1 }, end: { x: 2, y: 1 } };
 
@@ -55,6 +55,47 @@ describe('openTerminalLink', () => {
       expect(confirm, uri).not.toHaveBeenCalled();
       expect(open, uri).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe('an OSC 8 file link whose visible text is not its file (W211)', () => {
+  it('passes the text it shows, so the opener asks first, and passes none when the text is its file', () => {
+    const onFile = vi.fn();
+    const handler = createLinkHandler(onFile, (range) => (range.start.x === 1 ? 'NOTES.md' : 'src/a.ts:12'));
+    const at = (x: number) => ({ start: { x, y: 1 }, end: { x: x + 5, y: 1 } });
+    handler.activate({} as MouseEvent, 'src/a.ts#L12', at(1));
+    handler.activate({} as MouseEvent, 'src/a.ts#L12', at(2));
+    expect(onFile.mock.calls).toEqual([[{ path: 'src/a.ts', line: 12 }, 'NOTES.md'], [{ path: 'src/a.ts', line: 12 }]]);
+  });
+});
+
+describe('openTerminalLink with a file opener (W211)', () => {
+  it('sends a file: link, a relative target and #L12 to the opener, without asking, and refuses every other scheme', () => {
+    const onFile = vi.fn();
+    const confirm = vi.fn(() => true);
+    const open = vi.fn();
+    expect(openTerminalLink('file:///abs/NOW.md', { confirm, open }, onFile)).toBe(true);
+    expect(openTerminalLink('src/server/editors.ts#L12', { confirm, open }, onFile)).toBe(true);
+    expect(openTerminalLink('file:///a/b%20c.md', { confirm, open }, onFile)).toBe(true);
+    expect(onFile.mock.calls).toEqual([[{ path: '/abs/NOW.md' }], [{ path: 'src/server/editors.ts', line: 12 }], [{ path: '/a/b c.md' }]]);
+    for (const uri of ['javascript:alert(1)', 'vscode://file/x', 'data:text/html,x', 'file://evil.example/x', 'blob:http://a/b']) {
+      expect(openTerminalLink(uri, { confirm, open }, onFile), uri).toBe(false);
+    }
+    expect(onFile).toHaveBeenCalledTimes(3);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('still asks first for http and https, and sends them no further', () => {
+    const onFile = vi.fn();
+    const open = vi.fn();
+    expect(openTerminalLink('https://example.com/a.md', { confirm: () => true, open }, onFile)).toBe(true);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(onFile).not.toHaveBeenCalled();
+  });
+
+  it('treats a file link as nothing without an opener', () => {
+    expect(openTerminalLink('file:///abs/NOW.md', { confirm: () => true, open: vi.fn() })).toBe(false);
   });
 });
 

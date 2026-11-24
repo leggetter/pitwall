@@ -18,6 +18,8 @@ export interface ServerOptions {
   port?: number;
   /** Per-run secret, required on API and WebSocket requests. */
   token: string;
+  /** The config file's `editor` (W211): the editor a file link opens in when none was chosen before. */
+  defaultEditor?: 'vscode' | 'cursor';
   /** Directory of the built web UI. */
   webRoot: string;
   /**

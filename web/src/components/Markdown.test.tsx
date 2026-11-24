@@ -12,6 +12,7 @@ import { MAX_ELEMENTS } from '../markdown.js';
 import { createMentions } from '../mentions.js';
 import { pr, session } from '../test/fixtures.js';
 import { AS_WRITTEN, LINK_CONSEQUENCE, linkQuestion, Markdown, MentionsContext, OPEN_LINK, type MentionsValue } from './Markdown.js';
+import { FileLinksContext } from './FileLinks.js';
 import { ToastProvider } from './Toast.js';
 
 function renderMarkdown(text: string, clipboard: ClipboardLike = { writeText: vi.fn(async () => {}) }) {
@@ -152,7 +153,7 @@ describe('Markdown: inline', () => {
   });
 
   it('keeps javascript:, data:, relative and other links as the text they were written as', () => {
-    const written = '[x](javascript:alert(1)) [y](data:text/html,<script>alert(1)</script>) [z](src/a.ts) [w](/abs) <javascript:alert(1)> <mailto:a@example.com>';
+    const written = '[x](javascript:alert(1)) [y](data:text/html,<script>alert(1)</script>) [w](/abs) <javascript:alert(1)> <mailto:a@example.com>';
     const { root } = renderMarkdown(written);
     expect(root.querySelector('a, script')).toBeNull();
     expect(root.textContent).toBe(written);
@@ -803,5 +804,73 @@ describe('Markdown: mentions in the supervisor’s replies (W125)', () => {
     const { root } = renderMarkdown('**pr-894**');
     expect(root.querySelector('button')).toBeNull();
     expect(root.textContent).toBe('pr-894');
+  });
+});
+
+describe('Markdown: file links (W211)', () => {
+  function renderWithFiles(text: string, open = vi.fn()) {
+    const result = render(
+      <ClipboardContext.Provider value={{ writeText: vi.fn(async () => {}) }}>
+        <ToastProvider>
+          <FileLinksContext.Provider value={{ open }}>
+            <div className="entry-text entry-markdown">
+              <Markdown text={text} />
+            </div>
+          </FileLinksContext.Provider>
+        </ToastProvider>
+      </ClipboardContext.Provider>,
+    );
+    return { ...result, root: result.container.querySelector<HTMLElement>('.entry-markdown')!, open };
+  }
+  const buttons = (root: HTMLElement) => [...root.querySelectorAll<HTMLElement>('button.md-file')];
+
+  it('links a path in text, and clicking it opens that file', () => {
+    const { root, open } = renderWithFiles('See src/server/editors.ts:12 for it.');
+    const [button] = buttons(root);
+    expect(button!.textContent).toBe('src/server/editors.ts:12');
+    fireEvent.click(button!);
+    expect(open).toHaveBeenCalledWith({ path: 'src/server/editors.ts', line: 12 });
+  });
+
+  it('links a path in a code span', () => {
+    const { root, open } = renderWithFiles('Edit `src/a.ts` now.');
+    expect(buttons(root)).toHaveLength(1);
+    fireEvent.click(buttons(root)[0]!);
+    expect(open).toHaveBeenCalledWith({ path: 'src/a.ts' });
+  });
+
+  it('links a markdown link to a relative path and to a file: URL', () => {
+    const { root, open } = renderWithFiles('[the a file](src/a.ts) and [b](file:///abs/b%20c.md)');
+    expect(buttons(root).map((b) => b.textContent)).toEqual(['the a file', 'b']);
+    fireEvent.click(buttons(root)[1]!);
+    // Their text isn't their file, so each passes what it shows and the opener asks first.
+    expect(open).toHaveBeenCalledWith({ path: '/abs/b c.md' }, 'b');
+  });
+
+  it('a markdown link whose text is its own file opens on one click, and one whose text differs passes its text to ask', () => {
+    const { root, open } = renderWithFiles('[src/a.ts](src/a.ts), [a.ts:12](src/a.ts#L12) and [NOTES.md](src/a.ts)');
+    const links = buttons(root);
+    fireEvent.click(links[0]!);
+    fireEvent.click(links[1]!);
+    fireEvent.click(links[2]!);
+    expect(open.mock.calls).toEqual([[{ path: 'src/a.ts' }, undefined], [{ path: 'src/a.ts', line: 12 }, undefined], [{ path: 'src/a.ts' }, 'NOTES.md']]);
+  });
+
+  it('links nothing inside a link’s text, and nothing in a code block', () => {
+    const { root } = renderWithFiles('[see src/a.ts](https://example.com/x) and\n\n```\nsrc/b.ts\n```');
+    expect(buttons(root)).toHaveLength(0);
+    expect(root.querySelector('a')!.textContent).toBe('see src/a.ts');
+  });
+
+  it('leaves an http URL as the same link it was', () => {
+    const { root } = renderWithFiles('[docs](https://example.com/docs.html)');
+    expect(buttons(root)).toHaveLength(0);
+    expect(root.querySelector('a')!.getAttribute('href')).toBe('https://example.com/docs.html');
+  });
+
+  it('is plain text with no context', () => {
+    const { root } = renderMarkdown('See src/a.ts and `src/b.ts`.');
+    expect(root.querySelector('button.md-file')).toBeNull();
+    expect(root.textContent).toBe('See src/a.ts and src/b.ts.');
   });
 });

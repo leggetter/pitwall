@@ -6,7 +6,7 @@
 //                               A state-changing method (anything but GET and HEAD) also needs
 //                               the apiKey, not the token, and an Origin, else 403
 //   GET /api/directories        then directories.ts: the directories under the snapshot's roots
-//   GET /api/editors            then editors.ts: the editors found at startup
+//   GET /api/editors            then editors.ts: the editors found at startup, and the config's default
 //   GET /api/prs                then prs.ts: your open PRs, the latest list the poller has (M4);
 //                               POST /api/prs/refresh asks it for a fetch, at most one a minute,
 //                               else 429, and 409 with --no-prs; POST /api/prs/clone, clone.ts,
@@ -426,7 +426,7 @@ export async function startServerWithInternals(
     clone.register(app);
     registerAttachments(app, attachments);
     registerActions(app, indexer, { ...actionOptions, spawner, resumer });
-    registerEditors(app, indexer, { token, ...internals.editors, slots: commandSlots });
+    registerEditors(app, indexer, { token, ...(options.defaultEditor === undefined ? {} : { defaultEditor: options.defaultEditor }), ...internals.editors, slots: commandSlots });
     registerEndSession(app, indexer, {
       isRelay: (row) => relay.isRelay(row) || recaps?.isOwn(row) === true,
       isSupervisor: (row) => supervisor?.isOwn(row) === true,

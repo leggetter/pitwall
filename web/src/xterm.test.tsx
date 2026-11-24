@@ -38,6 +38,13 @@ vi.mock('@xterm/xterm', () => ({
       },
     };
     loadAddon() {}
+    // W211's link provider, and the buffer it reads a line from.
+    providers: unknown[] = [];
+    registerLinkProvider(provider: unknown) {
+      this.providers.push(provider);
+      return { dispose() {} };
+    }
+    buffer = { active: { getLine: (index: number) => (index === 0 ? { translateToString: () => 'edit src/a.ts:4' } : undefined) } };
     open(container: HTMLElement) {
       created.events.push('opened');
       created.hooks.push('opened');
@@ -60,7 +67,7 @@ vi.mock('@xterm/addon-fit', () => ({
   },
 }));
 
-const { createXterm, FONT_WAIT_MS, THEME_TOKENS, waitForFont } = await import('./xterm.js');
+const { createXterm, FONT_WAIT_MS, rangeText, THEME_TOKENS, waitForFont } = await import('./xterm.js');
 const { terminalLinkHandler } = await import('./links.js');
 
 /** The options createXterm() gave the terminal it just created. */
@@ -119,6 +126,27 @@ describe('createXterm', () => {
     expect(created.options).toHaveLength(1);
     expect(lastOptions()).toMatchObject({ linkHandler: terminalLinkHandler });
     expect(terminalLinkHandler.allowNonHttpProtocols).toBe(false);
+  });
+
+  it("with a file opener (W211), takes every scheme to the handler, which refuses all but http, https and files, and registers the path link provider", async () => {
+    const onFileLink = vi.fn();
+    await createXterm(document.createElement('div'), { onFileLink });
+    const handler = lastOptions().linkHandler as typeof terminalLinkHandler;
+    expect(handler).not.toBe(terminalLinkHandler);
+    expect(handler.allowNonHttpProtocols).toBe(true);
+    handler.activate(new MouseEvent('click'), 'file:///abs/a%20b.md', { start: { x: 1, y: 1 }, end: { x: 2, y: 1 } });
+    handler.activate(new MouseEvent('click'), 'src/a.ts#L12', { start: { x: 1, y: 1 }, end: { x: 2, y: 1 } });
+    handler.activate(new MouseEvent('click'), 'javascript:alert(1)', { start: { x: 1, y: 1 }, end: { x: 2, y: 1 } });
+    handler.activate(new MouseEvent('click'), 'vscode://file/etc/passwd', { start: { x: 1, y: 1 }, end: { x: 2, y: 1 } });
+    // The fake's cells say something else than the target, so each asks: it's given the text they show.
+    expect(onFileLink.mock.calls.map(([ref]) => ref)).toEqual([{ path: '/abs/a b.md' }, { path: 'src/a.ts', line: 12 }]);
+    expect(onFileLink.mock.calls.every(([, shown]) => typeof shown === 'string')).toBe(true);
+    const [terminal] = created.terminals as unknown as { providers: { provideLinks: (y: number, cb: (links?: { text: string; activate: () => void }[]) => void) => void }[] }[];
+    let links: { text: string; activate: () => void }[] | undefined;
+    terminal?.providers[0]?.provideLinks(1, (found) => (links = found));
+    expect(links?.map((link) => link.text)).toEqual(['src/a.ts:4']);
+    links?.[0]?.activate();
+    expect(onFileLink).toHaveBeenLastCalledWith({ path: 'src/a.ts', line: 4 });
   });
 
   it('takes its font family from --pw-font-mono, and the rest of its options from 4: Terminal', async () => {
@@ -343,5 +371,23 @@ describe("the terminal's code", () => {
     const box = declarations('.attach-terminal-fit');
     expect(box).toMatchObject({ flex: '1 1 0', 'min-width': '0', 'min-height': '0' });
     expect(Object.keys(box).filter((property) => /^(padding|border|margin)/.test(property))).toEqual([]);
+  });
+});
+
+describe('rangeText (W211)', () => {
+  it('reads the range by cell columns, so a wide character before a link does not shift it', () => {
+    // A row as xterm.js keeps it: each wide character takes two cells, the second empty.
+    const cells = [...'日日 [x]NOW.md'].flatMap((ch) => (ch === '日' ? [ch, ''] : [ch]));
+    const calls: unknown[][] = [];
+    const line = {
+      translateToString: (trim?: boolean, start = 0, end = cells.length) => {
+        calls.push([trim, start, end]);
+        return cells.slice(start, end).join('');
+      },
+    };
+    const terminal = { buffer: { active: { getLine: (y: number) => (y === 0 ? line : undefined) } } } as unknown as Parameters<typeof rangeText>[0];
+    // The visible "x" is cell 7; slicing the row's string at 6 would give "]".
+    expect(rangeText(terminal, { start: { x: 7, y: 1 }, end: { x: 7, y: 1 } })).toBe('x');
+    expect(calls).toEqual([[true, 6, 7]]);
   });
 });

@@ -33,7 +33,7 @@
 // passed through is never attached, and doesn't take focus when it does, so the next step is still a
 // step (W54). It shows "Attaching…" while it waits.
 
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { ATTACH_COMMAND, attachSocketUrl, endMessage, startAttach, type AttachEnd, type AttachEnv, type AttachSession, type AttachStatus, type EndNotice } from '../attach.js';
 import { isComposing } from '../composing.js';
 import { plainText } from '../format.js';
@@ -43,6 +43,7 @@ import type { XtermOptions } from '../xterm.js';
 import { Alert, Detail } from './Alert.js';
 import { Badge, type BadgeProps } from './Badge.js';
 import { Button } from './Button.js';
+import { FileLinksContext } from './FileLinks.js';
 import { InlineConfirm } from './InlineConfirm.js';
 import { KeyCaps } from './KeyCaps.js';
 import './Terminal.css';
@@ -233,6 +234,10 @@ export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, on
   const [focused, setFocused] = useState(false);
   const onAskRef = useRef(onAsk);
   onAskRef.current = onAsk;
+  // Files named in the output open in an editor (W211); read at the click, so the terminal needn't be made again for it.
+  const fileLinks = useContext(FileLinksContext);
+  const fileLinksRef = useRef(fileLinks);
+  fileLinksRef.current = fileLinks;
   const session = useRef<AttachSession | undefined>(undefined);
   // The open terminal, for a paste from outside it (W151).
   const screenTerminal = useRef<TerminalHandle | undefined>(undefined);
@@ -330,6 +335,8 @@ export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, on
           describedBy: hintId,
           // A font that arrived late changed the cells' size: the session gets the new one.
           onResize: (cols, rows) => session.current?.resize(cols, rows),
+          // File links (W211): OSC 8 links to a file and paths in the output, opened through the session view's opener.
+          onFileLink: (ref, shown) => fileLinksRef.current?.open(ref, shown),
         }),
       )
       .then(

@@ -296,9 +296,15 @@ describe('links', () => {
   });
 
   it("keeps a link to anything but absolute http: and https: as the text it was written as", () => {
-    for (const written of ['[x](javascript:alert(1))', '[x](data:text/html,hi)', '[x](src/a.ts)', '[x](/abs)', '[x](#top)', '[x](mailto:a@example.com)', '[x]()', '<javascript:alert(1)>', '<mailto:a@example.com>', 'javascript:alert(1)', 'www.example.com']) {
+    for (const written of ['[x](javascript:alert(1))', '[x](data:text/html,hi)', '[x](/abs)', '[x](#top)', '[x](mailto:a@example.com)', '[x]()', '<javascript:alert(1)>', '<mailto:a@example.com>', 'javascript:alert(1)', 'www.example.com']) {
       expect(parseInline(written), written).toEqual([text(written)]);
     }
+  });
+
+  it('makes a markdown link to a file a file node (W211): file:, relative and #L12, but not a folder-like or other target', () => {
+    expect(parseInline('[x](src/a.ts#L12)')).toEqual([{ type: 'file', target: 'src/a.ts#L12', children: [text('x')] }]);
+    expect(parseInline('[x](file:///abs/a%20b.md)')).toEqual([{ type: 'file', target: 'file:///abs/a%20b.md', children: [text('x')] }]);
+    for (const written of ['[x](docs)', '[x](src/)', '[x](file://evil.example/a.md)', '[x](vscode://file/a.ts)']) expect(parseInline(written), written).toEqual([text(written)]);
   });
 
   it('keeps text before and after a bare URL, without the punctuation that ends a sentence or a ) it did not open', () => {

@@ -22,6 +22,12 @@
 // - A message whose markdown would take more than MAX_ELEMENTS elements is shown as the text it was
 //   written in, with a note saying so, so no message, however hostile, takes long to draw.
 //
+// - In a session's view (W211), a path in text or in a code span is a link button that opens the file
+//   in your editor, and so is a markdown link to a file (a `file:` or relative target): absolute, `~/`
+//   or relative paths with an extension, with an optional `:line:column`, from FileLinksContext. The
+//   page doesn't check the path: the server does, on the click (a missing file answers "No such file").
+//   With no context, as in a sub-agent-less view outside a session, text is only text and a file link
+//   shows its text and target. Code blocks aren't linked, and links' own text never is.
 // - In the supervisor's view, a session or a PR it names is a link button that opens it (W125,
 //   mentions.ts), from MentionsContext: only in text, never in code, a code block or a link's text.
 //   Elsewhere there's no context, and text is only text.
@@ -30,9 +36,12 @@
 // render a message again.
 
 import { createContext, memo, useCallback, useContext, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { plainText } from '../format.js';
 import { mentionLabel, type Mentions, type MentionTarget } from '../mentions.js';
-import { asksFirst, elementCount, httpUrl, MAX_ELEMENTS, parseMarkdown, type Align, type Block, type Inline } from '../markdown.js';
+import { asksFirst, elementCount, httpUrl, linkText, MAX_ELEMENTS, parseMarkdown, type Align, type Block, type Inline } from '../markdown.js';
+import { findFileRefs, isOwnFileTarget, parseFileTarget, type FileRef } from '../fileLinks.js';
 import { CopyButton } from './CopyButton.js';
+import { FileLinksContext } from './FileLinks.js';
 import { InlineConfirm } from './InlineConfirm.js';
 import { ScrollBox } from './ScrollBox.js';
 import { focusQuietly, Tooltip } from './Tooltip.js';
@@ -164,7 +173,7 @@ function renderInlines(inlines: Inline[], m: Linking = undefined, whole = false)
 function renderInline(inline: Inline, key: number, m: Linking): ReactNode {
   switch (inline.type) {
     case 'text':
-      return inline.text;
+      return <FileText key={key} text={inline.text} />;
     case 'break':
       return <br key={key} />;
     case 'strong':
@@ -177,17 +186,76 @@ function renderInline(inline: Inline, key: number, m: Linking): ReactNode {
       // Never a mention: code is as written.
       return (
         <code key={key} className="md-code-span">
-          {inline.linked ? renderInlines(inline.linked) : inline.text}
+          {inline.linked ? renderInlines(inline.linked) : <FileText text={inline.text} />}
         </code>
       );
     case 'link':
       // Never a mention in a link's text: links don't nest.
       return (
         <Link key={key} href={inline.href} asks={asksFirst(inline)}>
-          {renderInlines(inline.children)}
+          <NoFileLinks>{renderInlines(inline.children)}</NoFileLinks>
         </Link>
       );
+    case 'file':
+      return (
+        <FileTarget key={key} target={inline.target} shown={linkText(inline.children)}>
+          <NoFileLinks>{renderInlines(inline.children)}</NoFileLinks>
+        </FileTarget>
+      );
   }
+}
+
+/** Inside a link's text nothing links: links don't nest. */
+function NoFileLinks({ children }: { children: ReactNode }) {
+  return <FileLinksContext.Provider value={undefined}>{children}</FileLinksContext.Provider>;
+}
+
+/** Text with its file paths as link buttons, where a session's view can open them (W211): otherwise just the text. */
+function FileText({ text }: { text: string }) {
+  const files = useContext(FileLinksContext);
+  if (!files || text.length < 3) return <>{text}</>;
+  const found = findFileRefs(text);
+  if (found.length === 0) return <>{text}</>;
+  const parts: ReactNode[] = [];
+  let at = 0;
+  for (const each of found) {
+    if (each.start > at) parts.push(text.slice(at, each.start));
+    const { start, end, ...ref } = each;
+    parts.push(<FileButton key={start} text={text.slice(start, end)} fileRef={ref} open={files.open} />);
+    at = end;
+  }
+  if (at < text.length) parts.push(text.slice(at));
+  return <>{parts}</>;
+}
+
+/** A markdown link to a file: a link button where it can open one, else its text with the target after it, as the reply wrote it. */
+function FileTarget({ target, shown, children }: { target: string; shown: string; children: ReactNode }) {
+  const files = useContext(FileLinksContext);
+  const ref = files ? parseFileTarget(target) : undefined;
+  if (!files || !ref) {
+    return (
+      <>
+        {children} ({plainTarget(target)})
+      </>
+    );
+  }
+  return (
+    <FileButton text={children} fileRef={ref} open={(each) => files.open(each, isOwnFileTarget(shown, target, each) ? undefined : shown)} />
+  );
+}
+
+/** A target shown as text: it's from a session, so no control or bidi characters. */
+const plainTarget = (target: string) => plainText(target);
+
+/** A file as a link button, in the text's own face, that opens it in your editor (W211). */
+function FileButton({ text, fileRef, open }: { text: ReactNode; fileRef: FileRef; open: (ref: FileRef) => void }) {
+  return (
+    <Tooltip content={`Open ${plainText(fileRef.path)}${fileRef.line === undefined ? '' : `:${fileRef.line}`} in your editor`}>
+      <button type="button" className="link-button md-file" data-file-path={fileRef.path} onClick={() => open(fileRef)}>
+        {text}
+      </button>
+    </Tooltip>
+  );
 }
 
 /**
@@ -324,7 +392,7 @@ function CodeBlock({ language, text, linked }: { language: string; text: string;
         <CopyButton text={text} label="Copy code" target={code} />
       </div>
       <ScrollBox as="pre" axis="x" label={language === '' ? 'Code' : `Code, ${language}`} className="md-code-scroll">
-        <code ref={code}>{linked ? renderInlines(linked) : text}</code>
+        <code ref={code}>{linked ? <NoFileLinks>{renderInlines(linked)}</NoFileLinks> : text}</code>
       </ScrollBox>
     </div>
   );

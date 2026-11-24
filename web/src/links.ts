@@ -8,7 +8,14 @@
 //   the link's text;
 // - a new tab with noopener and noreferrer, so the new page gets neither a
 //   handle on this one nor a referrer.
-import type { ILinkHandler } from '@xterm/xterm';
+//
+// A `file:` link, and a relative target such as `src/a.ts#L12`, which Claude Code writes for a
+// markdown link to a file, go to the session view's opener (W211, fileLinks.ts) when there is one;
+// the server checks the path and asks about one outside your workspaces. Any other scheme is refused
+// without asking. xterm.js is told to pass every scheme to the handler (allowNonHttpProtocols) only
+// when there's an opener, since this handler is then the only thing deciding.
+import type { IBufferRange, ILinkHandler } from '@xterm/xterm';
+import { isOwnFileTarget, parseFileTarget, type FileRef } from './fileLinks.js';
 
 export interface LinkOpeners {
   /** Default window.open. */
@@ -22,20 +29,31 @@ export function confirmMessage(url: URL): string {
   return `Open this link in a new tab?\n\n${url.href}`;
 }
 
+/** A `file:` or relative link's file, to the opener, with no question here: the server asks when the file is outside your workspaces. */
+function openFileLink(uri: string, onFile: ((ref: FileRef, shown?: string) => void) | undefined, shown: string | undefined): boolean {
+  const ref = onFile ? parseFileTarget(uri) : undefined;
+  if (!ref || !onFile) return false;
+  // A link whose visible cells aren't the file it opens asks first (W55's rule for http links): shown is passed only then.
+  if (shown !== undefined && !isOwnFileTarget(shown, uri, ref)) onFile(ref, shown);
+  else onFile(ref);
+  return true;
+}
+
 /**
  * Opens `uri` in a new tab when it's an absolute http: or https: URL and the
  * user confirms. Says whether it did. Any other URI is refused without asking.
  */
-export function openTerminalLink(uri: string, openers: LinkOpeners = {}): boolean {
+export function openTerminalLink(uri: string, openers: LinkOpeners = {}, onFile?: (ref: FileRef, shown?: string) => void, shown?: string): boolean {
   const open = openers.open ?? ((url, target, features) => window.open(url, target, features));
   const confirm = openers.confirm ?? ((message) => window.confirm(message));
   let url: URL;
   try {
     url = new URL(uri);
   } catch {
-    return false;
+    return openFileLink(uri, onFile, shown);
   }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+  // file: and, parsed as a scheme, `name.ts:12`, are for the opener, which refuses any other scheme.
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return openFileLink(uri, onFile, shown);
   if (!confirm(confirmMessage(url))) return false;
   open(url.href, '_blank', 'noopener,noreferrer');
   return true;
@@ -46,9 +64,14 @@ export function openTerminalLink(uri: string, openers: LinkOpeners = {}): boolea
  * target), not its visible text. allowNonHttpProtocols stays false, so
  * xterm.js doesn't offer other schemes either.
  */
-export const terminalLinkHandler: ILinkHandler = {
-  activate: (_event, uri) => {
-    openTerminalLink(uri);
-  },
-  allowNonHttpProtocols: false,
-};
+export function createLinkHandler(onFile?: (ref: FileRef, shown?: string) => void, rangeText?: (range: IBufferRange) => string | undefined): ILinkHandler {
+  return {
+    activate: (_event, uri, range) => {
+      // The link's visible text, read from the cells it covers: a file link asks when it isn't the file it opens.
+      openTerminalLink(uri, {}, onFile, onFile ? (rangeText?.(range) ?? '') : undefined);
+    },
+    allowNonHttpProtocols: onFile !== undefined,
+  };
+}
+
+export const terminalLinkHandler: ILinkHandler = createLinkHandler();

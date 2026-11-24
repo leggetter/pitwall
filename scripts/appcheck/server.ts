@@ -135,6 +135,8 @@ export interface Records {
   resumes: string[];
   /** Each open in an editor the server answered (W72), by the session's name and the editor's id. Nothing is opened. */
   opens: Array<{ name: string; editor: EditorId }>;
+  /** Each open of a file the server accepted (W211): its request body, as sent. Nothing is opened. */
+  fileOpens: unknown[];
   /** Each End session the server answered (W90), by the session's name, whether it was sent with `whileWorking`, and its status. Nothing is signalled. */
   ends: Array<{ name: string; whileWorking: boolean; status: number }>;
   /** Each refresh of the PR list the server answered (W95), by its status: 200, 409 or 429. */
@@ -175,6 +177,7 @@ const emptyRecords = (): Records => ({
   actions: [],
   resumes: [],
   opens: [],
+  fileOpens: [],
   ends: [],
   refreshes: [],
   recapFetches: [],
@@ -454,7 +457,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     const recapRefresh = /^\/api\/sessions\/([^/]+)\/recap\/refresh$/.exec(url.pathname);
     if (recapRefresh && method === 'POST') return refreshRecap(req, res, decodeURIComponent(recapRefresh[1]!));
 
-    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|flag|unflag|snooze|unsnooze|spin-off|clear-and-continue|continued|stop|remove|resume|open|subagents|end|recap)$/.exec(url.pathname);
+    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|flag|unflag|snooze|unsnooze|spin-off|clear-and-continue|continued|stop|remove|resume|open|open-file|subagents|end|recap)$/.exec(url.pathname);
     if (!match) return end(res, 404);
     const session = world.session(decodeURIComponent(match[1]!));
     if (!session) return end(res, 404);
@@ -562,6 +565,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     }
     if (route === 'resume' && method === 'POST') return resume(req, res, session.sessionId);
     if (route === 'open' && method === 'POST') return openInEditor(req, res, session.sessionId);
+    if (route === 'open-file' && method === 'POST') return openFile(req, res);
     if (route === 'end' && method === 'POST') return endSession(req, res, session.sessionId);
     return end(res, 405);
   }
@@ -818,6 +822,20 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     }
     records.opens.push({ name: session.name, editor: editor.id });
     return json(res, 200, { ok: true } satisfies ActionResult);
+  }
+
+  /**
+   * Open a file in an editor (W211), as src/server/editors.ts answers it but by the path's look: a path
+   * under /elsewhere/ is outside the roots (409 with its made-up realpath) until the request says
+   * `outside: true`, and one under /missing/ isn't there (404). It records each accepted open and opens nothing.
+   */
+  async function openFile(req: IncomingMessage, res: ServerResponse) {
+    const body = await readJson(req);
+    if (!isRecord(body) || typeof body.path !== 'string' || !EDITORS.editors.some((each) => each.id === body.editor)) return json(res, 400, { ok: false, error: 'Send an editor and a path.' } satisfies ActionResult);
+    if (body.path.startsWith('/missing/')) return json(res, 404, { ok: false, error: 'No such file.' });
+    if (body.path.startsWith('/elsewhere/') && body.outside !== true) return json(res, 409, { ok: false, error: 'That file is outside your workspaces.', outside: true, path: `/private${body.path}` });
+    records.fileOpens.push(body);
+    return json(res, 200, { ok: true });
   }
 
   /**

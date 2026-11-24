@@ -4135,6 +4135,35 @@ ol.md-list {
 }
 
 /*
+ * A file path or a link to a file in a session's messages (W211): a link button in the text's own
+ * face, size and weight, told apart by --pw-link and its underline, as a link is. In code, it keeps
+ * the code's face.
+ */
+.link-button.md-file {
+  border-radius: var(--pw-radius-xs);
+  font: inherit;
+  text-align: inherit;
+}
+
+@media (hover: hover) {
+  .link-button.md-file:hover {
+    text-decoration-thickness: 2px;
+  }
+}
+
+/* Open a file from a link (W211): the dialogs' path in code style, wrapping anywhere, and the editor buttons stacked. */
+.file-link-path {
+  overflow-wrap: anywhere;
+}
+
+.file-link-choices {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--pw-space-2);
+}
+
+/*
  * The question a link asks before it opens (W55), after the paragraph, heading or table the link is
  * in: an inline confirmation, in the text colour even inside a quote, whose text is muted.
  */

@@ -19,6 +19,9 @@ vi.mock('@xterm/xterm', () => ({
     // The parser hooks that keep the cursor steady (W45).
     parser = { registerCsiHandler: () => ({ dispose() {} }), registerEscHandler: () => ({ dispose() {} }) };
     loadAddon() {}
+    registerLinkProvider() {
+      return { dispose() {} };
+    }
     open() {}
     onData() {}
     write() {}

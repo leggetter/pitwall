@@ -731,6 +731,7 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
       token,
       relay,
       work,
+      ...(config.editor === undefined ? {} : { defaultEditor: config.editor }),
       onAuthenticated: () => launchFileUsed?.(),
       webRoot: resolveWebRoot(),
       // Attachments for New session's first prompt go in its attachments folder (W79), made on the first upload.
