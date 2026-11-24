@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { confirmMessage, openTerminalLink, terminalLinkHandler } from './links.js';
+import { confirmMessage, createLinkHandler, openTerminalLink, terminalLinkHandler } from './links.js';
 
 const RANGE = { start: { x: 1, y: 1 }, end: { x: 2, y: 1 } };
 
@@ -55,6 +55,17 @@ describe('openTerminalLink', () => {
       expect(confirm, uri).not.toHaveBeenCalled();
       expect(open, uri).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe('an OSC 8 file link whose visible text is not its file (W211)', () => {
+  it('passes the text it shows, so the opener asks first, and passes none when the text is its file', () => {
+    const onFile = vi.fn();
+    const handler = createLinkHandler(onFile, (range) => (range.start.x === 1 ? 'NOTES.md' : 'src/a.ts:12'));
+    const at = (x: number) => ({ start: { x, y: 1 }, end: { x: x + 5, y: 1 } });
+    handler.activate({} as MouseEvent, 'src/a.ts#L12', at(1));
+    handler.activate({} as MouseEvent, 'src/a.ts#L12', at(2));
+    expect(onFile.mock.calls).toEqual([[{ path: 'src/a.ts', line: 12 }, 'NOTES.md'], [{ path: 'src/a.ts', line: 12 }]]);
   });
 });
 

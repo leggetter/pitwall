@@ -8,8 +8,11 @@
 // - A file outside every workspace root: the server answers 409 with the file's realpath, and the page
 //   asks "This file is outside your workspaces: <path>. Open it in <editor>?" in a dialog (docs/design-
 //   system.md, 4: Dialogs, as New session and Clone and start ask), and sends the request again with
-//   `outside: true` only on Open. The link's own text is never what the question shows: it's the path
+//   `outside: true` only on Open, and then with the realpath the server named, which the server holds it to. The link's own text is never what the question shows: it's the path
 //   the server resolved.
+// - A link whose visible text isn't the file it opens (a markdown link's text, an OSC 8 link's cells) asks
+//   first, in a dialog that names the path it opens, as an http link does (W55). A bare path or a code span
+//   doesn't: there the text is the path.
 // - The result is a toast, from the app's stack, so it still arrives when the view has gone.
 //
 // Nothing here reads the file system or decides what's safe: the server checks every path (src/server/editors.ts).
@@ -30,10 +33,13 @@ export const FileLinksContext = createContext<FileLinks | undefined>(undefined);
 export const CHOOSE_TITLE = 'Open in which editor?';
 /** The question for a file outside your workspaces; the path follows, then the editor. */
 export const OUTSIDE_TITLE = 'Open a file outside your workspaces?';
+/** The question for a link whose text isn't its file; the link's text and the path follow. */
+export const MISMATCH_TITLE = "Open a file this link doesn't name?";
 export const outsideQuestion = (editor: Editor) => `Open it in ${editor.label}?`;
 export const NO_EDITOR = "pitwall didn't find VS Code or Cursor when it started, so it can't open a file.";
 
 type Step =
+  | { kind: 'mismatch'; ref: FileRef; shown: string; target: string }
   | { kind: 'choose'; ref: FileRef }
   | { kind: 'outside'; ref: FileRef; editor: Editor; path: string; busy: boolean };
 
@@ -80,7 +86,7 @@ export function useFileLinks(api: ApiClient | undefined, sessionId: string, enab
     [api, sessionId, toast],
   );
 
-  const open = useCallback(
+  const proceed = useCallback(
     (ref: FileRef) => {
       if (editors.length === 0) {
         toast({ tone: 'error', message: NO_EDITOR });
@@ -94,11 +100,50 @@ export function useFileLinks(api: ApiClient | undefined, sessionId: string, enab
     [editors, configured, run, toast],
   );
 
+  const open = useCallback(
+    (ref: FileRef, shown?: string) => {
+      // `shown` is passed only by a link whose text isn't its own file (isOwnFileTarget): it asks.
+      if (shown !== undefined) setStep({ kind: 'mismatch', ref, shown, target: ref.path });
+      else proceed(ref);
+    },
+    [proceed],
+  );
+
   const links = useMemo<FileLinks | undefined>(() => (api && enabled ? { open } : undefined), [api, enabled, open]);
 
   const close = () => setStep(undefined);
   let dialog: ReactNode = null;
-  if (step?.kind === 'choose') {
+  if (step?.kind === 'mismatch') {
+    const { ref, shown } = step;
+    dialog = (
+      <Dialog
+        title={MISMATCH_TITLE}
+        size="sm"
+        onClose={close}
+        className="file-link-dialog"
+        actions={
+          <>
+            <Button onClick={close}>Cancel</Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                setStep(undefined);
+                proceed(ref);
+              }}
+            >
+              Open
+            </Button>
+          </>
+        }
+      >
+        <p className="file-link-what">
+          The link says <code className="file-link-path">{plainText(shown.length > 120 ? `${shown.slice(0, 120)}…` : shown)}</code>, but it opens{' '}
+          <code className="file-link-path">{plainText(ref.path)}</code>
+          {ref.line === undefined ? '' : `:${ref.line}`}. Open it in your editor?
+        </p>
+      </Dialog>
+    );
+  } else if (step?.kind === 'choose') {
     const { ref } = step;
     dialog = (
       <Dialog
@@ -146,7 +191,7 @@ export function useFileLinks(api: ApiClient | undefined, sessionId: string, enab
               busyLabel="Opening…"
               onClick={() => {
                 setStep({ ...step, busy: true });
-                void run(ref, editor, true);
+                void run({ ...ref, path }, editor, true);
               }}
             >
               {`Open in ${editor.label}`}

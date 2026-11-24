@@ -77,6 +77,9 @@ export function parseFileTarget(target: string): FileRef | undefined {
       column = position(at[3]);
     }
   }
+  // The query is cut from the raw target, before decoding once: `a%3Fb.md` is a file named `a?b.md`, not `a`.
+  const query = rest.indexOf('?');
+  if (decode && query !== -1) rest = rest.slice(0, query);
   if (decode || /%[0-9a-f]{2}/i.test(rest)) {
     try {
       rest = decodeURIComponent(rest);
@@ -84,8 +87,6 @@ export function parseFileTarget(target: string): FileRef | undefined {
       return undefined;
     }
   }
-  const query = rest.indexOf('?');
-  if (decode && query !== -1) rest = rest.slice(0, query);
   if (rest === '' || rest.length > MAX_PATH || UNSAFE.test(rest)) return undefined;
   // A `file:` link names a file by being one. A relative target is a file only when it's named like one: `[the docs](docs)` isn't.
   if (!decode && !nameLooksLikeFile(rest)) return undefined;
@@ -102,8 +103,17 @@ const KNOWN_NAMES = new Set(['Makefile', 'Dockerfile', 'LICENSE', 'README', 'CHA
 const PATH_TOKEN =
   /^((?:~\/|\.{1,2}\/|\/)?[\w@%+~.-]+(?:\/[\w@%+~.-]+)*)(?::(\d+)(?::(\d+))?(?:-\d+)?)?$/;
 /** What may stand straight before a path, and straight after one, as punctuation in a sentence. */
+/** A margin for the punctuation round a path, in a token's length. */
+const MAX_AFFIX = 16;
 const LEADING = /^[([{<'"`*]+/;
-const TRAILING = /[.,;:!?)\]}>'"`*]+$/;
+const TRAILING = new Set(Array.from('.,;:!?)]}>\'"`*'));
+
+/** `raw` with the sentence's punctuation off its end, by a loop: a regex for it is quadratic on a long run of dots. */
+function trimTrailing(raw: string, from: number): number {
+  let end = raw.length;
+  while (end > from && TRAILING.has(raw[end - 1] as string)) end--;
+  return end;
+}
 
 /**
  * Whether a path's last name is a file's: it has an extension that starts with a letter (and, with no
@@ -149,9 +159,11 @@ export function findFileRefs(text: string): FoundRef[] {
   const found: FoundRef[] = [];
   for (const match of text.matchAll(/\S+/g)) {
     const raw = match[0];
+    // A token past the longest path can't be one: skipped before any trimming, so a long run costs nothing.
+    if (raw.length > MAX_PATH + 24 + MAX_AFFIX) continue;
     const lead = LEADING.exec(raw)?.[0].length ?? 0;
     // `file.ts:12.` is the sentence's full stop after a position: the trailing punctuation goes first.
-    const token = raw.slice(lead).replace(TRAILING, '');
+    const token = raw.slice(lead, trimTrailing(raw, lead));
     const ref = token === '' ? undefined : pathOf(token);
     if (!ref) continue;
     const start = (match.index as number) + lead;
@@ -190,7 +202,25 @@ export async function openFile(api: ApiClient, sessionId: string, request: OpenF
 
 /** What opening a file link does, from the session view: the terminal's and the conversation's links call it. */
 export interface FileLinks {
-  open(ref: FileRef): void;
+  /**
+   * `shown` is passed only by a link whose visible text isn't the file it opens (isOwnFileTarget; a markdown
+   * link's text, an OSC 8 link's cells): it asks first, as an http link does (W55). Every other link passes none.
+   */
+  open(ref: FileRef, shown?: string): void;
+}
+
+/** What a link's text may say to be its own file: the target as written, the path, the path with its position, or the file's name with either. */
+export function isOwnFileTarget(shown: string, target: string, ref: FileRef): boolean {
+  const text = shown.trim();
+  if (text === '') return false;
+  const name = ref.path.slice(ref.path.lastIndexOf('/') + 1);
+  const positions = ref.line === undefined ? [''] : ['', `:${ref.line}`, ...(ref.column === undefined ? [] : [`:${ref.line}:${ref.column}`])];
+  const own = new Set<string>([target, ref.path]);
+  for (const position of positions) {
+    own.add(ref.path + position);
+    own.add(name + position);
+  }
+  return own.has(text);
 }
 
 /**

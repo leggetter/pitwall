@@ -193,6 +193,8 @@ export const FILE_LINKS = {
   inCode: 'src/server/health.test.ts',
   markdown: 'docs/plan.md',
   outside: '/elsewhere/run.log',
+  /** A markdown link whose text isn't its file: it asks first. */
+  mismatch: 'docs/runbook.md',
 } as const;
 
 const MINUTE = 60_000;
@@ -1763,7 +1765,7 @@ export class World {
           '',
           `The notes are at <${LINKS.ownAddress}>, and you can sign in at [the dashboard](${LINKS.lookAlike}) to see the logs.`,
           '',
-          `The change is in ${FILE_LINKS.inText}, the test in \`${FILE_LINKS.inCode}\`, and the spec is [the plan](${FILE_LINKS.markdown}). The log is ${FILE_LINKS.outside}.`,
+          `The change is in ${FILE_LINKS.inText}, the test in \`${FILE_LINKS.inCode}\`, and the spec is [the plan](${FILE_LINKS.markdown}). The log is ${FILE_LINKS.outside}. See [the notes](${FILE_LINKS.mismatch}).`,
         ].join('\n'),
       },
     ];

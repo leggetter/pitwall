@@ -43,18 +43,24 @@
 //     502, 504  as the folder route's
 //
 //   The path comes from the page, so from a session's output, which is untrusted. It chooses only which
-//   file opens in the editor, and an editor opening a file doesn't run it. Each of these holds:
+//   file opens in the editor. A single file opens without a folder, so no workspace's tasks or settings
+//   load; folders and `.code-workspace` files are refused for that reason. Each of these holds:
 //   - the editor gets the realpath, absolute, and after `--goto`, so it's never read as an option;
 //   - a relative path is read against the session's directory's realpath (checkDirectory), `~/` against
 //     the home directory, and anything else must be absolute: the result is realpath'd, and a path
-//     that's a symlink out of the roots is judged by where it leads, not where it sits;
-//   - the check and the editor's open aren't atomic, as the folder route's aren't (the realpath is
-//     checked, then used); what a swap after the check can do is open another file in the editor, never
-//     run one. No lstat: the realpath is the thing opened.
-//   - a file in the session's directory opens in that folder's window, `<cli> <dir> --goto <file>:<line>:<column>`;
-//     any other, `<cli> --goto <file>:<line>:<column>`; the line and column only when given. The CLI is
-//     the editor's own command, which opens a file at a line, where `open -a` can't. With none found
-//     (on macOS, a bundle without its script), `open -a <bundle> <file>` opens the file with no line.
+//   - the check and the editor's open aren't atomic (the editor's command takes hundreds of milliseconds):
+//     a swap after the check can make the editor open a different file. It can't open a folder, so no
+//     workspace's tasks or settings load through it, and the editor's own trust applies to the file. No
+//     lstat: the realpath is the thing opened.
+//   - a link opens the file on its own, `<cli> --goto <file>:<line>:<column>`, never the session's folder
+//     (opening a folder in Cursor can run its tasks with no trust prompt; the W211 security review); the line
+//     and column only when given. The CLI is the editor's own command, which opens a file at a line, where
+//     `open -a` can't. With none found (on macOS, a bundle without its script), `open -a <bundle> <file>`
+//     opens the file with no line. A realpath with a `:` in it never goes after `--goto`, which splits on
+//     `:`: it opens as the path alone, with no line, and the route refuses any argument whose parse isn't
+//     exactly the realpath (parseGotoSpec).
+//   - `outside: true` is honoured only when `path` is the very realpath the 409 named, so a swap while the
+//     page asked can't open another file unasked.
 //
 // Detection runs once, as the server starts, and never again:
 //
@@ -84,7 +90,7 @@ import path from 'node:path';
 import type { Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { hasUnsafeCharacters } from '../index/guards.js';
-import { isWithin, matchRoot } from '../index/roots.js';
+import { matchRoot } from '../index/roots.js';
 import { childSearchPath, RunError, runFile as defaultRunFile, type RunFile } from '../index/exec.js';
 import type { Indexer } from '../index/index.js';
 import { EDITORS_PATH, MAX_OPEN_FILE_PATH, MAX_OPEN_FILE_POSITION, openFilePath, openInEditorPath, type ActionResult, type Editor, type EditorId, type EditorList, type OpenFileResult } from '../shared/protocol.js';
@@ -309,17 +315,49 @@ export function resolveFilePath(given: string, dir: string, home: string): strin
 }
 
 /**
- * The arguments that open the file `real` (a realpath) in `editor`: in the session directory's window
- * when `dir` holds it, on its own otherwise. Without the editor's command, `open -a <bundle> <file>`:
- * the file, but no line. Every path is absolute, so none can be read as an option; the line and column
- * follow only when given, and a file name that ends `:<number>` gets `:1`, so the editor doesn't read
- * it as a line.
+ * A port of the split rule in VS Code's and Cursor's `--goto` handling (parseLineAndColumnAware): the
+ * argument is split on `:`, the first two segments `Number()` takes as a number are the line and the
+ * column, and the rest, joined with `:`, are the path. A name with a colon in it can therefore open
+ * another file, which is why the route checks every `--goto` argument it builds with this (W211).
  */
-export function openFileArgs(editor: FoundEditor, dir: string, real: string, line?: number, column?: number): { file: string; args: string[] } {
-  if (editor.cli === undefined) return { file: editor.file, args: [...editor.args, real] };
-  const at = line ?? (/:\d+$/.test(real) ? 1 : undefined);
-  const spec = at === undefined ? real : `${real}:${at}${column === undefined ? '' : `:${column}`}`;
-  return { file: editor.cli, args: [...(isWithin(dir, real) ? [dir] : []), '--goto', spec] };
+export function parseGotoSpec(spec: string): { path: string; line?: number; column?: number } | undefined {
+  let file: string | undefined;
+  let line: number | undefined;
+  let column: number | undefined;
+  for (const segment of spec.split(':')) {
+    const n = Number(segment);
+    // The editor's own test is a number check that accepts what Number() does, Infinity included; empty and blank are 0.
+    if (typeof n === 'number' && !Number.isNaN(n)) {
+      if (line === undefined) line = n;
+      else if (column === undefined) column = n;
+    } else {
+      file = file === undefined || file === '' ? segment : `${file}:${segment}`;
+    }
+  }
+  if (!file) return undefined;
+  return { path: file, ...(line === undefined ? {} : { line, column: column ?? 1 }) };
+}
+
+/**
+ * The arguments that open the file `real` (a realpath) in `editor`, on its own: never with the session's
+ * directory, which would open it as a workspace, whose tasks and settings can load. Without the editor's
+ * command, `open -a <bundle> <file>`: the file, but no line. A realpath with a `:` in it also goes without
+ * `--goto`, as the path alone, since the editor reads a `:` in a `--goto` argument as a line or column
+ * (an argument that isn't `--goto`'s isn't split: checked in VS Code 1.147.0's bundle, where only
+ * gotoLineMode runs the split). The line and column follow only when given.
+ */
+export function openFileArgs(editor: FoundEditor, real: string, line?: number, column?: number): { file: string; args: string[] } {
+  if (editor.cli === undefined || real.includes(':')) return { file: editor.file, args: [...editor.args, real] };
+  const spec = line === undefined ? real : `${real}:${line}${column === undefined ? '' : `:${column}`}`;
+  return { file: editor.cli, args: ['--goto', spec] };
+}
+
+/** True when the editor would open exactly `real` from these arguments, by the split rule above. */
+export function opensExactly(args: readonly string[], real: string): boolean {
+  const at = args.indexOf('--goto');
+  if (at === -1) return args[args.length - 1] === real;
+  const spec = args[at + 1];
+  return spec !== undefined && parseGotoSpec(spec)?.path === real;
 }
 
 /** Why the editor didn't open, in one short line: never its output. */
@@ -481,16 +519,19 @@ export function registerEditors(app: Hono, indexer: Pick<Indexer, 'latest'>, opt
         }
         if (!isFile) return refuse(c, "That isn't a file.", 400);
         if (real.toLowerCase().endsWith('.code-workspace')) return refuse(c, "pitwall doesn't open a workspace file: it loads settings and tasks.", 400);
-        if (matchRoot(real, roots) === undefined && !request.outside) {
+        // An asked-first open is bound to the path it showed: the page sends back the realpath the 409 named, and
+        // anything else (a swap during the dialog) is asked again with the new realpath.
+        if (matchRoot(real, roots) === undefined && (!request.outside || request.path !== real)) {
           return reply(c, { ok: false, error: `This file is outside your workspaces: ${real}`, outside: true, path: real }, 409);
         }
+        const command = openFileArgs(editor, real, request.line, request.column);
+        if (!opensExactly(command.args, real)) return refuse(c, "That file's name can't be opened safely from here: open it from your editor.", 400);
         const taken = opens.take();
         if (!taken.ok) {
           c.header('Retry-After', String(taken.retryAfterSeconds));
           const every = Math.round(openRate.windowMs / 1000);
           return answer(c, { ok: false, error: `pitwall opens at most ${openRate.max} ${openRate.max === 1 ? 'directory' : 'directories'} in an editor every ${every} seconds. Try again in ${taken.retryAfterSeconds}s.` }, 429);
         }
-        const command = openFileArgs(editor, dir.path, real, request.line, request.column);
         try {
           await run(command.file, command.args, { cwd: os.tmpdir(), env: childEnvironment(options.env ?? process.env, options.token), timeoutMs });
         } catch (error) {

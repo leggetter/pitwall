@@ -138,7 +138,9 @@ describe('createXterm', () => {
     handler.activate(new MouseEvent('click'), 'src/a.ts#L12', { start: { x: 1, y: 1 }, end: { x: 2, y: 1 } });
     handler.activate(new MouseEvent('click'), 'javascript:alert(1)', { start: { x: 1, y: 1 }, end: { x: 2, y: 1 } });
     handler.activate(new MouseEvent('click'), 'vscode://file/etc/passwd', { start: { x: 1, y: 1 }, end: { x: 2, y: 1 } });
-    expect(onFileLink.mock.calls).toEqual([[{ path: '/abs/a b.md' }], [{ path: 'src/a.ts', line: 12 }]]);
+    // The fake's cells say something else than the target, so each asks: it's given the text they show.
+    expect(onFileLink.mock.calls.map(([ref]) => ref)).toEqual([{ path: '/abs/a b.md' }, { path: 'src/a.ts', line: 12 }]);
+    expect(onFileLink.mock.calls.every(([, shown]) => typeof shown === 'string')).toBe(true);
     const [terminal] = created.terminals as unknown as { providers: { provideLinks: (y: number, cb: (links?: { text: string; activate: () => void }[]) => void) => void }[] }[];
     let links: { text: string; activate: () => void }[] | undefined;
     terminal?.providers[0]?.provideLinks(1, (found) => (links = found));

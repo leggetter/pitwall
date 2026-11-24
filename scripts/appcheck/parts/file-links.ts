@@ -23,7 +23,7 @@ const part: Part = {
       await page.evaluate(`(() => { try { localStorage.removeItem('pitwall.editor'); } catch {} })()`);
       await openFromRow(t, NAMES.conversation);
       await page.waitFor('the file links', `!!${fileButton('src/server/health.ts')}`);
-      for (const path of ['src/server/health.ts', FILE_LINKS.inCode, FILE_LINKS.markdown, FILE_LINKS.outside]) {
+      for (const path of ['src/server/health.ts', FILE_LINKS.inCode, FILE_LINKS.markdown, FILE_LINKS.outside, FILE_LINKS.mismatch]) {
         t.expect(await page.evaluate<boolean>(`!!${fileButton(path)}`), `${path} is a link button`);
       }
       t.expectEqual(await page.evaluate(`${fileButton('src/server/health.ts')}.textContent`), FILE_LINKS.inText, 'with the text as written, line and all');
@@ -61,7 +61,26 @@ const part: Part = {
       await page.waitFor('the dialog', `${dialogName} === 'Open a file outside your workspaces?'`);
       await page.click('Open in Cursor', dialogButton('Open in Cursor'));
       await page.waitFor('the toast', `${toasts}.includes('Opened run.log in Cursor.')`);
-      t.expectEqual(server.records.fileOpens, [{ editor: 'cursor', path: FILE_LINKS.outside, outside: true }], 'one open, with outside');
+      t.expectEqual(server.records.fileOpens, [{ editor: 'cursor', path: `/private${FILE_LINKS.outside}`, outside: true }], 'one open, with the realpath the server named, and outside');
+    });
+
+    await t.step('a link whose text is not its file asks first, naming the file it opens; Cancel sends nothing, Open opens it', async () => {
+      server.clearRecords();
+      await page.waitFor('the earlier toast to go', `${toasts}.length === 0`);
+      await page.click('the mismatched link', fileButton(FILE_LINKS.mismatch));
+      await page.waitFor('the dialog', `${dialogName} === "Open a file this link doesn't name?"`);
+      const text = await page.evaluate<string>(`${DIALOG}.textContent`);
+      t.expect(text.includes('the notes') && text.includes(FILE_LINKS.mismatch), 'it shows the link’s text and the file it opens');
+      t.expectEqual(server.records.fileOpens, [], 'nothing sent yet');
+      await t.shot('mismatch');
+      await page.click('Cancel', dialogButton('Cancel'));
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+      t.expectEqual(server.records.fileOpens, [], 'Cancel opened nothing');
+      await page.click('the mismatched link', fileButton(FILE_LINKS.mismatch));
+      await page.waitFor('the dialog', `${dialogName} === "Open a file this link doesn't name?"`);
+      await page.click('Open', dialogButton('Open'));
+      await page.waitFor('the toast', `${toasts}.includes('Opened runbook.md in Cursor.')`);
+      t.expectEqual(server.records.fileOpens, [{ editor: 'cursor', path: FILE_LINKS.mismatch }], 'opened once');
     });
   },
 };

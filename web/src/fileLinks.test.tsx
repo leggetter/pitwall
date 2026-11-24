@@ -3,7 +3,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ILink } from '@xterm/xterm';
 import type { ApiClient, ApiResult } from './api.js';
-import { chooseEditor, findFileRefs, lastEditor, openFile, openFileRequest, parseFileTarget, rememberEditor, terminalFileLinks } from './fileLinks.js';
+import { chooseEditor, findFileRefs, isOwnFileTarget, lastEditor, openFile, openFileRequest, parseFileTarget, rememberEditor, terminalFileLinks } from './fileLinks.js';
 
 describe('parseFileTarget', () => {
   it('reads a file: link, with an encoded space, and a localhost host', () => {
@@ -33,6 +33,38 @@ describe('parseFileTarget', () => {
     for (const target of ['http://example.com/a', 'javascript:alert(1)', 'vscode://file/etc/passwd', 'data:text/plain,x', '//host/share/a.txt', '\\\\host\\a', '', '#L1', `${'a'.repeat(1030)}.ts`, 'a\u0000b.ts', 'a\nb.ts']) {
       expect(parseFileTarget(target), target).toBeUndefined();
     }
+  });
+});
+
+describe('parseFileTarget, encoded query and fragment characters', () => {
+  it('cuts the query and fragment from the raw URL, then decodes once', () => {
+    expect(parseFileTarget('file:///x/a%3Fb.md')).toEqual({ path: '/x/a?b.md' });
+    expect(parseFileTarget('file:///x/a%23b.md')).toEqual({ path: '/x/a#b.md' });
+    expect(parseFileTarget('file:///x/a%20b.md?raw=1')).toEqual({ path: '/x/a b.md' });
+    expect(parseFileTarget('file:///x/a%20b.md#L7')).toEqual({ path: '/x/a b.md', line: 7 });
+  });
+});
+
+describe('isOwnFileTarget', () => {
+  it('is true for the target, the path, the path with its position, or its name; false for anything else', () => {
+    const ref = { path: 'src/a.ts', line: 12 };
+    for (const text of ['src/a.ts', 'src/a.ts#L12', 'src/a.ts:12', 'a.ts', 'a.ts:12', ' a.ts ']) expect(isOwnFileTarget(text, 'src/a.ts#L12', ref)).toBe(true);
+    for (const text of ['', 'NOTES.md', 'b.ts', 'src/b.ts', 'the a file']) expect(isOwnFileTarget(text, 'src/a.ts#L12', ref)).toBe(false);
+  });
+});
+
+describe('findFileRefs on hostile text', () => {
+  it('parses a 32 KiB punctuation token and a 32 KiB message of long tokens quickly', () => {
+    const dots = '.'.repeat(32_000);
+    const long = `${'a'.repeat(1200)} `.repeat(27);
+    for (const text of [dots, `x ${dots}`, `${dots}:`, long, `${'a.'.repeat(16_000)}`]) {
+      const started = performance.now();
+      expect(findFileRefs(text)).toEqual([]);
+      expect(performance.now() - started).toBeLessThan(50);
+    }
+  });
+  it('still finds a path with punctuation after it', () => {
+    expect(findFileRefs('see (src/a.ts:12).')).toEqual([{ path: 'src/a.ts', line: 12, start: 5, end: 16 }]);
   });
 });
 

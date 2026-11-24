@@ -13,7 +13,7 @@
 // and DECSET 12 is undone before the next frame is drawn.
 
 import { FitAddon } from '@xterm/addon-fit';
-import { Terminal, type IDisposable, type IParser, type ITheme } from '@xterm/xterm';
+import { Terminal, type IBufferRange, type IDisposable, type IParser, type ITheme } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import type { TerminalHandle } from './components/Terminal.js';
 import { terminalFileLinks, type FileRef } from './fileLinks.js';
@@ -194,6 +194,18 @@ export function keepCursorSteady(terminal: SteadyCursorTerminal): IDisposable {
   };
 }
 
+/** The text in a link's range of cells (1-based, end inclusive), over rows, or undefined when it can't be read. */
+export function rangeText(terminal: Pick<Terminal, 'buffer'> | undefined, range: IBufferRange): string | undefined {
+  if (!terminal) return undefined;
+  let text = '';
+  for (let y = range.start.y; y <= range.end.y; y++) {
+    const row = terminal.buffer.active.getLine(y - 1)?.translateToString(true);
+    if (row === undefined) return undefined;
+    text += row.slice(y === range.start.y ? range.start.x - 1 : 0, y === range.end.y ? range.end.x : undefined);
+  }
+  return text;
+}
+
 /** What createXterm() needs from the session view. */
 export interface XtermOptions {
   /** The id of what describes the terminal, the F6 hint, for xterm.js's textarea, which is what has focus. */
@@ -204,7 +216,7 @@ export interface XtermOptions {
    * Opens a file a link or a path in the output names (W211, fileLinks.ts). With it, OSC 8 links to a file
    * and path-like text are links, and the link handler gets every scheme and refuses all but http, https and files.
    */
-  onFileLink?: ((ref: FileRef) => void) | undefined;
+  onFileLink?: ((ref: FileRef, shown?: string) => void) | undefined;
   /** Where the fonts load from: document.fonts, or a test's stand-in. */
   fonts?: FontLoader | undefined;
 }
@@ -229,7 +241,7 @@ export async function createXterm(container: HTMLElement, options: XtermOptions 
     scrollback: 5000,
     theme: terminalTheme(),
     // Only http: and https: links, opened with noopener and noreferrer (links.ts).
-    linkHandler: options.onFileLink ? createLinkHandler(options.onFileLink) : terminalLinkHandler,
+    linkHandler: options.onFileLink ? createLinkHandler(options.onFileLink, (range) => rangeText(terminal, range)) : terminalLinkHandler,
   });
   if (options.onFileLink) {
     const open = options.onFileLink;

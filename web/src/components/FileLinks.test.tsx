@@ -7,7 +7,7 @@ import { EditorsContext } from '../editors.js';
 import { lastEditor } from '../fileLinks.js';
 import type { Editor } from '../../../src/shared/protocol.js';
 import { toastMessages } from '../test/toasts.js';
-import { CHOOSE_TITLE, NO_EDITOR, OUTSIDE_TITLE, useFileLinks } from './FileLinks.js';
+import { CHOOSE_TITLE, MISMATCH_TITLE, NO_EDITOR, OUTSIDE_TITLE, useFileLinks } from './FileLinks.js';
 import { ToastProvider } from './Toast.js';
 
 const two: Editor[] = [
@@ -23,6 +23,7 @@ function setup(editors: Editor[], results: ApiResult[]) {
     return (
       <>
         <button onClick={() => links?.open({ path: 'src/a.ts', line: 3 })}>go</button>
+        <button onClick={() => links?.open({ path: 'src/a.ts', line: 3 }, 'NOTES.md')}>mismatch</button>
         {dialog}
       </>
     );
@@ -79,7 +80,22 @@ describe('useFileLinks', () => {
     expect(post).toHaveBeenCalledTimes(1);
     await click('Open in VS Code');
     expect(post).toHaveBeenCalledTimes(2);
-    expect(post).toHaveBeenLastCalledWith('/api/sessions/abc/open-file', { editor: 'vscode', path: 'src/a.ts', line: 3, outside: true });
+    expect(post).toHaveBeenLastCalledWith('/api/sessions/abc/open-file', { editor: 'vscode', path: '/real/elsewhere/a.ts', line: 3, outside: true });
+  });
+
+  it('asks first for a link whose text is not its file, naming the path it opens, and opens only on Open', async () => {
+    window.localStorage.setItem('pitwall.editor', 'vscode');
+    const { post, click } = setup(two, [ok]);
+    await click('mismatch');
+    expect(screen.getByText(MISMATCH_TITLE)).toBeTruthy();
+    expect(screen.getByText('NOTES.md')).toBeTruthy();
+    expect(screen.getByText('src/a.ts')).toBeTruthy();
+    expect(post).not.toHaveBeenCalled();
+    await click('Cancel');
+    expect(post).not.toHaveBeenCalled();
+    await click('mismatch');
+    await click('Open');
+    expect(post).toHaveBeenCalledWith('/api/sessions/abc/open-file', { editor: 'vscode', path: 'src/a.ts', line: 3 });
   });
 
   it('sends nothing more on Cancel', async () => {

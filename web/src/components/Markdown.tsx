@@ -38,8 +38,8 @@
 import { createContext, memo, useCallback, useContext, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { plainText } from '../format.js';
 import { mentionLabel, type Mentions, type MentionTarget } from '../mentions.js';
-import { asksFirst, elementCount, httpUrl, MAX_ELEMENTS, parseMarkdown, type Align, type Block, type Inline } from '../markdown.js';
-import { findFileRefs, parseFileTarget, type FileRef } from '../fileLinks.js';
+import { asksFirst, elementCount, httpUrl, linkText, MAX_ELEMENTS, parseMarkdown, type Align, type Block, type Inline } from '../markdown.js';
+import { findFileRefs, isOwnFileTarget, parseFileTarget, type FileRef } from '../fileLinks.js';
 import { CopyButton } from './CopyButton.js';
 import { FileLinksContext } from './FileLinks.js';
 import { InlineConfirm } from './InlineConfirm.js';
@@ -198,7 +198,7 @@ function renderInline(inline: Inline, key: number, m: Linking): ReactNode {
       );
     case 'file':
       return (
-        <FileTarget key={key} target={inline.target}>
+        <FileTarget key={key} target={inline.target} shown={linkText(inline.children)}>
           <NoFileLinks>{renderInlines(inline.children)}</NoFileLinks>
         </FileTarget>
       );
@@ -229,7 +229,7 @@ function FileText({ text }: { text: string }) {
 }
 
 /** A markdown link to a file: a link button where it can open one, else its text with the target after it, as the reply wrote it. */
-function FileTarget({ target, children }: { target: string; children: ReactNode }) {
+function FileTarget({ target, shown, children }: { target: string; shown: string; children: ReactNode }) {
   const files = useContext(FileLinksContext);
   const ref = files ? parseFileTarget(target) : undefined;
   if (!files || !ref) {
@@ -240,7 +240,7 @@ function FileTarget({ target, children }: { target: string; children: ReactNode 
     );
   }
   return (
-    <FileButton text={children} fileRef={ref} open={files.open} />
+    <FileButton text={children} fileRef={ref} open={(each) => files.open(each, isOwnFileTarget(shown, target, each) ? undefined : shown)} />
   );
 }
 

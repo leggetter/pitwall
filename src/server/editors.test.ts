@@ -14,7 +14,7 @@ import { EDITORS_PATH, openFilePath, openInEditorPath, removePath, stopPath, WS_
 import { pitwallOrigin, proofFor } from '../test/proof.js';
 import { takeRefusals } from '../test/noClaude.js';
 import type { CommandOptions, CommandResult } from './command.js';
-import { BUNDLE_COMMAND_DIR, DEFAULT_OPEN_RATE, openFileArgs, parseOpenFileRequest, resolveFilePath, detectEditors, EDITOR_TIMEOUT_MS, KNOWN_EDITORS, MAC_OPEN, parseOpenRequest, type DetectionFs, type EditorOptions, type FoundEditor } from './editors.js';
+import { BUNDLE_COMMAND_DIR, DEFAULT_OPEN_RATE, openFileArgs, opensExactly, parseGotoSpec, parseOpenFileRequest, resolveFilePath, detectEditors, EDITOR_TIMEOUT_MS, KNOWN_EDITORS, MAC_OPEN, parseOpenRequest, type DetectionFs, type EditorOptions, type FoundEditor } from './editors.js';
 import type { RunningServer } from './index.js';
 import { startServerWithInternals, type ServerInternals } from './server.js';
 
@@ -189,7 +189,7 @@ beforeAll(async () => {
   await writeFile(join(repo, 'NOW.md'), 'x');
   await writeFile(join(repo, 'src', 'a file.ts'), 'x');
   await writeFile(join(repo, 'two.code-workspace'), '{}');
-  await writeFile(join(repo, 'with:7'), 'x');
+  for (const name of ['with:7', 'evil.code-workspace:5', 'a.ts:12', 'a::b.ts', 'f:Infinity:g']) await writeFile(join(repo, name), 'x');
   await writeFile(join(root, 'sibling.md'), 'x');
   await writeFile(join(outside, 'secret.txt'), 'x');
   await writeFile(join(homeDir, 'notes', 'todo.md'), 'x');
@@ -782,26 +782,37 @@ describe('parseOpenFileRequest, resolveFilePath and openFileArgs', () => {
     expect(resolveFilePath('/abs/a.ts', '/d', '/h')).toBe('/abs/a.ts');
   });
 
-  it('builds the arguments: the directory first for a file inside it, --goto and the position only when given, :1 for a name that ends in a number', () => {
+  it('builds the arguments: --goto on its own, never the directory, and the position only when given', () => {
     const cursor = FILE_EDITORS[1] as FoundEditor;
-    expect(openFileArgs(cursor, '/d', '/d/a.ts', 3, 4)).toEqual({ file: CURSOR_CLI, args: ['/d', '--goto', '/d/a.ts:3:4'] });
-    expect(openFileArgs(cursor, '/d', '/d/a.ts', 3)).toEqual({ file: CURSOR_CLI, args: ['/d', '--goto', '/d/a.ts:3'] });
-    expect(openFileArgs(cursor, '/d', '/d/a.ts')).toEqual({ file: CURSOR_CLI, args: ['/d', '--goto', '/d/a.ts'] });
-    expect(openFileArgs(cursor, '/d', '/d2/a.ts', 1)).toEqual({ file: CURSOR_CLI, args: ['--goto', '/d2/a.ts:1'] });
-    expect(openFileArgs(cursor, '/d', '/d/with:7')).toEqual({ file: CURSOR_CLI, args: ['/d', '--goto', '/d/with:7:1'] });
-    expect(openFileArgs({ ...cursor, cli: undefined } as unknown as FoundEditor, '/d', '/d/a.ts', 3)).toEqual({ file: MAC_OPEN, args: ['-a', CURSOR_APP, '/d/a.ts'] });
+    expect(openFileArgs(cursor, '/d/a.ts', 3, 4)).toEqual({ file: CURSOR_CLI, args: ['--goto', '/d/a.ts:3:4'] });
+    expect(openFileArgs(cursor, '/d/a.ts', 3)).toEqual({ file: CURSOR_CLI, args: ['--goto', '/d/a.ts:3'] });
+    expect(openFileArgs(cursor, '/d/a.ts')).toEqual({ file: CURSOR_CLI, args: ['--goto', '/d/a.ts'] });
+    expect(openFileArgs({ ...cursor, cli: undefined } as unknown as FoundEditor, '/d/a.ts', 3)).toEqual({ file: MAC_OPEN, args: ['-a', CURSOR_APP, '/d/a.ts'] });
+  });
+
+  it('a realpath with a colon goes without --goto, and the split rule parses what is built back to the realpath', () => {
+    const cursor = FILE_EDITORS[1] as FoundEditor;
+    for (const real of ['/proj/evil.code-workspace:5', '/proj/a.ts:12', '/proj/a::b.ts', '/proj/f:Infinity:g']) {
+      const built = openFileArgs(cursor, real, 3, 2);
+      expect(built).toEqual({ file: MAC_OPEN, args: ['-a', CURSOR_APP, real] });
+      expect(opensExactly(built.args, real)).toBe(true);
+      // What the old builder did: the editor opens another file, so the route's check refuses it.
+      expect(opensExactly(['--goto', `${real}:1`], real)).toBe(false);
+    }
+    expect(parseGotoSpec('/proj/evil.code-workspace:5')).toEqual({ path: '/proj/evil.code-workspace', line: 5, column: 1 });
+    expect(opensExactly(['--goto', '/d/a.ts:3:4'], '/d/a.ts')).toBe(true);
   });
 });
 
 describe('POST openFilePath: opening', () => {
-  it("opens a file in the session's directory in that folder's window, with --goto, its realpath, the line and the column", async () => {
+  it("opens a file in the session's directory on its own, never the folder, with --goto, its realpath, the line and the column", async () => {
     const started = await startFiles();
     const res = await openFile(started, BG_ID, { editor: 'cursor', path: 'src/a file.ts', line: 12, column: 3 });
     expect(res.json).toEqual({ ok: true });
     expect(res.headers['cache-control']).toBe('no-store');
     const [call] = started.runFile.calls;
     expect(call?.file).toBe(CURSOR_CLI);
-    expect(call?.args).toEqual([repo, '--goto', `${repo}/src/a file.ts:12:3`]);
+    expect(call?.args).toEqual(['--goto', `${repo}/src/a file.ts:12:3`]);
     expect(call?.options.cwd).toBe(tmpdir());
     expect(call?.options.env).toEqual({ HOME: '/Users/pitwall-test', KEEP_ME: 'yes' });
   });
@@ -809,7 +820,7 @@ describe('POST openFilePath: opening', () => {
   it('takes an absolute path, and a symlink to a file inside the roots opens its target', async () => {
     const started = await startFiles();
     expect((await openFile(started, BG_ID, { editor: 'vscode', path: join(repo, 'link-in.md') })).status).toBe(200);
-    expect(started.runFile.calls[0]?.args).toEqual([repo, '--goto', join(repo, 'NOW.md')]);
+    expect(started.runFile.calls[0]?.args).toEqual(['--goto', join(repo, 'NOW.md')]);
   });
 
   it("opens a file in another root's folder, or any under the roots but outside the session's directory, on its own", async () => {
@@ -824,7 +835,7 @@ describe('POST openFilePath: opening', () => {
     expect(asked.status).toBe(409);
     expect(asked.json).toEqual({ ok: false, error: expect.stringContaining(join(homeDir, 'notes', 'todo.md')), outside: true, path: join(homeDir, 'notes', 'todo.md') });
     expect(started.runFile.calls).toHaveLength(0);
-    expect((await openFile(started, BG_ID, { editor: 'cursor', path: '~/notes/todo.md', outside: true })).status).toBe(200);
+    expect((await openFile(started, BG_ID, { editor: 'cursor', path: join(homeDir, 'notes', 'todo.md'), outside: true })).status).toBe(200);
     expect(started.runFile.calls[0]?.args).toEqual(['--goto', join(homeDir, 'notes', 'todo.md')]);
   });
 
@@ -835,7 +846,7 @@ describe('POST openFilePath: opening', () => {
     expect(asked.status).toBe(409);
     expect(asked.json).toMatchObject({ ok: false, outside: true, path: target });
     expect(started.runFile.calls).toHaveLength(0);
-    expect((await openFile(started, BG_ID, { editor: 'cursor', path: 'link-out.txt', outside: true })).status).toBe(200);
+    expect((await openFile(started, BG_ID, { editor: 'cursor', path: target, outside: true })).status).toBe(200);
     expect(started.runFile.calls[0]?.args).toEqual(['--goto', target]);
   });
 
@@ -850,10 +861,36 @@ describe('POST openFilePath: opening', () => {
     expect(started.runFile.calls[0]).toMatchObject({ file: MAC_OPEN, args: ['-a', CURSOR_APP, join(repo, 'NOW.md')] });
   });
 
-  it("gives a file whose name ends in a number a line, so the editor doesn't read the name as one", async () => {
+  it.each([
+    ['evil.code-workspace:5', undefined],
+    ['a.ts:12', 3],
+    ['a::b.ts', 4],
+    ['f:Infinity:g', 2],
+    ['with:7', undefined],
+  ])('a name with a colon, %s, opens the exact realpath with no --goto and no line', async (name, line) => {
     const started = await startFiles();
-    expect((await openFile(started, BG_ID, { editor: 'cursor', path: 'with:7' })).status).toBe(200);
-    expect(started.runFile.calls[0]?.args).toEqual([repo, '--goto', `${join(repo, 'with:7')}:1`]);
+    const res = await openFile(started, BG_ID, { editor: 'cursor', path: name, ...(line === undefined ? {} : { line }) });
+    expect(res.status).toBe(200);
+    expect(started.runFile.calls[0]).toMatchObject({ file: MAC_OPEN, args: ['-a', CURSOR_APP, join(repo, name)] });
+  });
+
+  it('a symlink to a workspace or a folder with a regular file X:1 beside it opens only what was checked', async () => {
+    const started = await startFiles();
+    await writeFile(join(repo, 'wsx'), '{}');
+    await writeFile(join(repo, 'wsx:1'), 'x');
+    expect((await openFile(started, BG_ID, { editor: 'cursor', path: 'wsx:1' })).status).toBe(200);
+    expect(started.runFile.calls[0]).toMatchObject({ file: MAC_OPEN, args: ['-a', CURSOR_APP, join(repo, 'wsx:1')] });
+  });
+
+  it('honours outside: true only for the realpath the 409 named, and asks again for another path', async () => {
+    const started = await startFiles();
+    const target = join(outsideDir, 'secret.txt');
+    // The link's own path with outside: true isn't the realpath it showed: asked again, with the realpath.
+    const again = await openFile(started, BG_ID, { editor: 'cursor', path: 'link-out.txt', outside: true });
+    expect(again.status).toBe(409);
+    expect(again.json).toMatchObject({ ok: false, outside: true, path: target });
+    expect(started.runFile.calls).toHaveLength(0);
+    expect((await openFile(started, BG_ID, { editor: 'cursor', path: target, outside: true })).status).toBe(200);
   });
 });
 

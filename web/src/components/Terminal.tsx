@@ -336,7 +336,7 @@ export function SessionTerminal({ sessionId, env, onClose, onLeave, onStatus, on
           // A font that arrived late changed the cells' size: the session gets the new one.
           onResize: (cols, rows) => session.current?.resize(cols, rows),
           // File links (W211): OSC 8 links to a file and paths in the output, opened through the session view's opener.
-          onFileLink: (ref) => fileLinksRef.current?.open(ref),
+          onFileLink: (ref, shown) => fileLinksRef.current?.open(ref, shown),
         }),
       )
       .then(

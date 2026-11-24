@@ -843,7 +843,17 @@ describe('Markdown: file links (W211)', () => {
     const { root, open } = renderWithFiles('[the a file](src/a.ts) and [b](file:///abs/b%20c.md)');
     expect(buttons(root).map((b) => b.textContent)).toEqual(['the a file', 'b']);
     fireEvent.click(buttons(root)[1]!);
-    expect(open).toHaveBeenCalledWith({ path: '/abs/b c.md' });
+    // Their text isn't their file, so each passes what it shows and the opener asks first.
+    expect(open).toHaveBeenCalledWith({ path: '/abs/b c.md' }, 'b');
+  });
+
+  it('a markdown link whose text is its own file opens on one click, and one whose text differs passes its text to ask', () => {
+    const { root, open } = renderWithFiles('[src/a.ts](src/a.ts), [a.ts:12](src/a.ts#L12) and [NOTES.md](src/a.ts)');
+    const links = buttons(root);
+    fireEvent.click(links[0]!);
+    fireEvent.click(links[1]!);
+    fireEvent.click(links[2]!);
+    expect(open.mock.calls).toEqual([[{ path: 'src/a.ts' }, undefined], [{ path: 'src/a.ts', line: 12 }, undefined], [{ path: 'src/a.ts' }, 'NOTES.md']]);
   });
 
   it('links nothing inside a link’s text, and nothing in a code block', () => {
