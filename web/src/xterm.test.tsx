@@ -38,6 +38,13 @@ vi.mock('@xterm/xterm', () => ({
       },
     };
     loadAddon() {}
+    // W211's link provider, and the buffer it reads a line from.
+    providers: unknown[] = [];
+    registerLinkProvider(provider: unknown) {
+      this.providers.push(provider);
+      return { dispose() {} };
+    }
+    buffer = { active: { getLine: (index: number) => (index === 0 ? { translateToString: () => 'edit src/a.ts:4' } : undefined) } };
     open(container: HTMLElement) {
       created.events.push('opened');
       created.hooks.push('opened');
@@ -119,6 +126,25 @@ describe('createXterm', () => {
     expect(created.options).toHaveLength(1);
     expect(lastOptions()).toMatchObject({ linkHandler: terminalLinkHandler });
     expect(terminalLinkHandler.allowNonHttpProtocols).toBe(false);
+  });
+
+  it("with a file opener (W211), takes every scheme to the handler, which refuses all but http, https and files, and registers the path link provider", async () => {
+    const onFileLink = vi.fn();
+    await createXterm(document.createElement('div'), { onFileLink });
+    const handler = lastOptions().linkHandler as typeof terminalLinkHandler;
+    expect(handler).not.toBe(terminalLinkHandler);
+    expect(handler.allowNonHttpProtocols).toBe(true);
+    handler.activate(new MouseEvent('click'), 'file:///abs/a%20b.md', { start: { x: 1, y: 1 }, end: { x: 2, y: 1 } });
+    handler.activate(new MouseEvent('click'), 'src/a.ts#L12', { start: { x: 1, y: 1 }, end: { x: 2, y: 1 } });
+    handler.activate(new MouseEvent('click'), 'javascript:alert(1)', { start: { x: 1, y: 1 }, end: { x: 2, y: 1 } });
+    handler.activate(new MouseEvent('click'), 'vscode://file/etc/passwd', { start: { x: 1, y: 1 }, end: { x: 2, y: 1 } });
+    expect(onFileLink.mock.calls).toEqual([[{ path: '/abs/a b.md' }], [{ path: 'src/a.ts', line: 12 }]]);
+    const [terminal] = created.terminals as unknown as { providers: { provideLinks: (y: number, cb: (links?: { text: string; activate: () => void }[]) => void) => void }[] }[];
+    let links: { text: string; activate: () => void }[] | undefined;
+    terminal?.providers[0]?.provideLinks(1, (found) => (links = found));
+    expect(links?.map((link) => link.text)).toEqual(['src/a.ts:4']);
+    links?.[0]?.activate();
+    expect(onFileLink).toHaveBeenLastCalledWith({ path: 'src/a.ts', line: 4 });
   });
 
   it('takes its font family from --pw-font-mono, and the rest of its options from 4: Terminal', async () => {

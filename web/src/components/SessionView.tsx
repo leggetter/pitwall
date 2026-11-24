@@ -68,6 +68,8 @@ import { getConversation } from '../conversation.js';
 import { COPIED, COPY_FAILED, selectText, useCopy } from '../copy.js';
 import { DraftStorageContext, hasStoredDraft } from '../drafts.js';
 import { EditorsContext, openInEditor, openLabel, openToast } from '../editors.js';
+import { rememberEditor } from '../fileLinks.js';
+import { FileLinksContext, useFileLinks } from './FileLinks.js';
 import { focusGesture, spendGesture, type FocusGesture } from '../focusGesture.js';
 import { DEFAULT_TERMINAL_FOCUS, type TerminalFocus } from '../terminalFocus.js';
 import { formatRoots, plainText, shortenHome } from '../format.js';
@@ -594,6 +596,8 @@ export function SessionView({
   const editors = useContext(EditorsContext);
   const [openingIn, setOpeningIn] = useState<EditorId>();
   const openingRef = useRef(false);
+  // Open a file from a link in the Terminal or Conversation tab (W211), while its directory is there to read a relative path against.
+  const fileLinks = useFileLinks(api, sessionId, listed && !session.cwdMissing);
 
   // A refused copy's text, shown under line 2, is selected so it can be copied by hand. It stays until the next copy.
   useEffect(() => {
@@ -620,6 +624,8 @@ export function SessionView({
   const openIn = (editor: Editor) => {
     if (!api || openingRef.current) return;
     openingRef.current = true;
+    // The one a file link opens in from now on (W211).
+    rememberEditor(editor.id);
     setOpeningIn(editor.id);
     void openInEditor(api, sessionId, editor.id).then((outcome) => {
       openingRef.current = false;
@@ -966,6 +972,7 @@ export function SessionView({
   const prsShown = prs !== undefined && (prsRevealed || hasPrs);
 
   return (
+    <FileLinksContext.Provider value={fileLinks.links}>
     <Frame layout={layout} hidden={hidden} animate={animate} titleId={ids.title} onEscape={onEscape}>
       <header className="session-view-head" onKeyDown={onHeaderKey}>
         <Top
@@ -1284,6 +1291,8 @@ export function SessionView({
         </footer>
       )}
     </Frame>
+    {fileLinks.dialog}
+    </FileLinksContext.Provider>
   );
 }
 

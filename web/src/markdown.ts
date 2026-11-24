@@ -11,7 +11,8 @@
 // - Only absolute http: and https: URLs become links, as the browser parses them, and never one with
 //   a username or password before its host, such as https://github.com@evil.example/x, whose text
 //   names one site while it goes to another (W55). A link to anything else shows as the literal text
-//   it was written as.
+//   it was written as, except a link to a file (W211): `file:///abs/a.ts`, or a relative target named like
+//   a file, `src/a.ts#L12`, which is a `file` node, left to the renderer to link or not.
 // - A link whose text isn't its own address asks before it opens (asksFirst, W55), so the renderer
 //   can ask; a bare URL and an autolink don't. Any link to a host with a punycode label asks too, a
 //   bare URL and an autolink included, since its text can show a look-alike of another host (W58).
@@ -28,8 +29,11 @@
 // what it parses is bounded too: a message that would take more than MAX_ELEMENTS elements is shown
 // as the text it was written in (elementCount), and the links in code count towards it.
 
+import { parseFileTarget } from './fileLinks.js';
+
 /** The most lists and quotes nest. A marker deeper than this is text. */
 export const MAX_BLOCK_DEPTH = 8;
+
 /** The most emphasis, strikethrough and links nest. Delimiters deeper than this are text. */
 export const MAX_INLINE_DEPTH = 16;
 /** A table with more columns than this is text. */
@@ -56,7 +60,13 @@ export type Inline =
    */
   | { type: 'code'; text: string; linked?: Inline[] }
   /** `href` is the URL as the browser parsed it: absolute, http: or https:. */
-  | { type: 'link'; href: string; children: Inline[] };
+  | { type: 'link'; href: string; children: Inline[] }
+  /**
+   * A markdown link whose target names a file (W211): `file:///abs/a.ts`, or a relative `src/a.ts#L12`.
+   * `target` is as written; fileLinks.ts' parseFileTarget() reads it, and the renderer links it only
+   * where there's an editor to open it in (FileLinksContext), and otherwise shows the text and the target.
+   */
+  | { type: 'file'; target: string; children: Inline[] };
 
 export type Block =
   | { type: 'paragraph'; children: Inline[] }
@@ -88,7 +98,7 @@ export function elementCount(blocks: Block[], limit = Number.POSITIVE_INFINITY):
     for (const item of inlines) {
       if (count > limit) return;
       if (item.type === 'text') continue;
-      count += item.type === 'link' ? 4 : 1;
+      count += item.type === 'link' || item.type === 'file' ? 4 : 1;
       if ('children' in item) inline(item.children);
       else if (item.type === 'code' && item.linked) inline(item.linked);
     }
@@ -966,7 +976,9 @@ class InlineParser {
     }
     this.flush();
     const url = httpUrl(target.destination);
-    if (!opener.image && !url) {
+    // A file link (W211): its node is a link with no href, and the target as written in `text`.
+    const file = !opener.image && !url && parseFileTarget(target.destination) !== undefined;
+    if (!opener.image && !url && !file) {
       // A link to anything else is the text it was written as, its target included, unparsed.
       this.buffer += this.text.slice(this.pos, target.end);
       this.pos = target.end;
@@ -980,9 +992,10 @@ class InlineParser {
       this.pos = target.end;
       return;
     }
-    if (url && depth <= MAX_INLINE_DEPTH) {
+    if ((url || file) && depth <= MAX_INLINE_DEPTH) {
       const link = node('link');
-      link.href = url.href;
+      if (url) link.href = url.href;
+      else link.text = target.destination;
       link.depth = depth;
       this.nodes.wrap(opener.node, null, link);
       // An image with no alt text shows its URL instead.
@@ -1217,7 +1230,8 @@ function toInlines(first: Node | null, inLink: boolean): Inline[] {
         break;
       case 'link':
         if (!inLink) {
-          out.push({ type: 'link', href: at.href, children: toInlines(at.first, true) });
+          const children = toInlines(at.first, true);
+          out.push(at.href === '' ? { type: 'file', target: at.text, children } : { type: 'link', href: at.href, children });
           break;
         }
         for (const child of toInlines(at.first, true)) {

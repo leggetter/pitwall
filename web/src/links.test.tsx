@@ -58,6 +58,36 @@ describe('openTerminalLink', () => {
   });
 });
 
+describe('openTerminalLink with a file opener (W211)', () => {
+  it('sends a file: link, a relative target and #L12 to the opener, without asking, and refuses every other scheme', () => {
+    const onFile = vi.fn();
+    const confirm = vi.fn(() => true);
+    const open = vi.fn();
+    expect(openTerminalLink('file:///abs/NOW.md', { confirm, open }, onFile)).toBe(true);
+    expect(openTerminalLink('src/server/editors.ts#L12', { confirm, open }, onFile)).toBe(true);
+    expect(openTerminalLink('file:///a/b%20c.md', { confirm, open }, onFile)).toBe(true);
+    expect(onFile.mock.calls).toEqual([[{ path: '/abs/NOW.md' }], [{ path: 'src/server/editors.ts', line: 12 }], [{ path: '/a/b c.md' }]]);
+    for (const uri of ['javascript:alert(1)', 'vscode://file/x', 'data:text/html,x', 'file://evil.example/x', 'blob:http://a/b']) {
+      expect(openTerminalLink(uri, { confirm, open }, onFile), uri).toBe(false);
+    }
+    expect(onFile).toHaveBeenCalledTimes(3);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('still asks first for http and https, and sends them no further', () => {
+    const onFile = vi.fn();
+    const open = vi.fn();
+    expect(openTerminalLink('https://example.com/a.md', { confirm: () => true, open }, onFile)).toBe(true);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(onFile).not.toHaveBeenCalled();
+  });
+
+  it('treats a file link as nothing without an opener', () => {
+    expect(openTerminalLink('file:///abs/NOW.md', { confirm: () => true, open: vi.fn() })).toBe(false);
+  });
+});
+
 describe('terminalLinkHandler', () => {
   it('uses window.confirm and window.open by default: opens when confirmed, not when declined', () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);

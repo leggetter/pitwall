@@ -30,28 +30,44 @@ export function parseEditorList(body: unknown): Editor[] | undefined {
   return editors;
 }
 
+/** The config file's `editor` (W211) in `body`, an EditorList: only an id in its own list. */
+export function parseEditorDefault(body: unknown, editors: readonly Editor[]): EditorId | undefined {
+  const value = typeof body === 'object' && body !== null ? (body as { default?: unknown }).default : undefined;
+  return typeof value === 'string' && editors.some((editor) => editor.id === value) ? (value as EditorId) : undefined;
+}
+
+/** What GET EDITORS_PATH answered: the editors found, and the config file's choice among them, if any. */
+export interface EditorsFound {
+  editors: Editor[];
+  defaultEditor?: EditorId;
+}
+
 /** GETs the list, waiting for the apiKey as every request does. None when it couldn't be had. */
-export async function fetchEditors(api: ApiClient, signal?: AbortSignal): Promise<Editor[]> {
+export async function fetchEditors(api: ApiClient, signal?: AbortSignal): Promise<EditorsFound> {
   const result = await api.get(EDITORS_PATH, signal ? { signal } : {});
-  return (result.kind === 'ok' ? parseEditorList(result.body) : undefined) ?? [];
+  const editors = (result.kind === 'ok' ? parseEditorList(result.body) : undefined) ?? [];
+  const defaultEditor = result.kind === 'ok' ? parseEditorDefault(result.body, editors) : undefined;
+  return { editors, ...(defaultEditor === undefined ? {} : { defaultEditor }) };
 }
 
 /** The editors found, for the session view's actions menu. App provides it; none outside it, as in most tests. */
 export const EditorsContext = createContext<readonly Editor[]>([]);
+/** The config file's `editor` (W211): what a file link opens in until you choose one. */
+export const DefaultEditorContext = createContext<EditorId | undefined>(undefined);
 
 const NONE: readonly Editor[] = [];
 
 /** The editors, fetched once for `api`, the connection's client, once it has authenticated. None until then. */
-export function useEditorList(api: ApiClient): readonly Editor[] {
-  const [editors, setEditors] = useState<readonly Editor[]>(NONE);
+export function useEditorList(api: ApiClient): { editors: readonly Editor[]; defaultEditor: EditorId | undefined } {
+  const [found, setFound] = useState<{ editors: readonly Editor[]; defaultEditor: EditorId | undefined }>({ editors: NONE, defaultEditor: undefined });
   useEffect(() => {
     const controller = new AbortController();
     void fetchEditors(api, controller.signal).then((list) => {
-      if (!controller.signal.aborted) setEditors(list.length === 0 ? NONE : list);
+      if (!controller.signal.aborted) setFound({ editors: list.editors.length === 0 ? NONE : list.editors, defaultEditor: list.defaultEditor });
     });
     return () => controller.abort();
   }, [api]);
-  return editors;
+  return found;
 }
 
 export type OpenOutcome =
