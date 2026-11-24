@@ -153,9 +153,10 @@ export class SnoozeStore {
     for (const { id, ...end } of stored.ended) if (!this.#snoozes.has(id)) this.#ended.set(id, end);
     this.#cap();
     this.#schedule();
-    // A new PR list can end a snooze that holds PRs, so the views decorate again on each.
+    // A new PR list can end a snooze that holds PRs, or a PR's end once that PR stops needing you, so the views decorate again on each.
     this.#offPrs = options.prs?.subscribe(() => {
-      if ([...this.#snoozes.values()].some((snooze) => snooze.heldPrs !== undefined)) this.#changed();
+      const holds = [...this.#snoozes.values()].some((snooze) => snooze.heldPrs !== undefined);
+      if (holds || [...this.#ended.values()].some((end) => end.why === 'pr')) this.#changed();
     });
   }
 
@@ -249,6 +250,17 @@ export class SnoozeStore {
         }
         const end = this.#ended.get(id);
         if (end === undefined) return session;
+        // A PR's end shows only while that PR still needs you, as a time or woken end shows only while the
+        // session needs you (snoozeBack()); with no PR list yet, as after a restart, it stays (W199's review, F1).
+        if (end.why === 'pr' && end.pr !== undefined && this.#prs?.latest()?.fetchedAt !== undefined) {
+          const ref = end.pr.ref;
+          const still = (ownedBy(id) ?? []).some((owned) => `${owned.repo}#${owned.number}` === ref && prNeedKind(owned) !== undefined);
+          if (!still) {
+            this.#ended.delete(id);
+            dirty = true;
+            return session;
+          }
+        }
         groupChanged = true;
         return { ...session, snoozeEnded: { ...end } };
       });

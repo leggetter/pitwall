@@ -447,6 +447,18 @@ describe('a snooze holds the session’s PR too (W199)', () => {
     expect(row.snoozeEnded).toMatchObject({ why: 'pr', pr: { ref: 'example/demo-app#7', need: 'checks-failing' } });
   });
 
+  it('drops a PR’s end once that PR no longer needs you, so its line 2 doesn’t linger (review F1)', () => {
+    const prs = source([pr(7)]);
+    const store = new SnoozeStore({ prs, now: fakeTime().now });
+    store.snooze(ID, undefined, undefined, owner(), [owner()]);
+    prs.set([pr(7, { stateHash: HASH_B })]);
+    expect(decorated(store, owner()).snoozeEnded).toMatchObject({ why: 'pr' });
+    prs.set([pr(7, { stateHash: HASH_B, checks: 'passing' })]);
+    expect(decorated(store, owner()).snoozeEnded).toBeUndefined();
+    prs.set([]);
+    expect(decorated(store, owner()).snoozeEnded).toBeUndefined();
+  });
+
   it('ends when another PR the session owns starts to need you, but not for one with no hash', () => {
     const prs = source([pr(7)]);
     const store = new SnoozeStore({ prs, now: fakeTime().now });
