@@ -973,325 +973,325 @@ export function SessionView({
 
   return (
     <FileLinksContext.Provider value={fileLinks.links}>
-    <Frame layout={layout} hidden={hidden} animate={animate} titleId={ids.title} onEscape={onEscape}>
-      <header className="session-view-head" onKeyDown={onHeaderKey}>
-        <Top
-          compact={compact}
-          onClose={onClose}
-          backLabel={backLabel}
-          end={
-            <>
-              {star && <StarButton sessionId={sessionId} name={session.name} starred={star.starred} onStar={star.onStar} size="md" shortcut={SHORTCUT_KEYS.star} />}
-              <MenuButton label="Session actions" icon="more" entries={entries} buttonRef={menuButton} />
-            </>
-          }
-        >
-          {/* Focused when the view opens from a row, with no ring of its own (6.1, item 8). */}
-          <h2 className="session-view-title" id={ids.title} ref={heading} tabIndex={-1}>
-            <span className="session-view-name">{name}</span>
-            {title && (
-              // The " · " is drawn with the title, so it goes when the title has given way. Screen
-              // readers get it from the hidden text instead. The whole title is in a tooltip, with where
-              // it came from, as the row has it; one whose source isn't known has it only when it's cut.
-              <Tooltip content={titleHint(title, session.titleSource)} relation="none" onlyIfCut={session.titleSource === undefined}>
-                <span className="session-view-subtitle">
-                  <span className="visually-hidden"> · </span>
-                  {title}
+      <Frame layout={layout} hidden={hidden} animate={animate} titleId={ids.title} onEscape={onEscape}>
+        <header className="session-view-head" onKeyDown={onHeaderKey}>
+          <Top
+            compact={compact}
+            onClose={onClose}
+            backLabel={backLabel}
+            end={
+              <>
+                {star && <StarButton sessionId={sessionId} name={session.name} starred={star.starred} onStar={star.onStar} size="md" shortcut={SHORTCUT_KEYS.star} />}
+                <MenuButton label="Session actions" icon="more" entries={entries} buttonRef={menuButton} />
+              </>
+            }
+          >
+            {/* Focused when the view opens from a row, with no ring of its own (6.1, item 8). */}
+            <h2 className="session-view-title" id={ids.title} ref={heading} tabIndex={-1}>
+              <span className="session-view-name">{name}</span>
+              {title && (
+                // The " · " is drawn with the title, so it goes when the title has given way. Screen
+                // readers get it from the hidden text instead. The whole title is in a tooltip, with where
+                // it came from, as the row has it; one whose source isn't known has it only when it's cut.
+                <Tooltip content={titleHint(title, session.titleSource)} relation="none" onlyIfCut={session.titleSource === undefined}>
+                  <span className="session-view-subtitle">
+                    <span className="visually-hidden"> · </span>
+                    {title}
+                  </span>
+                </Tooltip>
+              )}
+            </h2>
+          </Top>
+          <div className="session-view-meta">
+            {/* Idle shows here, though not in the list. */}
+            <StatusBadge badge={badge} />
+            {aside !== undefined && <span className="session-view-set-aside">{aside}</span>}
+            {/* The PR its job links, while it waits on someone else, CI or another session (W170). */}
+            {waitingOnPr !== undefined && (
+              <a className="session-view-waiting-pr" href={waitingOnPr.url} target="_blank" rel="noopener noreferrer">
+                {waitingOnPr.text}
+              </a>
+            )}
+            {/*
+              The row's other badges, each with an info button after it, so its explanation, which is a
+              hover-only tooltip in the row, is reachable here by keyboard and screen readers.
+            */}
+            {session.finished && session.askedYou && (
+              <span className="session-view-badge">
+                <Badge look="outline">Asked you</Badge>
+                <InfoTip text={finishedAskedHint(session)} className="session-view-info" />
+              </span>
+            )}
+            {finishedWaitingOnYou(session) && (
+              <span className="session-view-badge">
+                <Badge look="outline">{WAITING_ON_TEXT.you}</Badge>
+                <InfoTip text={finishedRecapHint(session)} className="session-view-info" />
+              </span>
+            )}
+            {session.stale && (
+              <span className="session-view-badge">
+                <Badge look="subtle-neutral" className="stale">
+                  Stale
+                </Badge>
+                <InfoTip text={STALE_HINT} className="session-view-info" />
+              </span>
+            )}
+            <span className="session-view-kind">
+              {KIND_LABELS[session.kind]}
+              {/* A button, so Tab reaches it: its name is the note, which is also its tooltip. Not once it has ended: there's no terminal to type /bg in. */}
+              {!background && !ended && <InfoTip text={BG_NOTE} className="session-view-info" />}
+            </span>
+            {session.lastActivityAt && <Timestamp className="session-view-activity" at={session.lastActivityAt} prefix="Active " />}
+            {/* Its context (W133): the number, flagged over 200K, or "unavailable". */}
+            <ContextMeta tokens={session.contextTokens} />
+            <span className="session-view-cwd">
+              {/* The whole path, home and all: on screen, home is ~ and the middle may be cut. */}
+              <Tooltip content={cwd} relation="none" onlyIfCut={shortenHome(cwd) === cwd}>
+                <span className="session-view-path" ref={pathRef}>
+                  <MiddleEllipsis text={shortenHome(cwd)} />
                 </span>
               </Tooltip>
+              <CopyButton text={session.cwd} label="Copy path" target={pathRef} />
+            </span>
+            {session.cwdMissing && (
+              // Its own item, so it wraps to the next line rather than squeezing the path.
+              <Tooltip content={CWD_MISSING_HINT} relation="none">
+                <span className="session-view-missing">Directory no longer exists</span>
+              </Tooltip>
             )}
-          </h2>
-        </Top>
-        <div className="session-view-meta">
-          {/* Idle shows here, though not in the list. */}
-          <StatusBadge badge={badge} />
-          {aside !== undefined && <span className="session-view-set-aside">{aside}</span>}
-          {/* The PR its job links, while it waits on someone else, CI or another session (W170). */}
-          {waitingOnPr !== undefined && (
-            <a className="session-view-waiting-pr" href={waitingOnPr.url} target="_blank" rel="noopener noreferrer">
-              {waitingOnPr.text}
-            </a>
+          </div>
+          {waiting && (
+            // Where to answer, under the status badge that says it's waiting (W47). Read once, in place.
+            <p className="session-view-waiting-note">{waiting}</p>
           )}
-          {/*
-            The row's other badges, each with an info button after it, so its explanation, which is a
-            hover-only tooltip in the row, is reachable here by keyboard and screen readers.
-          */}
-          {session.finished && session.askedYou && (
-            <span className="session-view-badge">
-              <Badge look="outline">Asked you</Badge>
-              <InfoTip text={finishedAskedHint(session)} className="session-view-info" />
-            </span>
+          {/* Over 200K, what to do about it (W133). Read once, in place, as the notes below are. */}
+          <ContextNote tokens={session.contextTokens} />
+          {missingNote && (
+            // Visible, not in a tooltip: why it's still listed, and what to do about it (W47). Read once, in place.
+            <p className="session-view-cwd-note">
+              <NoteText text={missingNote} />
+            </p>
           )}
-          {finishedWaitingOnYou(session) && (
-            <span className="session-view-badge">
-              <Badge look="outline">{WAITING_ON_TEXT.you}</Badge>
-              <InfoTip text={finishedRecapHint(session)} className="session-view-info" />
-            </span>
-          )}
-          {session.stale && (
-            <span className="session-view-badge">
-              <Badge look="subtle-neutral" className="stale">
-                Stale
-              </Badge>
-              <InfoTip text={STALE_HINT} className="session-view-info" />
-            </span>
-          )}
-          <span className="session-view-kind">
-            {KIND_LABELS[session.kind]}
-            {/* A button, so Tab reaches it: its name is the note, which is also its tooltip. Not once it has ended: there's no terminal to type /bg in. */}
-            {!background && !ended && <InfoTip text={BG_NOTE} className="session-view-info" />}
-          </span>
-          {session.lastActivityAt && <Timestamp className="session-view-activity" at={session.lastActivityAt} prefix="Active " />}
-          {/* Its context (W133): the number, flagged over 200K, or "unavailable". */}
-          <ContextMeta tokens={session.contextTokens} />
-          <span className="session-view-cwd">
-            {/* The whole path, home and all: on screen, home is ~ and the middle may be cut. */}
-            <Tooltip content={cwd} relation="none" onlyIfCut={shortenHome(cwd) === cwd}>
-              <span className="session-view-path" ref={pathRef}>
-                <MiddleEllipsis text={shortenHome(cwd)} />
+          {placement && placement.workedIn.length > 0 && (
+            // Line 3: where it started, and the repos it worked in beyond that, the same in every mode of Group sessions by (W42).
+            // The names are text, never markup or links: selecting one does nothing.
+            <p className="session-view-worked">
+              <span className="session-view-worked-text">
+                Started in <span className="session-view-repo">{plainText(placement.startedIn)}</span>
+                <span aria-hidden="true"> · </span>
+                <span className="visually-hidden">, and </span>
+                worked in{' '}
+                {placement.workedIn.map((label, index) => (
+                  // By place as well as label: two repos under different roots can share a label.
+                  <span key={`${index}:${label}`}>
+                    {index > 0 && ', '}
+                    <span className="session-view-repo">{plainText(label)}</span>
+                  </span>
+                ))}
               </span>
-            </Tooltip>
-            <CopyButton text={session.cwd} label="Copy path" target={pathRef} />
-          </span>
-          {session.cwdMissing && (
-            // Its own item, so it wraps to the next line rather than squeezing the path.
-            <Tooltip content={CWD_MISSING_HINT} relation="none">
-              <span className="session-view-missing">Directory no longer exists</span>
+              <InfoTip text={WORKED_IN_NOTE} className="session-view-info" />
+            </p>
+          )}
+          {lineage && <SessionLineage from={lineage.from} to={lineage.to} onOpen={lineage.onOpen} />}
+          {prs && prNeed !== undefined && <PrNeedNote pr={prNeed} onOpen={prs.onOpen} />}
+          {prs && prs.owned.length > 0 && <SessionPrLinks linked={prs.owned} onOpen={prs.onOpen} />}
+          {refused && (
+            <p className="session-view-copy-fallback">
+              {refused.label}: <code ref={fallbackRef}>{plainText(refused.text)}</code>
+            </p>
+          )}
+          {!listed && (
+            <Alert tone="neutral" role="status">
+              This session is no longer listed, so this is what it showed last.
+            </Alert>
+          )}
+        </header>
+
+        {/* An interactive session's too (W90), ended ones included, so End's answer still shows as the snapshot lists it as ended. */}
+        {(canAct || (!background && listed)) && (
+          <SessionConfirm actions={actions} session={session} ended={ended || !session.alive} onReturnFocus={returnFocusToMenu} />
+        )}
+
+        {/* Why it was started, where it is and what's next (W111), between the header and the tabs, on every tab. */}
+        <RecapStrip session={session} health={recaps} listed={listed} hidden={hidden} {...(conversation.state.turnEnded === undefined ? {} : { turnEnded: conversation.state.turnEnded })} />
+
+        <div className="session-tabs" role="tablist" aria-label="Session view" onKeyDown={onTabsKey}>
+          <button
+            ref={conversationTab}
+            type="button"
+            role="tab"
+            id={ids.conversationTab}
+            className="session-tab"
+            aria-selected={tab === 'conversation'}
+            aria-controls={ids.conversationPanel}
+            tabIndex={tab === 'conversation' ? 0 : -1}
+            onClick={() => openTab('conversation')}
+          >
+            <Icon name="conversation" />
+            Conversation
+          </button>
+          {/* Disabled, it says why in a tooltip, which describes it. An ended session has none: there's no process to attach to (W67). */}
+          {!ended && (
+            <Tooltip content={terminalOff} relation="description">
+              <button
+                ref={terminalTab}
+                type="button"
+                role="tab"
+                id={ids.terminalTab}
+                className="session-tab"
+                aria-selected={tab === 'terminal'}
+                aria-controls={ids.terminalPanel}
+                // Attached, it's described by the terminal's hint on how to type to it, which shows while the
+                // terminal doesn't have focus, as on this tab after F6 (W57).
+                aria-describedby={attached ? ids.typeHint : undefined}
+                aria-disabled={terminalOff !== undefined || undefined}
+                tabIndex={tab === 'terminal' ? 0 : -1}
+                onClick={() => openTab('terminal')}
+              >
+                <Icon name="terminal" />
+                Terminal
+                {attached && (
+                  <>
+                    <span className="session-tab-dot" aria-hidden="true" />
+                    <span className="visually-hidden">, attached</span>
+                  </>
+                )}
+              </button>
             </Tooltip>
           )}
-        </div>
-        {waiting && (
-          // Where to answer, under the status badge that says it's waiting (W47). Read once, in place.
-          <p className="session-view-waiting-note">{waiting}</p>
-        )}
-        {/* Over 200K, what to do about it (W133). Read once, in place, as the notes below are. */}
-        <ContextNote tokens={session.contextTokens} />
-        {missingNote && (
-          // Visible, not in a tooltip: why it's still listed, and what to do about it (W47). Read once, in place.
-          <p className="session-view-cwd-note">
-            <NoteText text={missingNote} />
-          </p>
-        )}
-        {placement && placement.workedIn.length > 0 && (
-          // Line 3: where it started, and the repos it worked in beyond that, the same in every mode of Group sessions by (W42).
-          // The names are text, never markup or links: selecting one does nothing.
-          <p className="session-view-worked">
-            <span className="session-view-worked-text">
-              Started in <span className="session-view-repo">{plainText(placement.startedIn)}</span>
-              <span aria-hidden="true"> · </span>
-              <span className="visually-hidden">, and </span>
-              worked in{' '}
-              {placement.workedIn.map((label, index) => (
-                // By place as well as label: two repos under different roots can share a label.
-                <span key={`${index}:${label}`}>
-                  {index > 0 && ', '}
-                  <span className="session-view-repo">{plainText(label)}</span>
-                </span>
-              ))}
-            </span>
-            <InfoTip text={WORKED_IN_NOTE} className="session-view-info" />
-          </p>
-        )}
-        {lineage && <SessionLineage from={lineage.from} to={lineage.to} onOpen={lineage.onOpen} />}
-        {prs && prNeed !== undefined && <PrNeedNote pr={prNeed} onOpen={prs.onOpen} />}
-        {prs && prs.owned.length > 0 && <SessionPrLinks linked={prs.owned} onOpen={prs.onOpen} />}
-        {refused && (
-          <p className="session-view-copy-fallback">
-            {refused.label}: <code ref={fallbackRef}>{plainText(refused.text)}</code>
-          </p>
-        )}
-        {!listed && (
-          <Alert tone="neutral" role="status">
-            This session is no longer listed, so this is what it showed last.
-          </Alert>
-        )}
-      </header>
-
-      {/* An interactive session's too (W90), ended ones included, so End's answer still shows as the snapshot lists it as ended. */}
-      {(canAct || (!background && listed)) && (
-        <SessionConfirm actions={actions} session={session} ended={ended || !session.alive} onReturnFocus={returnFocusToMenu} />
-      )}
-
-      {/* Why it was started, where it is and what's next (W111), between the header and the tabs, on every tab. */}
-      <RecapStrip session={session} health={recaps} listed={listed} hidden={hidden} {...(conversation.state.turnEnded === undefined ? {} : { turnEnded: conversation.state.turnEnded })} />
-
-      <div className="session-tabs" role="tablist" aria-label="Session view" onKeyDown={onTabsKey}>
-        <button
-          ref={conversationTab}
-          type="button"
-          role="tab"
-          id={ids.conversationTab}
-          className="session-tab"
-          aria-selected={tab === 'conversation'}
-          aria-controls={ids.conversationPanel}
-          tabIndex={tab === 'conversation' ? 0 : -1}
-          onClick={() => openTab('conversation')}
-        >
-          <Icon name="conversation" />
-          Conversation
-        </button>
-        {/* Disabled, it says why in a tooltip, which describes it. An ended session has none: there's no process to attach to (W67). */}
-        {!ended && (
-          <Tooltip content={terminalOff} relation="description">
+          {/* Once the session is known to have sub-agents, for every kind of session, finished and ended ones included (W77). */}
+          {subagentsShown && (
             <button
-              ref={terminalTab}
+              ref={subagentsTab}
               type="button"
               role="tab"
-              id={ids.terminalTab}
+              id={ids.subagentsTab}
               className="session-tab"
-              aria-selected={tab === 'terminal'}
-              aria-controls={ids.terminalPanel}
-              // Attached, it's described by the terminal's hint on how to type to it, which shows while the
-              // terminal doesn't have focus, as on this tab after F6 (W57).
-              aria-describedby={attached ? ids.typeHint : undefined}
-              aria-disabled={terminalOff !== undefined || undefined}
-              tabIndex={tab === 'terminal' ? 0 : -1}
-              onClick={() => openTab('terminal')}
+              aria-selected={tab === 'subagents'}
+              aria-controls={ids.subagentsPanel}
+              tabIndex={tab === 'subagents' ? 0 : -1}
+              onClick={() => openTab('subagents')}
             >
-              <Icon name="terminal" />
-              Terminal
-              {attached && (
-                <>
-                  <span className="session-tab-dot" aria-hidden="true" />
-                  <span className="visually-hidden">, attached</span>
-                </>
-              )}
+              <Icon name="subagents" />
+              Sub-agents
+              {subagentCount !== undefined && <span className="session-tab-count"> ({subagentCount})</span>}
             </button>
-          </Tooltip>
-        )}
-        {/* Once the session is known to have sub-agents, for every kind of session, finished and ended ones included (W77). */}
-        {subagentsShown && (
-          <button
-            ref={subagentsTab}
-            type="button"
-            role="tab"
-            id={ids.subagentsTab}
-            className="session-tab"
-            aria-selected={tab === 'subagents'}
-            aria-controls={ids.subagentsPanel}
-            tabIndex={tab === 'subagents' ? 0 : -1}
-            onClick={() => openTab('subagents')}
-          >
-            <Icon name="subagents" />
-            Sub-agents
-            {subagentCount !== undefined && <span className="session-tab-count"> ({subagentCount})</span>}
-          </button>
-        )}
-        {/* Once the session owns an open PR or is strongly linked to one (W106). */}
-        {prsShown && (
-          <button
-            ref={prsTab}
-            type="button"
-            role="tab"
-            id={ids.prsTab}
-            className="session-tab"
-            aria-selected={tab === 'prs'}
-            aria-controls={ids.prsPanel}
-            tabIndex={tab === 'prs' ? 0 : -1}
-            onClick={() => openTab('prs')}
-            data-session-tab="prs"
-          >
-            <Icon name="repo" />
-            Pull requests
-            {hasPrs && <span className="session-tab-count"> ({sessionPrsCount(ownedPrs, linkedPrs)})</span>}
-          </button>
-        )}
-      </div>
-
-      <SubagentLinkContext.Provider value={subagentsShown ? openSubagent : undefined}>
-        {/* Hidden behind the Terminal tab, or with its root tab: either way it goes back to the reader's place when shown. */}
-        <ConversationPanel
-          conversation={conversation}
-          id={ids.conversationPanel}
-          labelledBy={ids.conversationTab}
-          hidden={tab !== 'conversation' || hidden}
-          working={working}
-          workingReady={listed && conversation.state.status !== 'loading' && conversation.state.status !== 'unavailable'}
-        />
-        {subagentsShown && (
-          <SubagentsPanel
-            api={api}
-            sessionId={sessionId}
-            controller={subagents}
-            id={ids.subagentsPanel}
-            labelledBy={ids.subagentsTab}
-            hidden={tab !== 'subagents' || hidden}
-            open={openAgent}
-            opened={opened}
-            onOpen={openSubagent}
-            onBack={backToSubagents}
-            returnTo={returnTo}
-            signal={signal}
-          />
-        )}
-      </SubagentLinkContext.Provider>
-
-      {prsShown && prs && (
-        <SessionPrsPanel owned={ownedPrs} linked={linkedPrs} onOpen={prs.onOpen} id={ids.prsPanel} labelledBy={ids.prsTab} hidden={tab !== 'prs' || hidden} />
-      )}
-
-      {!ended && (
-        <div
-          className="session-view-terminal"
-          role="tabpanel"
-          id={ids.terminalPanel}
-          aria-labelledby={ids.terminalTab}
-          hidden={tab !== 'terminal'}
-        >
-          {tab === 'terminal' && attachEnv && (
-            <SessionTerminal
-              sessionId={sessionId}
-              env={attachEnv}
-              onClose={leaveTerminal}
-              onLeave={focusTerminalTab}
-              onStatus={setAttachStatus}
-              onRestartChange={setRestart}
-              wait={quiet}
-              canFocus={terminalMayFocus}
-              onAsk={askedInTerminal}
-              typeHintId={ids.typeHint}
-            />
+          )}
+          {/* Once the session owns an open PR or is strongly linked to one (W106). */}
+          {prsShown && (
+            <button
+              ref={prsTab}
+              type="button"
+              role="tab"
+              id={ids.prsTab}
+              className="session-tab"
+              aria-selected={tab === 'prs'}
+              aria-controls={ids.prsPanel}
+              tabIndex={tab === 'prs' ? 0 : -1}
+              onClick={() => openTab('prs')}
+              data-session-tab="prs"
+            >
+              <Icon name="repo" />
+              Pull requests
+              {hasPrs && <span className="session-tab-count"> ({sessionPrsCount(ownedPrs, linkedPrs)})</span>}
+            </button>
           )}
         </div>
-      )}
 
-      {session.kind === 'interactive' && (listed || drafting) && (
-        // Kept while the Sub-agents tab is open, but hidden, so a draft or a send in flight carries on:
-        // there's no message box for a sub-agent, and this one's for the session.
-        <footer className="session-view-foot" hidden={tab === 'subagents'}>
-          {/* An ended session has no message box, except to keep a draft, which is never lost to the session going (W31). */}
-          {(!ended || drafting) && (
-            <RelayBox
-              session={session}
-              listed={listed}
-              replyShown={replyShown}
-              onDraftChange={(has) => {
-                draft.current = has;
-                setDrafting(has);
-                onDraftChange?.(has);
-              }}
+        <SubagentLinkContext.Provider value={subagentsShown ? openSubagent : undefined}>
+          {/* Hidden behind the Terminal tab, or with its root tab: either way it goes back to the reader's place when shown. */}
+          <ConversationPanel
+            conversation={conversation}
+            id={ids.conversationPanel}
+            labelledBy={ids.conversationTab}
+            hidden={tab !== 'conversation' || hidden}
+            working={working}
+            workingReady={listed && conversation.state.status !== 'loading' && conversation.state.status !== 'unavailable'}
+          />
+          {subagentsShown && (
+            <SubagentsPanel
+              api={api}
+              sessionId={sessionId}
+              controller={subagents}
+              id={ids.subagentsPanel}
+              labelledBy={ids.subagentsTab}
+              hidden={tab !== 'subagents' || hidden}
+              open={openAgent}
+              opened={opened}
+              onOpen={openSubagent}
+              onBack={backToSubagents}
+              returnTo={returnTo}
+              signal={signal}
             />
           )}
-          {ended && listed && (
-            <EndedFooter session={session} resume={resume} onCopy={resumeCopy ? () => copy('Resume command', resumeCopy) : undefined} onFocusLeaving={onFootFocusLeaving} />
-          )}
-        </footer>
-      )}
-      {background && !terminalOff && tab === 'conversation' && (
-        // Where an interactive session has its message box: how to message this one (W47). No button
-        // opens the Terminal tab from here, since opening it attaches (D9). Not on the Terminal tab,
-        // which it's about, and which then has the room; not once it's no longer listed, or where it
-        // can't be attached, as the tab's tooltip says.
-        <footer className="session-view-foot">
-          {canResume ? (
-            <EndedFooter session={session} resume={resume} onCopy={undefined} note={BACKGROUND_NOTES.resumable} onFocusLeaving={onFootFocusLeaving} />
-          ) : (
-            <p className="session-view-note">{session.alive ? BACKGROUND_NOTES.running : BACKGROUND_NOTES.notRunning}</p>
-          )}
-        </footer>
-      )}
-    </Frame>
-    {fileLinks.dialog}
+        </SubagentLinkContext.Provider>
+
+        {prsShown && prs && (
+          <SessionPrsPanel owned={ownedPrs} linked={linkedPrs} onOpen={prs.onOpen} id={ids.prsPanel} labelledBy={ids.prsTab} hidden={tab !== 'prs' || hidden} />
+        )}
+
+        {!ended && (
+          <div
+            className="session-view-terminal"
+            role="tabpanel"
+            id={ids.terminalPanel}
+            aria-labelledby={ids.terminalTab}
+            hidden={tab !== 'terminal'}
+          >
+            {tab === 'terminal' && attachEnv && (
+              <SessionTerminal
+                sessionId={sessionId}
+                env={attachEnv}
+                onClose={leaveTerminal}
+                onLeave={focusTerminalTab}
+                onStatus={setAttachStatus}
+                onRestartChange={setRestart}
+                wait={quiet}
+                canFocus={terminalMayFocus}
+                onAsk={askedInTerminal}
+                typeHintId={ids.typeHint}
+              />
+            )}
+          </div>
+        )}
+
+        {session.kind === 'interactive' && (listed || drafting) && (
+          // Kept while the Sub-agents tab is open, but hidden, so a draft or a send in flight carries on:
+          // there's no message box for a sub-agent, and this one's for the session.
+          <footer className="session-view-foot" hidden={tab === 'subagents'}>
+            {/* An ended session has no message box, except to keep a draft, which is never lost to the session going (W31). */}
+            {(!ended || drafting) && (
+              <RelayBox
+                session={session}
+                listed={listed}
+                replyShown={replyShown}
+                onDraftChange={(has) => {
+                  draft.current = has;
+                  setDrafting(has);
+                  onDraftChange?.(has);
+                }}
+              />
+            )}
+            {ended && listed && (
+              <EndedFooter session={session} resume={resume} onCopy={resumeCopy ? () => copy('Resume command', resumeCopy) : undefined} onFocusLeaving={onFootFocusLeaving} />
+            )}
+          </footer>
+        )}
+        {background && !terminalOff && tab === 'conversation' && (
+          // Where an interactive session has its message box: how to message this one (W47). No button
+          // opens the Terminal tab from here, since opening it attaches (D9). Not on the Terminal tab,
+          // which it's about, and which then has the room; not once it's no longer listed, or where it
+          // can't be attached, as the tab's tooltip says.
+          <footer className="session-view-foot">
+            {canResume ? (
+              <EndedFooter session={session} resume={resume} onCopy={undefined} note={BACKGROUND_NOTES.resumable} onFocusLeaving={onFootFocusLeaving} />
+            ) : (
+              <p className="session-view-note">{session.alive ? BACKGROUND_NOTES.running : BACKGROUND_NOTES.notRunning}</p>
+            )}
+          </footer>
+        )}
+      </Frame>
+      {fileLinks.dialog}
     </FileLinksContext.Provider>
   );
 }
