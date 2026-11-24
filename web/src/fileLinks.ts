@@ -216,9 +216,11 @@ export function isOwnFileTarget(shown: string, target: string, ref: FileRef): bo
   const name = ref.path.slice(ref.path.lastIndexOf('/') + 1);
   const positions = ref.line === undefined ? [''] : ['', `:${ref.line}`, ...(ref.column === undefined ? [] : [`:${ref.line}:${ref.column}`])];
   const own = new Set<string>([target, ref.path]);
+  // The file's name alone only for a target without `..`, so a link can't name this repo's file and open another's.
+  const byName = !target.split(/[\\/]/).includes('..');
   for (const position of positions) {
     own.add(ref.path + position);
-    own.add(name + position);
+    if (byName) own.add(name + position);
   }
   return own.has(text);
 }

@@ -199,9 +199,10 @@ export function rangeText(terminal: Pick<Terminal, 'buffer'> | undefined, range:
   if (!terminal) return undefined;
   let text = '';
   for (let y = range.start.y; y <= range.end.y; y++) {
-    const row = terminal.buffer.active.getLine(y - 1)?.translateToString(true);
-    if (row === undefined) return undefined;
-    text += row.slice(y === range.start.y ? range.start.x - 1 : 0, y === range.end.y ? range.end.x : undefined);
+    // By cell columns, which the range is in: slicing the row's string would shift past a wide character.
+    const line = terminal.buffer.active.getLine(y - 1);
+    if (line === undefined) return undefined;
+    text += line.translateToString(true, y === range.start.y ? range.start.x - 1 : 0, y === range.end.y ? range.end.x : undefined);
   }
   return text;
 }

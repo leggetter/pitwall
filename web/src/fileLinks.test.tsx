@@ -51,6 +51,12 @@ describe('isOwnFileTarget', () => {
     for (const text of ['src/a.ts', 'src/a.ts#L12', 'src/a.ts:12', 'a.ts', 'a.ts:12', ' a.ts ']) expect(isOwnFileTarget(text, 'src/a.ts#L12', ref)).toBe(true);
     for (const text of ['', 'NOTES.md', 'b.ts', 'src/b.ts', 'the a file']) expect(isOwnFileTarget(text, 'src/a.ts#L12', ref)).toBe(false);
   });
+
+  it("doesn't take the file's name alone for a target with `..`, so a link can't open another repo's file of that name", () => {
+    expect(isOwnFileTarget('NOW.md', '../../elsewhere/NOW.md', { path: '../../elsewhere/NOW.md' })).toBe(false);
+    expect(isOwnFileTarget('../../elsewhere/NOW.md', '../../elsewhere/NOW.md', { path: '../../elsewhere/NOW.md' })).toBe(true);
+    expect(isOwnFileTarget('NOW.md', 'docs/NOW.md', { path: 'docs/NOW.md' })).toBe(true);
+  });
 });
 
 describe('findFileRefs on hostile text', () => {

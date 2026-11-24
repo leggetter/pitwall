@@ -49,9 +49,11 @@
 //   - a relative path is read against the session's directory's realpath (checkDirectory), `~/` against
 //     the home directory, and anything else must be absolute: the result is realpath'd, and a path
 //   - the check and the editor's open aren't atomic (the editor's command takes hundreds of milliseconds):
-//     a swap after the check can make the editor open a different file. It can't open a folder, so no
-//     workspace's tasks or settings load through it, and the editor's own trust applies to the file. No
-//     lstat: the realpath is the thing opened.
+//     a swap after the check can make the editor open a different file, or, if the last part of the path
+//     becomes a symlink to a folder in that window, the folder, as the editor follows it (the W211
+//     re-review's N2). No path-based open closes that race; it needs a session racing your click, and the
+//     editor's own Workspace Trust is what stands then (off by default in Cursor). No lstat: the realpath
+//     is the thing opened.
 //   - a link opens the file on its own, `<cli> --goto <file>:<line>:<column>`, never the session's folder
 //     (opening a folder in Cursor can run its tasks with no trust prompt; the W211 security review); the line
 //     and column only when given. The CLI is the editor's own command, which opens a file at a line, where
@@ -352,12 +354,33 @@ export function openFileArgs(editor: FoundEditor, real: string, line?: number, c
   return { file: editor.cli, args: ['--goto', spec] };
 }
 
-/** True when the editor would open exactly `real` from these arguments, by the split rule above. */
+/**
+ * The path the editor opens for a path argument: VS Code and Cursor trim spaces and tabs from both ends of
+ * every path, with or without `--goto`, then normalize it and drop a trailing `/` (`preparePath` in their
+ * main process; the W211 re-review read it in VS Code 1.147.0 and Cursor 3.28.7). So `/proj/ ` opens the
+ * folder `/proj`, and `evil.code-workspace ` the workspace beside it.
+ */
+export function editorPath(given: string): string {
+  let start = 0;
+  let end = given.length;
+  while (start < end && (given[start] === ' ' || given[start] === '\t')) start++;
+  while (end > start && (given[end - 1] === ' ' || given[end - 1] === '\t')) end--;
+  const normal = path.posix.normalize(given.slice(start, end));
+  let cut = normal.length;
+  while (cut > 1 && normal[cut - 1] === '/') cut--;
+  return normal.slice(0, cut);
+}
+
+/**
+ * True when the editor would open exactly `real` from these arguments: by the split rule above for
+ * `--goto`, and, for any form, after the editor's own trim and normalize (editorPath). `open -a` doesn't
+ * trim, but a name the editors would read differently is refused whichever opens it.
+ */
 export function opensExactly(args: readonly string[], real: string): boolean {
   const at = args.indexOf('--goto');
-  if (at === -1) return args[args.length - 1] === real;
-  const spec = args[at + 1];
-  return spec !== undefined && parseGotoSpec(spec)?.path === real;
+  const spec = at === -1 ? undefined : args[at + 1];
+  const opened = at === -1 ? args[args.length - 1] : spec === undefined ? undefined : parseGotoSpec(spec)?.path;
+  return opened !== undefined && opened === real && editorPath(opened) === real;
 }
 
 /** Why the editor didn't open, in one short line: never its output. */

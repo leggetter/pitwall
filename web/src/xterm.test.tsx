@@ -67,7 +67,7 @@ vi.mock('@xterm/addon-fit', () => ({
   },
 }));
 
-const { createXterm, FONT_WAIT_MS, THEME_TOKENS, waitForFont } = await import('./xterm.js');
+const { createXterm, FONT_WAIT_MS, rangeText, THEME_TOKENS, waitForFont } = await import('./xterm.js');
 const { terminalLinkHandler } = await import('./links.js');
 
 /** The options createXterm() gave the terminal it just created. */
@@ -371,5 +371,23 @@ describe("the terminal's code", () => {
     const box = declarations('.attach-terminal-fit');
     expect(box).toMatchObject({ flex: '1 1 0', 'min-width': '0', 'min-height': '0' });
     expect(Object.keys(box).filter((property) => /^(padding|border|margin)/.test(property))).toEqual([]);
+  });
+});
+
+describe('rangeText (W211)', () => {
+  it('reads the range by cell columns, so a wide character before a link does not shift it', () => {
+    // A row as xterm.js keeps it: each wide character takes two cells, the second empty.
+    const cells = [...'日日 [x]NOW.md'].flatMap((ch) => (ch === '日' ? [ch, ''] : [ch]));
+    const calls: unknown[][] = [];
+    const line = {
+      translateToString: (trim?: boolean, start = 0, end = cells.length) => {
+        calls.push([trim, start, end]);
+        return cells.slice(start, end).join('');
+      },
+    };
+    const terminal = { buffer: { active: { getLine: (y: number) => (y === 0 ? line : undefined) } } } as unknown as Parameters<typeof rangeText>[0];
+    // The visible "x" is cell 7; slicing the row's string at 6 would give "]".
+    expect(rangeText(terminal, { start: { x: 7, y: 1 }, end: { x: 7, y: 1 } })).toBe('x');
+    expect(calls).toEqual([[true, 6, 7]]);
   });
 });

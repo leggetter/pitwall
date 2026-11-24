@@ -14,7 +14,7 @@ import { EDITORS_PATH, openFilePath, openInEditorPath, removePath, stopPath, WS_
 import { pitwallOrigin, proofFor } from '../test/proof.js';
 import { takeRefusals } from '../test/noClaude.js';
 import type { CommandOptions, CommandResult } from './command.js';
-import { BUNDLE_COMMAND_DIR, DEFAULT_OPEN_RATE, openFileArgs, opensExactly, parseGotoSpec, parseOpenFileRequest, resolveFilePath, detectEditors, EDITOR_TIMEOUT_MS, KNOWN_EDITORS, MAC_OPEN, parseOpenRequest, type DetectionFs, type EditorOptions, type FoundEditor } from './editors.js';
+import { BUNDLE_COMMAND_DIR, DEFAULT_OPEN_RATE, editorPath, openFileArgs, opensExactly, parseGotoSpec, parseOpenFileRequest, resolveFilePath, detectEditors, EDITOR_TIMEOUT_MS, KNOWN_EDITORS, MAC_OPEN, parseOpenRequest, type DetectionFs, type EditorOptions, type FoundEditor } from './editors.js';
 import type { RunningServer } from './index.js';
 import { startServerWithInternals, type ServerInternals } from './server.js';
 
@@ -802,6 +802,21 @@ describe('parseOpenFileRequest, resolveFilePath and openFileArgs', () => {
     expect(parseGotoSpec('/proj/evil.code-workspace:5')).toEqual({ path: '/proj/evil.code-workspace', line: 5, column: 1 });
     expect(opensExactly(['--goto', '/d/a.ts:3:4'], '/d/a.ts')).toBe(true);
   });
+
+  it("refuses a realpath the editor would trim or normalize to another path (the W211 re-review's N1)", () => {
+    expect(editorPath('/proj/ ')).toBe('/proj');
+    expect(editorPath('/proj/evil.code-workspace ')).toBe('/proj/evil.code-workspace');
+    expect(editorPath(' \t/proj/n.md\t')).toBe('/proj/n.md');
+    expect(editorPath('/proj/a.ts')).toBe('/proj/a.ts');
+    expect(editorPath('/')).toBe('/');
+    for (const real of ['/proj/ ', '/proj/evil.code-workspace ', '/proj/n.md ', '/proj/\tx', '/proj/ /a.md']) {
+      expect(opensExactly(['--goto', real], real)).toBe(editorPath(real) === real);
+      expect(opensExactly(['--goto', `${real}:3`], real)).toBe(editorPath(real) === real);
+      expect(opensExactly(['-a', CURSOR_APP, real], real)).toBe(editorPath(real) === real);
+    }
+    expect(opensExactly(['--goto', '/proj/ '], '/proj/ ')).toBe(false);
+    expect(opensExactly(['-a', CURSOR_APP, '/proj/n.md '], '/proj/n.md ')).toBe(false);
+  });
 });
 
 describe('POST openFilePath: opening', () => {
@@ -880,6 +895,23 @@ describe('POST openFilePath: opening', () => {
     await writeFile(join(repo, 'wsx:1'), 'x');
     expect((await openFile(started, BG_ID, { editor: 'cursor', path: 'wsx:1' })).status).toBe(200);
     expect(started.runFile.calls[0]).toMatchObject({ file: MAC_OPEN, args: ['-a', CURSOR_APP, join(repo, 'wsx:1')] });
+  });
+
+  it.each([
+    [' ', undefined],
+    ['evil2.code-workspace ', 'evil2.code-workspace'],
+    ['n.md ', 'n.md'],
+  ])('400 for %j, a name the editor trims to a folder or a workspace, and never runs an editor', async (name, beside) => {
+    const started = await startFiles();
+    await writeFile(join(repo, name), 'x');
+    if (beside === 'evil2.code-workspace') await writeFile(join(repo, beside), '{}');
+    if (beside === 'n.md') await symlink(join(repo, 'src'), join(repo, beside));
+    for (const line of [undefined, 3]) {
+      const res = await openFile(started, BG_ID, { editor: 'cursor', path: join(repo, name), ...(line === undefined ? {} : { line }) });
+      expect(res.status).toBe(400);
+      expect(errorOf(res)).toMatch(/can't be opened safely/);
+    }
+    expect(started.runFile.calls).toHaveLength(0);
   });
 
   it('honours outside: true only for the realpath the 409 named, and asks again for another path', async () => {
