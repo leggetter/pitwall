@@ -222,6 +222,9 @@ export async function noteContinued(api: ApiClient, fromSessionId: string, short
 /** What a hand-off card says Clear and continue does, under the heading. */
 export const SPIN_OFF_CLEAR_NOTE =
   'Clear and continue types /clear into this job, then the prompt below as one message. The job, its name and its pull requests stay. Nothing runs until you click it.';
+/** Under a hand-off pitwall's recap found in the session's last message (W210), rather than its own block. */
+export const SPIN_OFF_RECAP_NOTE =
+  "pitwall's recap picked this prompt out of the session's last message. Check it's the hand-off before you click.";
 /** What the hand-off card's Start does, beside Clear and continue. */
 export const SPIN_OFF_HANDOFF_START_NOTE = 'Start opens New session filled in with this, to start a separate session instead. End session on the old one is yours to do.';
 /** The toast once a job is cleared and has its prompt. */

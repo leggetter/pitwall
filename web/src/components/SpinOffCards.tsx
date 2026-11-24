@@ -23,6 +23,7 @@ import {
   isHandoffProposal,
   SPIN_OFF_CLEAR_NOTE,
   SPIN_OFF_HANDOFF_START_NOTE,
+  SPIN_OFF_RECAP_NOTE,
   SPIN_OFF_NOTE, SPIN_OFF_UNREADABLE, SPIN_OFF_UNREADABLE_NEXT, spinOffTitle,
   type ListedSpinOff,
 } from '../spinOff.js';
@@ -138,6 +139,7 @@ function SpinOffCard({ item, onStart, onDismiss, onOpen, onCleared }: { item: Li
       {spinOff.kind === 'proposal' ? (
         <>
           <p className="approval-note">{canClear ? SPIN_OFF_CLEAR_NOTE : handoff ? SPIN_OFF_HANDOFF_START_NOTE : SPIN_OFF_NOTE}</p>
+          {spinOff.source === 'recap' && <p className="approval-note">{SPIN_OFF_RECAP_NOTE}</p>}
           {/* The whole path, as it is: the page can't know the real home, so it never shortens it to ~. */}
           <p className="approval-where">
             In <bdi className="approval-folder">{visibleString(spinOff.folder)}</bdi>

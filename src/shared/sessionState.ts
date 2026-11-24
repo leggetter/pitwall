@@ -77,6 +77,8 @@ export function waitingElsewhere(session: SessionSummary): WaitingElsewhere | un
  * an ended session, and its card in Needs you (not the row's own need) is what puts it there.
  */
 export function isHandedOff(session: SessionSummary): boolean {
+  // A failed or stopped job isn't handed off: Clear and continue would refuse it (W210's review, F6).
+  if (session.state === 'failed' || session.state === 'stopped') return false;
   return session.ended !== true && !session.stale && isOwnHandoff(session.sessionId, session.spinOff);
 }
 
@@ -163,7 +165,7 @@ function needsBadge(session: SessionSummary): StatusBadge {
   if (session.state === 'blocked' && session.stale) return { status: 'blocked-stale', label: `Blocked${reason}`, look: 'outline' };
   if (session.state === 'failed') return { status: 'failed', label: 'Failed', look: 'subtle-danger' };
   // Handed off (W210): not done, whatever Claude Code's state says: it carries on after /clear.
-  if (isHandedOff(session) && session.state !== 'stopped') return { status: 'handed-off', label: 'Handed off', look: 'subtle-warning' };
+  if (isHandedOff(session)) return { status: 'handed-off', label: 'Handed off', look: 'subtle-warning' };
   if (session.state === 'done') {
     // Claude Code calls it done, but its recap says it waits on someone else, CI or another session (W170).
     const waiting = waitingElsewhere(session);

@@ -962,7 +962,7 @@ describe('hiding its calls', () => {
 
 describe('a hand-off written by hand (W210)', () => {
   const PROMPT = 'Read /made/up/demo/NOW.md';
-  const MESSAGE = `NOW.md is rewritten, which finishes this session’s work. Start a new session with ${PROMPT}`;
+  const MESSAGE = `NOW.md is rewritten, which finishes this session’s work. Start a new session with \`${PROMPT}\`.`;
 
   async function handedOff(ending: string | null = MESSAGE, handoff: unknown = PROMPT) {
     const h = harness();
