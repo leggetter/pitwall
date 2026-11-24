@@ -219,6 +219,7 @@ pitwall's settled decisions, each with its reasoning. A decision record here say
 - **Rejected:** `vscode://` and `cursor://` links, which can't tell what's installed and may ask each time.
 - **Security:** it's a state-changing route that starts a process, so it had a security look, shared with resume's (W73).
 - **A limit a minute** (W85's security review, fixed in W87): at most 10 opens a minute, of any session in either editor, as well as the 4 commands at once it shares with stop, remove and resume. `open -a` returns as soon as the editor has the directory, so the 4 alone wouldn't stop a client with the key opening window after window.
+- **Files, from a link** (W211, Phil, 2026-11-24): the one exception to "never a path the page sends". A file link in the Terminal or Conversation tab sends its path; the server opens the realpath only when it's a regular file and not a `.code-workspace`, and asks you first, through the page, when it's outside every root ("any file but warn if outside of a workspace"). The editor is the one you last used, else the config file's `editor`, else a small menu. It runs each editor's own CLI with `--goto`, since `open -a` takes no line, and a file inside the session's directory opens in that folder's window. Planned: the detail is W211 in `PLAN.md` until it's built.
 
 ## D20 - Files for a new session reach it as `@` mentions of private copies
 
