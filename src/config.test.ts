@@ -144,6 +144,13 @@ describe('parseConfig', () => {
     for (const time of ['"18"', '"24:00"', '"6:00"', '"18:00:00"']) expect(fails(`{ "runRate": { "time": ${time} } }`)).toThrow(/"runRate.time" must be a time of day as HH:MM/);
   });
 
+  it('reads "editor" (W211), vscode or cursor, and refuses anything else', () => {
+    expect(parse('{}').editor).toBeUndefined();
+    expect(parse('{ "editor": "cursor" }').editor).toBe('cursor');
+    expect(parse('{ "editor": "vscode" }').warnings).toEqual([]);
+    for (const editor of ['"vim"', '"VSCode"', '1', 'null']) expect(fails(`{ "editor": ${editor} }`)).toThrow(`${FILE}: "editor" must be "vscode" or "cursor"`);
+  });
+
   it('refuses a profile named Customized or Custom, the name New session uses for its own choice (W155)', () => {
     expect(fails('{ "profiles": { "Customized": { "model": "sonnet" } } }')).toThrow(`${FILE}: "profiles.Customized" is a name New session uses for its own choice, Customized. Choose another.`);
     expect(fails('{ "profiles": { "customized": {} } }')).toThrow(/"profiles.customized" is a name New session uses/);

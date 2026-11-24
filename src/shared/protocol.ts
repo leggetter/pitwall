@@ -1486,6 +1486,8 @@ export const EDITORS_PATH = '/api/editors';
 
 export interface EditorList {
   editors: Editor[];
+  /** The config file's `editor` (W211), when that editor was found: the one a file link opens in when none was chosen before. */
+  default?: EditorId;
 }
 
 /** Body of a POST to openInEditorPath(). */
@@ -1509,6 +1511,42 @@ export interface OpenInEditorRequest {
  */
 export function openInEditorPath(sessionId: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/open`;
+}
+
+/** Body of a POST to openFilePath() (W211). `path` is as the link had it: absolute, `~/`, or relative to the session's directory. */
+export interface OpenFileRequest {
+  editor: EditorId;
+  path: string;
+  /** From 1, and only with `path`. */
+  line?: number;
+  /** From 1, and only with `line`. */
+  column?: number;
+  /** True only after the person said yes to a file outside every root (the 409 below). */
+  outside?: boolean;
+}
+
+/** The longest `path` a request may hold. */
+export const MAX_OPEN_FILE_PATH = 1024;
+/** The largest `line` and `column`. */
+export const MAX_OPEN_FILE_POSITION = 1_000_000;
+
+/** An ActionResult, or the 409 that asks first: the file's realpath is outside every root. */
+export type OpenFileResult = ActionResult | { ok: false; error: string; outside: true; path: string };
+
+/**
+ * Open a file in an editor from EditorList, from a link in a session's Terminal or Conversation tab
+ * (W211), answered with an OpenFileResult. POST with an OpenFileRequest. The server opens the path's
+ * realpath only when it's a regular file, never a `.code-workspace`; a relative path is read against
+ * the session's own directory and `~/` against home.
+ *
+ * - 400 for a malformed body, an editor that isn't in EditorList, a folder, or a `.code-workspace`.
+ * - 404 when the snapshot doesn't list the session, or the file isn't there ("No such file").
+ * - 409 when the session's directory has gone, or the file is outside every root and `outside` isn't
+ *   true: that answer has `outside: true` and the realpath as `path`, for the page to ask with.
+ * - 429, 502 and 504 as openInEditorPath()'s, sharing its limits.
+ */
+export function openFilePath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/open-file`;
 }
 
 // ---------------------------------------------------------------------------

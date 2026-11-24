@@ -28,6 +28,10 @@
 // variables) and the tools you chose as read-only (supervisor/connectors.ts). Variable names only,
 // never values: those come from pitwall's environment at each start.
 //
+// `editor` (W211) is `"vscode"` or `"cursor"`: the editor a file link in a session's Terminal or
+// Conversation tab opens in when you haven't chosen one yet in this browser. It's ignored when that
+// editor wasn't found.
+//
 // Security (D24):
 // - It never holds the token. A key named like one, or a GitHub token, anywhere
 //   in the file, is an error: PITWALL_TOKEN comes from the environment only,
@@ -101,6 +105,8 @@ export interface LoadedConfig {
   runRate?: RunRateTarget;
   /** The `supervisor` block (W184), checked: its connectors. Absent when the file has none. */
   supervisor?: SupervisorConfig;
+  /** The `editor` (W211): which editor a file link opens in by default. Absent when the file has none. */
+  editor?: 'vscode' | 'cursor';
   /** One line for each unknown key, to print on stderr. */
   warnings: string[];
 }
@@ -210,7 +216,7 @@ export function parseConfig(
   text: string,
   file: string,
   options: Pick<LoadConfigOptions, 'home' | 'realpath'> = {},
-): { roots?: ConfiguredRoot[]; work?: WorkChoices; profiles?: WorkProfile[]; runRate?: RunRateTarget; supervisor?: SupervisorConfig; warnings: string[] } {
+): { roots?: ConfiguredRoot[]; work?: WorkChoices; profiles?: WorkProfile[]; runRate?: RunRateTarget; supervisor?: SupervisorConfig; editor?: 'vscode' | 'cursor'; warnings: string[] } {
   const invalid = (at: number) =>
     new ConfigError(`${file} isn't valid JSON${at === -1 ? '' : ` at ${lineAndColumn(text, at)}`}. Comments and trailing commas are allowed.`);
   let stripped: string;
@@ -246,8 +252,10 @@ export function parseConfig(
     throw new ConfigError(`${file}: ${quote(key)} ${message}`);
   };
 
-  for (const key of Object.keys(value)) if (!['roots', 'work', 'profiles', 'runRate', 'supervisor'].includes(key)) unknown(key);
+  for (const key of Object.keys(value)) if (!['roots', 'work', 'profiles', 'runRate', 'supervisor', 'editor'].includes(key)) unknown(key);
+  if (Object.hasOwn(value, 'editor') && value.editor !== 'vscode' && value.editor !== 'cursor') fail('editor', 'must be "vscode" or "cursor"');
   const work = {
+    ...(Object.hasOwn(value, 'editor') ? { editor: value.editor as 'vscode' | 'cursor' } : {}),
     ...(Object.hasOwn(value, 'work') ? { work: parseWorkChoices(value.work, 'work', fail, unknown) } : {}),
     ...(Object.hasOwn(value, 'profiles') ? { profiles: parseProfiles(value.profiles, 'profiles', fail, unknown) } : {}),
     ...(Object.hasOwn(value, 'runRate') ? { runRate: parseRunRateTarget(value.runRate, 'runRate', fail, unknown) } : {}),

@@ -2,7 +2,7 @@
 // HTTP server and its /api/* checks, with the editors found given and a fake runFile, so no test
 // depends on this machine's editors or opens one. src/test/noClaude.ts refuses a real one anyway.
 // Made-up sessions only.
-import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,11 +10,11 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { WebSocket } from 'ws';
 import { RunError, type RunFile, type RunOptions } from '../index/exec.js';
 import type { Indexer } from '../index/index.js';
-import { EDITORS_PATH, openInEditorPath, removePath, stopPath, WS_PATH, type IndexSnapshot, type ServerMessage, type SessionSummary } from '../shared/protocol.js';
+import { EDITORS_PATH, openFilePath, openInEditorPath, removePath, stopPath, WS_PATH, type IndexSnapshot, type ServerMessage, type SessionSummary } from '../shared/protocol.js';
 import { pitwallOrigin, proofFor } from '../test/proof.js';
 import { takeRefusals } from '../test/noClaude.js';
 import type { CommandOptions, CommandResult } from './command.js';
-import { DEFAULT_OPEN_RATE, detectEditors, EDITOR_TIMEOUT_MS, KNOWN_EDITORS, MAC_OPEN, parseOpenRequest, type DetectionFs, type EditorOptions, type FoundEditor } from './editors.js';
+import { BUNDLE_COMMAND_DIR, DEFAULT_OPEN_RATE, openFileArgs, parseOpenFileRequest, resolveFilePath, detectEditors, EDITOR_TIMEOUT_MS, KNOWN_EDITORS, MAC_OPEN, parseOpenRequest, type DetectionFs, type EditorOptions, type FoundEditor } from './editors.js';
 import type { RunningServer } from './index.js';
 import { startServerWithInternals, type ServerInternals } from './server.js';
 
@@ -64,11 +64,20 @@ describe('detection, on macOS', () => {
     ]);
   });
 
+  it("finds each editor's own command in its bundle, the script that opens a file at a line (W211), only when it's a regular, executable file", async () => {
+    const code = `${VSCODE_APP}/Contents/Resources/app/bin/code`;
+    const found = await detectEditors({ platform: 'darwin', home: HOME, fs: fakeFs({ [VSCODE_APP]: 'dir', [code]: 'exe', [CURSOR_APP]: 'dir', [`${CURSOR_APP}/Contents/Resources/app/bin/cursor`]: 'file' }) });
+    expect(found).toEqual([
+      { id: 'vscode', label: 'VS Code', file: MAC_OPEN, args: ['-a', VSCODE_APP], cli: code },
+      { id: 'cursor', label: 'Cursor', file: MAC_OPEN, args: ['-a', CURSOR_APP] },
+    ]);
+  });
+
   it('looks in ~/Applications after /Applications', async () => {
     const mine = `${HOME}/Applications/Cursor.app`;
     const fs = fakeFs({ [mine]: 'dir' });
     expect(await detectEditors({ platform: 'darwin', home: HOME, fs })).toEqual([{ id: 'cursor', label: 'Cursor', file: MAC_OPEN, args: ['-a', mine] }]);
-    expect(fs.seen).toEqual([VSCODE_APP, `${HOME}/Applications/Visual Studio Code.app`, CURSOR_APP, mine]);
+    expect(fs.seen).toEqual([VSCODE_APP, `${HOME}/Applications/Visual Studio Code.app`, CURSOR_APP, mine, `${mine}/${BUNDLE_COMMAND_DIR}/cursor`]);
   });
 
   it("never takes a symlink, even to a directory, or a bundle that isn't a directory, and goes on to the next place", async () => {
@@ -94,15 +103,15 @@ describe('detection, elsewhere', () => {
     const fs = fakeFs({ '/usr/bin/code': 'exe', '/opt/bin/code': 'exe', '/home/pitwall-test/.local/bin/cursor': 'exe' });
     const found = await detectEditors({ platform: 'linux', path: '/opt/bin:/usr/bin:/home/pitwall-test/.local/bin', fs });
     expect(found).toEqual([
-      { id: 'vscode', label: 'VS Code', file: '/opt/bin/code', args: [] },
-      { id: 'cursor', label: 'Cursor', file: '/home/pitwall-test/.local/bin/cursor', args: [] },
+      { id: 'vscode', label: 'VS Code', file: '/opt/bin/code', args: [], cli: '/opt/bin/code' },
+      { id: 'cursor', label: 'Cursor', file: '/home/pitwall-test/.local/bin/cursor', args: [], cli: '/home/pitwall-test/.local/bin/cursor' },
     ]);
   });
 
   it("skips PATH entries that aren't absolute, and files that aren't regular and executable", async () => {
     const fs = fakeFs({ 'bin/code': 'exe', './code': 'exe', '/a/code': 'dir', '/b/code': 'file', '/c/code': 'exe', '/a/cursor': 'file' });
     const found = await detectEditors({ platform: 'linux', path: ':bin:.:/a:/b:/c', fs });
-    expect(found).toEqual([{ id: 'vscode', label: 'VS Code', file: '/c/code', args: [] }]);
+    expect(found).toEqual([{ id: 'vscode', label: 'VS Code', file: '/c/code', args: [], cli: '/c/code' }]);
     expect(fs.seen.every((file) => file.startsWith('/'))).toBe(true);
   });
 
@@ -110,13 +119,13 @@ describe('detection, elsewhere', () => {
   it('expands a leading ~ in a PATH entry to the home directory, and drops ~user/... with the other relative entries', async () => {
     const fs = fakeFs({ '/home/pitwall-test/.local/bin/code': 'exe', '~/bin/cursor': 'exe', '~other/bin/cursor': 'exe' });
     const found = await detectEditors({ platform: 'linux', home: '/home/pitwall-test', path: '~/bin:~other/bin:~/.local/bin', fs });
-    expect(found).toEqual([{ id: 'vscode', label: 'VS Code', file: '/home/pitwall-test/.local/bin/code', args: [] }]);
+    expect(found).toEqual([{ id: 'vscode', label: 'VS Code', file: '/home/pitwall-test/.local/bin/code', args: [], cli: '/home/pitwall-test/.local/bin/code' }]);
     expect(fs.seen.every((file) => file.startsWith('/home/pitwall-test/'))).toBe(true);
   });
 
   it('searches /usr/bin and /bin when no entry is absolute, as a child would', async () => {
     const fs = fakeFs({ '/usr/bin/code': 'exe', './code': 'exe' });
-    expect(await detectEditors({ platform: 'linux', path: '.::bin', fs })).toEqual([{ id: 'vscode', label: 'VS Code', file: '/usr/bin/code', args: [] }]);
+    expect(await detectEditors({ platform: 'linux', path: '.::bin', fs })).toEqual([{ id: 'vscode', label: 'VS Code', file: '/usr/bin/code', args: [], cli: '/usr/bin/code' }]);
     expect(fs.seen.every((file) => file.startsWith('/usr/bin/') || file.startsWith('/bin/'))).toBe(true);
   });
 
@@ -158,6 +167,10 @@ let dashed: string;
 let bidiDir: string;
 let c1Dir: string;
 let webRoot: string;
+/** Beside the root, so under none: W211's files outside the roots. */
+let outsideDir: string;
+/** A made-up home, for `~/`. */
+let homeDir: string;
 
 beforeAll(async () => {
   tmp = await realpath(await mkdtemp(join(tmpdir(), 'pitwall-test-editors-')));
@@ -169,6 +182,19 @@ beforeAll(async () => {
   webRoot = join(tmp, 'web');
   const outside = join(tmp, 'outside');
   for (const dir of [repo, dashed, bidiDir, c1Dir, webRoot, outside]) await mkdir(dir, { recursive: true });
+  outsideDir = outside;
+  homeDir = join(tmp, 'home');
+  await mkdir(join(homeDir, 'notes'), { recursive: true });
+  await mkdir(join(repo, 'src'));
+  await writeFile(join(repo, 'NOW.md'), 'x');
+  await writeFile(join(repo, 'src', 'a file.ts'), 'x');
+  await writeFile(join(repo, 'two.code-workspace'), '{}');
+  await writeFile(join(repo, 'with:7'), 'x');
+  await writeFile(join(root, 'sibling.md'), 'x');
+  await writeFile(join(outside, 'secret.txt'), 'x');
+  await writeFile(join(homeDir, 'notes', 'todo.md'), 'x');
+  await symlink(join(outside, 'secret.txt'), join(repo, 'link-out.txt'));
+  await symlink(join(repo, 'NOW.md'), join(repo, 'link-in.md'));
   await symlink(outside, join(root, 'escape'));
   await symlink(repo, join(root, 'alias'));
 });
@@ -296,7 +322,7 @@ async function start(
     indexer = fakeIndexer(),
     internals = {},
     editors = {},
-  }: { runFile?: ReturnType<typeof fakeRunFile>; found?: FoundEditor[]; indexer?: Indexer; internals?: ServerInternals; editors?: Pick<EditorOptions, 'openRate' | 'now'> } = {},
+  }: { runFile?: ReturnType<typeof fakeRunFile>; found?: FoundEditor[]; indexer?: Indexer; internals?: ServerInternals; editors?: Pick<EditorOptions, 'openRate' | 'now' | 'home' | 'defaultEditor'> } = {},
 ): Promise<Started> {
   const server = await startServerWithInternals(
     { indexer, token: TOKEN, webRoot, port: 0 },
@@ -460,7 +486,7 @@ describe('POST openInEditorPath: opening', () => {
   });
 
   it('runs a command found on PATH with the directory alone', async () => {
-    const started = await start({ found: [{ id: 'vscode', label: 'VS Code', file: '/usr/bin/code', args: [] }] });
+    const started = await start({ found: [{ id: 'vscode', label: 'VS Code', file: '/usr/bin/code', args: [], cli: '/usr/bin/code' }] });
     expect((await open(started, BG_ID, { editor: 'vscode' })).status).toBe(200);
     expect(started.runFile.calls.map(({ file, args }) => [file, args])).toEqual([['/usr/bin/code', [repo]]]);
   });
@@ -705,6 +731,219 @@ describe('POST openInEditorPath: opens a minute (W87)', () => {
   it("doesn't count toward spawn and resume's limit of sessions started a minute, or consult it", async () => {
     const started = await start({ internals: { actions: { spawnRate: { max: 1, windowMs: 60_000 }, now: () => 0 } }, editors: { now: () => 0 } });
     for (let i = 0; i < 3; i += 1) expect((await open(started, BG_ID)).status).toBe(200);
+  });
+});
+
+// ---------------------------------------------------------------- W211: files
+
+const CURSOR_CLI = `${CURSOR_APP}/Contents/Resources/app/bin/cursor`;
+const FILE_EDITORS: FoundEditor[] = [
+  { id: 'vscode', label: 'VS Code', file: MAC_OPEN, args: ['-a', VSCODE_APP], cli: `${VSCODE_APP}/Contents/Resources/app/bin/code` },
+  { id: 'cursor', label: 'Cursor', file: MAC_OPEN, args: ['-a', CURSOR_APP], cli: CURSOR_CLI },
+];
+
+function openFile(started: Started, sessionId: string, body: unknown, headers: Record<string, string> = {}): Promise<HttpResult> {
+  return request(
+    started.server.port,
+    'POST',
+    openFilePath(sessionId),
+    { authorization: `Bearer ${started.apiKey}`, origin: origin(started.server.port), 'content-type': 'application/json', ...headers },
+    typeof body === 'string' ? body : JSON.stringify(body),
+  );
+}
+
+const startFiles = (extra: Parameters<typeof start>[0] = {}) => start({ found: FILE_EDITORS, ...extra, editors: { home: homeDir, ...extra.editors } });
+
+describe('parseOpenFileRequest, resolveFilePath and openFileArgs', () => {
+  it('takes { editor, path } with an optional line, column and outside, and nothing else', () => {
+    expect(parseOpenFileRequest({ editor: 'cursor', path: 'a.ts', line: 3, column: 4, outside: true })).toEqual({
+      ok: true,
+      request: { editor: 'cursor', path: 'a.ts', line: 3, column: 4, outside: true },
+    });
+    expect(parseOpenFileRequest({ editor: 'cursor', path: 'a.ts' })).toEqual({ ok: true, request: { editor: 'cursor', path: 'a.ts', outside: false } });
+    const bad: unknown[] = [
+      null, [], 'x', {}, { editor: 'cursor' }, { path: 'a' }, { editor: 'vim', path: 'a' }, { editor: 'cursor', path: '' }, { editor: 'cursor', path: 1 },
+      { editor: 'cursor', path: 'a'.repeat(1025) }, { editor: 'cursor', path: 'a\u0000b' }, { editor: 'cursor', path: 'a\nb' }, { editor: 'cursor', path: 'a\u202eb' },
+      { editor: 'cursor', path: 'a', line: 0 }, { editor: 'cursor', path: 'a', line: -1 }, { editor: 'cursor', path: 'a', line: 1.5 }, { editor: 'cursor', path: 'a', line: '3' },
+      { editor: 'cursor', path: 'a', line: 1_000_001 }, { editor: 'cursor', path: 'a', column: 2 }, { editor: 'cursor', path: 'a', line: 1, column: 0 },
+      { editor: 'cursor', path: 'a', outside: 'yes' }, { editor: 'cursor', path: 'a', cwd: '/' },
+    ];
+    for (const body of bad) expect(parseOpenFileRequest(body).ok, JSON.stringify(body)).toBe(false);
+    expect(parseOpenFileRequest({ editor: 'cursor', path: 'a'.repeat(1024), line: 1_000_000 }).ok).toBe(true);
+    expect(parseOpenFileRequest(JSON.parse('{"__proto__": {}, "editor": "cursor", "path": "a"}')).ok).toBe(false);
+  });
+
+  it("reads ~ and ~/ against home, a relative path against the session's directory, and an absolute one as it is", () => {
+    expect(resolveFilePath('~/x/y.md', '/d', '/h')).toBe('/h/x/y.md');
+    expect(resolveFilePath('~', '/d', '/h')).toBe('/h');
+    expect(resolveFilePath('~other/x', '/d', '/h')).toBe('/d/~other/x');
+    expect(resolveFilePath('src/a.ts', '/d', '/h')).toBe('/d/src/a.ts');
+    expect(resolveFilePath('../b/a.ts', '/d/e', '/h')).toBe('/d/b/a.ts');
+    expect(resolveFilePath('/abs/a.ts', '/d', '/h')).toBe('/abs/a.ts');
+  });
+
+  it('builds the arguments: the directory first for a file inside it, --goto and the position only when given, :1 for a name that ends in a number', () => {
+    const cursor = FILE_EDITORS[1] as FoundEditor;
+    expect(openFileArgs(cursor, '/d', '/d/a.ts', 3, 4)).toEqual({ file: CURSOR_CLI, args: ['/d', '--goto', '/d/a.ts:3:4'] });
+    expect(openFileArgs(cursor, '/d', '/d/a.ts', 3)).toEqual({ file: CURSOR_CLI, args: ['/d', '--goto', '/d/a.ts:3'] });
+    expect(openFileArgs(cursor, '/d', '/d/a.ts')).toEqual({ file: CURSOR_CLI, args: ['/d', '--goto', '/d/a.ts'] });
+    expect(openFileArgs(cursor, '/d', '/d2/a.ts', 1)).toEqual({ file: CURSOR_CLI, args: ['--goto', '/d2/a.ts:1'] });
+    expect(openFileArgs(cursor, '/d', '/d/with:7')).toEqual({ file: CURSOR_CLI, args: ['/d', '--goto', '/d/with:7:1'] });
+    expect(openFileArgs({ ...cursor, cli: undefined } as unknown as FoundEditor, '/d', '/d/a.ts', 3)).toEqual({ file: MAC_OPEN, args: ['-a', CURSOR_APP, '/d/a.ts'] });
+  });
+});
+
+describe('POST openFilePath: opening', () => {
+  it("opens a file in the session's directory in that folder's window, with --goto, its realpath, the line and the column", async () => {
+    const started = await startFiles();
+    const res = await openFile(started, BG_ID, { editor: 'cursor', path: 'src/a file.ts', line: 12, column: 3 });
+    expect(res.json).toEqual({ ok: true });
+    expect(res.headers['cache-control']).toBe('no-store');
+    const [call] = started.runFile.calls;
+    expect(call?.file).toBe(CURSOR_CLI);
+    expect(call?.args).toEqual([repo, '--goto', `${repo}/src/a file.ts:12:3`]);
+    expect(call?.options.cwd).toBe(tmpdir());
+    expect(call?.options.env).toEqual({ HOME: '/Users/pitwall-test', KEEP_ME: 'yes' });
+  });
+
+  it('takes an absolute path, and a symlink to a file inside the roots opens its target', async () => {
+    const started = await startFiles();
+    expect((await openFile(started, BG_ID, { editor: 'vscode', path: join(repo, 'link-in.md') })).status).toBe(200);
+    expect(started.runFile.calls[0]?.args).toEqual([repo, '--goto', join(repo, 'NOW.md')]);
+  });
+
+  it("opens a file in another root's folder, or any under the roots but outside the session's directory, on its own", async () => {
+    const started = await startFiles();
+    expect((await openFile(started, BG_ID, { editor: 'cursor', path: '../sibling.md', line: 2 })).status).toBe(200);
+    expect(started.runFile.calls[0]?.args).toEqual(['--goto', `${join(root, 'sibling.md')}:2`]);
+  });
+
+  it('reads ~/ against the home directory, and a file there is outside the roots', async () => {
+    const started = await startFiles();
+    const asked = await openFile(started, BG_ID, { editor: 'cursor', path: '~/notes/todo.md' });
+    expect(asked.status).toBe(409);
+    expect(asked.json).toEqual({ ok: false, error: expect.stringContaining(join(homeDir, 'notes', 'todo.md')), outside: true, path: join(homeDir, 'notes', 'todo.md') });
+    expect(started.runFile.calls).toHaveLength(0);
+    expect((await openFile(started, BG_ID, { editor: 'cursor', path: '~/notes/todo.md', outside: true })).status).toBe(200);
+    expect(started.runFile.calls[0]?.args).toEqual(['--goto', join(homeDir, 'notes', 'todo.md')]);
+  });
+
+  it('asks first for a symlink out of the roots, with where it leads, and opens that realpath only after outside: true', async () => {
+    const started = await startFiles();
+    const target = join(outsideDir, 'secret.txt');
+    const asked = await openFile(started, BG_ID, { editor: 'cursor', path: 'link-out.txt' });
+    expect(asked.status).toBe(409);
+    expect(asked.json).toMatchObject({ ok: false, outside: true, path: target });
+    expect(started.runFile.calls).toHaveLength(0);
+    expect((await openFile(started, BG_ID, { editor: 'cursor', path: 'link-out.txt', outside: true })).status).toBe(200);
+    expect(started.runFile.calls[0]?.args).toEqual(['--goto', target]);
+  });
+
+  it('a file under the roots opens with outside: true too, and the question is only for those outside', async () => {
+    const started = await startFiles();
+    expect((await openFile(started, BG_ID, { editor: 'cursor', path: 'NOW.md', outside: true })).status).toBe(200);
+  });
+
+  it('opens with open -a and no line when the editor has no command of its own', async () => {
+    const started = await start({ editors: { home: homeDir } });
+    expect((await openFile(started, BG_ID, { editor: 'cursor', path: 'NOW.md', line: 3 })).status).toBe(200);
+    expect(started.runFile.calls[0]).toMatchObject({ file: MAC_OPEN, args: ['-a', CURSOR_APP, join(repo, 'NOW.md')] });
+  });
+
+  it("gives a file whose name ends in a number a line, so the editor doesn't read the name as one", async () => {
+    const started = await startFiles();
+    expect((await openFile(started, BG_ID, { editor: 'cursor', path: 'with:7' })).status).toBe(200);
+    expect(started.runFile.calls[0]?.args).toEqual([repo, '--goto', `${join(repo, 'with:7')}:1`]);
+  });
+});
+
+describe('POST openFilePath: refusals', () => {
+  it('404 "No such file." for a missing file, and never runs an editor', async () => {
+    const started = await startFiles();
+    const res = await openFile(started, BG_ID, { editor: 'cursor', path: 'nope.md' });
+    expect(res.status).toBe(404);
+    expect(errorOf(res)).toBe('No such file.');
+    expect(started.runFile.calls).toHaveLength(0);
+  });
+
+  it("400 for a folder, a .code-workspace file, and anything that isn't a plain body", async () => {
+    const started = await startFiles();
+    expect((await openFile(started, BG_ID, { editor: 'cursor', path: 'src' })).status).toBe(400);
+    expect((await openFile(started, BG_ID, { editor: 'cursor', path: 'two.code-workspace', outside: true })).status).toBe(400);
+    const cases: Array<[unknown, Record<string, string>?]> = [
+      [{ editor: 'cursor', path: 'NOW.md' }, { 'content-type': 'text/plain' }],
+      ['not json'],
+      [{ editor: 'cursor', path: 'NOW.md', cwd: '/' }],
+      [{ editor: 'cursor', path: 'a\u0000b' }],
+      [{ editor: 'cursor', path: 'NOW.md', line: 0 }],
+      [{ editor: 'cursor', path: 'x'.repeat(5000) }],
+    ];
+    for (const [body, headers] of cases) expect((await openFile(started, BG_ID, body, headers)).status, JSON.stringify(body).slice(0, 60)).toBe(400);
+    expect(started.runFile.calls).toHaveLength(0);
+  });
+
+  it("400 for an editor that wasn't found; the session's lookups answer as the folder route's: 404, 409", async () => {
+    const started = await startFiles({ found: [FILE_EDITORS[0] as FoundEditor] });
+    expect((await openFile(started, BG_ID, { editor: 'cursor', path: 'NOW.md' })).status).toBe(400);
+    const both = await startFiles();
+    expect((await openFile(both, '00000000-0000-4000-8000-000000000000', { editor: 'cursor', path: 'NOW.md' })).status).toBe(404);
+    expect((await openFile(both, MISSING_ID, { editor: 'cursor', path: 'NOW.md' })).status).toBe(409);
+    expect((await openFile(both, GONE_ID, { editor: 'cursor', path: 'NOW.md' })).status).toBe(409);
+    expect((await openFile(both, ESCAPE_ID, { editor: 'cursor', path: 'secret.txt' })).status).toBe(409);
+  });
+
+  it('shares the folder route\'s credentials: 403 for another Origin, 401 without one', async () => {
+    const started = await startFiles();
+    const { port } = started.server;
+    const body = JSON.stringify({ editor: 'cursor', path: 'NOW.md' });
+    const post = (headers: Record<string, string>) => request(port, 'POST', openFilePath(BG_ID), { 'content-type': 'application/json', ...headers }, body);
+    expect((await post({ authorization: `Bearer ${TOKEN}`, origin: origin(port) })).status).toBe(403);
+    expect((await post({ authorization: `Bearer ${started.apiKey}` })).status).toBe(403);
+    expect((await post({ authorization: `Bearer ${started.apiKey}`, origin: 'http://evil.example' })).status).toBe(403);
+    expect((await post({ origin: origin(port) })).status).toBe(401);
+    expect(started.runFile.calls).toHaveLength(0);
+  });
+
+  it("counts toward the folder route's 10 opens a minute, and an asked-first or refused open doesn't count", async () => {
+    const started = await startFiles({ editors: { openRate: { max: 2, windowMs: 60_000 }, now: () => 0 } });
+    await openFile(started, BG_ID, { editor: 'cursor', path: 'nope.md' });
+    await openFile(started, BG_ID, { editor: 'cursor', path: 'link-out.txt' });
+    expect((await openFile(started, BG_ID, { editor: 'cursor', path: 'NOW.md' })).status).toBe(200);
+    expect((await open(started, BG_ID)).status).toBe(200);
+    const limited = await openFile(started, BG_ID, { editor: 'cursor', path: 'NOW.md' });
+    expect(limited.status).toBe(429);
+    expect(limited.headers['retry-after']).toBeDefined();
+  });
+
+  it("shares the folder route's command slots: 429 while they're full", async () => {
+    const release: Array<() => void> = [];
+    const runFile = fakeRunFile(() => new Promise<string>((resolve) => release.push(() => resolve(''))));
+    const started = await startFiles({ runFile, internals: { actions: { maxConcurrentCommands: 1 } } });
+    const first = openFile(started, BG_ID, { editor: 'cursor', path: 'NOW.md' });
+    await vi.waitFor(() => expect(runFile.calls).toHaveLength(1));
+    expect((await open(started, BG_ID)).status).toBe(429);
+    expect((await openFile(started, BG_ID, { editor: 'cursor', path: 'NOW.md' })).status).toBe(429);
+    release[0]?.();
+    expect((await first).status).toBe(200);
+  });
+
+  it('502 when the editor exits non-zero, with a short line and none of its output', async () => {
+    const runFile = fakeRunFile(async () => {
+      throw new RunError('exit', 'secret output');
+    });
+    const started = await startFiles({ runFile });
+    const res = await openFile(started, BG_ID, { editor: 'cursor', path: 'NOW.md' });
+    expect(res.status).toBe(502);
+    expect(errorOf(res)).not.toContain('secret');
+  });
+});
+
+describe('GET EDITORS_PATH: the config file\'s default editor (W211)', () => {
+  it('serves `default` only when that editor was found', async () => {
+    const found = await startFiles({ editors: { defaultEditor: 'cursor' } });
+    expect((await request(found.server.port, 'GET', EDITORS_PATH, { authorization: `Bearer ${found.apiKey}` })).json).toMatchObject({ default: 'cursor' });
+    const missing = await startFiles({ found: [FILE_EDITORS[0] as FoundEditor], editors: { defaultEditor: 'cursor' } });
+    expect((await request(missing.server.port, 'GET', EDITORS_PATH, { authorization: `Bearer ${missing.apiKey}` })).json).toEqual({ editors: [{ id: 'vscode', label: 'VS Code' }] });
   });
 });
 
