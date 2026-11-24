@@ -417,7 +417,7 @@ describe('the hand-off (W210)', () => {
     const kept = recap({ handoff: 'Read ~/oss/demo/NOW.md\nthen carry on' });
     const file = JSON.parse(storedText(A, kept));
     expect(file.recap.handoff).toBe('Read ~/oss/demo/NOW.md\nthen carry on');
-    expect(parseStoredRecap(storedText(A, kept), A, NOW)?.handoff).toBe('Read ~/oss/demo/NOW.md\nthen carry on');
+    expect((parseStoredRecap(storedText(A, kept), A, NOW) as SessionRecap).handoff).toBe('Read ~/oss/demo/NOW.md\nthen carry on');
     expect(JSON.parse(storedText(A, recap())).recap).not.toHaveProperty('handoff');
     expect(parseStoredRecap(storedText(A, recap()), A, NOW)).not.toHaveProperty('handoff');
   });

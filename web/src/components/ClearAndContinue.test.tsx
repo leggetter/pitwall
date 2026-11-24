@@ -198,7 +198,7 @@ describe('a hand-off written by hand, from the recap (W210)', () => {
     expect(buttons()).toEqual(expect.arrayContaining(['Start new session…', 'End session…']));
     expect(buttons()).not.toContain('Clear and continue');
     cleanup();
-    renderDashboard(fakeServer(), snap('background', { ...fromRecap(), prompt: `${RECAP_PROMPT}\\` }));
+    renderDashboard(fakeServer(), snap('background', { kind: 'proposal', key: KEY, folder: DEMO, prompt: `${RECAP_PROMPT}\\`, source: 'recap' }));
     expect(buttons()).not.toContain('Clear and continue');
   });
 
