@@ -523,7 +523,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       if (typeof key !== 'string') return answer(400, { ok: false, error: 'The body must be { key }, the proposal’s key.' });
       if (proposal === undefined || proposal.key !== key) return answer(409, { ok: false, error: 'That session has proposed something else since. Read its new proposal first.' });
       if (proposal.kind !== 'proposal') return answer(409, { ok: false, error: proposal.problem });
-      if (session.kind !== 'background' || !proposal.prompt.startsWith(`Continues session ${session.sessionId}.`)) return answer(409, { ok: false, error: 'Clear and continue is for a running background session. Start a new session instead.' });
+      if (session.kind !== 'background' || (proposal.source !== 'recap' && !proposal.prompt.startsWith(`Continues session ${session.sessionId}.`))) return answer(409, { ok: false, error: 'Clear and continue is for a running background session. Start a new session instead.' });
       if (proposal.prompt.includes(CLEAR_TIMEOUT_MARKER)) return answer(504, { ok: false, error: 'The job didn’t list a new session id in time, so the prompt was not typed. /clear may or may not have run: check the job.' });
       return answer(200, { ok: true, sessionId: '00000000-0000-4000-8000-0000000168ff' });
     }

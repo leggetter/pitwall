@@ -7,7 +7,7 @@
 // changed another root's repo most kept in its own root's tab, its row "also in" that repo (W149);
 // and a session's proposal for a new session, a card over Needs you's rows, counted there (W163).
 
-import { API_SERVER, CODE, DEMO_APP, DEMO_APP_WEB, DOCS_SITE, handoffProposal, NAMES, OSS, SDK_CLI, SPIN_OFF, SPIN_OFF_PROMPT } from '../fixtures.js';
+import { API_SERVER, CODE, DEMO_APP, DEMO_APP_WEB, DOCS_SITE, handoffProposal, NAMES, recapHandoffProposal, OSS, SDK_CLI, SPIN_OFF, SPIN_OFF_PROMPT } from '../fixtures.js';
 import type { Part } from '../runner.js';
 import { chooseInRepoList, focused, listHeading, openFromRow, openRepoList, repoItem, repoLabels, row, rowNames, selectedRepo, viewName, VIEW } from './_dom.js';
 
@@ -227,6 +227,34 @@ const part: Part = {
       t.expectEqual(t.server.records.clears, [], 'nothing was sent to a session');
       t.expectEqual(t.server.records.actions, [], 'and nothing was ended');
       t.server.world.spinOff(talker.sessionId, undefined);
+      t.server.broadcast();
+      await page.waitFor('the card to go', `!${card}`);
+    });
+
+    await t.step("a hand-off the recap found shows as Handed off, and its card offers Clear and continue (W210)", async () => {
+      const card = `document.querySelector('.session-list li.spin-off-card')`;
+      t.server.clearRecords();
+      const job = t.server.world.byName(NAMES.running);
+      t.server.world.spinOff(job.sessionId, recapHandoffProposal());
+      t.server.broadcast();
+      await page.waitFor('the card', `!!${card}`);
+      const look = await page.evaluate<{ heading: string; buttons: string[]; left: number; right: number }>(`(() => {
+        const li = ${card};
+        const r = li.getBoundingClientRect();
+        const row = [...document.querySelectorAll('.session-list .sessions > li.session')].find((each) => each.querySelector('.session-name')?.textContent.trim() === ${JSON.stringify(NAMES.running)});
+        return { heading: li.querySelector('h4').textContent, buttons: [...li.querySelectorAll('.approval-actions button')].map((b) => b.textContent.trim()), left: r.left, right: r.right };
+      })()`);
+      t.expectEqual(look.heading, `${NAMES.running} handed off to free up context`, "the heading names the session that handed off");
+      t.expectEqual(look.buttons, ['Clear and continue', 'Start new session…', 'Open session', 'Dismiss'], 'Clear and continue, Start new session, Open session and Dismiss');
+      t.expect(look.left >= 0 && look.right <= t.viewport.width, 'inside the window', look);
+      await t.shot('handoff-recap');
+      // The row itself isn't in Needs you (a finished-looking row isn't); All sessions shows its badge.
+      await chooseInRepoList(t, 'All sessions');
+      const badge = await page.evaluate<string | null>(`([...document.querySelectorAll('.session-list .sessions > li.session')].find((each) => each.querySelector('.session-name')?.textContent.trim() === ${JSON.stringify(NAMES.running)})?.querySelector('.badge.state-handed-off')?.textContent.trim()) ?? null`);
+      t.expectEqual(badge, 'Handed off', "the row's badge says Handed off");
+      await t.shot('handoff-recap-row');
+      await chooseInRepoList(t, 'Needs you');
+      t.server.world.spinOff(job.sessionId, undefined);
       t.server.broadcast();
       await page.waitFor('the card to go', `!${card}`);
     });
