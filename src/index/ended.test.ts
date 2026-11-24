@@ -140,6 +140,7 @@ describe('the ended-session scanner: the rule (spike 006, finding 7)', () => {
           attendedAt: ago(30),
           aiTitle: 'Fix the scheduler race',
           askedYou: { reason: 'question', excerpt: 'I found the race. Shall I push the fix?' },
+          assistantEnding: 'I found the race. Shall I push the fix?',
         },
       },
     ]);

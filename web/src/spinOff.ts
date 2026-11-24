@@ -18,7 +18,7 @@
 // - The index clears a proposal when the session's next turn ends without one, or a prompt comes.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { endsWithBackslash, isHandoffOf } from '../../src/shared/handoff.js';
+import { endsWithBackslash, isOwnHandoff } from '../../src/shared/handoff.js';
 import { clearAndContinuePath, continuedPath, spinOffPath, type ClearAndContinueResult, type SessionGroup, type SessionSummary, type SpinOff, type SpinOffCheck } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
 import { browserStorage, type StorageSource } from './groupState.js';
@@ -163,6 +163,9 @@ export async function checkSpinOff(api: ApiClient, sessionId: string, key: strin
 /** The card's heading: the session that asked, by name. */
 export const spinOffTitle = (name: string): string => `${name} proposes a new session`;
 
+/** A hand-off card's heading (W210): the session that handed off, by name. */
+export const handoffTitle = (name: string): string => `${name} handed off to free up context`;
+
 /** What Start does, under the heading. */
 export const SPIN_OFF_NOTE = 'Start opens New session filled in with this, to read and change before it runs. Nothing starts until you start it there.';
 
@@ -180,7 +183,7 @@ export const SPIN_OFF_UNREADABLE_NEXT = 'Open the session to read it, or ask it 
 export function canClearAndContinue(session: SessionSummary, spinOff: SpinOff): boolean {
   return (
     spinOff.kind === 'proposal' &&
-    isHandoffOf(session.sessionId, spinOff.prompt) &&
+    isOwnHandoff(session.sessionId, spinOff) &&
     !endsWithBackslash(spinOff.prompt) &&
     session.kind === 'background' &&
     session.shortId !== undefined &&
@@ -191,7 +194,7 @@ export function canClearAndContinue(session: SessionSummary, spinOff: SpinOff): 
 }
 
 /** Whether the proposal is `session`'s own hand-off, whatever kind of session it is. */
-export const isHandoffProposal = (session: Pick<SessionSummary, 'sessionId'>, spinOff: SpinOff): boolean => spinOff.kind === 'proposal' && isHandoffOf(session.sessionId, spinOff.prompt);
+export const isHandoffProposal = (session: Pick<SessionSummary, 'sessionId'>, spinOff: SpinOff): boolean => isOwnHandoff(session.sessionId, spinOff);
 
 export type ClearOutcome = { kind: 'cleared'; sessionId: string } | { kind: 'failed'; error: string };
 
@@ -219,6 +222,9 @@ export async function noteContinued(api: ApiClient, fromSessionId: string, short
 /** What a hand-off card says Clear and continue does, under the heading. */
 export const SPIN_OFF_CLEAR_NOTE =
   'Clear and continue types /clear into this job, then the prompt below as one message. The job, its name and its pull requests stay. Nothing runs until you click it.';
+/** Under a hand-off pitwall's recap found in the session's last message (W210), rather than its own block. */
+export const SPIN_OFF_RECAP_NOTE =
+  "pitwall's recap picked this prompt out of the session's last message. Check it's the hand-off before you click.";
 /** What the hand-off card's Start does, beside Clear and continue. */
 export const SPIN_OFF_HANDOFF_START_NOTE = 'Start opens New session filled in with this, to start a separate session instead. End session on the old one is yours to do.';
 /** The toast once a job is cleared and has its prompt. */

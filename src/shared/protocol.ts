@@ -52,9 +52,13 @@ export interface AskedYou {
  *   session's text: a field over its limit, a hidden character, a line it doesn't know, no folder or
  *   no prompt.
  * `key` tells one proposal from the next, for the page's Dismiss: a hash of the block's text.
+ * `source: 'recap'` (W210, a hand-off shows as Handed off): the proposal isn't a block at all. The recap
+ * quoted a hand-off written by hand, and the server kept it because it appears word for word in the
+ * session's newest assistant message (src/recaps/handoff.ts). Only the server sets it, never a block's
+ * text; its `folder` is the session's own and it is that session's hand-off (isOwnHandoff()).
  */
 export type SpinOff =
-  | { kind: 'proposal'; key: string; folder: string; name?: string; prompt: string }
+  | { kind: 'proposal'; key: string; folder: string; name?: string; prompt: string; source?: 'recap' }
   | { kind: 'unreadable'; key: string; problem: string };
 
 /** The longest folder a spin-off block names (W163). */
@@ -2093,6 +2097,14 @@ export interface SessionRecap {
   planItems?: PlanItem[];
   /** W172: how the plan changed during the session, at most RECAP_FIELD_MAX characters. Absent when it records no change. */
   planChanges?: string;
+  /**
+   * W210 (a hand-off shows as Handed off): the prompt the next session starts from, as the model quoted
+   * it from the newest assistant message when that message is the session's own hand-off, such as "Read
+   * <path>/NOW.md". Untrusted and not yet checked against the transcript: the engine only turns it into
+   * SessionSummary.spinOff (source 'recap') while it appears word for word in that message, passes
+   * handoffProblem(), and no prompt or newer message has come since. Absent when there is none.
+   */
+  handoff?: string;
   /** ISO 8601: when it was made. */
   at: string;
   /** ISO 8601: the newest transcript entry it covers. */

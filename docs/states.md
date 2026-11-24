@@ -27,6 +27,7 @@ The first rule that holds wins. A row shows no badge for `idle`; the session vie
 | `recap` | Waiting on you | Its current recap says it waits on you. A session that is also busy keeps Busy's dot. |
 | `blocked-stale` | Blocked | Claude Code says blocked, nothing needs you, and it is stale. Outlined. |
 | `failed` | Failed | The background state is `failed`. |
+| `handed-off` | Handed off | Its newest message is its own hand-off (W210, a hand-off shows as Handed off): a `Continues session <id>.` block, or its recap's word-for-word quote of a hand-off written by hand. Whatever Claude Code's state, but not `failed` or `stopped`: it carries on after `/clear`, so it is not done. Its card in Needs you offers Clear and continue, until your next prompt or the job's new session id. |
 | `waiting-on` | Waiting on CI / another session / someone else | Claude Code says `done`, but pitwall's current recap says it waits on someone else. Never needs you. |
 | `done` | Done | The background state is `done` and the recap names no one else. |
 | `stopped` | Stopped | The background state is `stopped`. |

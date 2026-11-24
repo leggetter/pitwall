@@ -51,11 +51,12 @@ Still to do:
 
 ## Next, in order
 
-1. **W210 (a hand-off shows as Handed off, with Clear and continue, even when it's written by hand),** from `main` (`PLAN.md`, W210), now (Phil, 2026-11-24: "go with your recs"): a builder in `.worktrees/w210-handed-off`, then a fresh xhigh security review, since it types text a model quoted into a job's PTY.
-2. **W179 (the supervisor keeps its conversation short),** from `main` (`PLAN.md`, W179): a new conversation when its context is over a limit, or over a lower one when Ask the supervisor (W178) names a different session.
-3. **W207 (a message box on a running background session's Conversation tab, sent as you), with W208 (which views you use: a local count),** from `main` (`PLAN.md`, W207 and W208): the spike first, then Phil's call, then the build and a security review.
-4. **The other open items** (`PLAN.md`, "Open items"), one at a time: W191 (the supervisor uses your sessions' connectors; a spike first), W196 (a resume's copy cleaned up), W198 (the attachments folder's trust), W194 (a resumed job's latest transcript), W195 (Not for me on a session row), W199 (a snooze holds the session's PR too), W200 (a mention owns a PR inside the PR's repo), W205 (npm's allowScripts covers node-pty and esbuild), W206 (a detached terminal attaches again when you click or type in it) and W209 (a spin-off block in the Conversation tab is a card you can start, with a link a terminal can open).
-5. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
+1. **W210 (a hand-off shows as Handed off, with Clear and continue, even when it's written by hand),** from `main` (`PLAN.md`, W210), built on `w210-handed-off` and in review as a draft PR (Phil, 2026-11-24: "go with your recs"); next a fresh xhigh security review, since it types text a model quoted into a job's PTY.
+2. **W199 (a snooze holds the session's PR too: a snoozed session's row leaves Needs you even while its PR needs attention, until the PR has something new),** from `main` (`PLAN.md`, W199): Phil asked for it on 2026-11-24 through another session, because a snoozed session (56a12cbe) stayed in Needs you on a PR that was already failing before the snooze.
+3. **W179 (the supervisor keeps its conversation short),** from `main` (`PLAN.md`, W179): a new conversation when its context is over a limit, or over a lower one when Ask the supervisor (W178) names a different session.
+4. **W207 (a message box on a running background session's Conversation tab, sent as you), with W208 (which views you use: a local count),** from `main` (`PLAN.md`, W207 and W208): the spike first, then Phil's call, then the build and a security review.
+5. **The other open items** (`PLAN.md`, "Open items"), one at a time: W191 (the supervisor uses your sessions' connectors; a spike first), W196 (a resume's copy cleaned up), W198 (the attachments folder's trust), W194 (a resumed job's latest transcript), W195 (Not for me on a session row), W199 (a snooze holds the session's PR too), W200 (a mention owns a PR inside the PR's repo), W205 (npm's allowScripts covers node-pty and esbuild), W206 (a detached terminal attaches again when you click or type in it) and W209 (a spin-off block in the Conversation tab is a card you can start, with a link a terminal can open).
+6. **M6 (triage),** on the coordination model ("M6 - Triage" and "Considering: Peers" in `PLAN.md`), with Peers part of it, show only.
 
 ## Open questions for Phil
 
