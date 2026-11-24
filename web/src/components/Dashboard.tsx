@@ -162,7 +162,7 @@ import { pendingLink, prPrefill, withPendingLinks, type PendingLinks } from '../
 import { createPanelWidthStore } from '../panelWidth.js';
 import { relayAlertText } from '../relay.js';
 import { tabAttention, tabGroups, writeStoredTab } from '../rootTabs.js';
-import { clearedText, isHandoffProposal, noteContinued, openSpinOffs, spinOffCount, useDismissedSpinOffs } from '../spinOff.js';
+import { clearedText, noteContinued, openSpinOffs, spinOffCount, useDismissedSpinOffs } from '../spinOff.js';
 import {
   browserNavigation,
   findGroup,
@@ -2266,7 +2266,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
           onClose={() => setSpinOffStart(undefined)}
           onStarted={(session) => {
             // Started: its card goes, as a dismissed one does. A hand-off's session continues the old one (W168): the server records it.
-            if (api && isHandoffProposal({ sessionId: spinOffStart.sessionId }, { kind: 'proposal', key: spinOffStart.key, folder: spinOffStart.cwd, prompt: spinOffStart.prompt })) {
+            if (api && spinOffStart.handoff === true) {
               void noteContinued(api, spinOffStart.sessionId, session.shortId);
             }
             dismissedSpinOffs.dismiss(spinOffStart.sessionId, spinOffStart.key);

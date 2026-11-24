@@ -307,7 +307,7 @@ describe('the routes', () => {
     ...overrides,
   });
 
-  function routes(summary: SessionSummary, options: { spawned?: boolean; calls?: Array<{ job: unknown; prompt: string }>; result?: Awaited<ReturnType<ClearAndContinue['run']>> } = {}) {
+  function routes(summary: SessionSummary, options: { recapHandoff?: (session: SessionSummary) => SpinOff | undefined; spawned?: boolean; calls?: Array<{ job: unknown; prompt: string }>; result?: Awaited<ReturnType<ClearAndContinue['run']>> } = {}) {
     const snapshot: IndexSnapshot = { generatedAt: '2026-11-18T10:00:00.000Z', roots: ['/tmp'], groups: [{ key: '/tmp', label: 'tmp', kind: 'git', root: '/tmp', sessions: [summary] }], source: { ok: true } };
     const calls = options.calls ?? [];
     const lineage = new LineageStore();
@@ -317,6 +317,7 @@ describe('the routes', () => {
       runner: { run: async (job, prompt) => (calls.push({ job, prompt }), options.result ?? { ok: true, sessionId: NEW }), close: async () => {} },
       spawned: { has: () => options.spawned ?? true },
       lineage,
+      ...(options.recapHandoff === undefined ? {} : { recapHandoff: options.recapHandoff }),
     });
     const post = async (path: string, body: unknown, type = 'application/json') => {
       const response = await app.request(path, { method: 'POST', headers: { 'content-type': type }, body: typeof body === 'string' ? body : JSON.stringify(body) });
@@ -356,6 +357,38 @@ describe('the routes', () => {
     expect((await r.post(clearAndContinuePath(OLD), 'not json')).status).toBe(400);
     expect((await r.post(clearAndContinuePath(OLD), { key: KEY, pad: 'x'.repeat(400) })).status).toBe(413);
     expect(r.calls).toEqual([]);
+  });
+
+  describe('a hand-off from the recap (W210)', () => {
+    const RECAP_PROMPT = 'Read /made/up/NOW.md';
+    const fromRecap: SpinOff = { kind: 'proposal', key: KEY, folder: '/tmp', prompt: RECAP_PROMPT, source: 'recap' };
+
+    it('types the proposal’s own text once the engine works out the same hand-off again now', async () => {
+      const r = routes(session({}, fromRecap), { recapHandoff: () => fromRecap });
+      expect(await r.post(clearAndContinuePath(OLD), { key: KEY })).toMatchObject({ status: 200, json: { ok: true, sessionId: NEW } });
+      expect(r.calls).toEqual([{ job: { sessionId: OLD, shortId: JOB, cwd: '/tmp' }, prompt: RECAP_PROMPT }]);
+    });
+
+    it('refuses, typing nothing, when the newest message has changed, the engine gives another prompt, or there is no engine', async () => {
+      const cases: Array<[string, ReturnType<typeof routes>]> = [
+        ['message changed', routes(session({}, fromRecap), { recapHandoff: () => undefined })],
+        ['another prompt', routes(session({}, fromRecap), { recapHandoff: () => ({ ...fromRecap, prompt: 'Read /made/up/other.md' }) })],
+        ['another key', routes(session({}, fromRecap), { recapHandoff: () => ({ ...fromRecap, key: 'fedcba9876543210' }) })],
+        ['recaps off', routes(session({}, fromRecap))],
+        ['interactive', routes(session({ kind: 'interactive', shortId: undefined }, fromRecap), { recapHandoff: () => fromRecap })],
+      ];
+      for (const [label, r] of cases) {
+        expect([label, (await r.post(clearAndContinuePath(OLD), { key: KEY })).status]).toEqual([label, 409]);
+        expect(r.calls).toEqual([]);
+      }
+    });
+
+    it('takes no prompt from the request, and links a started session only to a session that proposes it', async () => {
+      const r = routes(session({}, fromRecap), { recapHandoff: () => fromRecap });
+      expect((await r.post(clearAndContinuePath(OLD), { key: KEY, prompt: 'Rm -rf' })).status).toBe(400);
+      expect(r.calls).toEqual([]);
+      expect(await r.post(continuedPath(OLD), { shortId: '0f0f0f0f' })).toMatchObject({ status: 200, json: { ok: true } });
+    });
   });
 
   it('passes the runner’s failure on with its status', async () => {

@@ -438,8 +438,8 @@ export async function startServerWithInternals(
     registerRecaps(app, indexer, recaps);
     registerFlags(app, { snapshots: flagged, store: flags, relay, recaps });
     registerSnoozes(app, { snapshots: snoozed, store: snoozes });
-    registerSpinOffs(app, { snapshots: indexer });
-    registerClearAndContinue(app, { snapshots: indexer, runner: clearAndContinue, spawned, lineage });
+    registerSpinOffs(app, { snapshots });
+    registerClearAndContinue(app, { snapshots, runner: clearAndContinue, spawned, lineage, ...(recaps === undefined ? {} : { recapHandoff: (session) => recaps.handoffOf(session) }) });
     registerSupervisor(app, supervisor, supervisorActions);
     registerMcp(app, mcp);
     registerUsage(app, options.usage);

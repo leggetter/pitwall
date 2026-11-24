@@ -3,6 +3,7 @@
 // tool (src/server/whyState.ts) explains them from this same code, so the two can't disagree. Pure, and
 // no text from a session beyond what the badge's label carries.
 import { CONTEXT_HIGH_TOKENS, CONTEXT_WARN_TOKENS, type RecapWaitingOn, type SessionSummary } from './protocol.js';
+import { isOwnHandoff } from './handoff.js';
 import { indexNeedsYou, isBusy, needsAttention } from './needsYou.js';
 
 /**
@@ -69,6 +70,21 @@ export function waitingElsewhere(session: SessionSummary): WaitingElsewhere | un
   return recap.waitingOn === 'you' || recap.waitingOn === 'nothing' ? undefined : recap.waitingOn;
 }
 
+/**
+ * A session whose newest message is its own hand-off (W210, a hand-off shows as Handed off): it handed
+ * itself over to free up context, and carries on after /clear, in the same job or a new session. The
+ * server sets SessionSummary.spinOff to such a proposal while the message is the newest and no prompt has
+ * come since: from a `spin-off` block that starts with its own "Continues session <id>." line (W168), or
+ * from its recap's quote of a hand-off written by hand, which appears word for word in the message
+ * (source 'recap', src/recaps/handoff.ts). A prompt of yours, or the job's new session id, ends it. Never
+ * an ended session, and its card in Needs you (not the row's own need) is what puts it there.
+ */
+export function isHandedOff(session: SessionSummary): boolean {
+  // A failed or stopped job isn't handed off: Clear and continue would refuse it (W210's review, F6).
+  if (session.state === 'failed' || session.state === 'stopped') return false;
+  return session.ended !== true && !session.stale && isOwnHandoff(session.sessionId, session.spinOff);
+}
+
 /** The session states the badges tell apart, as in the Badges table. */
 export type SessionStatus =
   | 'waiting'
@@ -78,6 +94,7 @@ export type SessionStatus =
   | 'recap'
   | 'blocked-stale'
   | 'failed'
+  | 'handed-off'
   | 'waiting-on'
   | 'done'
   | 'stopped'
@@ -109,6 +126,9 @@ export interface StatusBadge {
  * - 'recap': "Waiting on you", subtle as Asked you is (M5, W111): its current recap says it's waiting
  *   on you, as a job Claude Code calls done can be (Phil, 2026-10-29). It takes Done's place. A session
  *   that is also busy (W174) keeps Busy's 8 px dot before the label.
+ * A session whose newest message is its own hand-off shows "Handed off", subtle and warning, in Done's
+ * place, as a session whose newest message hands it over to free up context isn't done (W210; Phil,
+ * 2026-11-24: "we're just handing over to free up context"). Its card in Needs you offers Clear and continue.
  * A job Claude Code calls done whose current recap says it waits on someone else, on CI or on another
  * session shows "Waiting on someone else", "Waiting on CI" or "Waiting on another session" in Done's
  * place, subtle and neutral, never needing you (W170): "it's still marked as DONE" (Phil, 2026-11-09).
@@ -147,6 +167,8 @@ function needsBadge(session: SessionSummary): StatusBadge {
   // A stale blocked job keeps its "Blocked" text but loses the attention styling.
   if (session.state === 'blocked' && session.stale) return { status: 'blocked-stale', label: `Blocked${reason}`, look: 'outline' };
   if (session.state === 'failed') return { status: 'failed', label: 'Failed', look: 'subtle-danger' };
+  // Handed off (W210): not done, whatever Claude Code's state says: it carries on after /clear.
+  if (isHandedOff(session)) return { status: 'handed-off', label: 'Handed off', look: 'subtle-warning' };
   if (session.state === 'done') {
     // Claude Code calls it done, but its recap says it waits on someone else, CI or another session (W170).
     const waiting = waitingElsewhere(session);
@@ -185,6 +207,7 @@ export const STATUS_RULES: Readonly<Record<SessionStatus, string>> = {
   recap: "Its current recap says it's waiting on you (Needs you reason 'recap'). A busy session keeps Busy's dot.",
   'blocked-stale': 'Claude Code says blocked, nothing needs you, and it has had no activity for over 7 days (stale). Outlined.',
   failed: "Claude Code's background state is failed.",
+  'handed-off': "Its newest message is its own hand-off (spinOff is its own, from a `Continues session <id>.` block or its recap's word-for-word quote), whatever Claude Code's state, but not failed or stopped. It carries on after /clear, so it isn't done. Its card is in Needs you until your next prompt or the job's new session id.",
   'waiting-on': "Claude Code says done, but pitwall's own current recap says it waits on CI, another session or someone else.",
   done: "Claude Code's background state is done, and its recap doesn't say it waits on anyone else.",
   stopped: "Claude Code's background state is stopped.",

@@ -76,6 +76,17 @@ export const handoffProposal = (sessionId: string, timeout = false): SpinOff => 
   folder: DEMO_APP_WEB,
   prompt: `Continues session ${sessionId}.\nRead NOW.md, then start with the first item under "Next, in order".${timeout ? `\n(${CLEAR_TIMEOUT_MARKER})` : ''}`,
 });
+/**
+ * A made-up hand-off the recap found (W210, a hand-off shows as Handed off): a session wrote its hand-off by hand,
+ * so its prompt doesn't start with the continues line and the proposal says `source: 'recap'`.
+ */
+export const recapHandoffProposal = (): SpinOff => ({
+  kind: 'proposal',
+  key: '9e4b1d7a62c30f85',
+  folder: DEMO_APP_WEB,
+  prompt: 'Read NOW.md, then carry on with the made-up settings page work from the first item under "Next, in order".',
+  source: 'recap',
+});
 /** A cloned repo with no session (W106): the server places its PRs under it, so the page builds its group. */
 export const EVENT_RELAY = `${CODE}/event-relay`;
 

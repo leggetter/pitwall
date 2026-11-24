@@ -714,6 +714,7 @@ const BY_STATUS: Record<SessionStatus, Partial<SessionSummary>> = {
   recap: { needsYou: { reason: 'recap', text: 'Say whether to merge' } },
   'blocked-stale': { kind: 'background', state: 'blocked', stale: true },
   failed: { kind: 'background', state: 'failed', finished: true, alive: false },
+  'handed-off': { kind: 'background', state: 'done', finished: true, spinOff: { kind: 'proposal', key: '0123456789abcdef', folder: '/made/up', prompt: 'Read NOW.md', source: 'recap' } },
   'waiting-on': { kind: 'background', state: 'done', finished: true, recap: { waitingOn: 'CI', title: 't', forYou: 0, at: new Date(NOW).toISOString(), source: 'pitwall' } },
   done: { kind: 'background', state: 'done', finished: true },
   stopped: { kind: 'background', state: 'stopped', finished: true, alive: false },

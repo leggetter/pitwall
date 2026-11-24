@@ -22,7 +22,7 @@
 // (ensureLaunchDir()), each file a regular file of this user's, not a link, not writable by group or
 // others, at most MAX_BYTES, with exactly these fields, this version, the session id its name says,
 // canonical times, and a recap that readRecapAnswer() (prompt.ts), the check a model's answer gets,
-// takes back unchanged. Version 2 since W189: a recap kept before it was written for a reader with the
+// takes back unchanged. Version 3 since W210 (2 since W189): a recap kept before W189 was written for a reader with the
 // transcript open, so it's ignored, as a file of any other version is, and that session is recapped
 // again, by itself once it's idle if its process runs, or when its view opens. A pitwall from before
 // W189 ignores a version 2 file the same way. Anything else is ignored and counted, never a crash, and
@@ -43,8 +43,12 @@ import { readRecapAnswer, todoOf } from './prompt.js';
 /** The folder's name in pitwall's home. */
 export const RECAP_STORE_DIR_NAME = 'recap-store';
 
-/** The file format's version: a file with any other is ignored. 2 since W189 (recaps a cold reader can act on). */
-export const RECAP_STORE_VERSION = 2;
+/**
+ * The file format's version: a file with any other is ignored. 2 since W189 (recaps a cold reader can act
+ * on), 3 since W210 (a hand-off shows as Handed off): the recap prompt now says a hand-off isn't finished
+ * and quotes its prompt, so a recap kept before it is made again, and may carry `handoff`.
+ */
+export const RECAP_STORE_VERSION = 3;
 
 /**
  * How long a recap is kept, from the newer of when it was made and the newest entry it covers:
@@ -61,8 +65,9 @@ export const RECAP_KEEP_MS = ENDED_LISTED_DAYS * 24 * 60 * 60 * 1000;
  * W172's items, up to PLAN_ITEMS_MAX (15) of PLAN_ITEM_MAX (200) characters, and its changes, at most
  * 400, add 3,400 characters, 7,520 in all, about 30 KB at 4 bytes a character with the JSON around
  * them, so 40 KiB. W189's done, at most 400 more, brings it to 7,920, about 32 KB: still under it.
+ * W210's hand-off, up to SPAWN_PROMPT_MAX (16,384) characters, is 64 KiB at 4 bytes a character, so 112 KiB.
  */
-export const RECAP_STORE_MAX_BYTES = 40 * 1024;
+export const RECAP_STORE_MAX_BYTES = 112 * 1024;
 
 /** The most files read at load: pitwall lists at most ENDED_LISTED_MAX ended sessions, plus those running. */
 export const RECAP_STORE_MAX_FILES = 1000;
@@ -153,6 +158,7 @@ export function storedText(sessionId: string, recap: SessionRecap): string {
       plan: recap.plan ?? '',
       items: (planItems ?? []).map(({ text, state }) => ({ text, state })),
       changes: planChanges ?? '',
+      ...(recap.handoff === undefined ? {} : { handoff: recap.handoff }),
     },
   })}\n`;
 }
@@ -202,6 +208,8 @@ export function parseStoredRecap(text: string, sessionId: string, nowMs: number,
   if (!reading.ok || reading.repaired.length > 0) return undefined;
   const { answer } = reading;
   if (answer.summary !== raw.summary || answer.title !== raw.title || answer.waitingOn !== raw.waitingOn) return undefined;
+  // The hand-off (W210) as written, or none in the file and none in the answer.
+  if ((answer.handoff ?? '') !== (raw.handoff ?? '') || (raw.handoff !== undefined && typeof raw.handoff !== 'string')) return undefined;
   if (answer.goal !== raw.goal || answer.done !== raw.done || answer.workingOn !== raw.workingOn || answer.plan !== raw.plan) return undefined;
   if (answer.todos.length !== raw.todos.length) return undefined;
   // The plan's items (W172): exactly as written, changes "" for none; with an empty plan, none at all.

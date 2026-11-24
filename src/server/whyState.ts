@@ -6,7 +6,7 @@
 // (a prompt's reason, a job's line, a PR's repo): text from sessions or GitHub, plain and capped by the caller.
 import { CONTEXT_HIGH_TOKENS, CONTEXT_WARN_TOKENS, type PullRequestSummary, type SessionSummary } from '../shared/protocol.js';
 import { indexNeedsYou, isBusy, needsYouReason, ownedPrsBySession, prNeedKind } from '../shared/needsYou.js';
-import { contextLevel, isFlagged, isSnoozed, NEEDS_YOU_RULES, PR_NEED_RULES, snoozeBack, statusBadge, STATUS_RULES } from '../shared/sessionState.js';
+import { contextLevel, isFlagged, isHandedOff, isSnoozed, NEEDS_YOU_RULES, PR_NEED_RULES, snoozeBack, statusBadge, STATUS_RULES } from '../shared/sessionState.js';
 
 /** The rule behind isBusy(), in words. */
 export const BUSY_RULE =
@@ -32,6 +32,11 @@ export interface StateExplanation {
     prHeldWhileBusy?: { need: string };
     /** Which one line 2 explains when both hold. */
     won?: 'own' | 'pr';
+    /**
+     * W210: its hand-off's card (Clear and continue) is in Needs you and counts there, whatever the row's own
+     * need, until your next prompt or the job's new session id. Set only while it is handed off.
+     */
+    handoffCard?: { source: 'block' | 'recap'; rule: string };
   };
   flag: { flagged: boolean; at?: string; rule: string };
   snooze: { snoozed: boolean; at?: string; until?: string; endedAt?: string; endedBy?: 'time' | 'woken' | 'pr'; endedByPr?: string; heldPrs?: string[]; backInNeedsYou?: 'time' | 'woken' | 'pr' };
@@ -59,6 +64,13 @@ export function explainState(session: SessionSummary, everyone: readonly Session
   // A PR that needs you, held back because the session is busy (prNeedOf()).
   const held = busy ? owned?.find((pr) => prNeedKind(pr) !== undefined) : undefined;
   if (held !== undefined) needsYou.prHeldWhileBusy = { need: prNeedKind(held)! };
+
+  if (isHandedOff(session) && session.spinOff?.kind === 'proposal') {
+    needsYou.handoffCard = {
+      source: session.spinOff.source === 'recap' ? 'recap' : 'block',
+      rule: 'It handed itself over to free up context. Its card in Needs you offers Clear and continue with the prompt shown, until your next prompt or the job’s new session id.',
+    };
+  }
 
   const flagged = isFlagged(session);
   const snoozed = isSnoozed(session);

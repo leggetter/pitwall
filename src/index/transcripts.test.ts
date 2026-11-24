@@ -740,6 +740,7 @@ describe('createTranscriptReader', () => {
       lastUserPrompt: 'add a test',
       lastPromptMs: Date.parse(prompt.timestamp as string),
       attendedAt: new Date(Date.parse(prompt.timestamp as string)).toISOString(),
+      assistantEnding: 'Added the test.',
     });
   });
 
@@ -784,7 +785,7 @@ describe('createTranscriptReader', () => {
     const started = performance.now();
     const info = await reader().read(SID, [CWD]);
     expect(performance.now() - started).toBeLessThan(FAST_MS);
-    expect(info).toEqual({ transcript: 'ok', lastActivityAt: expect.any(String) });
+    expect(info).toEqual({ transcript: 'ok', lastActivityAt: expect.any(String), assistantEnding: expect.any(String) });
   });
 
   describe('titles', () => {
@@ -1272,6 +1273,7 @@ describe('readNewestEntries', () => {
         lastPromptMs: Date.parse(prompt.timestamp as string),
         attendedAt: new Date(Date.parse(prompt.timestamp as string)).toISOString(),
         askedYou: { reason: 'question', excerpt: 'Shall I go on?' },
+        assistantEnding: 'Shall I go on?',
         aiTitle: 'A title',
       },
       inBackground: false,

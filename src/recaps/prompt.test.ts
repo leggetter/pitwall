@@ -89,8 +89,8 @@ describe('RECAP_SYSTEM_PROMPT', () => {
   });
 
   it('asks for a summary and to-dos (W121): what it is doing, a goal that moved on, and to-dos in order, each owned', () => {
-    expect(RECAP_SYSTEM_PROMPT).toContain('{"title": "...", "summary": "...", "goal": "...", "done": "...", "workingOn": "...", "todos": [{"text": "...", "owner": "...", "after": false, "optional": false}], "waitingOn": "...", "plan": "...", "items": [{"text": "...", "state": "..."}], "changes": "..."}');
-    expect(RECAP_SYSTEM_PROMPT).toContain('exactly these ten keys and no others');
+    expect(RECAP_SYSTEM_PROMPT).toContain('{"title": "...", "summary": "...", "goal": "...", "done": "...", "workingOn": "...", "todos": [{"text": "...", "owner": "...", "after": false, "optional": false}], "waitingOn": "...", "plan": "...", "items": [{"text": "...", "state": "..."}], "changes": "...", "handoff": "..."}');
+    expect(RECAP_SYSTEM_PROMPT).toContain('exactly these eleven keys and no others');
     expect(RECAP_SYSTEM_PROMPT).toContain('- summary: what this session is doing');
     expect(RECAP_SYSTEM_PROMPT).toContain('If the user moved the session on from what it started as, say what it started as and what it is now.');
     expect(RECAP_SYSTEM_PROMPT).toContain('in the order it should happen, the most immediate first, at most 6. Leave out anything done.');
@@ -609,5 +609,42 @@ describe("the plan's items (W172)", () => {
     expect(read.planItems!.every((item) => item.text.length <= PLAN_ITEM_MAX)).toBe(true);
     expect(read.planChanges!.startsWith('A change y')).toBe(true);
     expect(read.planChanges!.length).toBeLessThanOrEqual(RECAP_FIELD_MAX);
+  });
+});
+
+describe('the hand-off (W210, a hand-off shows as Handed off)', () => {
+  const handoffOf = (value: unknown) => {
+    const read = readRecapAnswer(answer({ handoff: value }));
+    return read.ok ? read.answer.handoff : 'refused';
+  };
+
+  it('tells the model a hand-off is not finished: handed off to free up context, and Clear and continue, not a new session', () => {
+    expect(RECAP_SYSTEM_PROMPT).toContain('handoff:');
+    expect(RECAP_SYSTEM_PROMPT).toContain('handed off to free up context; it carries on after /clear');
+    expect(RECAP_SYSTEM_PROMPT).toContain('Clear and continue with');
+    expect(RECAP_SYSTEM_PROMPT).toContain('word for word');
+    expect(RECAP_SYSTEM_PROMPT).toContain('never "start a new session"');
+  });
+
+  it('keeps the prompt as written, trimmed, with its lines, and none when it is empty or the key is missing', () => {
+    expect(handoffOf('Read ~/oss/demo/NOW.md')).toBe('Read ~/oss/demo/NOW.md');
+    expect(handoffOf('\n  Read NOW.md first.\nThen carry on.  \n')).toBe('Read NOW.md first.\nThen carry on.');
+    expect(handoffOf('')).toBeUndefined();
+    expect(handoffOf('   ')).toBeUndefined();
+    const missing = readRecapAnswer(answer());
+    expect(missing.ok && missing.answer.handoff).toBeUndefined();
+    expect(missing.ok && missing.repaired).toEqual([]);
+  });
+
+  it('leaves out, and keeps the recap, a hand-off pitwall would not type: a leading / or !, a hidden character, a trailing backslash, one over the cap', () => {
+    for (const bad of ['/clear and go', '!rm -rf x', 'Read NOW.md​', 'Read‮NOW.md', 'Read NOW.md\u001b[201~x', 'Read NOW.md \\', 'x'.repeat(16_385), 42, null, ['Read NOW.md']]) {
+      expect(handoffOf(bad), String(bad).slice(0, 20)).toBeUndefined();
+    }
+  });
+
+  it('takes a stored hand-off back exactly, and refuses extra keys beside it in a stored file', () => {
+    const stored = readRecapAnswer(answer({ handoff: 'Read NOW.md' }), { stored: true });
+    expect(stored.ok && stored.answer.handoff).toBe('Read NOW.md');
+    expect(readRecapAnswer(answer({ handoff: 'Read NOW.md', other: 1 }), { stored: true })).toEqual({ ok: false, refusal: 'keys' });
   });
 });

@@ -9,7 +9,8 @@ import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import { AttachContext, type AttachEnv } from '../attach.js';
 import type { StorageSource } from '../groupState.js';
 import { memoryNavigation } from '../selection.js';
-import { clearedText, SPIN_OFFS_KEY, SPIN_OFF_CLEAR_NOTE } from '../spinOff.js';
+import { statusBadge } from '../sessions.js';
+import { clearedText, handoffTitle, SPIN_OFFS_KEY, SPIN_OFF_CLEAR_NOTE } from '../spinOff.js';
 import { fakeSockets, group, NOW, session, snapshot } from '../test/fixtures.js';
 import { toastMessages } from '../test/toasts.js';
 import { Dashboard } from './Dashboard.js';
@@ -161,5 +162,52 @@ describe('a hand-off’s card', () => {
   it('a hand-off whose prompt ends in a backslash is not offered Clear and continue', () => {
     renderDashboard(fakeServer(), snap('background', proposal(`${HANDOFF}\\`)));
     expect(buttons()).not.toContain('Clear and continue');
+  });
+});
+
+describe('a hand-off written by hand, from the recap (W210)', () => {
+  const RECAP_PROMPT = 'Read /Users/example/code/demo-app/NOW.md';
+  const fromRecap = (): SpinOff => ({ kind: 'proposal', key: KEY, folder: DEMO, prompt: RECAP_PROMPT, source: 'recap' });
+
+  it('shows the session as Handed off, not Done, and its card says it handed off to free up context', () => {
+    const made = asker('background', fromRecap());
+    expect(statusBadge(made)).toEqual({ status: 'handed-off', label: 'Handed off', look: 'subtle-warning' });
+    expect(statusBadge({ ...made, spinOff: undefined })).toMatchObject({ status: 'done', label: 'Done' });
+    expect(statusBadge({ ...made, state: 'failed' })).toMatchObject({ status: 'failed' });
+    expect(statusBadge({ ...made, state: 'stopped' })).toMatchObject({ status: 'stopped' });
+    expect(statusBadge({ ...made, ended: true })).toMatchObject({ status: 'ended' });
+    // A block that starts with its own Continues line is Handed off too; another session's, or a plain spin-off, is not.
+    expect(statusBadge(asker('background', proposal(HANDOFF))).status).toBe('handed-off');
+    expect(statusBadge(asker('background', proposal('Fix the flaky export test.'))).status).toBe('done');
+    renderDashboard(fakeServer(), snap('background', fromRecap()));
+    expect(card().querySelector('h4')?.textContent).toBe(handoffTitle('export-work'));
+  });
+
+  it('offers Clear and continue with the prompt shown whole, and sends only the key', async () => {
+    const server = fakeServer();
+    renderDashboard(server, snap('background', fromRecap()));
+    expect(buttons()).toEqual(expect.arrayContaining(['Clear and continue', 'Start new session…']));
+    expect(card().querySelector('.approval-text')?.textContent).toBe(RECAP_PROMPT);
+    fireEvent.click(within(card()).getByRole('button', { name: 'Clear and continue' }));
+    await waitFor(() => expect(cards()).toEqual([]));
+    expect(server.posts()).toEqual([{ url: clearAndContinuePath(ASKER_ID), body: { key: KEY } }]);
+  });
+
+  it('for an interactive session offers Start new session… only beside End session…, and a trailing backslash gets no Clear and continue', () => {
+    renderDashboard(fakeServer(), snap('interactive', fromRecap()));
+    expect(buttons()).toEqual(expect.arrayContaining(['Start new session…', 'End session…']));
+    expect(buttons()).not.toContain('Clear and continue');
+    cleanup();
+    renderDashboard(fakeServer(), snap('background', { kind: 'proposal', key: KEY, folder: DEMO, prompt: `${RECAP_PROMPT}\\`, source: 'recap' }));
+    expect(buttons()).not.toContain('Clear and continue');
+  });
+
+  it('Start new session… tells the server it continues the old one', async () => {
+    const server = fakeServer();
+    renderDashboard(server, snap('background', fromRecap()));
+    fireEvent.click(within(card()).getByRole('button', { name: 'Start new session…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'New session' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
+    await waitFor(() => expect(server.posts().some((post) => post.url === continuedPath(ASKER_ID))).toBe(true));
   });
 });

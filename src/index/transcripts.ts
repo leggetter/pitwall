@@ -29,6 +29,12 @@ export interface TranscriptInfo {
    */
   spinOff?: SpinOff;
   /**
+   * The end of the newest assistant message's text, at most ASSISTANT_TEXT_KEEP, with no prompt since
+   * (W210). Never in the snapshot: only SessionFacts.assistantEnding carries it, to the recap engine, which
+   * keeps a recap's quoted hand-off only if it appears word for word in it.
+   */
+  assistantEnding?: string;
+  /**
    * The newest title Claude Code generated for the session (an `ai-title`
    * entry), on one line, at most 120 characters. Internal and undocumented.
    */
@@ -1002,6 +1008,7 @@ function toInfo(state: FileState): TranscriptInfo {
     const derived = derive(state, fields.assistantText, fields.assistantTail ?? fields.assistantText);
     if (derived.askedYou !== undefined && fields.promptAfterText !== true) info.askedYou = derived.askedYou;
     if (derived.spinOff !== undefined && fields.promptAfterText !== true) info.spinOff = derived.spinOff;
+    if (fields.promptAfterText !== true) info.assistantEnding = fields.assistantTail ?? fields.assistantText;
   }
   if (fields.userPrompt !== undefined) info.lastUserPrompt = fields.userPrompt;
   if (fields.aiTitle !== undefined) info.aiTitle = fields.aiTitle;
