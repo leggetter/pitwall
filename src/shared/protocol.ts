@@ -3,6 +3,7 @@
 // this file, so change it deliberately and in its own commit.
 
 import { isBuiltInCommand } from './builtInCommands.js';
+import type { PrNeedKind } from './needsYou.js';
 
 /** Where a session runs. Matches `kind` in `claude agents --json`. */
 export type SessionKind = 'interactive' | 'background';
@@ -1056,13 +1057,33 @@ export interface SessionSnooze {
   at: string;
   /** When it ends by itself, ISO 8601. Absent for Later, which ends only when the session is woken. */
   until?: string;
+  /**
+   * The PRs the session owned that needed you when you snoozed it (W199), each with the hashes it had
+   * then (W188). While the snooze holds, a PR still at those hashes doesn't keep the row in Needs you
+   * (prHeldBy(), needsYou.ts); something new on it, or another PR starting to need you, ends the
+   * snooze with why 'pr'. Absent when the PR list wasn't loaded then, and from a snooze made before
+   * W199: those hold nothing, and a PR the session owns keeps the row in Needs you, as it did.
+   */
+  heldPrs?: SnoozeHeldPr[];
 }
 
-/** Why a snooze ended by itself (W154): its time was up, or the session was woken by a turn you didn't start. */
+/** One PR a snooze holds (SessionSnooze.heldPrs, W199): its `owner/repo#123`, stateHash and, while CI failed, redHash. */
+export interface SnoozeHeldPr {
+  key: string;
+  stateHash: string;
+  redHash?: string;
+}
+
+/**
+ * Why a snooze ended by itself (W154): its time was up, the session was woken by a turn you didn't
+ * start, or, 'pr' (W199), a PR it owns has something new or another one needs you, which `pr` names.
+ */
 export interface SnoozeEnded {
   /** When it ended, ISO 8601. */
   at: string;
-  why: 'time' | 'woken';
+  why: 'time' | 'woken' | 'pr';
+  /** For 'pr': the PR as `owner/repo#123` and why it needs you, as PrNeedKind. */
+  pr?: { ref: string; need: PrNeedKind };
 }
 
 /** How long a row says why a snooze ended (SessionSummary.snoozeEnded): 12 hours. */

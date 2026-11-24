@@ -10,9 +10,10 @@
 // It replaces W88's Not needed now, which the browser kept under pitwall.not-needed.v1. Those marks
 // aren't carried over: the key is removed once, as the page loads (dropOldMarks()), and a session
 // that was marked is back in Needs you until you snooze or flag it.
-import { snoozePath, unsnoozePath, type SessionSnooze, type SnoozeResult } from '../../src/shared/protocol.js';
+import { snoozePath, unsnoozePath, type SessionSnooze, type SnoozeEnded, type SnoozeHeldPr, type SnoozeResult } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
 import { plainText } from './format.js';
+import { PR_NEED_WORDS } from './prs.js';
 import { browserStorage, type StorageSource } from './groupState.js';
 
 /** One of the snooze menu's choices. */
@@ -46,6 +47,9 @@ export const SNOOZE_CHOICES: readonly SnoozeChoice[] = [
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const isTime = (value: unknown): value is string => typeof value === 'string' && !Number.isNaN(Date.parse(value));
 
+const isHeldPr = (value: unknown): value is SnoozeHeldPr =>
+  isRecord(value) && typeof value.key === 'string' && typeof value.stateHash === 'string' && (value.redHash === undefined || typeof value.redHash === 'string');
+
 /** A SnoozeResult in `body`, or undefined. */
 export function asSnoozeResult(body: unknown): SnoozeResult | undefined {
   if (!isRecord(body)) return undefined;
@@ -54,7 +58,8 @@ export function asSnoozeResult(body: unknown): SnoozeResult | undefined {
   if (body.snoozed === undefined) return { ok: true };
   const snoozed = body.snoozed;
   if (!isRecord(snoozed) || !isTime(snoozed.at) || (snoozed.until !== undefined && !isTime(snoozed.until))) return undefined;
-  return { ok: true, snoozed: { at: snoozed.at, ...(snoozed.until === undefined ? {} : { until: snoozed.until as string }) } };
+  const heldPrs = Array.isArray(snoozed.heldPrs) ? (snoozed.heldPrs as unknown[]).filter(isHeldPr) : undefined;
+  return { ok: true, snoozed: { at: snoozed.at, ...(snoozed.until === undefined ? {} : { until: snoozed.until as string }), ...(heldPrs === undefined ? {} : { heldPrs }) } };
 }
 
 /** What a snooze came to: the snooze, or why not, in pitwall's words. */
@@ -100,6 +105,11 @@ export const SNOOZE_BACK_TEXT: Readonly<Record<'time' | 'woken', string>> = {
   time: 'Snooze ended',
   woken: 'Woken: a new turn',
 };
+
+/** What a row back from a snooze because of a PR it owns says (W199): which PR and why, in the PR badge's words. */
+export function snoozeBackPrText(ended: SnoozeEnded): string {
+  return ended.pr === undefined ? 'Snooze ended: a PR needs you' : `Snooze ended: ${ended.pr.ref} ${PR_NEED_WORDS[ended.pr.need]}`;
+}
 
 /** The snooze toggle's and menu's name and tooltip, in either state. */
 export const snoozeLabel = (name: string) => `Snooze ${plainText(name)}`;

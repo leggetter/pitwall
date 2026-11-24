@@ -2,7 +2,7 @@
 // goes in Needs you (`attention = own || prNeed`, SessionRow.tsx); the server's diagnostics log
 // (src/server/diagnostics.ts) records the reason, and it must be the reason the page shows, so both
 // call this code. Pure, and no text from a session or a PR: reasons are fixed words.
-import { prNeedsAttention, prOwner, type NeedsYou, type PullRequestSummary, type SessionSummary } from './protocol.js';
+import { prNeedsAttention, prOwner, type NeedsYou, type PullRequestSummary, type SessionSnooze, type SessionSummary, type SnoozeEnded } from './protocol.js';
 
 /**
  * A session the index says needs Phil (SessionSummary.needsYou, W69), for one of NeedsYou's reasons,
@@ -62,7 +62,37 @@ export function comparePrs(a: PullRequestSummary, b: PullRequestSummary): number
  * asks his review listed in Needs you for that review, which said nothing of what the session needed.
  */
 export function prNeedOf(session: SessionSummary, owned: readonly PullRequestSummary[] | undefined): PullRequestSummary | undefined {
-  return isBusy(session) ? undefined : owned?.find(prNeedsAttention);
+  if (isBusy(session)) return undefined;
+  const snooze = session.snoozed;
+  return owned?.find((pr) => prNeedsAttention(pr) && !(snooze !== undefined && prHeldBy(snooze, pr)));
+}
+
+/**
+ * Whether `snooze` holds `pr` (W199): it recorded the PR when it was made, and the PR's stateHash is
+ * still the one it had and its head hasn't gone red since (W188's rule for a dismissal). A PR whose
+ * hash can't be read now isn't held, as a dismissal of it isn't applied.
+ */
+export function prHeldBy(snooze: SessionSnooze, pr: PullRequestSummary): boolean {
+  const held = snooze.heldPrs?.find((each) => each.key === `${pr.repo}#${pr.number}`);
+  if (held === undefined || pr.stateHash === undefined) return false;
+  return pr.stateHash === held.stateHash && (pr.redHash === undefined || pr.redHash === held.redHash);
+}
+
+/**
+ * The PR that ends `session`'s snooze early (W199), when it has recorded PRs (`heldPrs`): one it
+ * holds that needs you with something new (hash changed, or its head gone red), or one it doesn't
+ * hold that needs you, which started after the snooze. A PR with no stateHash can't be told from
+ * what was there, so it doesn't end it; it keeps the row in Needs you (prHeldBy()). Never while the
+ * session is busy, as prNeedOf() leaves a PR out then too.
+ */
+export function prWakeOf(session: SessionSummary, snooze: SessionSnooze, owned: readonly PullRequestSummary[] | undefined): SnoozeEnded['pr'] {
+  if (snooze.heldPrs === undefined || isBusy(session)) return undefined;
+  for (const pr of owned ?? []) {
+    const need = prNeedKind(pr);
+    if (need === undefined || pr.stateHash === undefined || prHeldBy(snooze, pr)) continue;
+    return { ref: `${pr.repo}#${pr.number}`, need };
+  }
+  return undefined;
 }
 
 /** The open PRs each session owns (prOwner()), by session id, most urgent first. Only sessions that own one. */

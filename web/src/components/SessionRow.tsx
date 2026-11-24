@@ -33,7 +33,7 @@ import { prNeedText, sessionPrBadge } from '../prs.js';
 import { ENDED_RECAP_HINT, FINISHED_RECAP_HINT, finishedWaitingOnYou, forYouLabel, quietWaitingOn, recapForYou, WAITING_ON_TEXT, waitingPr } from '../recap.js';
 import { elsewhereRepos } from '../groupBy.js';
 import { canFlag, canSnooze, groupLabel, isFlagged, isSnoozed, needsAttention, needsText, recapNeedsText, rowStatusBadge, snoozeBack } from '../sessions.js';
-import { SNOOZE_BACK_TEXT, snoozedText } from '../snooze.js';
+import { SNOOZE_BACK_TEXT, snoozeBackPrText, snoozedText } from '../snooze.js';
 import { prNeedOf } from '../work.js';
 import { FLAGGED_TEXT } from '../flags.js';
 import { FlagButton } from './FlagButton.js';
@@ -80,7 +80,8 @@ export function asideText(session: SessionSummary, now: Date = new Date()): stri
   if (isFlagged(session)) return FLAGGED_TEXT;
   if (isSnoozed(session)) return snoozedText(session.snoozed!, now);
   const back = snoozeBack(session);
-  return back === undefined ? undefined : SNOOZE_BACK_TEXT[back];
+  if (back === undefined) return undefined;
+  return back === 'pr' ? snoozeBackPrText(session.snoozeEnded!) : SNOOZE_BACK_TEXT[back];
 }
 
 /** Whether a row shows its context badge: over 200K (W133). */

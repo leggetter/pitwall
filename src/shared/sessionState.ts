@@ -33,9 +33,12 @@ export function isSetAside(session: SessionSummary): boolean {
 
 /**
  * Why it's back in Needs you after a snooze ended by itself (W154, SessionSummary.snoozeEnded), while
- * it needs you and the server still says so: its time was up, or a turn you didn't start woke it.
+ * it needs you and the server still says so: its time was up, a turn you didn't start woke it, or
+ * a PR it owns had something new, 'pr' (W199).
  */
-export function snoozeBack(session: SessionSummary): 'time' | 'woken' | undefined {
+export function snoozeBack(session: SessionSummary): 'time' | 'woken' | 'pr' | undefined {
+  // 'pr' (W199) is back through the PR, whether or not the session needs you itself.
+  if (session.snoozeEnded?.why === 'pr') return session.snoozed === undefined && !session.finished && !session.ended ? 'pr' : undefined;
   return needsAttention(session) ? session.snoozeEnded?.why : undefined;
 }
 
