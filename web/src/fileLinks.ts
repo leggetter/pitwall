@@ -99,6 +99,10 @@ const BARE_EXTENSIONS = new Set(
 );
 /** Names with no extension that are files. */
 const KNOWN_NAMES = new Set(['Makefile', 'Dockerfile', 'LICENSE', 'README', 'CHANGELOG', 'Gemfile', 'Procfile']);
+/** Dotfiles taken for files (W213): `.env` and `demo/.env`, not a sentence's `.NET` or a folder's `~/.claude`. */
+const KNOWN_DOTFILES = new Set(
+  '.env .envrc .gitignore .gitattributes .gitmodules .npmrc .nvmrc .node-version .editorconfig .prettierrc .prettierignore .eslintrc .eslintignore .dockerignore .babelrc .bashrc .zshrc .profile .tool-versions .mcp.json'.split(' '),
+);
 
 const PATH_TOKEN =
   /^((?:~\/|\.{1,2}\/|\/)?[\w@%+~.-]+(?:\/[\w@%+~.-]+)*)(?::(\d+)(?::(\d+))?(?:-\d+)?)?$/;
@@ -118,12 +122,15 @@ function trimTrailing(raw: string, from: number): number {
 /**
  * Whether a path's last name is a file's: it has an extension that starts with a letter (and, with no
  * directory, one from a short list of common ones, so `NOW.md` is a file and `example.com` isn't), or
- * it's a well-known name such as `Makefile`.
+ * it's a well-known name such as `Makefile`. A dotfile (W213), whose only dot is its first character, is a
+ * file when it's one of a short list, or `.env.<name>`, with or without a directory: `demo/.env`, but not
+ * `~/.claude`, which is a folder as often as not.
  */
 export function nameLooksLikeFile(path: string): boolean {
   const name = path.slice(path.lastIndexOf('/') + 1);
   if (KNOWN_NAMES.has(name)) return true;
   if (name === '.' || name === '..') return false;
+  if (KNOWN_DOTFILES.has(name) || /^\.env\.[A-Za-z0-9]+$/.test(name)) return true;
   const dot = name.lastIndexOf('.');
   const extension = dot > 0 ? name.slice(dot + 1) : '';
   if (!/^[A-Za-z][A-Za-z0-9]{0,9}$/.test(extension)) return false;

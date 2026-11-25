@@ -1,7 +1,7 @@
 // Open a file in your editor from a link in a message (W211; docs/design-system.md, 4: Markdown in
 // messages, and Dialogs): a path in text, in a code span, or a markdown link to one is a link button;
 // the first click, with two editors found and none chosen, asks "Open in which editor?"; choosing one
-// POSTs the open and remembers it; a file outside the workspaces asks first, showing the server's path,
+// POSTs the open and remembers it; a dotfile such as `demo/.env` is a link too (W213); a file outside the workspaces asks first, showing the server's path,
 // and sends outside: true only on Open; Cancel sends nothing. Nothing is opened: the fake server
 // records each accepted request.
 
@@ -23,7 +23,7 @@ const part: Part = {
       await page.evaluate(`(() => { try { localStorage.removeItem('pitwall.editor'); } catch {} })()`);
       await openFromRow(t, NAMES.conversation);
       await page.waitFor('the file links', `!!${fileButton('src/server/health.ts')}`);
-      for (const path of ['src/server/health.ts', FILE_LINKS.inCode, FILE_LINKS.markdown, FILE_LINKS.outside, FILE_LINKS.mismatch]) {
+      for (const path of ['src/server/health.ts', FILE_LINKS.inCode, FILE_LINKS.markdown, FILE_LINKS.outside, FILE_LINKS.mismatch, FILE_LINKS.dotfile]) {
         t.expect(await page.evaluate<boolean>(`!!${fileButton(path)}`), `${path} is a link button`);
       }
       t.expectEqual(await page.evaluate(`${fileButton('src/server/health.ts')}.textContent`), FILE_LINKS.inText, 'with the text as written, line and all');
