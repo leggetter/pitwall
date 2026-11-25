@@ -102,6 +102,25 @@ describe('findFileRefs', () => {
     expect(refs('https://example.com/docs/a.md example.com v2.1.331 and/or e.g. 3.14 src/server/ http://x/a.ts npm_config_x foo.bar')).toEqual([{ path: 'foo.bar', text: 'foo.bar' }].filter(() => false));
   });
 
+  it('finds a known dotfile, bare or in a folder, and .env.<name>, but not a folder or an unknown dotfile (W213)', () => {
+    expect(refs('Add it to `/Users/me/work/demo/.env`, then .gitignore, demo/.npmrc:3 and ~/.zshrc.')).toEqual([
+      { path: '/Users/me/work/demo/.env', text: '/Users/me/work/demo/.env' },
+      { path: '.gitignore', text: '.gitignore' },
+      { path: 'demo/.npmrc', line: 3, text: 'demo/.npmrc:3' },
+      { path: '~/.zshrc', text: '~/.zshrc' },
+    ]);
+    expect(refs('.env.local and a/.env.example')).toEqual([
+      { path: '.env.local', text: '.env.local' },
+      { path: 'a/.env.example', text: 'a/.env.example' },
+    ]);
+    expect(refs('~/.claude, ~/.pitwall, .NET, ... and a/.hidden')).toEqual([]);
+  });
+
+  it('reads a markdown link to a dotfile (W213)', () => {
+    expect(parseFileTarget('demo/.env')).toEqual({ path: 'demo/.env' });
+    expect(parseFileTarget('file:///Users/me/demo/.env')).toEqual({ path: '/Users/me/demo/.env' });
+  });
+
   it('gives each reference its place in the text, for a link provider', () => {
     const [found] = findFileRefs('  edit src/a.ts:4 now');
     expect(found).toMatchObject({ start: 7, end: 17, path: 'src/a.ts', line: 4 });
