@@ -6,24 +6,20 @@
 // - Start asks the server to check the proposal (checkSpinOff(), spinOffPath()), by spawn_session's
 //   checks, then opens New session filled in with what it checked, to read and change before it runs.
 //   Nothing starts without New session's own Start session.
-// - Dismiss takes the card away; so does starting it. Both are kept in the browser, as stars are
-//   (starred.ts): one localStorage key, pitwall.spinOffs.v1, holding the dismissed proposals as
-//   "<session id>:<key>", the key a hash of the block the index read, never its text:
-//
-//     {"v":1,"dismissed":["00000000-0000-4000-8000-000000000001:0123456789abcdef"]}
-//
-//   So a new proposal from the same session, with another key, shows again. At most
-//   SPIN_OFFS_CAP entries, the oldest dropped. Storage that's missing or throws keeps the dismissals
-//   for the page's life.
+// - Dismiss takes the card away; so does starting it. Since W212 the server keeps both
+//   ($PITWALL_HOME/spin-offs.json, src/server/spinOffs.ts) and marks the proposal `settled` on the
+//   snapshot, so every page agrees, and it also settles a proposal when a session with its name and
+//   folder began after it, however it was started. A new proposal from the same session, with another
+//   key, shows again. The browser's pitwall.spinOffs.v1, "<session id>:<key>" entries (the key a hash
+//   of the block, never its text), is read once and sent to the server, then emptied.
 // - The index clears a proposal when the session's next turn ends without one, or a prompt comes.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { endsWithBackslash, isOwnHandoff } from '../../src/shared/handoff.js';
-import { clearAndContinuePath, continuedPath, spinOffPath, type ClearAndContinueResult, type SessionGroup, type SessionSummary, type SpinOff, type SpinOffCheck } from '../../src/shared/protocol.js';
+import { clearAndContinuePath, continuedPath, SPIN_OFF_MIGRATE_MAX, SPIN_OFF_MIGRATE_PATH, spinOffPath, spinOffSettlePath, type ClearAndContinueResult, type SessionGroup, type SessionSummary, type SpinOff, type SpinOffCheck } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
 import { browserStorage, type StorageSource } from './groupState.js';
 import { activityMs } from './sessions.js';
-import type { StarredEvents } from './starred.js';
 import { sessionNeedsYou, type Work } from './work.js';
 
 export const SPIN_OFFS_KEY = 'pitwall.spinOffs.v1';
@@ -64,50 +60,56 @@ export function readDismissed(storage: StorageSource = browserStorage): string[]
   }
 }
 
-function writeDismissed(entries: readonly string[], storage: StorageSource): void {
-  try {
-    storage()?.setItem(SPIN_OFFS_KEY, JSON.stringify({ v: 1, dismissed: capped(entries) }));
-  } catch {
-    // Blocked or full: the dismissals last until the page reloads.
-  }
-}
-
 export interface DismissedSpinOffs {
+  /** Settled in this page since it loaded, ahead of the server's word on the snapshot: "<session id>:<key>". */
   set: ReadonlySet<string>;
+  /** Dismiss the proposal: it goes at once, and the server keeps it, so every page agrees (W212). */
   dismiss: (sessionId: string, key: string) => void;
+  /** The proposal was started from its card: as dismiss, but kept as started. */
+  start: (sessionId: string, key: string) => void;
 }
 
-/** The dismissed proposals, read once from storage, and a way to dismiss one; another tab's change is read again. */
-export function useDismissedSpinOffs(storage: StorageSource = browserStorage, events: StarredEvents = window): DismissedSpinOffs {
-  const [entries, setEntries] = useState<readonly string[]>(() => readDismissed(storage));
-  const latest = useRef(entries);
-  latest.current = entries;
+/**
+ * The proposals settled from this page, and a way to settle one (W212). The server keeps each Start and
+ * Dismiss ($PITWALL_HOME/spin-offs.json) and marks the proposal `settled` on the snapshot, which is what
+ * every page, on every port, goes by; `set` only covers the moment before the snapshot says so. The
+ * dismissals the browser kept before W212 are sent to the server once, then emptied here.
+ */
+export function useDismissedSpinOffs(api: ApiClient | undefined, storage: StorageSource = browserStorage): DismissedSpinOffs {
+  const [entries, setEntries] = useState<ReadonlySet<string>>(() => new Set());
 
   useEffect(() => {
-    const onStorage = (event: Pick<StorageEvent, 'key'>) => {
-      if (event.key !== SPIN_OFFS_KEY && event.key !== null) return;
-      const next = readDismissed(storage);
-      latest.current = next;
-      setEntries(next);
+    if (api === undefined) return;
+    const old = readDismissed(storage);
+    if (old.length === 0) return;
+    let live = true;
+    void api.post(SPIN_OFF_MIGRATE_PATH, { dismissed: old.slice(-SPIN_OFF_MIGRATE_MAX) }).then(
+      (result) => {
+        if (!live || result.kind !== 'ok') return;
+        try {
+          storage()?.setItem(SPIN_OFFS_KEY, JSON.stringify({ v: 1, dismissed: [] }));
+        } catch {
+          // Blocked: it's sent again next time, which the server takes as nothing new.
+        }
+      },
+      () => {},
+    );
+    return () => {
+      live = false;
     };
-    events.addEventListener('storage', onStorage);
-    return () => events.removeEventListener('storage', onStorage);
-  }, [storage, events]);
+  }, [api, storage]);
 
-  const dismiss = useCallback(
-    (sessionId: string, key: string) => {
-      const entry = spinOffId(sessionId, key);
-      if (latest.current.includes(entry)) return;
-      const next = capped([...latest.current, entry]);
-      latest.current = next;
-      setEntries(next);
-      writeDismissed(next, storage);
+  const settle = useCallback(
+    (sessionId: string, key: string, how: 'started' | 'dismissed') => {
+      setEntries((current) => new Set(current).add(spinOffId(sessionId, key)));
+      // Best effort: the card has gone from this page either way, and a failed save shows again on reload.
+      if (api !== undefined) void api.post(spinOffSettlePath(sessionId), { key, how }).catch(() => {});
     },
-    [storage],
+    [api],
   );
-
-  const set = useMemo(() => new Set(entries), [entries]);
-  return { set, dismiss };
+  const dismiss = useCallback((sessionId: string, key: string) => settle(sessionId, key, 'dismissed'), [settle]);
+  const start = useCallback((sessionId: string, key: string) => settle(sessionId, key, 'started'), [settle]);
+  return useMemo(() => ({ set: entries, dismiss, start }), [entries, dismiss, start]);
 }
 
 /**
@@ -122,7 +124,7 @@ export function openSpinOffs(groups: readonly Pick<SessionGroup, 'sessions'>[], 
       if (seen.has(session.sessionId)) continue;
       seen.add(session.sessionId);
       const { spinOff } = session;
-      if (spinOff === undefined || session.stale || dismissed.has(spinOffId(session.sessionId, spinOff.key))) continue;
+      if (spinOff === undefined || spinOff.settled !== undefined || session.stale || dismissed.has(spinOffId(session.sessionId, spinOff.key))) continue;
       listed.push({ session, spinOff });
     }
   }

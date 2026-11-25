@@ -57,7 +57,7 @@ Still to do:
 
 ## Next, in order
 
-1. **W212 (a spin-off you've started leaves Needs you, however you started it),** from `main`, in `.worktrees/w212-started-spin-offs` (branch `w212-started-spin-offs`, made from 248a45f with `npm ci` done: merge `main` into it first) (`PLAN.md`, W212). Phil, 2026-11-24: prioritize it, it "is making some of the sessions unusable": a proposer stays in Needs you, with Start and a recap waiting on you, after the proposed session was started from another page, port or terminal.
+1. **W212 (a spin-off you've started leaves Needs you, however you started it): built, in review (PR link below),** from `main`, in `.worktrees/w212-started-spin-offs` (branch `w212-started-spin-offs`, made from 248a45f with `npm ci` done: merge `main` into it first) (`PLAN.md`, W212). Phil, 2026-11-24: prioritize it, it "is making some of the sessions unusable": a proposer stays in Needs you, with Start and a recap waiting on you, after the proposed session was started from another page, port or terminal.
 2. **W209 (a spin-off block in the Conversation tab is a card with Start, and a link a terminal can open),** from `main` (`PLAN.md`, W209), straight after W212. Phil, 2026-11-24, asked why the Conversation tab shows a `spin-off` block as plain code: that is what W209 builds.
 3. **W179 (the supervisor keeps its conversation short),** from `main` (`PLAN.md`, W179): a new conversation when its context is over a limit, or over a lower one when Ask the supervisor (W178) names a different session.
 4. **W207 (a message box on a running background session's Conversation tab, sent as you), with W208 (which views you use: a local count),** from `main` (`PLAN.md`, W207 and W208): the spike first, then Phil's call, then the build and a security review.

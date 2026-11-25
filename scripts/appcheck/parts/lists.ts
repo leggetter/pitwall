@@ -196,6 +196,33 @@ const part: Part = {
       t.expectEqual(await page.evaluate(titleCount), before, 'and leaves the count when dismissed');
     });
 
+    await t.step("a proposal the server says is settled, started from another page or a terminal, is no card and no count, and a Dismiss is kept by the server (W212)", async () => {
+      const card = `document.querySelector('.session-list li.spin-off-card')`;
+      const titleCount = `Number(/^\\((\\d+)\\)/.exec(document.title)?.[1] ?? 0)`;
+      const before = await page.evaluate<number>(titleCount);
+      const asker = t.server.world.byName(NAMES.conversation).sessionId;
+      // Another key: the step before dismissed SPIN_OFF's, in this page.
+      const open = { ...SPIN_OFF, key: 'a1b2c3d4e5f60718' };
+      t.server.world.spinOff(asker, open);
+      t.server.broadcast();
+      await page.waitFor('the card', `!!${card}`);
+      t.expectEqual(await page.evaluate(titleCount), before + 1, 'the open proposal counts');
+      t.server.world.spinOff(asker, { ...open, settled: { how: 'started', at: new Date().toISOString(), name: 'pitwall-test-spin-off' } });
+      t.server.broadcast();
+      await page.waitFor('the card to go with no click', `!${card}`);
+      t.expectEqual(await page.evaluate(titleCount), before, 'and leaves the count');
+      t.server.world.spinOff(asker, open);
+      t.server.broadcast();
+      await page.waitFor('the card back', `!!${card}`);
+      const told = t.server.records.spinOffSettles.length;
+      await page.click('Dismiss', `${card}.querySelector('.approval-actions button:last-child')`);
+      await page.waitFor('the card to go', `!${card}`);
+      for (let tries = 0; tries < 40 && t.server.records.spinOffSettles.length === told; tries += 1) await new Promise((resolve) => setTimeout(resolve, 50));
+      t.expectEqual(t.server.records.spinOffSettles.slice(told).map((each) => each.how), ['dismissed'], 'Dismiss is sent to the server');
+      t.server.world.spinOff(asker, undefined);
+      t.server.broadcast();
+    });
+
     await t.step("a hand-off's card offers Clear and continue for a running job, and End session for an interactive one, and sends nothing (W168)", async () => {
       const card = `document.querySelector('.session-list li.spin-off-card')`;
       const look = (): Promise<{ buttons: string[]; note: string; left: number; right: number; listScrollsSideways: boolean }> =>

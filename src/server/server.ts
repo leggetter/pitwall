@@ -124,6 +124,7 @@ import { createLineageView, LineageStore } from './lineage.js';
 import { createSnoozeView, registerSnoozes, SnoozeStore } from './snoozes.js';
 import { SessionLaunches } from './sessionLaunches.js';
 import { registerSpinOffs } from './spinOffRoutes.js';
+import { createSpinOffView, registerSpinOffSettle, SpinOffStore } from './spinOffs.js';
 import { createClearAndContinue, type ClearTimings, registerClearAndContinue } from './clearAndContinue.js';
 import {
   bearerToken,
@@ -318,12 +319,15 @@ export async function startServerWithInternals(
   // Session lineage (W167): each session's `lineage`, the ids of the session it continues and the one that continues it.
   const lineage = options.lineage ?? new LineageStore(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
   const lineaged = createLineageView(snoozed, lineage);
+  // Started and dismissed spin-off proposals (W212): each one's `settled`, from a click on any page or a session found with its name and folder.
+  const spinOffs = options.spinOffs ?? new SpinOffStore({ ...(options.pitwallHome === undefined ? {} : { home: options.pitwallHome }), predecessorOf: (id) => lineage.linksOf(id).from });
+  const spunOff = createSpinOffView(lineaged, spinOffs);
   // The supervisor (M5, W113), or off. Started only when the page asks, stopped on close().
   const supervisor = options.supervisor;
   // With it, the snapshot carries its state, under W105's view.
-  const supervised = supervisor === undefined ? undefined : createSupervisorView(lineaged, supervisor);
+  const supervised = supervisor === undefined ? undefined : createSupervisorView(spunOff, supervisor);
   // The snapshot clients get: each session's PR links cut to those matching a PR in the list (D14, W105).
-  const snapshots = createSnapshotView(supervised ?? lineaged, prs);
+  const snapshots = createSnapshotView(supervised ?? spunOff, prs);
   // The diagnostics log (W165): why each row is in Needs you, from the snapshot the page gets and the PR list, with no off switch.
   // Written every DIAGNOSTICS_INTERVAL_MS, and on a PR list change, flag and snooze, and only when a session's state changes.
   const diagnostics = options.diagnostics ?? new DiagnosticsLog(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
@@ -439,6 +443,7 @@ export async function startServerWithInternals(
     registerFlags(app, { snapshots: flagged, store: flags, relay, recaps });
     registerSnoozes(app, { snapshots: snoozed, store: snoozes });
     registerSpinOffs(app, { snapshots });
+    registerSpinOffSettle(app, { snapshots, store: spinOffs });
     registerClearAndContinue(app, { snapshots, runner: clearAndContinue, spawned, lineage, ...(recaps === undefined ? {} : { recapHandoff: (session) => recaps.handoffOf(session) }) });
     registerSupervisor(app, supervisor, supervisorActions);
     registerMcp(app, mcp);

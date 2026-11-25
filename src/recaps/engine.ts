@@ -228,6 +228,11 @@ export interface RecapEngineOptions {
    * pitwall's own goes into this session's first recap as data. Never given session content.
    */
   predecessorOf?: (sessionId: string) => string | undefined;
+  /**
+   * What became of the session's spin-off proposal (W212): started, as which session when known, or
+   * dismissed. The input says so, so the recap drops the to-do to start it. A hook that throws says nothing.
+   */
+  startedSpinOff?: (session: SessionSummary, snapshot: IndexSnapshot) => { how: 'started' | 'dismissed'; name?: string } | undefined;
 }
 
 /** A failed call isn't tried again automatically, for the same activity, sooner than this. */
@@ -649,7 +654,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     const prs = prsOf(session);
     const withPrs = prs === undefined ? {} : { prs };
     // Who the session is and your messages through it (W189), in both kinds of call.
-    const about = { name: session.name, repo, ...(read.prompts === undefined ? {} : { prompts: read.prompts }) };
+    const about = { name: session.name, repo, ...(read.prompts === undefined ? {} : { prompts: read.prompts }), ...proposalOf(session) };
     const input = update
       ? updateRecapInput(
           { ...about, ...(read.firstPrompt === undefined ? {} : { firstPrompt: read.firstPrompt }), previous: answerOf(previous), turns: collector.text(), ...withPrs },
@@ -725,6 +730,19 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     lastError = undefined;
     lastErrorAt = undefined;
     changed();
+  }
+
+  /** What became of the session's proposal (W212), for the input's session info, or nothing. */
+  function proposalOf(session: SessionSummary): { proposal: string } | Record<string, never> {
+    if (session.spinOff === undefined || options.startedSpinOff === undefined) return {};
+    try {
+      const snapshot = index?.latest();
+      const settled = snapshot === undefined ? undefined : options.startedSpinOff(session, snapshot);
+      if (settled === undefined) return {};
+      return { proposal: settled.how === 'started' ? `already started${settled.name === undefined ? '' : ` as the session named ${settled.name}`}` : 'dismissed by the user, so it will not be started' };
+    } catch {
+      return {};
+    }
   }
 
   /** The session's PRs for an input (W150): its strong links matched with the latest PR list, or none. */

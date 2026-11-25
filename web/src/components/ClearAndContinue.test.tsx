@@ -4,13 +4,13 @@
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clearAndContinuePath, continuedPath, endSessionPath, SPAWN_PATH, spinOffPath, type IndexSnapshot, type SessionSummary, type SpinOff } from '../../../src/shared/protocol.js';
+import { clearAndContinuePath, continuedPath, endSessionPath, SPAWN_PATH, spinOffPath, spinOffSettlePath, type IndexSnapshot, type SessionSummary, type SpinOff } from '../../../src/shared/protocol.js';
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import { AttachContext, type AttachEnv } from '../attach.js';
 import type { StorageSource } from '../groupState.js';
 import { memoryNavigation } from '../selection.js';
 import { statusBadge } from '../sessions.js';
-import { clearedText, handoffTitle, SPIN_OFFS_KEY, SPIN_OFF_CLEAR_NOTE } from '../spinOff.js';
+import { clearedText, handoffTitle, SPIN_OFF_CLEAR_NOTE } from '../spinOff.js';
 import { fakeSockets, group, NOW, session, snapshot } from '../test/fixtures.js';
 import { toastMessages } from '../test/toasts.js';
 import { Dashboard } from './Dashboard.js';
@@ -108,12 +108,12 @@ describe('a hand-off’s card', () => {
 
   it('Clear and continue asks the server for the proposal by its key, then the card goes with a toast', async () => {
     const server = fakeServer();
-    const { storage } = renderDashboard(server);
+    renderDashboard(server);
     fireEvent.click(within(card()).getByRole('button', { name: 'Clear and continue' }));
     await waitFor(() => expect(cards()).toEqual([]));
-    expect(server.posts()).toEqual([{ url: clearAndContinuePath(ASKER_ID), body: { key: KEY } }]);
+    expect(server.posts().filter((post) => post.url !== spinOffSettlePath(ASKER_ID))).toEqual([{ url: clearAndContinuePath(ASKER_ID), body: { key: KEY } }]);
     expect(toastMessages()).toContain(clearedText('export-work'));
-    expect(storage.values.get(SPIN_OFFS_KEY)).toBe(JSON.stringify({ v: 1, dismissed: [`${ASKER_ID}:${KEY}`] }));
+    await waitFor(() => expect(server.posts().find((post) => post.url === spinOffSettlePath(ASKER_ID))?.body).toEqual({ key: KEY, how: 'dismissed' }));
   });
 
   it('keeps the card, says why and leaves Start new session… when Clear and continue fails', async () => {
@@ -134,7 +134,7 @@ describe('a hand-off’s card', () => {
     expect(server.posts().some((post) => post.url === clearAndContinuePath(ASKER_ID))).toBe(false);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
     await waitFor(() => expect(server.posts().some((post) => post.url === continuedPath(ASKER_ID))).toBe(true));
-    expect(server.posts().at(-1)).toEqual({ url: continuedPath(ASKER_ID), body: { shortId: NEW_JOB.shortId } });
+    expect(server.posts().find((post) => post.url === continuedPath(ASKER_ID))).toEqual({ url: continuedPath(ASKER_ID), body: { shortId: NEW_JOB.shortId } });
   });
 
   it('for an interactive session offers Start new session… and End session…, and ends nothing until confirmed', async () => {
@@ -190,7 +190,7 @@ describe('a hand-off written by hand, from the recap (W210)', () => {
     expect(card().querySelector('.approval-text')?.textContent).toBe(RECAP_PROMPT);
     fireEvent.click(within(card()).getByRole('button', { name: 'Clear and continue' }));
     await waitFor(() => expect(cards()).toEqual([]));
-    expect(server.posts()).toEqual([{ url: clearAndContinuePath(ASKER_ID), body: { key: KEY } }]);
+    expect(server.posts().filter((post) => post.url !== spinOffSettlePath(ASKER_ID))).toEqual([{ url: clearAndContinuePath(ASKER_ID), body: { key: KEY } }]);
   });
 
   it('for an interactive session offers Start new session… only beside End session…, and a trailing backslash gets no Clear and continue', () => {

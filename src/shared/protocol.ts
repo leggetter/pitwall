@@ -59,8 +59,43 @@ export interface AskedYou {
  * text; its `folder` is the session's own and it is that session's hand-off (isOwnHandoff()).
  */
 export type SpinOff =
-  | { kind: 'proposal'; key: string; folder: string; name?: string; prompt: string; source?: 'recap' }
-  | { kind: 'unreadable'; key: string; problem: string };
+  | { kind: 'proposal'; key: string; folder: string; name?: string; prompt: string; source?: 'recap'; settled?: SpinOffSettled }
+  | { kind: 'unreadable'; key: string; problem: string; settled?: SpinOffSettled };
+
+/**
+ * A proposal that's no longer waiting on you (W212), set by the server on the snapshot, never by the
+ * index: you started it or dismissed it from a card, on any page, or pitwall found a session with the
+ * proposal's name, in its folder, that began after the proposal, however it was started. The web UI
+ * leaves a settled proposal out of Needs you and its counts. Kept in $PITWALL_HOME/spin-offs.json
+ * (src/server/spinOffs.ts): ids, times and the started session's name, never the prompt.
+ * - `how`: 'started' or 'dismissed'.
+ * - `sessionId` and `name`: the session it was started as, when pitwall knows it.
+ */
+export interface SpinOffSettled {
+  how: 'started' | 'dismissed';
+  /** ISO 8601. */
+  at: string;
+  sessionId?: string;
+  name?: string;
+}
+
+/**
+ * Settle a proposal (W212): the body is { key, how: 'started' | 'dismissed' }, the proposal the card
+ * showed, and the proposal is the snapshot's, never the request's. Answers SpinOffSettleResult.
+ */
+export function spinOffSettlePath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/spin-off/settle`;
+}
+
+/**
+ * Move the dismissals the browser kept before W212 to the server, once: the body is
+ * { dismissed: ["<session id>:<key>", ...] }, at most SPIN_OFF_MIGRATE_MAX entries.
+ */
+export const SPIN_OFF_MIGRATE_PATH = '/api/spin-offs/migrate';
+export const SPIN_OFF_MIGRATE_MAX = 200;
+
+/** The answer to a POST to spinOffSettlePath() or SPIN_OFF_MIGRATE_PATH. */
+export type SpinOffSettleResult = { ok: true } | { ok: false; error: string };
 
 /** The longest folder a spin-off block names (W163). */
 export const SPIN_OFF_FOLDER_MAX = 1024;
