@@ -35,7 +35,8 @@
 // It's memoised on its text, so a conversation that re-renders as entries arrive doesn't parse or
 // render a message again.
 
-import { createContext, memo, useCallback, useContext, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { createContext, Fragment, memo, useCallback, useContext, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { fingerprint } from '../../../src/shared/fingerprint.js';
 import { plainText } from '../format.js';
 import { mentionLabel, type Mentions, type MentionTarget } from '../mentions.js';
 import { asksFirst, elementCount, httpUrl, linkText, MAX_ELEMENTS, parseMarkdown, type Align, type Block, type Inline } from '../markdown.js';
@@ -44,6 +45,7 @@ import { CopyButton } from './CopyButton.js';
 import { FileLinksContext } from './FileLinks.js';
 import { InlineConfirm } from './InlineConfirm.js';
 import { ScrollBox } from './ScrollBox.js';
+import { SpinOffBlockContext, type FoundBlock } from '../spinOffBlock.js';
 import { focusQuietly, Tooltip } from './Tooltip.js';
 
 /** What a message too big to format says, after its text. */
@@ -66,12 +68,45 @@ export interface MentionsValue {
 }
 export const MentionsContext = createContext<MentionsValue | undefined>(undefined);
 
-export const Markdown = memo(function Markdown({ text }: { text: string }) {
+export const SPIN_OFF_UNREADABLE_CODE = "pitwall won't show this spin-off block as a card:";
+
+/** The code blocks whose whole info string is spin-off (any case), in document order, lists included. A quote isn't looked into: the server reads no block there. */
+function spinOffCodeBlocks(blocks: Block[], into: Array<Extract<Block, { type: 'code' }>> = []): Array<Extract<Block, { type: 'code' }>> {
+  for (const block of blocks) {
+    if (block.type === 'code' && block.exact === true) into.push(block);
+    else if (block.type === 'list') for (const item of block.items) spinOffCodeBlocks(item, into);
+  }
+  return into;
+}
+
+/**
+ * Assistant text with the `spin-off` blocks the server read in it (W209): a spin-off code block is
+ * drawn as the session view's card when the server read a block with the same fingerprint and line count (not by
+ * position, so a look-alike the server didn't read stays code). A block the server couldn't read stays code, with why. Without the view's host, or on a
+ * mismatch, it stays a code block.
+ */
+export const Markdown = memo(function Markdown({ text, spinOffs }: { text: string; spinOffs?: readonly FoundBlock[] | undefined }) {
   const mentions = useContext(MentionsContext);
+  const host = useContext(SpinOffBlockContext);
   const blocks = useMemo(() => {
     const parsed = parseMarkdown(text);
     return elementCount(parsed, MAX_ELEMENTS) > MAX_ELEMENTS ? undefined : parsed;
   }, [text]);
+  const cards = useMemo(() => {
+    const found = new Map<Block, { card: boolean; node: ReactNode }>();
+    if (!blocks || !host || !spinOffs || spinOffs.length === 0) return found;
+    const used = new Set<FoundBlock>();
+    spinOffCodeBlocks(blocks).forEach((block) => {
+      // Matched by what the server read, not by position: its fingerprint of the body must be the one of the code drawn here.
+      const check = fingerprint(block.text);
+      const lines = block.text === '' ? 0 : block.text.split('\n').length;
+      const each = spinOffs.find((candidate) => !used.has(candidate) && candidate.check === check && candidate.lines === lines);
+      if (each === undefined) return;
+      used.add(each);
+      found.set(block, each.spinOff.kind === 'proposal' ? { card: true, node: host.card(each.spinOff) } : { card: false, node: <UnreadableNote problem={each.spinOff.problem} /> });
+    });
+    return found;
+  }, [blocks, host, spinOffs]);
   if (!blocks) {
     return (
       <>
@@ -82,17 +117,26 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
   }
   // The message is a host too, for any link outside a paragraph, heading, table or code block, though
   // links are only ever in those, so none should reach it.
-  return <Asking>{blocks.map((block, index) => renderBlock(block, index, mentions))}</Asking>;
+  return <Asking>{blocks.map((block, index) => renderBlock(block, index, mentions, cards))}</Asking>;
 });
 
 /** What text may link (W125): the view's mentions, or none, as in code and links' text. */
 type Linking = MentionsValue | undefined;
 
-function renderBlocks(blocks: Block[], m: Linking): ReactNode[] {
-  return blocks.map((block, index) => renderBlock(block, index, m));
+function renderBlocks(blocks: Block[], m: Linking, cards?: ReadonlyMap<Block, { card: boolean; node: ReactNode }>): ReactNode[] {
+  return blocks.map((block, index) => renderBlock(block, index, m, cards));
 }
 
-function renderBlock(block: Block, key: number, m: Linking): ReactNode {
+/** A spin-off block pitwall couldn't read: the code as written, then why, in pitwall's words (W163's reasons). */
+function UnreadableNote({ problem }: { problem: string }) {
+  return (
+    <p className="md-as-written-note spin-off-block-problem">
+      {SPIN_OFF_UNREADABLE_CODE} {problem}
+    </p>
+  );
+}
+
+function renderBlock(block: Block, key: number, m: Linking, cards?: ReadonlyMap<Block, { card: boolean; node: ReactNode }>): ReactNode {
   switch (block.type) {
     case 'paragraph':
       return (
@@ -106,15 +150,20 @@ function renderBlock(block: Block, key: number, m: Linking): ReactNode {
           <p className={`md-heading md-h${block.level}`}>{renderInlines(block.children, m)}</p>
         </Asking>
       );
-    case 'code':
+    case 'code': {
+      // A spin-off block is a card (W209), or its code with why it isn't one.
+      const card = cards?.get(block);
+      if (card?.card === true) return <Fragment key={key}>{card.node}</Fragment>;
       // Its bare URLs ask when their host is punycode (W58), so the question shows after the box.
       return (
         <Asking key={key}>
           <CodeBlock language={block.language} text={block.text} linked={block.linked} />
+          {card?.node}
         </Asking>
       );
+    }
     case 'list': {
-      const items = block.items.map((item, index) => <li key={index}>{renderBlocks(item, m)}</li>);
+      const items = block.items.map((item, index) => <li key={index}>{renderBlocks(item, m, cards)}</li>);
       return block.ordered ? (
         <ol key={key} className="md-list" start={block.start === 1 ? undefined : block.start}>
           {items}
@@ -128,7 +177,7 @@ function renderBlock(block: Block, key: number, m: Linking): ReactNode {
     case 'quote':
       return (
         <blockquote key={key} className="md-quote">
-          {renderBlocks(block.children, m)}
+          {renderBlocks(block.children, m, cards)}
         </blockquote>
       );
     case 'rule':

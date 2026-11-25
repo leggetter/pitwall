@@ -117,6 +117,17 @@ export function spinOffPath(sessionId: string): string {
 }
 
 /**
+ * Check a spin-off block in a session's Conversation tab (W209): the body is { key }, the block the card
+ * showed. The server finds the block in the session's transcript, newest messages first, through the
+ * conversation reader, and runs the same checks as spinOffPath() on it, never on the request's text.
+ * Answers SpinOffCheck. 409 when no message has that block now, or it can't be read or fails the checks.
+ * Nothing starts and nothing is sent to the session. A POST, so the apiKey and Origin checks hold.
+ */
+export function conversationSpinOffPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/conversation/spin-off`;
+}
+
+/**
  * Clear and continue (W168): for a hand-off from a background job, pitwall types `/clear` into the job
  * through the server's own attach PTY, waits until `claude agents --json` lists the job with a new
  * session id, then types the proposal's prompt, bracketed. The body is { key }, the proposal the card
@@ -836,6 +847,17 @@ export interface ConversationEntry {
   text: string;
   /** True when `text` is markdown: set on 'assistant', 'cross-session' and 'to-pitwall' entries. */
   markdown?: true;
+  /**
+   * For 'assistant' (W209): the `spin-off` blocks in the message, in order, wherever they are in it
+   * (at most 8), read from the whole message before its text is cut. A block quoted inside another
+   * fence isn't one. Each is as the index read it (SpinOff, W163): a proposal, or unreadable with
+   * why. `lines` is how many lines the block's body has, so the page can tell it drew the right
+   * fence, and `check` is fingerprint() (shared/fingerprint.ts) of its body, which the page must recompute from the code
+   * block it drew before it draws a card. Not read for sessions' sub-agents, nor for an entry whose text was cut.
+   * Untrusted session text: the Conversation tab shows a proposal as a card, and Start sends
+   * only the key to conversationSpinOffPath(), which finds the block in the transcript again.
+   */
+  spinOffs?: Array<{ spinOff: SpinOff; lines: number; check: string }>;
   /** For 'tool': the tool's name. */
   toolName?: string;
   /** For 'tool' and 'question': whether the result was an error. */

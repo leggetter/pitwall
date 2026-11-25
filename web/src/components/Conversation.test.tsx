@@ -10,6 +10,7 @@ import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import { AttachContext } from '../attach.js';
 import { absoluteTime, clockTime } from '../format.js';
 import { NOW, fakeSockets, minutesAgo, session, withoutSubagents } from '../test/fixtures.js';
+import { fingerprint } from '../../../src/shared/fingerprint.js';
 import { hover, pass, shownTooltip, tooltipText, unhover } from '../test/tooltips.js';
 import { TO_SUPERVISOR_SPEAKER } from './Conversation.js';
 import { SessionView } from './SessionView.js';
@@ -1149,5 +1150,156 @@ describe('Conversation: across the Terminal tab (W29)', () => {
     resized();
     expect(view.body.scrollTop).toBe(1200);
     expect(bar(view.body)).toBeNull();
+  });
+});
+
+// W209: a spin-off block in an assistant message is a card in the Conversation tab.
+describe('Conversation: spin-off blocks', () => {
+  const KEY = '0123456789abcdef';
+  const KEY2 = 'fedcba9876543210';
+  const bodyOf = (prompt: string) => ['folder: ~/oss/demo-app', 'name: fix-export', `prompt: ${prompt}`];
+  /** The server's block for a fenced(`bodyPrompt`) in the message: the fingerprint is of the body the page will draw. */
+  const proposal = (key: string, prompt: string, extra: Record<string, unknown> = {}, bodyPrompt = prompt): NonNullable<ConversationEntry['spinOffs']>[number] => ({
+    lines: 3,
+    check: fingerprint(bodyOf(bodyPrompt).join('\n')),
+    spinOff: { kind: 'proposal', key, folder: '/home/dev/oss/demo-app', name: 'fix-export', prompt, ...extra },
+  });
+  const fenced = (prompt: string) => ['```spin-off', ...bodyOf(prompt), '```'].join('\n');
+  const withBlocks = (second: number, texts: string[], spinOffs: NonNullable<ConversationEntry['spinOffs']>): ConversationEntry => ({ ...claude(second, texts.join('\n\nAnd then.\n\n')), spinOffs });
+
+  async function viewWith(entries: ConversationEntry[], overrides: Partial<SessionSummary> = {}, search = '') {
+    const posts: Array<{ url: string; body: unknown }> = [];
+    const server = fakeServer(page(entries));
+    const fetch = withoutSubagents(async (url, init) => {
+      if (init?.method === 'POST') {
+        posts.push({ url, body: JSON.parse(String(init.body)) });
+        return new Response(JSON.stringify({ ok: true, cwd: '/home/dev/oss/demo-app', name: 'fix-export', prompt: 'Fix it.' }), { status: 200 });
+      }
+      return server.fetch(url, init);
+    });
+    const api = createApiClient({ apiKey: API_KEY, fetch });
+    const started: unknown[] = [];
+    const opened: string[] = [];
+    window.history.replaceState(null, '', `/${search}`);
+    const current = target(overrides);
+    const result = render(
+      <ApiContext.Provider value={api}>
+        <SessionView session={current} listed onClose={() => {}} spinOffs={{ onStart: (checked) => started.push(checked), onOpenSession: (id) => opened.push(id) }} />
+      </ApiContext.Provider>,
+    );
+    await settle();
+    return { ...result, body: result.container.querySelector<HTMLElement>('.session-view-body')!, posts, started, opened };
+  }
+
+  it('draws a block mid-message as a card with its folder, name and whole prompt, and a block in another fence as code', async () => {
+    const quoted = ['````md', fenced('Quoted.'), '````'].join('\n');
+    const entry = withBlocks(2, [fenced('Fix the export.')], [proposal(KEY, 'Fix the export.')]);
+    const { body } = await viewWith([entry, { ...claude(3, quoted) }, you(4, fenced('A prompt.'))]);
+    const cards = body.querySelectorAll('.spin-off-block');
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.textContent).toContain('/home/dev/oss/demo-app');
+    expect(cards[0]!.textContent).toContain('fix-export');
+    expect(cards[0]!.querySelector('.approval-text')!.textContent).toBe('Fix the export.');
+    expect(cards[0]!.querySelector('.md-code')).toBeNull();
+    // The quoted one stays code, and your prompt stays plain text.
+    expect(body.querySelectorAll('.md-code').length).toBe(1);
+    expect(body.querySelector('.entry-user')!.textContent).toContain('A prompt.');
+  });
+
+  it('Start sends the session id and the block’s key to the server, and hands what it checked on; nothing else', async () => {
+    const view = await viewWith([withBlocks(2, [fenced('Fix the export.')], [proposal(KEY, 'Fix the export.')])]);
+    fireEvent.click(within(view.body).getByRole('button', { name: /Start…/ }));
+    await settle();
+    expect(view.posts).toEqual([{ url: `/api/sessions/${SID}/conversation/spin-off`, body: { key: KEY } }]);
+    expect(view.started).toEqual([{ sessionId: SID, key: KEY, from: 'demo-conversation', cwd: '/home/dev/oss/demo-app', name: 'fix-export', prompt: 'Fix it.' }]);
+  });
+
+  it('a hand-off block gets Start only, never Clear and continue', async () => {
+    const prompt = `Continues session ${SID}.\n\nRead NOW.md`;
+    const view = await viewWith([withBlocks(2, [fenced('x')], [proposal(KEY, prompt, {}, 'x')])]);
+    expect(within(view.body).getByRole('button', { name: /Start new session…/ })).toBeTruthy();
+    expect(within(view.body).queryByRole('button', { name: /Clear and continue/ })).toBeNull();
+  });
+
+  it('shows a block pitwall couldn’t read as code, with why', async () => {
+    const entry = withBlocks(2, [fenced('x')], [{ lines: 3, check: fingerprint(bodyOf('x').join('\n')), spinOff: { kind: 'unreadable', key: KEY, problem: 'The block names no folder.' } }]);
+    const { body } = await viewWith([entry]);
+    expect(body.querySelector('.spin-off-block')).toBeNull();
+    expect(body.querySelector('.md-code')).not.toBeNull();
+    expect(body.querySelector('.spin-off-block-problem')!.textContent).toContain('The block names no folder.');
+  });
+
+  it('keeps a block as code when the lines don’t add up to the server’s', async () => {
+    const entry = withBlocks(2, [fenced('x')], [{ ...proposal(KEY, 'x'), lines: 9 }]);
+    const { body } = await viewWith([entry]);
+    expect(body.querySelector('.spin-off-block')).toBeNull();
+  });
+
+  // F2: a card replaces only the code the server read, never a look-alike.
+  it('keeps a block with extra words after spin-off in its fence as code', async () => {
+    const entry = withBlocks(2, [fenced('x').replace('```spin-off', '```spin-off extra')], [proposal(KEY, 'x')]);
+    expect((await viewWith([entry])).body.querySelector('.spin-off-block')).toBeNull();
+  });
+
+  it('keeps a block inside a quote as code', async () => {
+    const quoted = fenced('x').split('\n').map((line) => `> ${line}`).join('\n');
+    expect((await viewWith([withBlocks(2, [quoted], [proposal(KEY, 'x')])])).body.querySelector('.spin-off-block')).toBeNull();
+  });
+
+  it('keeps a block with a control character in it as code, since the page reads it without', async () => {
+    const entry = withBlocks(2, [fenced('a\u0001b')], [proposal(KEY, 'ab', {}, 'a\u0001b')]);
+    expect((await viewWith([entry])).body.querySelector('.spin-off-block')).toBeNull();
+  });
+
+  it('draws the card on the block the server read, not on an earlier look-alike', async () => {
+    const entry = withBlocks(2, [fenced('Decoy.'), fenced('Real.')], [proposal(KEY, 'Real.')]);
+    const { body } = await viewWith([entry]);
+    const cards = body.querySelectorAll('.spin-off-block');
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.textContent).toContain('Real.');
+    expect(body.querySelectorAll('.md-code')).toHaveLength(1);
+    expect(body.querySelector('.md-code')!.textContent).toContain('Decoy.');
+  });
+
+  it('says "Started as <name>" with a link to the session in place of Start, and notes a dismissal', async () => {
+    const settled = { how: 'started' as const, at: at(5), sessionId: '11111111-1111-4111-8111-111111111111', name: 'fix-export' };
+    const entry = withBlocks(2, [fenced('Fix the export.')], [proposal(KEY, 'Fix the export.')]);
+    const started = await viewWith([entry], { spinOff: { kind: 'proposal', key: KEY, folder: '/home/dev/oss/demo-app', prompt: 'Fix the export.', settled } });
+    expect(within(started.body).queryByRole('button', { name: /Start…/ })).toBeNull();
+    fireEvent.click(started.body.querySelector('[data-open-started]')!);
+    expect(started.opened).toEqual([settled.sessionId]);
+    started.unmount();
+    const dismissed = await viewWith([entry], { spinOff: { kind: 'proposal', key: KEY, folder: '/home/dev/oss/demo-app', prompt: 'Fix the export.', settled: { how: 'dismissed', at: at(5) } } });
+    expect(dismissed.body.textContent).toContain('Dismissed from Needs you');
+    expect(within(dismissed.body).getByRole('button', { name: /Start…/ })).toBeTruthy();
+  });
+
+  describe('?spinoff=latest', () => {
+    const scrolled: Element[] = [];
+    beforeEach(() => {
+      scrolled.length = 0;
+      Element.prototype.scrollIntoView = function (this: Element) {
+        scrolled.push(this);
+      };
+    });
+
+    it('scrolls to the newest card of a session with two, and takes the parameter out of the address', async () => {
+      const entries = [withBlocks(2, [fenced('One.')], [proposal(KEY, 'One.')]), withBlocks(3, [fenced('Two.')], [proposal(KEY2, 'Two.')])];
+      const { body } = await viewWith(entries, {}, `?session=${SID}&spinoff=latest`);
+      expect(scrolled).toHaveLength(1);
+      expect(scrolled[0]!.getAttribute('data-key')).toBe(KEY2);
+      expect(body.contains(scrolled[0]!)).toBe(true);
+      expect(window.location.search).toBe(`?session=${SID}`);
+    });
+
+    it('does nothing for a session with no block, or without the parameter, or for another session', async () => {
+      await viewWith([claude(2, 'No block here.')], {}, `?session=${SID}&spinoff=latest`);
+      expect(scrolled).toHaveLength(0);
+      expect(window.location.search).toBe(`?session=${SID}`);
+      const entries = [withBlocks(2, [fenced('One.')], [proposal(KEY, 'One.')])];
+      await viewWith(entries, {}, `?session=${SID}`);
+      await viewWith(entries, {}, `?session=22222222-2222-4222-8222-222222222222&spinoff=latest`);
+      expect(scrolled).toHaveLength(0);
+    });
   });
 });

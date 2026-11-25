@@ -188,6 +188,34 @@ describe('readConversationPage: what becomes an entry', () => {
     expect(entries.map((e) => e.text)).toEqual(['the only prompt']);
   });
 
+  it('lists the spin-off blocks of an assistant message, wherever they are in it, and none from a quote or a prompt (W209)', async () => {
+    const block = (folder: string) => ['```spin-off', `folder: ${folder}`, 'prompt: Do it.', '```'].join('\n');
+    const quoted = ['````md', block('/tmp/quoted'), '````'].join('\n');
+    const entries = await entriesOf(
+      user(block('/tmp/in-a-prompt')),
+      assistant([text(`Here.\n\n${block('/tmp/first')}\n\nAnd more words after it.\n\n${block('/tmp/second')}\n\n${quoted}`)], 'msg_1'),
+      assistant([text('No block.')], 'msg_2'),
+    );
+    expect(entries[0]).not.toHaveProperty('spinOffs');
+    expect(entries[2]).not.toHaveProperty('spinOffs');
+    const found = entries[1]!.spinOffs!;
+    expect(found.map((each) => (each.spinOff.kind === 'proposal' ? each.spinOff.folder : 'unreadable'))).toEqual(['/tmp/first', '/tmp/second']);
+    expect(found.map((each) => each.lines)).toEqual([2, 2]);
+  });
+
+  it('gives no spin-off blocks to a sub-agent’s page or to an entry the budget cut (F4)', async () => {
+    const block = ['```spin-off', 'folder: /tmp/a', 'prompt: Do it.', '```'].join('\n');
+    const side = await page(await transcript(jsonl(assistant([text(block)], 'msg_s', { isSidechain: true }))), undefined, { sidechain: true });
+    expect(side.entries[0]).not.toHaveProperty('spinOffs');
+    // Eight newer 32 KiB entries spend the budget, so the older entry's text is cut to 512 characters and keeps no blocks.
+    const entries = await entriesOf(
+      assistant([text(`${'x'.repeat(600)}\n\n${block}`)], 'msg_old'),
+      ...Array.from({ length: 8 }, (_, i) => assistant([text('d'.repeat(ENTRY_TEXT_MAX))], `msg_full_${i}`)),
+    );
+    expect(entries[0]).toMatchObject({ truncated: true });
+    expect(entries[0]).not.toHaveProperty('spinOffs');
+  });
+
   it('joins text blocks from the same assistant message, written on separate lines, and leaves thinking out', async () => {
     const first = assistant([text('First part.')], 'msg_1');
     const entries = await entriesOf(

@@ -32,3 +32,19 @@
     max-height: calc(4 * var(--pw-leading-m) + 2 * var(--pw-space-2));
   }
 }
+
+/*
+ * A spin-off block in the Conversation tab (W209): the same card, inside a message, so it takes the
+ * message's width, spaced as a code block is, and its prompt shows up to eight lines before it scrolls.
+ */
+.spin-off-block {
+  margin-block: var(--pw-space-2);
+}
+
+.spin-off-block .approval-text {
+  max-height: calc(8 * var(--pw-leading-m) + 2 * var(--pw-space-2));
+}
+
+.spin-off-block .approval-actions .link-button {
+  margin-inline-start: var(--pw-space-1);
+}

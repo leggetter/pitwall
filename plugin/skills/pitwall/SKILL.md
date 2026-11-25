@@ -12,8 +12,9 @@ The new session works on its own. Its result never comes back to this session, s
 ## How
 
 1. Say in a sentence or two what you're proposing and why it's a separate session.
-2. End your message with one `spin-off` block, as the very last thing in it. Nothing after it, not even a sign-off.
-3. Then stop. Don't start the work yourself, don't run `claude --bg` or any other command to start a session, and don't wait for it.
+2. Just before the block, write one line with the way in, from the pitwall note at the start of this session (its URL and your own session id): `Start it in pitwall: <pitwall URL>/?session=<your session id>&spinoff=latest`. In a terminal the block is only text; this link opens your conversation in pitwall at the card, and the user starts it from there. If there's no pitwall note, write no line.
+3. End your message with one `spin-off` block, as the very last thing in it. Nothing after it, not even a sign-off.
+4. Then stop. Don't start the work yourself, don't run `claude --bg` or any other command to start a session, and don't wait for it.
 
 ```spin-off
 folder: ~/code/demo-app
@@ -43,13 +44,13 @@ The new session knows nothing of this conversation. Write the prompt so it stand
 
 Write plain text. pitwall won't show a block with a control, zero-width, bidi or other invisible character in it, and says so on the card instead.
 
-## One at a time
+## One at a time, and never twice
 
-pitwall shows the last block of your newest message, and only while it ends the message. A later message without one clears it. To propose two sessions, propose one, and the next in a later turn.
+pitwall shows the last block of your newest message in Needs you, and only while it ends the message. A later message without one clears it from Needs you. The block stays a card in your conversation in pitwall, and the link keeps it startable, so don't repeat a proposal in a later message to keep its card: in a terminal that's a screen of text to scroll past. To propose two sessions, propose one, and the next in a later turn.
 
 ## A hand-off is a proposal too (W168)
 
-When a session finishes a piece of work and its user will carry on in a fresh context (a hand-off, a `/clear` and "Read NOW.md"), end the message with a `spin-off` block whose prompt starts with this exact line, naming this session by its own id (the `?session=` link in the pitwall note at the start of this session):
+When a session finishes a piece of work and its user will carry on in a fresh context (a hand-off, a `/clear` and "Read NOW.md"), write the link line, then end the message with a `spin-off` block whose prompt starts with this exact line, naming this session by its own id (the `?session=` link in the pitwall note at the start of this session):
 
 ```
 Continues session <this session's id>.

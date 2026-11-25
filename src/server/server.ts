@@ -423,6 +423,7 @@ export async function startServerWithInternals(
     lineage,
     ...(internals.clearTimings === undefined ? {} : { timings: internals.clearTimings }),
   });
+  const reads = createReadLimit(MAX_CONVERSATION_READS);
   const routes = (app: Hono) => {
     registerDirectories(app, indexer, internals.directories);
     registerPrs(app, prs);
@@ -442,7 +443,7 @@ export async function startServerWithInternals(
     registerRecaps(app, indexer, recaps);
     registerFlags(app, { snapshots: flagged, store: flags, relay, recaps });
     registerSnoozes(app, { snapshots: snoozed, store: snoozes });
-    registerSpinOffs(app, { snapshots });
+    registerSpinOffs(app, { snapshots, conversation: (id, before) => indexer.conversation(id, before), reads });
     registerSpinOffSettle(app, { snapshots, store: spinOffs });
     registerClearAndContinue(app, { snapshots, runner: clearAndContinue, spawned, lineage, ...(recaps === undefined ? {} : { recapHandoff: (session) => recaps.handoffOf(session) }) });
     registerSupervisor(app, supervisor, supervisorActions);
@@ -454,7 +455,7 @@ export async function startServerWithInternals(
     });
     internals.routes?.(app);
   };
-  const app = createApp({ snapshots, indexer, token, apiKey, linkCodes, peerCheck, webRoot, port: () => port ?? -1, routes, ...(supervisor === undefined ? {} : { supervisor }) });
+  const app = createApp({ snapshots, indexer, token, apiKey, linkCodes, peerCheck, webRoot, port: () => port ?? -1, routes, reads, ...(supervisor === undefined ? {} : { supervisor }) });
   const honoListener = getRequestListener(app.fetch);
 
   const server = createServer((req, res) => {
@@ -577,6 +578,18 @@ function gateStatus(req: IncomingMessage, port: number | undefined): number | un
   return undefined;
 }
 
+/** The one limit on transcript reads (MAX_CONVERSATION_READS), shared by every route that reads one. */
+export interface ReadLimit {
+  full(): boolean;
+  take(): void;
+  release(): void;
+}
+
+function createReadLimit(max: number): ReadLimit {
+  let busy = 0;
+  return { full: () => busy >= max, take: () => void (busy += 1), release: () => void (busy -= 1) };
+}
+
 interface AppContext {
   /** What GET SNAPSHOT_PATH answers: the index's snapshot with only the links to open PRs (snapshotLinks.ts). */
   snapshots: SnapshotView;
@@ -588,14 +601,14 @@ interface AppContext {
   webRoot: string;
   port(): number;
   routes: ServerInternals['routes'];
+  /** Transcript reads being made now: the conversation's pages, sub-agents' and the spin-off check's (W209), under MAX_CONVERSATION_READS. */
+  reads: ReadLimit;
   /** The supervisor, for its conversation's pages (W113). Absent with --no-supervisor. */
   supervisor?: Pick<Supervisor, 'conversation'>;
 }
 
-function createApp({ snapshots, indexer, token, apiKey, linkCodes, peerCheck, webRoot, port, routes, supervisor }: AppContext): Hono {
+function createApp({ snapshots, indexer, token, apiKey, linkCodes, peerCheck, webRoot, port, routes, supervisor, reads }: AppContext): Hono {
   const app = new Hono();
-  // Conversation pages being read now.
-  let conversationReads = 0;
 
   app.use('/api/*', async (c, next) => {
     const origin = c.req.header('origin');
@@ -628,11 +641,11 @@ function createApp({ snapshots, indexer, token, apiKey, linkCodes, peerCheck, we
     if (cursors !== undefined && cursors.length !== 1) return c.body(null, 400);
     const before = cursors?.[0];
     if (before !== undefined && !isWellFormedCursor(before)) return c.body(null, 400);
-    if (conversationReads >= MAX_CONVERSATION_READS) {
+    if (reads.full()) {
       c.header('Retry-After', '1');
       return c.body(null, 429);
     }
-    conversationReads += 1;
+    reads.take();
     let page;
     try {
       page = await read(before);
@@ -642,7 +655,7 @@ function createApp({ snapshots, indexer, token, apiKey, linkCodes, peerCheck, we
       }
       throw error;
     } finally {
-      conversationReads -= 1;
+      reads.release();
     }
     if (!page) return c.body(null, 404);
     return c.json(page);
@@ -664,16 +677,16 @@ function createApp({ snapshots, indexer, token, apiKey, linkCodes, peerCheck, we
     c.header('Cache-Control', 'no-store');
     const lookup = resolveSession(indexer, c.req.param('sessionId'));
     if (!lookup.ok) return c.body(null, lookup.status);
-    if (conversationReads >= MAX_CONVERSATION_READS) {
+    if (reads.full()) {
       c.header('Retry-After', '1');
       return c.body(null, 429);
     }
-    conversationReads += 1;
+    reads.take();
     try {
       const list = await indexer.subagents(lookup.session.sessionId);
       return list === undefined ? c.body(null, 404) : c.json(list);
     } finally {
-      conversationReads -= 1;
+      reads.release();
     }
   });
 

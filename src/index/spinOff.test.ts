@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { isHandoffOf } from '../shared/handoff.js';
 import { SPAWN_PROMPT_MAX, SPIN_OFF_FOLDER_MAX, SPIN_OFF_NAME_MAX } from '../shared/protocol.js';
-import { detectSpinOff } from './spinOff.js';
+import { detectSpinOff, detectSpinOffBlocks, SPIN_OFF_BLOCKS_MAX } from './spinOff.js';
 
 // Made-up messages only, in the shape the pitwall plugin's skill (plugin/skills/pitwall/SKILL.md, W176) asks for.
 
@@ -190,5 +190,48 @@ describe('isHandoffOf', () => {
     expect(isHandoffOf(id, `Continues session 00000000-0000-4000-8000-000000000002.\nGo on.`)).toBe(false);
     expect(isHandoffOf(id, ` Continues session ${id}.`)).toBe(false);
     expect(isHandoffOf(id, 'Fix the test.')).toBe(false);
+  });
+});
+
+describe('detectSpinOffBlocks (W209)', () => {
+  const all = (text: string) => detectSpinOffBlocks(text, HOME);
+
+  it('finds a block mid-message, and each of two', () => {
+    const text = lines('Intro.', block('folder: ~/a', 'prompt: One.'), 'Words after it.', block('folder: ~/b', 'name: two', 'prompt:', 'Two.'));
+    const found = all(text);
+    expect(found).toHaveLength(2);
+    expect(found[0]).toMatchObject({ lines: 2, spinOff: { kind: 'proposal', folder: '/home/dev/a', prompt: 'One.' } });
+    expect(found[1]).toMatchObject({ lines: 4, spinOff: { kind: 'proposal', name: 'two' } });
+    // The key is the same as when the block ends the message.
+    expect(found[1]!.spinOff.key).toBe(read(text)!.key);
+  });
+
+  it('leaves out a block quoted inside another fence, and lists an unreadable one with why', () => {
+    expect(all(lines('````md', block('folder: ~/a', 'prompt: One.'), '````'))).toEqual([]);
+    expect(all(lines('~~~', block('folder: ~/a', 'prompt: One.'), '~~~'))).toEqual([]);
+    expect(all(block('name: x', 'prompt: One.'))[0]!.spinOff).toMatchObject({ kind: 'unreadable', problem: 'The block names no folder.' });
+  });
+
+  it('reads a block a fence in its prompt closed early as unreadable, as detectSpinOff does (F1)', () => {
+    const early = lines('Done.', '', '```spin-off', 'folder: /tmp/x', 'prompt:', 'Run this:', '```', 'Then fix it.', '```', '');
+    expect(read(early)).toMatchObject({ kind: 'unreadable', problem: expect.stringMatching(/close early/) });
+    const found = all(early);
+    expect(found).toHaveLength(1);
+    expect(found[0]!.spinOff).toMatchObject({ kind: 'unreadable', problem: expect.stringMatching(/close early/) });
+    // A later fence that opens real code, with text in it, is not this case.
+    expect(all(lines(block('folder: /tmp/x', 'prompt: Go.'), 'More text.', '```', 'code'))[0]!.spinOff.kind).toBe('proposal');
+  });
+
+  it('gives each block a fingerprint of its body with the fence’s indent off (F2)', () => {
+    const [plain] = all(block('folder: ~/a', 'prompt: One.'));
+    const [indented] = all(lines('- x', '  ```spin-off', '  folder: ~/a', '  prompt: One.', '  ```'));
+    expect(plain!.check).toMatch(/^[0-9a-f]{8}$/);
+    expect(indented!.check).toBe(plain!.check);
+  });
+
+  it('reads a block that never closes as unreadable, and stops at the most blocks one message gives', () => {
+    expect(all(lines('```spin-off', 'folder: ~/a', 'prompt: One.'))[0]!.spinOff).toMatchObject({ kind: 'unreadable' });
+    const many = Array.from({ length: SPIN_OFF_BLOCKS_MAX + 3 }, () => block('folder: ~/a', 'prompt: One.')).join('\n\n');
+    expect(all(many)).toHaveLength(SPIN_OFF_BLOCKS_MAX);
   });
 });

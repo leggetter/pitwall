@@ -366,6 +366,18 @@ describe('getConversation', () => {
   });
 });
 
+describe('asConversationPage: spin-off blocks (W209, F2)', () => {
+  const SID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const good = { lines: 2, check: 'abcdef01', spinOff: { kind: 'unreadable', key: '0123456789abcdef', problem: 'x' } };
+  const pageWith = (spinOffs: unknown[]) => ({ sessionId: SID, entries: [{ kind: 'assistant', text: 'x', spinOffs }] });
+
+  it('keeps all of an entry’s blocks, and none when one is malformed, so the rest can’t shift', () => {
+    expect(asConversationPage(pageWith([good, good]), SID)?.entries[0]?.spinOffs).toHaveLength(2);
+    expect(asConversationPage(pageWith([good, { ...good, check: 'nope' }, good]), SID)?.entries[0]).not.toHaveProperty('spinOffs');
+    expect(asConversationPage(pageWith([{ lines: 1, spinOff: good.spinOff }]), SID)?.entries[0]).not.toHaveProperty('spinOffs');
+  });
+});
+
 describe('asConversationPage', () => {
   const SID = '00000000-0000-4000-8000-0000000000c2';
 

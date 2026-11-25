@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { endsWithBackslash, isOwnHandoff } from '../../src/shared/handoff.js';
-import { clearAndContinuePath, continuedPath, SPIN_OFF_MIGRATE_MAX, SPIN_OFF_MIGRATE_PATH, spinOffPath, spinOffSettlePath, type ClearAndContinueResult, type SessionGroup, type SessionSummary, type SpinOff, type SpinOffCheck } from '../../src/shared/protocol.js';
+import { clearAndContinuePath, continuedPath, conversationSpinOffPath, SPIN_OFF_MIGRATE_MAX, SPIN_OFF_MIGRATE_PATH, spinOffPath, spinOffSettlePath, type ClearAndContinueResult, type SessionGroup, type SessionSummary, type SpinOff, type SpinOffCheck } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
 import { browserStorage, type StorageSource } from './groupState.js';
 import { activityMs } from './sessions.js';
@@ -160,8 +160,9 @@ function asCheck(body: unknown): SpinOffCheck | undefined {
 }
 
 /** Asks the server to check `sessionId`'s proposal `key` before New session opens with it. Never rejects. */
-export async function checkSpinOff(api: ApiClient, sessionId: string, key: string): Promise<SpinOffOutcome> {
-  const result = await api.post(spinOffPath(sessionId), { key });
+export async function checkSpinOff(api: ApiClient, sessionId: string, key: string, from: 'snapshot' | 'conversation' = 'snapshot'): Promise<SpinOffOutcome> {
+  // 'conversation' (W209): a block in the Conversation tab, which the server finds in the transcript.
+  const result = await api.post(from === 'conversation' ? conversationSpinOffPath(sessionId) : spinOffPath(sessionId), { key });
   if (result.kind === 'unauthorized') return { kind: 'failed', error: "pitwall didn't accept the page's key. Reload the page." };
   const body = asCheck(result.body);
   if (body === undefined) return { kind: 'failed', error: SPIN_OFF_UNEXPECTED };
@@ -238,3 +239,18 @@ export const SPIN_OFF_RECAP_NOTE =
 export const SPIN_OFF_HANDOFF_START_NOTE = 'Start opens New session filled in with this, to start a separate session instead. End session on the old one is yours to do.';
 /** The toast once a job is cleared and has its prompt. */
 export const clearedText = (name: string) => `Cleared ${name} and sent it the prompt. It carries on as the same job.`;
+
+// --- The Conversation tab's card (W209) --------------------------------------------------------------
+
+/**
+ * The parameter a link a terminal can open carries, beside ?session= (W209): `spinoff=latest` opens that
+ * session's Conversation tab at its newest spin-off card. It only navigates: Start on the card, and New
+ * session's own Start after it, are still the clicks that start anything. Any other value is ignored.
+ */
+export const SPIN_OFF_LINK_PARAM = 'spinoff';
+
+/** Whether `search` is a link to `sessionId`'s newest spin-off card: ?session=<sessionId>&spinoff=latest. */
+export function wantsLatestSpinOff(search: string, sessionId: string): boolean {
+  const params = new URLSearchParams(search);
+  return params.get(SPIN_OFF_LINK_PARAM) === 'latest' && params.get('session') === sessionId;
+}

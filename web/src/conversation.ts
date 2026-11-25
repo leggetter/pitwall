@@ -161,7 +161,7 @@ export function asConversationPage(body: unknown, sessionId: string): Conversati
 
 function asEntry(value: unknown): ConversationEntry | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
-  const { kind, at, text, markdown, toolName, toolError, from, recipient, subagent, questions, truncated, midTurn } = value as Record<string, unknown>;
+  const { kind, at, text, markdown, toolName, toolError, from, recipient, subagent, questions, truncated, midTurn, spinOffs } = value as Record<string, unknown>;
   if (typeof kind !== 'string' || !KINDS.has(kind as ConversationEntryKind) || typeof text !== 'string') return undefined;
   const entry: ConversationEntry = { kind: kind as ConversationEntryKind, text };
   if (typeof at === 'string') entry.at = at;
@@ -178,9 +178,32 @@ function asEntry(value: unknown): ConversationEntry | undefined {
   }
   if (kind === 'question' && Array.isArray(questions)) entry.questions = questions.slice(0, QUESTIONS_SHOWN).flatMap((question) => asQuestion(question) ?? []);
   if (truncated === true) entry.truncated = true;
+  // The spin-off blocks the server read in an assistant message (W209), each checked field by field.
+  if (kind === 'assistant' && Array.isArray(spinOffs)) {
+    // All or none: a malformed block is never skipped, so the rest can't shift.
+    const blocks = spinOffs.slice(0, 8).map((block) => asSpinOffBlock(block));
+    if (blocks.length > 0 && blocks.every((block) => block !== undefined)) entry.spinOffs = blocks as NonNullable<ConversationEntry['spinOffs']>;
+  }
   // Written while a turn ran, so it didn't begin one (W102).
   if (midTurn === true) entry.midTurn = true;
   return entry;
+}
+
+const SPIN_OFF_KEY = /^[0-9a-f]{16}$/;
+
+/** One of an entry's spin-off blocks (W209), or undefined when it isn't well formed. Only what the card shows is kept. */
+function asSpinOffBlock(value: unknown): NonNullable<ConversationEntry['spinOffs']>[number] | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const { spinOff, lines, check } = value as Record<string, unknown>;
+  if (typeof check !== 'string' || !/^[0-9a-f]{8}$/.test(check)) return undefined;
+  if (typeof lines !== 'number' || !Number.isInteger(lines) || lines < 0 || typeof spinOff !== 'object' || spinOff === null) return undefined;
+  const { kind, key, folder, name, prompt, problem } = spinOff as Record<string, unknown>;
+  if (typeof key !== 'string' || !SPIN_OFF_KEY.test(key)) return undefined;
+  if (kind === 'unreadable' && typeof problem === 'string') return { lines, check, spinOff: { kind, key, problem } };
+  if (kind === 'proposal' && typeof folder === 'string' && typeof prompt === 'string' && (name === undefined || typeof name === 'string')) {
+    return { lines, check, spinOff: { kind, key, folder, prompt, ...(name === undefined ? {} : { name }) } };
+  }
+  return undefined;
 }
 
 /** The most questions, and options to a question, the contract allows (AskedQuestion). */

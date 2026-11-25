@@ -54,9 +54,11 @@
 
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
+import os from 'node:os';
 import { open, type FileHandle } from 'node:fs/promises';
 import type { AskedQuestion, ConversationEntry, ConversationPage } from '../shared/protocol.js';
 import { isRecord } from './guards.js';
+import { detectSpinOffBlocks, SPIN_OFF_INFO } from './spinOff.js';
 import type { SubagentLabels } from './subagents.js';
 import { cap, truncate } from './text.js';
 import { queuedEntryOf, removePasteTags, stripSystemReminders, turnSignalOf, type TurnSignal } from './transcripts.js';
@@ -1028,7 +1030,12 @@ class PageBuilder {
     const supervisorAt = (address: string, offset: number) => fromBefore(address, offset, 'supervisor');
     const entries: ConversationEntry[] = [];
     const budget = { chars: PAGE_TEXT_BUDGET };
-    for (const draft of this.drafts) entries.push(withinBudget(finishDraft(draft, recipientOf, supervisorAt), budget));
+    for (const draft of this.drafts) {
+      const entry = finishDraft(draft, recipientOf, supervisorAt);
+      const cut = withinBudget(entry, budget);
+      // Spin-off blocks (W209) only from the whole text of the session's own messages: not a sub-agent's, and not an entry cut by the budget.
+      entries.push(this.sidechain || cut.text.length !== entry.text.length ? cut : withSpinOffs(cut));
+    }
     return entries.reverse();
   }
 }
@@ -1058,6 +1065,13 @@ function finishDraft(draft: Draft, recipientOf: (send: SendDraft) => Recipient |
       // separate paragraphs: a table or a list at the end of one doesn't run on into the next.
       return withAt({ kind: 'assistant', text: [...draft.parts].reverse().join('\n\n'), markdown: true }, draft.at);
   }
+}
+
+/** The entry with its message's spin-off blocks (W209), read from its whole text: the caller passes only an entry that wasn't cut. */
+function withSpinOffs(entry: ConversationEntry): ConversationEntry {
+  if (entry.kind !== 'assistant' || !entry.text.toLowerCase().includes(SPIN_OFF_INFO)) return entry;
+  const found = detectSpinOffBlocks(entry.text, os.homedir());
+  return found.length === 0 ? entry : { ...entry, spinOffs: found };
 }
 
 /**
