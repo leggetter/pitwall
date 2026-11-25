@@ -3,6 +3,7 @@
 // session, To pitwall-relay, a question Claude Code asked, a notice, one tool call, and two or more
 // folded into one toggle. Markdown shows as pitwall's own elements, a code block's long lines wrap (W137), and the view opens at the newest.
 
+import { fingerprint } from '../../../src/shared/fingerprint.js';
 import type { ConversationEntry } from '../../../src/shared/protocol.js';
 import { DEMO_APP_WEB, NAMES, SPIN_OFF, SPIN_OFF_PROMPT } from '../fixtures.js';
 import type { Part } from '../runner.js';
@@ -17,7 +18,7 @@ function blockMessages(): ConversationEntry[] {
   const body = ['folder: ' + DEMO_APP_WEB, 'name: pitwall-test-spin-off', 'prompt:', ...SPIN_OFF_PROMPT.split('\n')];
   const at = new Date().toISOString();
   return [
-    { kind: 'assistant', markdown: true, at, text: ['That settings work is separate from this session, so here is a proposal for a new one.', '', '```spin-off', ...body, '```'].join('\n'), spinOffs: [{ spinOff: SPIN_OFF, lines: body.length }] },
+    { kind: 'assistant', markdown: true, at, text: ['That settings work is separate from this session, so here is a proposal for a new one.', '', '```spin-off', ...body, '```'].join('\n'), spinOffs: [{ spinOff: SPIN_OFF, lines: body.length, check: fingerprint(body.join('\n')) }] },
     { kind: 'assistant', markdown: true, at, text: ['Meanwhile, the notes for this session:', '', ...Array.from({ length: 40 }, (_, index) => `- Note ${index + 1}: a made-up line, so the conversation is taller than the window.`)].join('\n') },
   ];
 }

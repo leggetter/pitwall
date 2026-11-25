@@ -29,6 +29,7 @@
 
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import { fingerprint } from '../shared/fingerprint.js';
 import { describeCodePoint, hiddenCharacter } from '../shared/hiddenText.js';
 import { SPAWN_PROMPT_MAX, SPIN_OFF_FOLDER_MAX, SPIN_OFF_NAME_MAX, type SpinOff } from '../shared/protocol.js';
 
@@ -72,6 +73,8 @@ export function detectSpinOff(text: string, home: string): SpinOff | undefined {
 export interface FoundSpinOff {
   spinOff: SpinOff;
   lines: number;
+  /** fingerprint() of the body with the fence's indent taken off, which the page recomputes from the code block it drew. */
+  check: string;
 }
 
 /** The most blocks one message gives (W209): more are left as code. */
@@ -86,8 +89,9 @@ export const SPIN_OFF_BLOCKS_MAX = 8;
 export function detectSpinOffBlocks(text: string, home: string): FoundSpinOff[] {
   const lines = text.replace(/\r\n?/g, '\n').split('\n');
   const found: FoundSpinOff[] = [];
-  let open: { marker: string; block: Block | undefined } | undefined;
-  const add = (block: Block) => found.push({ spinOff: readBlock(block, home), lines: block.body.length });
+  let open: { marker: string; block: Block | undefined; blankSince: boolean } | undefined;
+  const add = (block: Block) =>
+    found.push({ spinOff: readBlock(block, home), lines: block.body.length, check: fingerprint(block.body.map((line) => dedent(line, block.indent)).join('\n')) });
   for (const line of lines) {
     if (found.length >= SPIN_OFF_BLOCKS_MAX) break;
     if (open !== undefined) {
@@ -100,18 +104,25 @@ export function detectSpinOffBlocks(text: string, home: string): FoundSpinOff[] 
         open = undefined;
       } else {
         open.block?.body.push(line);
+        if (line.trim() !== '') open.blankSince = false;
       }
       continue;
     }
     const opening = FENCE_OPEN.exec(line);
     if (opening !== null && (opening[3] ?? '').toLowerCase() === SPIN_OFF_INFO) {
-      open = { marker: opening[2]!, block: { body: [], indent: opening[1]!.length, closed: false } };
+      open = { marker: opening[2]!, block: { body: [], indent: opening[1]!.length, closed: false }, blankSince: true };
       continue;
     }
     const other = /^\s*(`{3,}|~{3,})(.*)$/.exec(line);
-    if (other !== null && !(other[1]![0] === '`' && other[2]!.includes('`'))) open = { marker: other[1]!, block: undefined };
+    if (other !== null && !(other[1]![0] === '`' && other[2]!.includes('`'))) open = { marker: other[1]!, block: undefined, blankSince: other[2]!.trim() === '' };
   }
   if (open?.block !== undefined && found.length < SPIN_OFF_BLOCKS_MAX) add(open.block);
+  // As lastBlock(): the message ends in a bare fence after a block, so a fence in the block's prompt closed it
+  // early. The block is unreadable, with why, not a proposal cut mid-fence.
+  const lastFound = found[found.length - 1];
+  if (open !== undefined && open.block === undefined && open.blankSince && lastFound !== undefined) {
+    found[found.length - 1] = { ...lastFound, spinOff: { kind: 'unreadable', key: lastFound.spinOff.key, problem: CLOSED_EARLY } };
+  }
   return found;
 }
 

@@ -584,23 +584,35 @@ export function SessionView({
   const conversation = useConversation(session.lastActivityAt, loader, { pollMs: claudeSaysWorking && tab === 'conversation' && !hidden ? WORKING_POLL_MS : undefined });
   // The spin-off cards in the Conversation tab (W209), and a link's scroll to the newest of them, once the
   // first page is in. The link's parameter is taken out of the address so it doesn't open the next session there.
-  const spinOffHost = useMemo<SpinOffBlockHost | undefined>(
-    () =>
-      spinOffs === undefined
-        ? undefined
-        : {
-            card: (block) => (
-              <SpinOffBlockCard
-                session={session}
-                spinOff={block}
-                settled={session.spinOff?.key === block.key ? session.spinOff.settled : undefined}
-                onStart={spinOffs.onStart}
-                onOpenSession={spinOffs.onOpenSession}
-              />
-            ),
-          },
-    [session, spinOffs],
-  );
+  // Stable while what a card shows is the same, so every message's Markdown doesn't draw again on each render (F7):
+  // the callbacks are called through a ref, and the session is taken apart into the values the card reads.
+  const spinOffsRef = useRef(spinOffs);
+  spinOffsRef.current = spinOffs;
+  const hasSpinOffs = spinOffs !== undefined;
+  const { sessionId: spinSessionId, name: spinSessionName } = session;
+  const proposed = session.spinOff;
+  const proposedKey = proposed?.key;
+  const settledNow = proposed?.kind === 'proposal' ? proposed.settled : undefined;
+  const settledHow = settledNow?.how;
+  const settledAt = settledNow?.at;
+  const settledSession = settledNow?.sessionId;
+  const settledName = settledNow?.name;
+  const spinOffHost = useMemo<SpinOffBlockHost | undefined>(() => {
+    if (!hasSpinOffs) return undefined;
+    const settled = settledHow === undefined ? undefined : ({ how: settledHow, at: settledAt, sessionId: settledSession, name: settledName } as NonNullable<typeof settledNow>);
+    return {
+      card: (block) => (
+        <SpinOffBlockCard
+          session={{ sessionId: spinSessionId, name: spinSessionName }}
+          spinOff={block}
+          settled={proposedKey === block.key ? settled : undefined}
+          onStart={(checked) => spinOffsRef.current?.onStart(checked)}
+          onOpenSession={(id) => spinOffsRef.current?.onOpenSession(id)}
+        />
+      ),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasSpinOffs, spinSessionId, spinSessionName, proposedKey, settledHow, settledAt, settledSession, settledName]);
   const conversationStatus = conversation.state.status;
   useLayoutEffect(() => {
     if (!latestSpinOff.current || (conversationStatus !== 'ready' && conversationStatus !== 'missing')) return;

@@ -5,7 +5,7 @@ import { createContext, type ReactNode } from 'react';
 import type { SpinOff } from '../../src/shared/protocol.js';
 
 /** A block the server read in an assistant message (ConversationEntry.spinOffs). */
-export type FoundBlock = { spinOff: SpinOff; lines: number };
+export type FoundBlock = { spinOff: SpinOff; lines: number; check: string };
 
 export interface SpinOffBlockHost {
   /** The card for a readable block. */

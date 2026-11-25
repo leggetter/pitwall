@@ -76,7 +76,7 @@ export type Block =
    * closed. `text` is the code as written, and `linked` the same text with its bare URLs as links, as
    * for a code span.
    */
-  | { type: 'code'; language: string; text: string; closed: boolean; linked?: Inline[] }
+  | { type: 'code'; language: string; text: string; closed: boolean; linked?: Inline[]; exact?: true }
   | { type: 'list'; ordered: boolean; start: number; items: Block[][] }
   | { type: 'quote'; children: Block[] }
   | { type: 'rule' }
@@ -500,7 +500,10 @@ function readFence(lines: string[], i: number, fence: Fence, blocks: Block[]): n
   const language = (fence.info.split(/[ \t]/, 1)[0] ?? '').slice(0, MAX_LANGUAGE);
   const text = content.join('\n');
   const linked = linkedCode(text);
-  blocks.push(linked ? { type: 'code', language, text, closed, linked } : { type: 'code', language, text, closed });
+  const block: Extract<Block, { type: 'code' }> = linked ? { type: 'code', language, text, closed, linked } : { type: 'code', language, text, closed };
+  // The info string is the language alone, with no other words (W209): all a spin-off card is drawn for.
+  if (language.toLowerCase() === 'spin-off' && fence.info.trim() === language) block.exact = true;
+  blocks.push(block);
   return j;
 }
 

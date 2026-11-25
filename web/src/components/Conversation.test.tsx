@@ -10,6 +10,7 @@ import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import { AttachContext } from '../attach.js';
 import { absoluteTime, clockTime } from '../format.js';
 import { NOW, fakeSockets, minutesAgo, session, withoutSubagents } from '../test/fixtures.js';
+import { fingerprint } from '../../../src/shared/fingerprint.js';
 import { hover, pass, shownTooltip, tooltipText, unhover } from '../test/tooltips.js';
 import { TO_SUPERVISOR_SPEAKER } from './Conversation.js';
 import { SessionView } from './SessionView.js';
@@ -1156,11 +1157,14 @@ describe('Conversation: across the Terminal tab (W29)', () => {
 describe('Conversation: spin-off blocks', () => {
   const KEY = '0123456789abcdef';
   const KEY2 = 'fedcba9876543210';
-  const proposal = (key: string, prompt: string, extra: Record<string, unknown> = {}): NonNullable<ConversationEntry['spinOffs']>[number] => ({
+  const bodyOf = (prompt: string) => ['folder: ~/oss/demo-app', 'name: fix-export', `prompt: ${prompt}`];
+  /** The server's block for a fenced(`bodyPrompt`) in the message: the fingerprint is of the body the page will draw. */
+  const proposal = (key: string, prompt: string, extra: Record<string, unknown> = {}, bodyPrompt = prompt): NonNullable<ConversationEntry['spinOffs']>[number] => ({
     lines: 3,
+    check: fingerprint(bodyOf(bodyPrompt).join('\n')),
     spinOff: { kind: 'proposal', key, folder: '/home/dev/oss/demo-app', name: 'fix-export', prompt, ...extra },
   });
-  const fenced = (prompt: string) => ['```spin-off', 'folder: ~/oss/demo-app', 'name: fix-export', `prompt: ${prompt}`, '```'].join('\n');
+  const fenced = (prompt: string) => ['```spin-off', ...bodyOf(prompt), '```'].join('\n');
   const withBlocks = (second: number, texts: string[], spinOffs: NonNullable<ConversationEntry['spinOffs']>): ConversationEntry => ({ ...claude(second, texts.join('\n\nAnd then.\n\n')), spinOffs });
 
   async function viewWith(entries: ConversationEntry[], overrides: Partial<SessionSummary> = {}, search = '') {
@@ -1212,13 +1216,13 @@ describe('Conversation: spin-off blocks', () => {
 
   it('a hand-off block gets Start only, never Clear and continue', async () => {
     const prompt = `Continues session ${SID}.\n\nRead NOW.md`;
-    const view = await viewWith([withBlocks(2, [fenced('x')], [proposal(KEY, prompt)])]);
+    const view = await viewWith([withBlocks(2, [fenced('x')], [proposal(KEY, prompt, {}, 'x')])]);
     expect(within(view.body).getByRole('button', { name: /Start new session…/ })).toBeTruthy();
     expect(within(view.body).queryByRole('button', { name: /Clear and continue/ })).toBeNull();
   });
 
   it('shows a block pitwall couldn’t read as code, with why', async () => {
-    const entry = withBlocks(2, [fenced('x')], [{ lines: 3, spinOff: { kind: 'unreadable', key: KEY, problem: 'The block names no folder.' } }]);
+    const entry = withBlocks(2, [fenced('x')], [{ lines: 3, check: fingerprint(bodyOf('x').join('\n')), spinOff: { kind: 'unreadable', key: KEY, problem: 'The block names no folder.' } }]);
     const { body } = await viewWith([entry]);
     expect(body.querySelector('.spin-off-block')).toBeNull();
     expect(body.querySelector('.md-code')).not.toBeNull();
@@ -1229,6 +1233,32 @@ describe('Conversation: spin-off blocks', () => {
     const entry = withBlocks(2, [fenced('x')], [{ ...proposal(KEY, 'x'), lines: 9 }]);
     const { body } = await viewWith([entry]);
     expect(body.querySelector('.spin-off-block')).toBeNull();
+  });
+
+  // F2: a card replaces only the code the server read, never a look-alike.
+  it('keeps a block with extra words after spin-off in its fence as code', async () => {
+    const entry = withBlocks(2, [fenced('x').replace('```spin-off', '```spin-off extra')], [proposal(KEY, 'x')]);
+    expect((await viewWith([entry])).body.querySelector('.spin-off-block')).toBeNull();
+  });
+
+  it('keeps a block inside a quote as code', async () => {
+    const quoted = fenced('x').split('\n').map((line) => `> ${line}`).join('\n');
+    expect((await viewWith([withBlocks(2, [quoted], [proposal(KEY, 'x')])])).body.querySelector('.spin-off-block')).toBeNull();
+  });
+
+  it('keeps a block with a control character in it as code, since the page reads it without', async () => {
+    const entry = withBlocks(2, [fenced('a\u0001b')], [proposal(KEY, 'ab', {}, 'a\u0001b')]);
+    expect((await viewWith([entry])).body.querySelector('.spin-off-block')).toBeNull();
+  });
+
+  it('draws the card on the block the server read, not on an earlier look-alike', async () => {
+    const entry = withBlocks(2, [fenced('Decoy.'), fenced('Real.')], [proposal(KEY, 'Real.')]);
+    const { body } = await viewWith([entry]);
+    const cards = body.querySelectorAll('.spin-off-block');
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.textContent).toContain('Real.');
+    expect(body.querySelectorAll('.md-code')).toHaveLength(1);
+    expect(body.querySelector('.md-code')!.textContent).toContain('Decoy.');
   });
 
   it('says "Started as <name>" with a link to the session in place of Start, and notes a dismissal', async () => {

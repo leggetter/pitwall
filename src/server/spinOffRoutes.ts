@@ -31,6 +31,7 @@ import { isRecord } from '../index/guards.js';
 import { conversationSpinOffPath, spinOffPath, type ConversationPage, type IndexSnapshot, type SpinOff, type SpinOffCheck } from '../shared/protocol.js';
 import { LOOKUP_ERRORS } from './actions.js';
 import { resolveSession } from './sessions.js';
+import type { ReadLimit } from './server.js';
 import { checkSpawn } from './supervisorActions.js';
 
 /** The route as a Hono pattern. spinOffPath() encodes its argument, so the pattern is decoded back. */
@@ -49,10 +50,17 @@ export const CONVERSATION_SCAN_PAGES = 20;
 /** Checks at once: the scan reads the transcript, as the conversation's pages do, which have their own limit. */
 export const CONVERSATION_SCANS_MAX = 2;
 
+/** How long a scan may take: it stops paging after this and answers 503 (W209, F3). */
+export const CONVERSATION_SCAN_MS = 5000;
+
 export interface SpinOffRouteSources {
   snapshots: { latest(): IndexSnapshot | undefined };
   /** One page of the session's conversation, as the conversation route reads it (W209). Left out, that check answers 404. */
   conversation?: ((sessionId: string, before?: string) => Promise<ConversationPage | undefined>) | undefined;
+  /** The server's limit on transcript reads, shared with the conversation's pages: each page of a scan takes one (W209, F3). Left out, no limit. */
+  reads?: ReadLimit | undefined;
+  /** How long a scan may run before it stops paging, in ms. Default CONVERSATION_SCAN_MS. */
+  scanMs?: number | undefined;
 }
 
 export function registerSpinOffs(app: Hono, sources: SpinOffRouteSources): void {
@@ -117,7 +125,13 @@ export function registerSpinOffs(app: Hono, sources: SpinOffRouteSources): void 
       scans += 1;
       let proposal: SpinOff | undefined;
       try {
-        proposal = await findBlock(read, lookup.session.sessionId, body.key);
+        const found = await findBlock(read, lookup.session.sessionId, body.key, sources.reads, Date.now() + (sources.scanMs ?? CONVERSATION_SCAN_MS));
+        if (found === 'busy') {
+          c.header('Retry-After', '1');
+          return answer(c, { ok: false, error: 'pitwall is reading other conversations. Try again in a moment.' }, 429);
+        }
+        if (found === 'late') return answer(c, { ok: false, error: 'pitwall took too long reading the conversation to check the block. Try again.' }, 503);
+        proposal = found;
       } catch {
         return answer(c, { ok: false, error: 'pitwall couldn’t read the conversation to check the block. Try again.' }, 409);
       } finally {
@@ -134,11 +148,25 @@ export function registerSpinOffs(app: Hono, sources: SpinOffRouteSources): void 
   );
 }
 
-/** The newest assistant message's block with `key`, found by reading the transcript's pages from its end. */
-async function findBlock(read: NonNullable<SpinOffRouteSources['conversation']>, sessionId: string, key: string): Promise<SpinOff | undefined> {
+/** The newest assistant message's block with `key`, found by reading the transcript's pages from its end. 'busy': the read limit is full. 'late': the deadline passed. */
+async function findBlock(
+  read: NonNullable<SpinOffRouteSources['conversation']>,
+  sessionId: string,
+  key: string,
+  reads: ReadLimit | undefined,
+  deadline: number,
+): Promise<SpinOff | undefined | 'busy' | 'late'> {
   let before: string | undefined;
   for (let pages = 0; pages < CONVERSATION_SCAN_PAGES; pages += 1) {
-    const page = await read(sessionId, before);
+    if (Date.now() > deadline) return 'late';
+    if (reads?.full() === true) return 'busy';
+    reads?.take();
+    let page;
+    try {
+      page = await read(sessionId, before);
+    } finally {
+      reads?.release();
+    }
     if (page === undefined) return undefined;
     for (let index = page.entries.length - 1; index >= 0; index -= 1) {
       const entry = page.entries[index]!;
