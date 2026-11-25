@@ -1007,6 +1007,26 @@ describe('a hand-off written by hand (W210)', () => {
   });
 });
 
+describe('a proposal settled after the recap (W212)', () => {
+  it('recaps the proposer again when its proposal is settled, so the to-do to start it goes', async () => {
+    const listeners = new Set<(sessionId: string) => void>();
+    const h = harness({ spinOffSettled: { subscribe: (listener) => (listeners.add(listener), () => listeners.delete(listener)) } });
+    h.start();
+    const a = h.add('a');
+    await h.poll([a]);
+    await h.reply(h.calls[0], envelope(answer()));
+    expect(h.calls).toHaveLength(1);
+    for (const listener of listeners) listener('not-listed');
+    await tick();
+    expect(h.calls).toHaveLength(1);
+    for (const listener of listeners) listener('a');
+    await tick();
+    expect(h.calls).toHaveLength(2);
+    await h.engine.close();
+    expect(listeners.size).toBe(0);
+  });
+});
+
 describe('what the snapshot shows', () => {
   async function recapped(overrides: Record<string, unknown> = {}) {
     const h = harness();

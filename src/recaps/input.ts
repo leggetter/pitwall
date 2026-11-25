@@ -430,6 +430,11 @@ function prsBlock(prs: SessionPrs | undefined): string[] {
 export interface SessionInfo {
   name?: string;
   repo?: string;
+  /**
+   * What became of the new session this one proposed (W212): "already started as …" or dismissed. Said
+   * once it's settled, so the recap doesn't list starting it as a to-do or as what the session waits on.
+   */
+  proposal?: string;
 }
 
 /** The longest name or repo label sent. */
@@ -516,6 +521,8 @@ function infoBlock(info: SessionInfo): string[] {
   const repo = info.repo === undefined ? '' : plainLine(info.repo, INFO_MAX);
   if (name !== '') lines.push(`Name: ${name}`);
   if (repo !== '') lines.push(`Repo: ${repo}`);
+  const proposal = info.proposal === undefined ? '' : plainLine(info.proposal, INFO_MAX);
+  if (proposal !== '') lines.push(`Spin-off proposal: ${proposal}`);
   return lines.length === 0 ? [] : [block('session-info', lines.join('\n'))];
 }
 

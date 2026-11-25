@@ -499,8 +499,8 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   // Every root's rows that need you, a PR's included (W106): the page title's count.
   const attention = countNeeds(groups, work);
   // The proposals for new sessions that wait on you (W163), every root's for the title and the root
-  // tabs, and the open tab's for Needs you, its cards and its count. Dismissed ones are the browser's.
-  const dismissedSpinOffs = useDismissedSpinOffs(storage);
+  // tabs, and the open tab's for Needs you, its cards and its count. Settled ones, started or dismissed, are the server's (W212).
+  const dismissedSpinOffs = useDismissedSpinOffs(useContext(ApiContext));
   const spinOffs = useMemo(() => openSpinOffs(groups, dismissedSpinOffs.set), [groups, dismissedSpinOffs.set]);
   const tabSpinOffs = useMemo(() => openSpinOffs(shownGroups, dismissedSpinOffs.set), [shownGroups, dismissedSpinOffs.set]);
   // Start on a proposal, once the server has checked it: New session, filled in with it.
@@ -2269,7 +2269,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             if (api && spinOffStart.handoff === true) {
               void noteContinued(api, spinOffStart.sessionId, session.shortId);
             }
-            dismissedSpinOffs.dismiss(spinOffStart.sessionId, spinOffStart.key);
+            dismissedSpinOffs.start(spinOffStart.sessionId, spinOffStart.key);
             setSpinOffStart(undefined);
             started.wait(session);
             toasts.show({ tone: 'success', key: startedKey(session.shortId), message: startedText(session.name) });

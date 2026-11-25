@@ -126,6 +126,8 @@ export interface Records {
   snoozes: Array<{ action: 'snooze' | 'unsnooze'; name: string; until?: string }>;
   /** Each spin-off check the server answered (W163), by the asking session's name, with the key asked for and the status. */
   spinOffChecks: Array<{ name: string; key: unknown; status: number }>;
+  /** Each Start or Dismiss the server was told of (W212), by the asking session's name. */
+  spinOffSettles: Array<{ name: string; key: unknown; how: unknown }>;
   /** Each Clear and continue the server answered (W168), by the asking session's name, with the key asked for and the status. */
   clears: Array<{ name: string; key: unknown; status: number }>;
   /** Each started session the page said continues another (W168), by the old session's name. */
@@ -172,6 +174,7 @@ const emptyRecords = (): Records => ({
   prDismissals: [],
   snoozes: [],
   spinOffChecks: [],
+  spinOffSettles: [],
   clears: [],
   continued: [],
   actions: [],
@@ -457,7 +460,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     const recapRefresh = /^\/api\/sessions\/([^/]+)\/recap\/refresh$/.exec(url.pathname);
     if (recapRefresh && method === 'POST') return refreshRecap(req, res, decodeURIComponent(recapRefresh[1]!));
 
-    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|flag|unflag|snooze|unsnooze|spin-off|clear-and-continue|continued|stop|remove|resume|open|open-file|subagents|end|recap)$/.exec(url.pathname);
+    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|flag|unflag|snooze|unsnooze|spin-off\/settle|spin-off|clear-and-continue|continued|stop|remove|resume|open|open-file|subagents|end|recap)$/.exec(url.pathname);
     if (!match) return end(res, 404);
     const session = world.session(decodeURIComponent(match[1]!));
     if (!session) return end(res, 404);
@@ -495,6 +498,18 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     if (route === 'unflag' && method === 'POST') {
       records.flags.push({ action: 'unflag', name: session.name });
       world.flag(session.sessionId, undefined);
+      broadcast();
+      return json(res, 200, { ok: true });
+    }
+    if (route === 'spin-off/settle' && method === 'POST') {
+      // spinOffSettlePath(id) (W212): the server keeps the Start or Dismiss, so the snapshot says it's settled.
+      const body = await readJson(req);
+      const key = isRecord(body) ? body.key : undefined;
+      const how = isRecord(body) ? body.how : undefined;
+      records.spinOffSettles.push({ name: session.name, key, how });
+      const proposal = session.spinOff;
+      if (proposal === undefined || proposal.key !== key || (how !== 'started' && how !== 'dismissed')) return json(res, 409, { ok: false, error: 'That session has proposed something else since.' });
+      world.spinOff(session.sessionId, { ...proposal, settled: { how, at: new Date().toISOString() } });
       broadcast();
       return json(res, 200, { ok: true });
     }

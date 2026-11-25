@@ -228,6 +228,17 @@ export interface RecapEngineOptions {
    * pitwall's own goes into this session's first recap as data. Never given session content.
    */
   predecessorOf?: (sessionId: string) => string | undefined;
+  /**
+   * What became of the session's spin-off proposal (W212): started, as which session when known, or
+   * dismissed. The input says so, so the recap drops the to-do to start it. A hook that throws says nothing.
+   */
+  startedSpinOff?: (session: SessionSummary, snapshot: IndexSnapshot) => { how: 'started' | 'dismissed'; name?: string } | undefined;
+  /**
+   * Told the proposer's session id when its proposal is settled or found started (W212). The engine
+   * recaps that session again, within the debounce and the daily budget, since a recap made before
+   * the settle still lists starting it as a to-do.
+   */
+  spinOffSettled?: { subscribe(listener: (sessionId: string) => void): () => void };
 }
 
 /** A failed call isn't tried again automatically, for the same activity, sooner than this. */
@@ -351,6 +362,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
   let index: RecapIndex | undefined;
   let unsubscribe: (() => void) | undefined;
   let unsubscribePrs: (() => void) | undefined;
+  let unsubscribeSettled: (() => void) | undefined;
   let prSource: RecapPrs | undefined;
   let closed = false;
   let changes = 0;
@@ -649,7 +661,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     const prs = prsOf(session);
     const withPrs = prs === undefined ? {} : { prs };
     // Who the session is and your messages through it (W189), in both kinds of call.
-    const about = { name: session.name, repo, ...(read.prompts === undefined ? {} : { prompts: read.prompts }) };
+    const about = { name: session.name, repo, ...(read.prompts === undefined ? {} : { prompts: read.prompts }), ...proposalOf(session) };
     const input = update
       ? updateRecapInput(
           { ...about, ...(read.firstPrompt === undefined ? {} : { firstPrompt: read.firstPrompt }), previous: answerOf(previous), turns: collector.text(), ...withPrs },
@@ -725,6 +737,19 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     lastError = undefined;
     lastErrorAt = undefined;
     changed();
+  }
+
+  /** What became of the session's proposal (W212), for the input's session info, or nothing. */
+  function proposalOf(session: SessionSummary): { proposal: string } | Record<string, never> {
+    if (session.spinOff === undefined || options.startedSpinOff === undefined) return {};
+    try {
+      const snapshot = index?.latest();
+      const settled = snapshot === undefined ? undefined : options.startedSpinOff(session, snapshot);
+      if (settled === undefined) return {};
+      return { proposal: settled.how === 'started' ? `already started${settled.name === undefined ? '' : ` as the session named ${settled.name}`}` : 'dismissed by the user, so it will not be started' };
+    } catch {
+      return {};
+    }
   }
 
   /** The session's PRs for an input (W150): its strong links matched with the latest PR list, or none. */
@@ -864,6 +889,20 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     return { reason: 'recap', text: next };
   }
 
+  /** Queues a recap for the session now, as the page's refresh does. */
+  function refreshSession(session: SessionSummary): RefreshResult {
+    if (closed) return { kind: 'closed' };
+    sync();
+    if (session.transcript !== 'ok' || facts.get(session.sessionId)?.file === undefined) return { kind: 'no-transcript' };
+    if (running.has(session.sessionId)) return { kind: 'running', retryAfterSeconds: 5 };
+    if (spent()) return { kind: 'spent', retryAfterSeconds: secondsToMidnight(now()) };
+    const automatic = autoQueue.findIndex((job) => job.sessionId === session.sessionId);
+    if (automatic !== -1) autoQueue.splice(automatic, 1);
+    if (!demandQueue.some((job) => job.sessionId === session.sessionId)) demandQueue.push({ sessionId: session.sessionId, demand: true });
+    pump();
+    return { kind: 'queued' };
+  }
+
   return {
     start(given, prs) {
       if (index !== undefined || closed) return;
@@ -877,6 +916,14 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
           if (latest !== undefined) schedule(latest);
         });
       }
+      unsubscribeSettled = options.spinOffSettled?.subscribe((sessionId) => {
+        try {
+          const found = given.latest()?.groups.flatMap((group) => group.sessions).find((each) => each.sessionId === sessionId);
+          if (found !== undefined) refreshSession(found);
+        } catch {
+          // A recap that can't be queued now is made at the next change.
+        }
+      });
       const latest = given.latest();
       if (latest !== undefined) schedule(latest);
     },
@@ -890,18 +937,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
       const started = parseMs(row.startedAt);
       return !Number.isNaN(started) && now() - started < OWN_NAME_MS;
     },
-    refresh(session) {
-      if (closed) return { kind: 'closed' };
-      sync();
-      if (session.transcript !== 'ok' || facts.get(session.sessionId)?.file === undefined) return { kind: 'no-transcript' };
-      if (running.has(session.sessionId)) return { kind: 'running', retryAfterSeconds: 5 };
-      if (spent()) return { kind: 'spent', retryAfterSeconds: secondsToMidnight(now()) };
-      const automatic = autoQueue.findIndex((job) => job.sessionId === session.sessionId);
-      if (automatic !== -1) autoQueue.splice(automatic, 1);
-      if (!demandQueue.some((job) => job.sessionId === session.sessionId)) demandQueue.push({ sessionId: session.sessionId, demand: true });
-      pump();
-      return { kind: 'queued' };
-    },
+    refresh: refreshSession,
     recap(session) {
       return shown(session);
     },
@@ -953,6 +989,7 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
       closed = true;
       unsubscribe?.();
       unsubscribePrs?.();
+      unsubscribeSettled?.();
       listeners.clear();
       demandQueue.length = 0;
       autoQueue.length = 0;

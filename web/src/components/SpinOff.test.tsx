@@ -5,13 +5,13 @@
 
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SPAWN_PATH, spinOffPath, type IndexSnapshot, type SessionSummary, type SpinOff } from '../../../src/shared/protocol.js';
+import { SPAWN_PATH, spinOffPath, spinOffSettlePath, type IndexSnapshot, type SessionSummary, type SpinOff } from '../../../src/shared/protocol.js';
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import { AttachContext, type AttachEnv } from '../attach.js';
 import { shortenHome } from '../format.js';
 import type { StorageSource } from '../groupState.js';
 import { memoryNavigation } from '../selection.js';
-import { SPIN_OFFS_KEY, spinOffTitle } from '../spinOff.js';
+import { spinOffTitle } from '../spinOff.js';
 import { fakeSockets, group, NOW, session, snapshot } from '../test/fixtures.js';
 import { toastMessages } from '../test/toasts.js';
 import { Dashboard, startedText } from './Dashboard.js';
@@ -56,6 +56,7 @@ function fakeServer(check: [number, unknown] = [200, { ok: true, cwd: DOCS, name
       posts.push({ url, body: init.body ? JSON.parse(String(init.body)) : undefined });
       if (url === spinOffPath(ASKER_ID)) return new Response(JSON.stringify(check[1]), { status: check[0] });
       if (url === SPAWN_PATH) return new Response(JSON.stringify({ ok: true, ...STARTED }), { status: 201 });
+      if (url.includes('/spin-off/settle')) return new Response(JSON.stringify({ ok: true }), { status: 200 });
       return new Response(JSON.stringify({ ok: false, error: 'not in this test' }), { status: 409 });
     }
     return new Response(JSON.stringify({ sessionId: 'x', entries: [] }), { status: 200 });
@@ -151,17 +152,18 @@ describe('a spin-off proposal in Needs you', () => {
 
   it('starts nothing until New session’s own Start session, then its card goes', async () => {
     const server = fakeServer();
-    const { storage } = renderDashboard(server);
+    renderDashboard(server);
     fireEvent.click(within(card()).getByRole('button', { name: 'Start…' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New session' })).not.toBeNull());
     expect(server.posts().some((post) => post.url === SPAWN_PATH)).toBe(false);
     fireEvent.change(field('First prompt'), { target: { value: 'Tidy the made-up README, my way.' } });
     fireEvent.click(within(dialog()).getByRole('button', { name: 'Start session' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New session' })).toBeNull());
-    expect(server.posts().at(-1)).toEqual({ url: SPAWN_PATH, body: { cwd: DOCS, name: 'tidy-readme', prompt: 'Tidy the made-up README, my way.' } });
+    expect(server.posts().find((post) => post.url === SPAWN_PATH)).toEqual({ url: SPAWN_PATH, body: { cwd: DOCS, name: 'tidy-readme', prompt: 'Tidy the made-up README, my way.' } });
     expect(toastMessages()).toContain(startedText(STARTED.name));
     expect(cards()).toEqual([]);
-    expect(storage.values.get(SPIN_OFFS_KEY)).toBe(JSON.stringify({ v: 1, dismissed: [`${ASKER_ID}:${KEY}`] }));
+    // The server keeps the start (W212), not the browser.
+    await waitFor(() => expect(server.posts().find((post) => post.url === spinOffSettlePath(ASKER_ID))).toEqual({ url: spinOffSettlePath(ASKER_ID), body: { key: KEY, how: 'started' } }));
   });
 
   it('leaves the card when New session is closed without starting', async () => {
