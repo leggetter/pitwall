@@ -489,6 +489,7 @@ Branch from `main`, merge into `main` (Phil, 2026-11-18). Planned during M5.4; b
     - **Left:** "Started as <name>" in the Conversation tab is W209's, which should read `spinOff.settled`; with no new activity in the proposer, a recap that already waits on you doesn't change until refreshed.
 
 ## Open questions
+  - Fix check (2026-11-25): approve. Left: a settle while that session's recap is running drops the re-queue (`refreshSession` answers `running`), so that recap keeps its stale to-do until the next activity or Refresh; and a proposer that proposes the same name and folder twice, with no started entry for the first, can match the first's session.
 
 - **Profiles set the sub-agent model as a default, or force it?** A default (Phil, 2026-11-06, W155): since Claude Code v2.1.251, an Agent call's own `model` beats `CLAUDE_CODE_SUBAGENT_MODEL`, and forcing it with `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` would quietly put a security review on Sonnet and a Haiku agent up to Sonnet. 11-02's sub-agents named no model, so a default covers them. Revisit if W158 shows Build sessions' sub-agents still mostly on Opus.
 - **Is pitwall open-sourced, and how?** Decided (Phil, 2026-10-28): it goes public, under Apache-2.0 (D21).
