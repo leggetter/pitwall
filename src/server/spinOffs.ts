@@ -24,13 +24,16 @@
 //     after /clear count too (W167's lineage: a session whose predecessors include a match). Found
 //     only hides a card, it never starts anything, so a name the session chose is enough. The first
 //     time one is found it's recorded, so the card doesn't come back if that session is removed later.
-// The proposal's message time is the proposer's lastActivityAt: a proposal holds only while its turn
-// has ended and no prompt has come since, so nothing is newer.
+// A match must have begun at or after the proposer's own start: lastActivityAt moves on every message
+// and task notification that doesn't clear a proposal, so it would lose a session started while pitwall
+// wasn't recording. To keep a later proposal from matching an earlier one's session, a candidate this
+// proposer's other held entries claim (a started one's session id, or begun at or before its time) is skipped.
+// A second pitwall on the same home is read again whenever the file changes (decorate()).
 // A session's own hand-off (isOwnHandoff(), W210) is never found by name and folder: it's the proposer
 // continuing itself, and W210 clears it when the job really continues (a new prompt or session id).
 // Only a click settles it.
 import { randomBytes } from 'node:crypto';
-import { closeSync, constants, fstatSync, openSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -119,30 +122,44 @@ export class SpinOffStore {
   #entries = new Map<string, Entry>();
   readonly #realPaths = new Map<string, string>();
   readonly #listeners = new Set<() => void>();
+  readonly #settledListeners = new Set<(sessionId: string) => void>();
   #version = 0;
+  /** The file's mtime and size when last read, to see another pitwall's write. */
+  #seen = '';
 
   constructor(options: SpinOffStoreOptions = {}) {
     this.#home = options.home === undefined ? undefined : path.resolve(options.home);
     this.#file = this.#home === undefined ? undefined : path.join(this.#home, SPIN_OFFS_FILE_NAME);
     this.#now = options.now ?? (() => new Date());
     this.#predecessorOf = options.predecessorOf ?? (() => undefined);
-    if (this.#file !== undefined) for (const [id, entry] of readSpinOffsFile(this.#file, this.#now())) this.#entries.set(id, entry);
+    if (this.#file !== undefined) {
+      for (const [id, entry] of readSpinOffsFile(this.#file, this.#now())) this.#entries.set(id, entry);
+      this.#seen = this.#stamp();
+    }
   }
 
   /** Settles `sessionId`'s proposal `key`. A started one keeps the session it was started as, when known. */
   settle(sessionId: string, key: string, how: 'started' | 'dismissed', started?: { sessionId?: string; name?: string }): void {
     const id = spinOffEntryId(sessionId, key);
-    const entry: Entry = {
-      how,
-      at: this.#now().toISOString(),
-      ...(started?.sessionId !== undefined && UUID.test(started.sessionId) ? { session: started.sessionId } : {}),
-      ...(isSafeName(started?.name) ? { name: started.name } : {}),
-    };
+    this.#reload();
+    const held = this.#entries.get(id);
+    // A started one stays started: a stale tab's later Dismiss doesn't turn it back, and a bare Start keeps what's known.
+    if (held?.how === 'started' && how === 'dismissed') return;
+    const session = started?.sessionId !== undefined && UUID.test(started.sessionId) ? started.sessionId : held?.how === 'started' ? held.session : undefined;
+    const name = isSafeName(started?.name) ? started.name : held?.how === 'started' ? held.name : undefined;
+    const entry: Entry = { how, at: this.#now().toISOString(), ...(session === undefined ? {} : { session }), ...(name === undefined ? {} : { name }) };
     this.#entries.delete(id);
     this.#entries.set(id, entry);
     this.#cap();
     this.#write();
     this.#changed();
+    this.#told(sessionId);
+  }
+
+  /** Called with the proposer's session id when its proposal is settled or found started, after the current work. */
+  onSettled(listener: (sessionId: string) => void): () => void {
+    this.#settledListeners.add(listener);
+    return () => this.#settledListeners.delete(listener);
   }
 
   /** The dismissals the browser kept before W212 (`<session id>:<key>`), as dismissed now. Returns how many were new. */
@@ -176,11 +193,13 @@ export class SpinOffStore {
     this.#write();
     // Not told from here, which can be inside a snapshot's decoration; the next view carries it.
     this.#version += 1;
+    this.#told(session.sessionId);
     return settledOf(entry);
   }
 
   /** `snapshot` with `settled` on each proposal that's started or dismissed. A copy when any changed. */
   decorate(snapshot: IndexSnapshot): IndexSnapshot {
+    this.#reload();
     let changed = false;
     const groups = snapshot.groups.map((group) => {
       let groupChanged = false;
@@ -220,13 +239,23 @@ export class SpinOffStore {
 
   #find(proposer: SessionSummary, spinOff: SpinOff, snapshot: IndexSnapshot): { sessionId: string; name: string } | undefined {
     if (spinOff.kind !== 'proposal' || spinOff.name === undefined || isOwnHandoff(proposer.sessionId, spinOff)) return undefined;
-    const since = ms(proposer.lastActivityAt ?? proposer.startedAt);
+    const since = ms(proposer.startedAt);
     if (Number.isNaN(since)) return undefined;
+    // What the proposer's other proposals have claimed: the sessions they started, and anything begun before the latest was settled.
+    const prefix = `${proposer.sessionId}:`;
+    const ownId = spinOffEntryId(proposer.sessionId, spinOff.key);
+    const claimed = new Set<string>();
+    let floor = since;
+    for (const [id, entry] of this.#entries) {
+      if (id === ownId || !id.startsWith(prefix) || entry.how !== 'started') continue;
+      if (entry.session !== undefined) claimed.add(entry.session);
+      floor = Math.max(floor, ms(entry.at));
+    }
     const folder = this.#realPath(spinOff.folder);
     const all = new Map<string, SessionSummary>();
     for (const group of snapshot.groups) for (const each of group.sessions) if (!all.has(each.sessionId)) all.set(each.sessionId, each);
     const matches = (each: SessionSummary): boolean =>
-      each.sessionId !== proposer.sessionId && each.name === spinOff.name && ms(each.startedAt) >= since && this.#realPath(each.cwd) === folder;
+      each.sessionId !== proposer.sessionId && !claimed.has(each.sessionId) && each.name === spinOff.name && ms(each.startedAt) >= since && (floor === since || ms(each.startedAt) > floor) && this.#realPath(each.cwd) === folder;
     for (const candidate of all.values()) {
       if (candidate.sessionId === proposer.sessionId) continue;
       let at: SessionSummary | undefined = candidate;
@@ -258,6 +287,57 @@ export class SpinOffStore {
     return resolved;
   }
 
+  #told(sessionId: string): void {
+    if (this.#settledListeners.size === 0) return;
+    // After the current work: this can be inside a snapshot's decoration.
+    queueMicrotask(() => {
+      for (const listener of [...this.#settledListeners]) {
+        try {
+          listener(sessionId);
+        } catch {
+          // A listener's failure isn't the store's.
+        }
+      }
+    });
+  }
+
+  /** The file's mtime and size, or '' without a file. */
+  #stamp(): string {
+    if (this.#file === undefined) return '';
+    try {
+      const stat = statSync(this.#file);
+      return `${stat.mtimeMs}:${stat.size}`;
+    } catch {
+      return '';
+    }
+  }
+
+  /** Another pitwall's write, read in: the file again when it changed, the newer entry of each id winning. Fails soft. */
+  #reload(): void {
+    try {
+      const stamp = this.#stamp();
+      if (stamp === this.#seen) return;
+      this.#seen = stamp;
+      if (this.#file === undefined) return;
+      const settled: string[] = [];
+      for (const [id, entry] of readSpinOffsFile(this.#file, this.#now())) {
+        const mine = this.#entries.get(id);
+        if (mine !== undefined && ms(mine.at) >= ms(entry.at)) continue;
+        if (mine?.how === 'started' && entry.how === 'dismissed') continue;
+        this.#entries.delete(id);
+        this.#entries.set(id, entry);
+        settled.push(id.slice(0, 36));
+      }
+      if (settled.length === 0) return;
+      this.#entries = new Map([...this.#entries].sort((a, b) => ms(a[1].at) - ms(b[1].at)));
+      this.#cap();
+      this.#version += 1;
+      for (const sessionId of new Set(settled)) this.#told(sessionId);
+    } catch {
+      // Another pitwall's write isn't seen until the next change.
+    }
+  }
+
   #cap(): void {
     while (this.#entries.size > SPIN_OFFS_HELD_MAX) this.#entries.delete(this.#entries.keys().next().value!);
   }
@@ -272,6 +352,7 @@ export class SpinOffStore {
     if (this.#file === undefined || this.#home === undefined) return;
     for (const [id, entry] of readSpinOffsFile(this.#file, this.#now())) {
       const mine = this.#entries.get(id);
+      if (mine?.how === 'started' && entry.how === 'dismissed') continue;
       if (mine === undefined || ms(mine.at) < ms(entry.at)) {
         this.#entries.delete(id);
         this.#entries.set(id, entry);
@@ -285,6 +366,7 @@ export class SpinOffStore {
       ensureLaunchDir(this.#home);
       writeFileSync(temporary, `${JSON.stringify(body)}\n`, { mode: 0o600, flag: 'wx' });
       renameSync(temporary, this.#file);
+      this.#seen = this.#stamp();
     } catch {
       try {
         unlinkSync(temporary);

@@ -359,9 +359,9 @@ describe('the input', () => {
 
   it('says in the session info that the proposed session is already started, so the recap drops the to-do (W212)', () => {
     const input = firstRecapInput({ name: 'proposer', proposal: 'already started as the session named plugin-hosted-mcp-test', turns: '' }, fixedId);
-    expect(input).toContain('The new session this one proposed in its last message: already started as the session named plugin-hosted-mcp-test.');
-    expect(input).toContain("Don't list starting it as a to-do");
-    expect(firstRecapInput({ name: 'proposer', turns: '' }, fixedId)).not.toContain('proposed in its last message');
+    expect(input).toContain('Spin-off proposal: already started as the session named plugin-hosted-mcp-test');
+    expect(input).not.toContain("Don't list");
+    expect(firstRecapInput({ name: 'proposer', turns: '' }, fixedId)).not.toContain('Spin-off proposal');
   });
 
   it('keeps the newest of your messages that fit in RECAP_YOUR_MESSAGES_CAP, each to RECAP_YOUR_MESSAGE_MAX, and says how many were left out (W189)', () => {

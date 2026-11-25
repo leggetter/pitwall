@@ -687,7 +687,7 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   // Recaps (M5, W110): the server starts them once it's listening. The index leaves their calls out, and
   // hands them what it read of each transcript. With --no-recaps, there's no engine, and no call.
   // Your messages through the relay are yours in a recap's input, by their ids (W110's review).
-  const recaps = command.recaps ? createRecapEngine({ startedSpinOff: (session, snapshot) => spinOffs.settledOf(session, snapshot), predecessorOf: (sessionId) => lineage.linksOf(sessionId).from, relay: { name: RELAY_NAME, sent: (msgId) => relay.sentByRelay(msgId) }, work: () => work.choice('recaps') }) : undefined;
+  const recaps = command.recaps ? createRecapEngine({ startedSpinOff: (session, snapshot) => spinOffs.settledOf(session, snapshot), spinOffSettled: { subscribe: (listener) => spinOffs.onSettled(listener) }, predecessorOf: (sessionId) => lineage.linksOf(sessionId).from, relay: { name: RELAY_NAME, sent: (msgId) => relay.sentByRelay(msgId) }, work: () => work.choice('recaps') }) : undefined;
   // The supervisor (M5, W113): started only when the page asks. The index leaves it out, as it does the relay.
   // With --no-supervisor, there's none, and pitwall never runs it.
   // Its connectors (W184, D28): the config file's, none with --no-connectors, started only with it.

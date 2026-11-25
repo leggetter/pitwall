@@ -76,7 +76,7 @@ export interface DismissedSpinOffs {
  * dismissals the browser kept before W212 are sent to the server once, then emptied here.
  */
 export function useDismissedSpinOffs(api: ApiClient | undefined, storage: StorageSource = browserStorage): DismissedSpinOffs {
-  const [entries, setEntries] = useState<ReadonlySet<string>>(() => new Set());
+  const [entries, setEntries] = useState<ReadonlySet<string>>(() => new Set(readDismissed(storage)));
 
   useEffect(() => {
     if (api === undefined) return;
@@ -92,7 +92,6 @@ export function useDismissedSpinOffs(api: ApiClient | undefined, storage: Storag
           // Blocked: it's sent again next time, which the server takes as nothing new.
         }
       },
-      () => {},
     );
     return () => {
       live = false;
@@ -102,8 +101,16 @@ export function useDismissedSpinOffs(api: ApiClient | undefined, storage: Storag
   const settle = useCallback(
     (sessionId: string, key: string, how: 'started' | 'dismissed') => {
       setEntries((current) => new Set(current).add(spinOffId(sessionId, key)));
-      // Best effort: the card has gone from this page either way, and a failed save shows again on reload.
-      if (api !== undefined) void api.post(spinOffSettlePath(sessionId), { key, how }).catch(() => {});
+      // A dismissal the server didn't take brings the card back; a start stays hidden (the server's matcher is the backstop).
+      if (api === undefined) return;
+      void api.post(spinOffSettlePath(sessionId), { key, how }).then((result) => {
+        if (result.kind === 'ok' || how === 'started') return;
+        setEntries((current) => {
+          const next = new Set(current);
+          next.delete(spinOffId(sessionId, key));
+          return next;
+        });
+      });
     },
     [api],
   );

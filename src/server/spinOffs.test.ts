@@ -69,6 +69,49 @@ describe('the matcher', () => {
     expect(settledOf(store, snapshotOf(proposer(proposal({ name: undefined })), started()))).toBeUndefined();
   });
 
+  it('finds a session begun after the proposer started, however much later the proposer was active', () => {
+    const store = new SpinOffStore({ home });
+    const busy = session(PROPOSER, { name: 'proposer', lastActivityAt: '2026-11-24T15:00:00.000Z', spinOff: proposal() });
+    expect(settledOf(store, snapshotOf(busy, started()))).toMatchObject({ how: 'started', sessionId: STARTED });
+  });
+
+  it('does not match a new proposal to a session an earlier proposal of the same session already claimed', () => {
+    const OTHER_KEY = 'fedcba9876543210';
+    const claimed = new SpinOffStore({ home: join(dir, 'h-claimed') });
+    claimed.settle(PROPOSER, OTHER_KEY, 'started', { sessionId: STARTED, name: 'plugin-hosted-mcp-test' });
+    expect(settledOf(claimed, snapshotOf(proposer(), started()))).toBeUndefined();
+    // A click-started one carries no session id: a session begun before it was settled isn't the next proposal's.
+    let now = new Date('2026-11-24T14:20:00.000Z');
+    const clicked = new SpinOffStore({ home: join(dir, 'h-clicked'), now: () => now });
+    clicked.settle(PROPOSER, OTHER_KEY, 'started');
+    expect(settledOf(clicked, snapshotOf(proposer(), started()))).toBeUndefined();
+    now = new Date('2026-11-24T14:30:00.000Z');
+    expect(settledOf(clicked, snapshotOf(proposer(), started({ startedAt: '2026-11-24T14:25:00.000Z' })))?.sessionId).toBe(STARTED);
+  });
+
+  it('keeps a started proposal started when a stale Dismiss comes, and keeps its session on a bare Start', () => {
+    const store = new SpinOffStore({ home });
+    store.settle(PROPOSER, KEY, 'started', { sessionId: STARTED, name: 'plugin-hosted-mcp-test' });
+    store.settle(PROPOSER, KEY, 'dismissed');
+    expect(settledOf(store, snapshotOf(proposer()))).toMatchObject({ how: 'started', sessionId: STARTED });
+    store.settle(PROPOSER, KEY, 'started');
+    expect(settledOf(store, snapshotOf(proposer()))).toMatchObject({ how: 'started', sessionId: STARTED, name: 'plugin-hosted-mcp-test' });
+  });
+
+  it('sees another pitwall’s settle on the same home at the next snapshot, and tells its listeners', async () => {
+    const a = new SpinOffStore({ home });
+    const b = new SpinOffStore({ home });
+    const told: string[] = [];
+    a.onSettled((id) => told.push(id));
+    expect(settledOf(a, snapshotOf(proposer()))).toBeUndefined();
+    const before = a.version();
+    b.settle(PROPOSER, KEY, 'dismissed');
+    expect(settledOf(a, snapshotOf(proposer()))?.how).toBe('dismissed');
+    expect(a.version()).toBeGreaterThan(before);
+    await Promise.resolve();
+    expect(told).toEqual([PROPOSER]);
+  });
+
   it('compares folders by real path', () => {
     const link = join(dir, 'link');
     symlinkSync(folder, link);

@@ -103,4 +103,16 @@ describe('useDismissedSpinOffs', () => {
     await waitFor(() => expect(post).toHaveBeenCalled());
     expect(readDismissed(storage.source)).toEqual(['a:1']);
   });
+
+  it('hides cards dismissed in the old storage from the first render, and brings a dismissed card back when the server refuses', async () => {
+    const refuse = vi.fn(async () => ({ kind: 'unauthorized' as const }));
+    const storage = memory(JSON.stringify({ v: 1, dismissed: ['a:1'] }));
+    const { result } = renderHook(() => useDismissedSpinOffs({ post: refuse } as unknown as ApiClient, storage.source));
+    expect(result.current.set.has('a:1')).toBe(true);
+    result.current.dismiss('s2', 'k2');
+    result.current.start('s3', 'k3');
+    await waitFor(() => expect(refuse).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(result.current.set.has(spinOffId('s3', 'k3'))).toBe(true));
+    await waitFor(() => expect(result.current.set.has(spinOffId('s2', 'k2'))).toBe(false));
+  });
 });

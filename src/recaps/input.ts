@@ -522,7 +522,7 @@ function infoBlock(info: SessionInfo): string[] {
   if (name !== '') lines.push(`Name: ${name}`);
   if (repo !== '') lines.push(`Repo: ${repo}`);
   const proposal = info.proposal === undefined ? '' : plainLine(info.proposal, INFO_MAX);
-  if (proposal !== '') lines.push(`The new session this one proposed in its last message: ${proposal}. Don't list starting it as a to-do, and it isn't waiting on the user for it.`);
+  if (proposal !== '') lines.push(`Spin-off proposal: ${proposal}`);
   return lines.length === 0 ? [] : [block('session-info', lines.join('\n'))];
 }
 

@@ -98,6 +98,7 @@ function fakeServer(options: { clone?: [number, unknown]; resume?: [number, unkn
         const [status, body] = options.resume ?? [200, { ok: true, shortId: 'pt031' }];
         return new Response(JSON.stringify(body), { status });
       }
+      if (url.includes('/spin-off/settle')) return new Response(JSON.stringify({ ok: true }), { status: 200 });
       return new Response(JSON.stringify({ ok: false, error: 'not in this test' }), { status: 409 });
     }
     return new Response(JSON.stringify({ sessionId: 'x', entries: [] }), { status: 200 });

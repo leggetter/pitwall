@@ -51,6 +51,7 @@ function fakeServer(clear: [number, unknown] = [200, { ok: true, sessionId: '000
       if (url === spinOffPath(ASKER_ID)) return new Response(JSON.stringify({ ok: true, cwd: DEMO, prompt: HANDOFF }), { status: 200 });
       if (url === SPAWN_PATH) return new Response(JSON.stringify({ ok: true, ...NEW_JOB }), { status: 201 });
       if (url === continuedPath(ASKER_ID)) return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      if (url.includes('/spin-off/settle')) return new Response(JSON.stringify({ ok: true }), { status: 200 });
       return new Response(JSON.stringify({ ok: false, error: 'not in this test' }), { status: 409 });
     }
     return new Response(JSON.stringify({ sessionId: 'x', entries: [] }), { status: 200 });
