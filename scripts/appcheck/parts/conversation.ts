@@ -3,9 +3,24 @@
 // session, To pitwall-relay, a question Claude Code asked, a notice, one tool call, and two or more
 // folded into one toggle. Markdown shows as pitwall's own elements, a code block's long lines wrap (W137), and the view opens at the newest.
 
-import { NAMES } from '../fixtures.js';
+import type { ConversationEntry } from '../../../src/shared/protocol.js';
+import { DEMO_APP_WEB, NAMES, SPIN_OFF, SPIN_OFF_PROMPT } from '../fixtures.js';
 import type { Part } from '../runner.js';
-import { openFromRow, VIEW, viewClose, viewHeading, viewTab } from './_dom.js';
+import { DIALOG, dialogButton, dialogName, openFromRow, VIEW, viewClose, viewHeading, viewTab } from './_dom.js';
+
+const q = JSON.stringify;
+const CARD = `${VIEW}?.querySelector('.spin-off-block')`;
+const PROMPT_FIELD = `[...(${DIALOG}?.querySelectorAll('input, select, textarea') ?? [])].find((el) => el.labels?.[0]?.textContent.trim().startsWith('First prompt'))`;
+
+/** The made-up assistant messages for W209: one with a spin-off block (the fence's body is the fixture's proposal, line for line), then a long one, so the newest isn't the card. */
+function blockMessages(): ConversationEntry[] {
+  const body = ['folder: ' + DEMO_APP_WEB, 'name: pitwall-test-spin-off', 'prompt:', ...SPIN_OFF_PROMPT.split('\n')];
+  const at = new Date().toISOString();
+  return [
+    { kind: 'assistant', markdown: true, at, text: ['That settings work is separate from this session, so here is a proposal for a new one.', '', '```spin-off', ...body, '```'].join('\n'), spinOffs: [{ spinOff: SPIN_OFF, lines: body.length }] },
+    { kind: 'assistant', markdown: true, at, text: ['Meanwhile, the notes for this session:', '', ...Array.from({ length: 40 }, (_, index) => `- Note ${index + 1}: a made-up line, so the conversation is taller than the window.`)].join('\n') },
+  ];
+}
 
 const BODY = `${VIEW}.querySelector('.session-view-body')`;
 const entries = `[...${VIEW}.querySelectorAll('ol.conversation > li.entry')].map((li) => ({ kind: [...li.classList].find((c) => c.startsWith('entry-')), speaker: li.querySelector(':scope > .entry-speaker')?.childNodes[0]?.textContent ?? null }))`;
@@ -15,7 +30,7 @@ const part: Part = {
   name: 'conversation',
   title: 'The session view: its header and tabs, and every kind of conversation entry',
   async run(t) {
-    const { page } = t;
+    const { page, server } = t;
 
     await t.step('opens from its row, on Conversation, at the newest entry', async () => {
       await t.fresh({ search: '?view=all' });
@@ -135,6 +150,75 @@ const part: Part = {
       await page.waitFor('the view to close', `!${VIEW} || !${viewHeading}`);
       t.expect(!(await page.evaluate(`location.search.includes('session=')`)), 'the URL has no session');
       t.expect(await page.evaluate(`!!${viewClose} === false`), 'no view left to close');
+    });
+
+    await t.step('a spin-off block is a card with Start; Start checks it by its key and opens New session filled in; nothing starts (W209)', async () => {
+      const id = server.world.byName(NAMES.conversation).sessionId;
+      await t.fresh({ search: '?view=all' });
+      server.world.blockMessages(id, blockMessages());
+      await openFromRow(t, NAMES.conversation);
+      await page.waitFor('the card', `!!${CARD}`);
+      await page.settle(100);
+      const card = await page.evaluate<{ title: string; start: boolean; cards: number; code: number; sideways: boolean }>(`(() => {
+        const c = ${CARD};
+        const r = c.getBoundingClientRect();
+        const b = ${VIEW}.querySelector('.session-view-body').getBoundingClientRect();
+        return {
+          title: c.querySelector('.approval-title').textContent,
+          start: [...c.querySelectorAll('.approval-actions button')].map((x) => x.textContent.trim()).join('|') === 'Start…',
+          cards: ${VIEW}.querySelectorAll('.spin-off-block').length,
+          code: [...${VIEW}.querySelectorAll('pre')].filter((p) => p.textContent.includes('folder: ')).length,
+          sideways: r.right > b.right + 1 || r.left < b.left - 1,
+        };
+      })()`);
+      t.expect(card.title.includes(NAMES.conversation), 'its title names the session', card);
+      t.expect(card.start, 'Start… is its only button', card);
+      t.expect(card.cards === 1 && card.code === 0, 'one card, and the block is not also drawn as code', card);
+      t.expect(!card.sideways, 'inside the view', card);
+      await page.evaluate(`${CARD}.scrollIntoView({ block: 'center' })`);
+      await t.shot('spin-off-card');
+      server.clearRecords();
+      await page.click('Start…', `[...${CARD}.querySelectorAll('.approval-actions button')].find((b) => b.textContent.trim() === 'Start…')`);
+      await page.waitFor('the dialog', `${dialogName} === 'New session'`);
+      t.expectEqual(server.records.spinOffChecks, [{ name: NAMES.conversation, key: SPIN_OFF.key, status: 200 }], 'the server checked it, by its key');
+      t.expectEqual(await page.evaluate(`${PROMPT_FIELD}.value`), SPIN_OFF_PROMPT, 'New session has its whole prompt');
+      t.expectEqual(server.records.spawns, [], 'nothing was started');
+      await page.click('Cancel', dialogButton('Cancel'));
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+      t.expect(await page.evaluate(`!!${CARD}`), 'the card stays after Cancel');
+    });
+
+    await t.step('a started proposal says "Started as <name>", linked to its session, in place of Start (W209, W212)', async () => {
+      const id = server.world.byName(NAMES.conversation).sessionId;
+      const other = server.world.byName(NAMES.waiting);
+      server.world.spinOff(id, { ...SPIN_OFF, settled: { how: 'started', at: new Date().toISOString(), sessionId: other.sessionId, name: NAMES.waiting } });
+      server.broadcast();
+      await page.waitFor('Started as', `${CARD}?.textContent.includes('Started as')`);
+      const look = await page.evaluate<{ buttons: string[]; link: string | undefined }>(`({ buttons: [...${CARD}.querySelectorAll('.approval-actions button')].map((b) => b.textContent.trim()), link: ${CARD}.querySelector('[data-open-started]')?.textContent })`);
+      t.expectEqual(look.link, NAMES.waiting, 'the started session is a link');
+      t.expectEqual(look.buttons, [NAMES.waiting], 'and Start is gone');
+      await page.evaluate(`${CARD}.scrollIntoView({ block: 'center' })`);
+      await t.shot('spin-off-started');
+      server.world.spinOff(id, undefined);
+      server.broadcast();
+    });
+
+    await t.step('?session=<id>&spinoff=latest opens the Conversation tab at the card, then takes the parameter out (W209)', async () => {
+      const id = server.world.byName(NAMES.conversation).sessionId;
+      await t.fresh({ search: '?view=all' });
+      server.world.blockMessages(id, blockMessages());
+      await page.evaluate(`(location.search = ${q(`?view=all&session=${id}&spinoff=latest`)}, true)`);
+      await page.waitFor('the view and its card', `!!${CARD}`);
+      await page.settle(300);
+      t.expectEqual(await page.evaluate(viewTab), 'Conversation', 'the Conversation tab');
+      const at = await page.evaluate<{ top: number; bodyTop: number; bottom: boolean }>(`(() => {
+        const b = ${VIEW}.querySelector('.session-view-body');
+        return { top: ${CARD}.getBoundingClientRect().top, bodyTop: b.getBoundingClientRect().top, bottom: b.scrollHeight - b.clientHeight - b.scrollTop < 2 };
+      })()`);
+      t.expect(!at.bottom && at.top - at.bodyTop < 120 && at.top >= at.bodyTop - 2, 'scrolled to the card, not the newest entry', at);
+      t.expect(await page.evaluate(`!location.search.includes('spinoff')`), 'the parameter is gone from the address');
+      t.expect(await page.evaluate(`location.search.includes(${q('')} + 'session=')`), 'the session stays in it');
+      await t.shot('spin-off-link');
     });
   },
 };
