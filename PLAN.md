@@ -525,6 +525,8 @@ Small improvements that aren't needed now, gathered from reviews and try-outs so
 - **Recaps**
   - **Honour Claude Code's `cleanupPeriodDays`** for kept recaps: keep each for the shorter of it and 30 days, so a recap doesn't outlive the transcript it summarises once Claude Code has cleaned it up or you've deleted it (W132's security review; Phil, 2026-11-03). Kept recaps themselves are W132's.
   - **`--effort low` for recaps,** half the time, if quality holds (spike 010). Now a setting (W119: `work.recaps.effort`, or Preferences); measuring its quality is what's left.
+- **Needs you**
+  - **A session that blocks after you've left** (Phil, 2026-11-25; for consideration, to see if it happens again). On 2026-11-24 a background session told Phil its sub-agent was "still running", then the sub-agent was refused at its first step and the session ended its turn with a spin-off proposal. Phil had already left, and the work waited 2.5 hours. Claude Code refused the sub-agent, not pitwall: a background session isolated in one worktree can't give a sub-agent write access to a sibling worktree. Claude Code also left the job's state at "working", with a detail taken from the proposal's text, so the session's row looked busy and joined Needs you only at its next recap, 15 minutes later; the spin-off card was in Needs you from the start. Two ideas, if it recurs: a desktop notification when something enters Needs you, and a session whose turn ends with a spin-off proposal counting as needing you, whatever Claude Code's state says.
 
 ## Suggested actions
 
