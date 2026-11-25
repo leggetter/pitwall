@@ -877,7 +877,7 @@ function Entry({ entry, userSpeaker }: { entry: ConversationEntry; userSpeaker: 
     );
   const body = isMarkdown(entry) ? (
     <div className="entry-text entry-markdown">
-      <Markdown text={text} />
+      <Markdown text={text} spinOffs={entry.kind === 'assistant' ? entry.spinOffs : undefined} />
     </div>
   ) : (
     <p className="entry-text">{text}</p>

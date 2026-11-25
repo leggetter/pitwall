@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { spinOffPath, type IndexSnapshot, type SessionSummary, type SpinOff, type SpinOffCheck } from '../shared/protocol.js';
+import { conversationSpinOffPath, spinOffPath, type ConversationEntry, type ConversationPage, type IndexSnapshot, type SessionSummary, type SpinOff, type SpinOffCheck } from '../shared/protocol.js';
 import { registerSpinOffs } from './spinOffRoutes.js';
 
 const ID = '44444444-4444-4444-8444-444444444444';
@@ -94,5 +94,72 @@ describe('POST spinOffPath()', () => {
     expect((await check({ key: KEY }, '55555555-5555-4555-8555-555555555555')).status).toBe(404);
     expect((await check({ key: KEY }, '../etc')).status).toBe(400);
     expect((await check({ key: KEY, pad: 'x'.repeat(300) })).status).toBe(413);
+  });
+});
+
+// W209: a block in the Conversation tab is found in the transcript, through the conversation reader.
+describe('POST conversationSpinOffPath()', () => {
+  const block = (overrides: Partial<Extract<SpinOff, { kind: 'proposal' }>> = {}): SpinOff => ({ kind: 'proposal', key: KEY, folder: repo, prompt: 'Tidy the README.', ...overrides });
+  const entry = (spinOffs?: ConversationEntry['spinOffs'], kind: ConversationEntry['kind'] = 'assistant'): ConversationEntry => ({ kind, text: 'x', ...(spinOffs === undefined ? {} : { spinOffs }) });
+
+  function scanning(pages: ConversationPage[], reads: string[] = []) {
+    const snapshot: IndexSnapshot = {
+      generatedAt: '2026-11-07T10:00:00.000Z',
+      roots: [root],
+      groups: [{ key: repo, label: 'repo', kind: 'git', root, sessions: [session(undefined)] }],
+      source: { ok: true },
+    };
+    const hono = new Hono();
+    registerSpinOffs(hono, {
+      snapshots: { latest: () => snapshot },
+      conversation: async (_id, before) => {
+        reads.push(before ?? 'newest');
+        return pages[before === undefined ? 0 : Number(before)];
+      },
+    });
+    return async (body: unknown = { key: KEY }, type = 'application/json') => {
+      const response = await hono.request(conversationSpinOffPath(ID), { method: 'POST', headers: { 'content-type': type }, body: JSON.stringify(body) });
+      return { status: response.status, json: (await response.json()) as SpinOffCheck };
+    };
+  }
+  const page = (entries: ConversationEntry[], before?: string): ConversationPage => ({ sessionId: ID, entries, ...(before === undefined ? {} : { before }) });
+
+  it('finds a block in an older message and checks it as the card route does', async () => {
+    const reads: string[] = [];
+    const check = scanning([page([entry()], '1'), page([entry([{ spinOff: block({ name: 'pitwall-test-tidy' }), lines: 3 }]), entry()])], reads);
+    expect(await check()).toEqual({ status: 200, json: { ok: true, cwd: repo, name: 'pitwall-test-tidy', prompt: 'Tidy the README.' } });
+    expect(reads).toEqual(['newest', '1']);
+  });
+
+  it('answers 409 for a key that no message has now, or a block that changed', async () => {
+    const changed = scanning([page([entry([{ spinOff: block({ key: 'fedcba9876543210' }), lines: 3 }])])]);
+    expect(await changed()).toMatchObject({ status: 409, json: { ok: false, error: expect.stringMatching(/isn’t in the session/) } });
+    expect((await scanning([page([])])()).status).toBe(409);
+  });
+
+  it('never reads a block from a message that isn’t the assistant’s', async () => {
+    expect((await scanning([page([entry([{ spinOff: block(), lines: 3 }], 'user')])])()).status).toBe(409);
+  });
+
+  it('refuses an unreadable block with why, and what spawn_session refuses', async () => {
+    const unreadable = scanning([page([entry([{ spinOff: { kind: 'unreadable', key: KEY, problem: 'The block names no folder.' }, lines: 1 }])])]);
+    expect(await unreadable()).toEqual({ status: 409, json: { ok: false, error: 'The block names no folder.' } });
+    expect((await scanning([page([entry([{ spinOff: block({ folder: tmpdir() }), lines: 3 }])])])()).status).toBe(409);
+  });
+
+  it('stops reading after its page limit', async () => {
+    const reads: string[] = [];
+    const endless = Array.from({ length: 40 }, (_unused, index) => page([entry()], String(index + 1)));
+    expect((await scanning(endless, reads)()).status).toBe(409);
+    expect(reads).toHaveLength(20);
+  });
+
+  it('refuses a bad body, content type and id like the proposal route', async () => {
+    const check = scanning([page([entry([{ spinOff: block(), lines: 3 }])])]);
+    expect((await check({})).status).toBe(400);
+    expect((await check({ key: KEY, prompt: 'x' })).status).toBe(400);
+    expect((await check({ key: 'nope' })).status).toBe(400);
+    expect((await check({ key: KEY }, 'text/plain')).status).toBe(415);
+    expect((await check({ key: KEY })).status).toBe(200);
   });
 });

@@ -1934,6 +1934,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             }
       }
       recaps={snapshot?.recaps}
+      spinOffs={api ? { onStart: setSpinOffStart, onOpenSession: (sessionId) => openSession(sessionId) } : undefined}
       backLabel={hiddenIn === undefined ? backLabel : undefined}
       prs={{
         owned: work.owned.get(session.sessionId) ?? [],

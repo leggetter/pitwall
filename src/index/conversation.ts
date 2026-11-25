@@ -54,9 +54,11 @@
 
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
+import os from 'node:os';
 import { open, type FileHandle } from 'node:fs/promises';
 import type { AskedQuestion, ConversationEntry, ConversationPage } from '../shared/protocol.js';
 import { isRecord } from './guards.js';
+import { detectSpinOffBlocks, SPIN_OFF_INFO } from './spinOff.js';
 import type { SubagentLabels } from './subagents.js';
 import { cap, truncate } from './text.js';
 import { queuedEntryOf, removePasteTags, stripSystemReminders, turnSignalOf, type TurnSignal } from './transcripts.js';
@@ -1056,8 +1058,15 @@ function finishDraft(draft: Draft, recipientOf: (send: SendDraft) => Recipient |
     case 'assistant':
       // Parts were collected newest first. Each block is markdown on its own, so they're joined as
       // separate paragraphs: a table or a list at the end of one doesn't run on into the next.
-      return withAt({ kind: 'assistant', text: [...draft.parts].reverse().join('\n\n'), markdown: true }, draft.at);
+      return withSpinOffs(withAt({ kind: 'assistant', text: [...draft.parts].reverse().join('\n\n'), markdown: true }, draft.at));
   }
+}
+
+/** The entry with its message's spin-off blocks (W209), read from the whole text, before any cut. */
+function withSpinOffs(entry: ConversationEntry): ConversationEntry {
+  if (!entry.text.toLowerCase().includes(SPIN_OFF_INFO)) return entry;
+  const found = detectSpinOffBlocks(entry.text, os.homedir());
+  return found.length === 0 ? entry : { ...entry, spinOffs: found };
 }
 
 /**

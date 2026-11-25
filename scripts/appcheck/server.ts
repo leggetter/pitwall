@@ -460,12 +460,27 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     const recapRefresh = /^\/api\/sessions\/([^/]+)\/recap\/refresh$/.exec(url.pathname);
     if (recapRefresh && method === 'POST') return refreshRecap(req, res, decodeURIComponent(recapRefresh[1]!));
 
-    const match = /^\/api\/sessions\/([^/]+)\/(conversation|relay|flag|unflag|snooze|unsnooze|spin-off\/settle|spin-off|clear-and-continue|continued|stop|remove|resume|open|open-file|subagents|end|recap)$/.exec(url.pathname);
+    const match = /^\/api\/sessions\/([^/]+)\/(conversation\/spin-off|conversation|relay|flag|unflag|snooze|unsnooze|spin-off\/settle|spin-off|clear-and-continue|continued|stop|remove|resume|open|open-file|subagents|end|recap)$/.exec(url.pathname);
     if (!match) return end(res, 404);
     const session = world.session(decodeURIComponent(match[1]!));
     if (!session) return end(res, 404);
     const route = match[2];
     if (route === 'conversation' && method === 'GET') return json(res, 200, world.conversation(session.sessionId) satisfies ConversationPage | undefined);
+    if (route === 'conversation/spin-off' && method === 'POST') {
+      // conversationSpinOffPath(id) (W209): the block is found in the session's conversation by its key, never the request's text.
+      const body = await readJson(req);
+      const key = isRecord(body) ? body.key : undefined;
+      const answer = (status: number, result: Record<string, unknown>) => {
+        records.spinOffChecks.push({ name: session.name, key, status });
+        return json(res, status, result);
+      };
+      const found = (world.conversation(session.sessionId)?.entries ?? []).flatMap((entry) => entry.spinOffs ?? []).find((each) => each.spinOff.key === key);
+      if (typeof key !== 'string') return answer(400, { ok: false, error: 'The body must be { key }, the block’s key.' });
+      if (found === undefined) return answer(409, { ok: false, error: 'That block isn’t in the session’s recent messages now. Reload the conversation and read it again.' });
+      if (found.spinOff.kind !== 'proposal') return answer(409, { ok: false, error: found.spinOff.problem });
+      if (world.rootFor(found.spinOff.folder) === undefined) return answer(409, { ok: false, error: `The directory ${found.spinOff.folder} isn't under one of your roots.` });
+      return answer(200, { ok: true, cwd: found.spinOff.folder, prompt: found.spinOff.prompt, ...(found.spinOff.name === undefined ? {} : { name: found.spinOff.name }) });
+    }
     if (route === 'subagents' && method === 'GET') return json(res, 200, world.subagents(session.sessionId) satisfies SubagentList | undefined);
     if (route === 'recap' && method === 'GET') {
       // recapPath(id) (W111): the session's whole recap, or 404 while it has none, as the contract says.

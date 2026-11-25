@@ -451,6 +451,8 @@ export class World {
   #runRate: RunRateWorldState = 'off';
   /** The sessions whose running turn `endTurn()` has ended, until the next reset (W102). */
   #turnsEnded = new Set<string>();
+  /** Assistant messages with spin-off blocks (W209) added to a session's conversation until the next reset. */
+  #blockMessages = new Map<string, ConversationEntry[]>();
   /** What the PR source says, and whether a fetch is running (W95). */
   #prs: PrsState = 'ok';
   #prsRefreshing = false;
@@ -512,6 +514,7 @@ export class World {
     this.#usage = options.usage ?? 'ok';
     this.#runRate = options.runRate ?? 'off';
     this.#turnsEnded = new Set();
+    this.#blockMessages = new Map();
     this.#prs = options.prs ?? 'ok';
     this.#prsRefreshing = false;
     // Fetched two minutes ago, by the poll, so a refresh now is allowed.
@@ -1285,7 +1288,7 @@ export class World {
           : session.name === NAMES.asked
             ? [...this.#short(session), ...this.#repliedToSupervisor()]
             : this.#short(session);
-    return { sessionId, entries };
+    return { sessionId, entries: [...entries, ...(this.#blockMessages.get(sessionId) ?? [])] };
   }
 
   /**
@@ -1480,6 +1483,11 @@ export class World {
     if (!session) return;
     const { spinOff: _old, ...rest } = session;
     this.#sessions.set(sessionId, spinOff === undefined ? rest : { ...rest, spinOff });
+  }
+
+  /** Adds assistant messages that hold spin-off blocks (W209) at the end of the session's conversation. */
+  blockMessages(sessionId: string, entries: ConversationEntry[]): void {
+    this.#blockMessages.set(sessionId, entries);
   }
 
   flag(sessionId: string, flagged: SessionSummary['flagged']): void {

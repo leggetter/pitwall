@@ -94,6 +94,12 @@ import { Icon } from './Icon.js';
 import { InfoTip } from './InfoTip.js';
 import { ContextMeta, ContextNote } from './ContextGauge.js';
 import { PrNeedNote, SessionPrLinks } from './PrBadges.js';
+import { browserNavigation } from '../selection.js';
+import { withoutParams } from '../openSession.js';
+import { SpinOffBlockContext, SPIN_OFF_BLOCK_CLASS, type SpinOffBlockHost } from '../spinOffBlock.js';
+import { SPIN_OFF_LINK_PARAM, wantsLatestSpinOff } from '../spinOff.js';
+import { SpinOffBlockCard } from './SpinOffBlock.js';
+import type { CheckedSpinOff } from './SpinOffCards.js';
 import { SessionLineage, type LineageTarget } from './SessionLineage.js';
 import { SessionPrsPanel, sessionPrsCount, type LinkedPr } from './SessionPrs.js';
 import { MenuButton, type MenuEntry } from './Menu.js';
@@ -447,6 +453,11 @@ export interface SessionViewProps {
    * "Continued in" under the header's other lines. A session pitwall doesn't list has no name and no link.
    */
   lineage?: { from?: LineageTarget | undefined; to?: LineageTarget | undefined; onOpen: (sessionId: string) => void } | undefined;
+  /**
+   * What a spin-off block's card in the Conversation tab does (W209): Start hands what the server
+   * checked to New session, and a started one links to its session. Without it, a block stays a code block.
+   */
+  spinOffs?: { onStart: (checked: CheckedSpinOff) => void; onOpenSession: (sessionId: string) => void } | undefined;
 }
 
 type Tab = 'conversation' | 'terminal' | 'subagents' | 'prs';
@@ -479,6 +490,7 @@ export function SessionView({
   terminalFocus = DEFAULT_TERMINAL_FOCUS,
   polledAt,
   lineage,
+  spinOffs,
   backLabel,
   prs,
   recaps,
@@ -550,12 +562,15 @@ export function SessionView({
         ? "It's no longer listed, so it can't be attached."
         : undefined;
 
+  // A link a terminal can open (W209): ?session=<this>&spinoff=latest opens the Conversation tab at the newest
+  // spin-off card, read once when the view opens. It only navigates; nothing starts.
+  const latestSpinOff = useRef(!hidden && wantsLatestSpinOff(browserNavigation.location.search, session.sessionId));
   /**
    * The tab it opens on (W54): Terminal for a running background session it can attach, unless View
    * preferences says Conversation; Conversation for the rest. A finished one restarts when attached,
    * which the restart confirmation asks first, so it waits for you to open the tab.
    */
-  const openingTab = (): Tab => (backgroundTab === 'terminal' && background && session.alive && terminalOff === undefined ? 'terminal' : 'conversation');
+  const openingTab = (): Tab => (!latestSpinOff.current && backgroundTab === 'terminal' && background && session.alive && terminalOff === undefined ? 'terminal' : 'conversation');
   // Undefined until the view is first shown: one that opens hidden, in a root tab that isn't open (W38),
   // as a session started there does, decides when that tab is opened, so it never attaches unseen.
   const [chosen, setChosen] = useState<Tab | undefined>(() => (hidden ? undefined : openingTab()));
@@ -567,6 +582,34 @@ export function SessionView({
   // shown (W102), until that page says the turn has ended: so the working line's step keeps up.
   const claudeSaysWorking = turnMode(session, listed, undefined) === 'working';
   const conversation = useConversation(session.lastActivityAt, loader, { pollMs: claudeSaysWorking && tab === 'conversation' && !hidden ? WORKING_POLL_MS : undefined });
+  // The spin-off cards in the Conversation tab (W209), and a link's scroll to the newest of them, once the
+  // first page is in. The link's parameter is taken out of the address so it doesn't open the next session there.
+  const spinOffHost = useMemo<SpinOffBlockHost | undefined>(
+    () =>
+      spinOffs === undefined
+        ? undefined
+        : {
+            card: (block) => (
+              <SpinOffBlockCard
+                session={session}
+                spinOff={block}
+                settled={session.spinOff?.key === block.key ? session.spinOff.settled : undefined}
+                onStart={spinOffs.onStart}
+                onOpenSession={spinOffs.onOpenSession}
+              />
+            ),
+          },
+    [session, spinOffs],
+  );
+  const conversationStatus = conversation.state.status;
+  useLayoutEffect(() => {
+    if (!latestSpinOff.current || (conversationStatus !== 'ready' && conversationStatus !== 'missing')) return;
+    latestSpinOff.current = false;
+    const cards = conversation.scroller.current?.querySelectorAll(`.${SPIN_OFF_BLOCK_CLASS}`);
+    cards?.[cards.length - 1]?.scrollIntoView({ block: 'start' });
+    const { pathname, search, hash } = browserNavigation.location;
+    browserNavigation.history.replaceState(browserNavigation.history.state, '', `${pathname}${withoutParams(search, [SPIN_OFF_LINK_PARAM])}${hash}`);
+  }, [conversationStatus, conversation.scroller]);
   // The working line at the end of the conversation, and what its status region says (W102).
   const mode = turnMode(session, listed, conversation.state.turnEnded);
   const canAttachHere = background && !terminalOff;
@@ -1199,6 +1242,7 @@ export function SessionView({
         </div>
 
         <SubagentLinkContext.Provider value={subagentsShown ? openSubagent : undefined}>
+         <SpinOffBlockContext.Provider value={spinOffHost}>
           {/* Hidden behind the Terminal tab, or with its root tab: either way it goes back to the reader's place when shown. */}
           <ConversationPanel
             conversation={conversation}
@@ -1208,6 +1252,7 @@ export function SessionView({
             working={working}
             workingReady={listed && conversation.state.status !== 'loading' && conversation.state.status !== 'unavailable'}
           />
+         </SpinOffBlockContext.Provider>
           {subagentsShown && (
             <SubagentsPanel
               api={api}

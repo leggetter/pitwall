@@ -442,7 +442,7 @@ export async function startServerWithInternals(
     registerRecaps(app, indexer, recaps);
     registerFlags(app, { snapshots: flagged, store: flags, relay, recaps });
     registerSnoozes(app, { snapshots: snoozed, store: snoozes });
-    registerSpinOffs(app, { snapshots });
+    registerSpinOffs(app, { snapshots, conversation: (id, before) => indexer.conversation(id, before) });
     registerSpinOffSettle(app, { snapshots, store: spinOffs });
     registerClearAndContinue(app, { snapshots, runner: clearAndContinue, spawned, lineage, ...(recaps === undefined ? {} : { recapHandoff: (session) => recaps.handoffOf(session) }) });
     registerSupervisor(app, supervisor, supervisorActions);
