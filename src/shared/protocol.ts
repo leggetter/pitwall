@@ -2106,6 +2106,55 @@ export type AttachServerMessage =
   | { type: 'exit'; code: number | null }
   | { type: 'error'; error: string };
 
+// ---------------------------------------------------------------------------
+// Trust a folder (W214, spike 020): a WebSocket carrying a PTY that runs a bare
+// `claude` in a folder Claude Code hasn't trusted, so you answer Claude Code's
+// own trust prompt in the page. pitwall never writes trust itself.
+// ---------------------------------------------------------------------------
+
+/** WebSocket path for the trust terminal. Same Host and Origin checks, and handshake, as ATTACH_PATH. */
+export const TRUST_PATH = '/trust';
+
+/** The longest a trust terminal runs before the server ends it and falls back to the command to copy. */
+export const TRUST_TIME_LIMIT_MS = 5 * 60 * 1000;
+
+/**
+ * How a trust terminal ended:
+ * - 'trusted': Claude Code's banner showed with no question left open, so pitwall ended `claude`. Send the
+ *   start again: its answer is the proof, since a second 422 means it still isn't trusted.
+ * - 'declined': `claude` exited by itself, as it does for No or Esc. Nothing was trusted.
+ * - 'unclear': the screen never matched before the time limit, or `claude` exited before its trust
+ *   prompt showed. Fall back to the command to copy.
+ */
+export type TrustOutcome = 'trusted' | 'declined' | 'unclear';
+
+/**
+ * Client → server on a trust socket, as JSON text frames, after the handshake's `auth`. `open` names
+ * the folder only: the server checks it as New session does and runs `claude` with no arguments, never
+ * a command or argument from the client. `input` is a key the page forwards; the server writes it only
+ * when it is Up, Down, Enter or Esc (trustKey() in src/server/trust.ts), and drops anything else.
+ */
+export type TrustClientMessage =
+  | { type: 'auth'; proof: string }
+  | { type: 'open'; cwd: string; cols: number; rows: number }
+  | { type: 'input'; data: string }
+  | { type: 'resize'; cols: number; rows: number };
+
+/**
+ * Server → client on a trust socket. PTY output is sent as binary frames.
+ * - 'ready': the proof was valid; send `open`. A second trust socket past the handshake while one is
+ *   open gets `error` and close 4429.
+ * - 'started': `claude` is running in the folder; its screen follows.
+ * - 'outcome': how it ended, once `claude` has exited; then close 1000.
+ * - 'error': a refusal or failure, such as a folder that fails New session's checks; then a close.
+ */
+export type TrustServerMessage =
+  | { type: 'challenge'; version: number; nonce: string }
+  | { type: 'ready' }
+  | { type: 'started' }
+  | { type: 'outcome'; outcome: TrustOutcome }
+  | { type: 'error'; error: string };
+
 // --- Recaps (M5, spike 010) -----------------------------------------------------------------------
 
 /**
