@@ -51,10 +51,11 @@ import type {
   SpawnResult,
   SubagentList,
   SupervisorDecision,
+  TrustOutcome,
   UsageWindowKey,
 } from '../../src/shared/protocol.js';
 import { ownedPrsBySession, prNeedKind } from '../../src/shared/needsYou.js';
-import { CLEAR_TIMEOUT_MARKER, COPY_SHORT_ID, NAMES, RECAP_CALL_MS, SUPERVISOR_HELD_ERROR, SUPERVISOR_STEP_MS, terminalScreen, World, type ResetOptions, type TerminalSize } from './fixtures.js';
+import { CLEAR_TIMEOUT_MARKER, COPY_SHORT_ID, NAMES, RECAP_CALL_MS, SUPERVISOR_HELD_ERROR, SUPERVISOR_STEP_MS, terminalScreen, trustScreen, UNTRUSTED_DIR, World, type ResetOptions, type TerminalSize } from './fixtures.js';
 
 type Security = typeof import('../../src/server/security.js');
 type Static = typeof import('../../src/server/static.js');
@@ -62,6 +63,7 @@ type Protocol = typeof import('../../src/shared/protocol.js');
 type Work = typeof import('../../src/server/work.js');
 type ClaudeDefaultsModule = typeof import('../../src/server/claudeDefaults.js');
 type LinkCodesModule = typeof import('../../src/server/linkCodes.js');
+type TrustModule = typeof import('../../src/server/trust.js');
 
 /** pitwall's own modules, from the build. */
 export interface Built {
@@ -74,20 +76,23 @@ export interface Built {
   claudeDefaults: ClaudeDefaultsModule;
   /** The one-time codes for a pitwall link opened in a new tab (W175), so the fake issues and redeems them as the real server does. */
   linkCodes: LinkCodesModule;
+  /** The trust terminal's message parser, key filter and busy answer (W214), so the fake takes and drops what the real one does. */
+  trust: TrustModule;
 }
 
-/** Imports the five modules the fake server uses from a server build, such as dist. */
+/** Imports the modules the fake server uses from a server build, such as dist. */
 export async function importBuilt(dist: string): Promise<Built> {
   const load = (path: string) => import(pathToFileURL(join(dist, path)).href);
-  const [security, staticFiles, protocol, work, claudeDefaults, linkCodes] = await Promise.all([
+  const [security, staticFiles, protocol, work, claudeDefaults, linkCodes, trust] = await Promise.all([
     load('server/security.js'),
     load('server/static.js'),
     load('shared/protocol.js'),
     load('server/work.js'),
     load('server/claudeDefaults.js'),
     load('server/linkCodes.js'),
+    load('server/trust.js'),
   ]);
-  return { security: security as Security, static: staticFiles as Static, protocol: protocol as Protocol, work: work as Work, claudeDefaults: claudeDefaults as ClaudeDefaultsModule, linkCodes: linkCodes as LinkCodesModule };
+  return { security: security as Security, static: staticFiles as Static, protocol: protocol as Protocol, work: work as Work, claudeDefaults: claudeDefaults as ClaudeDefaultsModule, linkCodes: linkCodes as LinkCodesModule, trust: trust as TrustModule };
 }
 
 export interface Records {
@@ -161,6 +166,12 @@ export interface Records {
   requests: string[];
   /** Every `link-confirm` a signed-in tab sent (W175), and whether this server had issued that code and not seen it used. */
   linkConfirms: Array<{ hash: string; confirmed: boolean }>;
+  /** Each trust terminal's `open` the fake took (W214): the folder, and the size the page gave it. */
+  trustOpens: Array<{ cwd: string; cols: number; rows: number }>;
+  /** Every key the page sent a trust terminal, and which of the four trustKey() read it as, or 'dropped'. */
+  trustKeys: Array<{ data: string; key: string }>;
+  /** How each trust terminal ended: the outcome the fake sent, or 'closed' when the page closed it first. */
+  trustEnds: Array<{ cwd: string; how: TrustOutcome | 'closed' }>;
 }
 
 const emptyRecords = (): Records => ({
@@ -195,6 +206,9 @@ const emptyRecords = (): Records => ({
   deletes: [],
   requests: [],
   linkConfirms: [],
+  trustOpens: [],
+  trustKeys: [],
+  trustEnds: [],
 });
 
 /** How long a made-up clone takes, so Clone shows it's busy (W107). */
@@ -290,6 +304,13 @@ export interface FakeServer {
    * as the next poll most likely does, since the server polls soon before it answers.
    */
   readonly resumeOrder: { listedFirst: boolean; copyReopens: boolean };
+  /**
+   * The trust terminal (W214). `running`: the folder of the one that's open, past `started`, if any.
+   * `end(outcome)` sends it `outcome` and closes it 1000, as the real one does once `claude` exits; once
+   * trusted, its folder is trusted until the next reset, so a start there gets 201, and NAMES.endedAsked
+   * resumes. False when none is running.
+   */
+  readonly trust: { readonly running: string | undefined; end(outcome: TrustOutcome): boolean };
   close(): Promise<void>;
 }
 
@@ -335,6 +356,11 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
   const timers = new Set<NodeJS.Timeout>();
   const indexSockets = new Set<WebSocket>();
   const attachSockets = new Set<WebSocket>();
+  // The trust terminal (W214): the one socket past the handshake, and the one running, with its folder;
+  // and the folders its terminals trusted, until the next reset.
+  let trustAdmitted: WebSocket | undefined;
+  let trustRunning: { ws: WebSocket; cwd: string } | undefined;
+  const trusted = new Set<string>();
   const later = (ms: number, run: () => void) => {
     const timer = setTimeout(() => {
       timers.delete(timer);
@@ -896,6 +922,8 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     records.resumes.push(session.name);
     switch (session.name) {
       case NAMES.endedAsked:
+        // Until a trust terminal trusted its folder (W214); then it resumes, as NAMES.ended does.
+        if (trusted.has(session.cwd)) break;
         return json(res, 422, untrusted(session.cwd) satisfies ResumeResult);
       case NAMES.endedCopy:
         json(res, 409, {
@@ -1021,6 +1049,11 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     }
     const root = world.rootFor(body.cwd);
     if (root === undefined) return json(res, 400, { ok: false, error: 'Made up: that directory is under no root.' } satisfies SpawnResult);
+    // A folder Claude Code doesn't trust (W214): the 422 resume's endedAsked gets, until a trust terminal
+    // trusted it. Not in `spawns`, which are the starts taken; `requests` has its 422.
+    if (body.cwd === UNTRUSTED_DIR && !trusted.has(body.cwd)) {
+      return json(res, 422, untrusted(body.cwd));
+    }
     // The files (W82): uploads this server kept and no spawn has used, each once, at most ATTACHMENTS_MAX_PER_SESSION.
     let attachments: string[] | undefined;
     if (body.attachments !== undefined) {
@@ -1063,11 +1096,11 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       socket.end(`HTTP/1.1 ${status} ${STATUS_CODES[status]}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
     };
     if (!security.isAllowedHost(req.headers.host, port)) return refuse(403);
-    if (path !== protocol.WS_PATH && path !== protocol.ATTACH_PATH) return refuse(404);
+    if (path !== protocol.WS_PATH && path !== protocol.ATTACH_PATH && path !== protocol.TRUST_PATH) return refuse(404);
     // Browsers always send Origin on a WebSocket upgrade, so a missing one is refused, as pitwall does.
     if (!security.isAllowedOrigin(req.headers.origin, port)) return refuse(403);
     records.requests.push(`UPGRADE ${path} 101`);
-    wss.handleUpgrade(req, socket, head, (ws) => (path === protocol.WS_PATH ? indexSocket(ws) : attachSocket(ws)));
+    wss.handleUpgrade(req, socket, head, (ws) => (path === protocol.WS_PATH ? indexSocket(ws) : path === protocol.TRUST_PATH ? trustSocket(ws) : attachSocket(ws)));
   });
 
   /** The v3 challenge, then `then` once the page's proof, bound to this origin, is good; 4401 otherwise. */
@@ -1157,6 +1190,61 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     );
   }
 
+  /**
+   * The trust terminal (W214), in the contract's order: the handshake, `ready`, or TRUST_BUSY and 4429
+   * while another is past it; `open`, parsed by pitwall's own parseTrustMessage(), for a folder under a
+   * root with a command to copy, then `started` and the made-up trust prompt as binary frames, drawn
+   * again on each resize; each `input` read by pitwall's own trustKey(), and recorded, never written
+   * anywhere. It ends when a step calls trust.end(), or when the page closes it.
+   */
+  function trustSocket(ws: WebSocket) {
+    const { parseTrustMessage, trustKey, TRUST_BUSY } = built.trust;
+    let cwd: string | undefined;
+    let size: TerminalSize = { cols: 80, rows: 24 };
+    const draw = () => cwd !== undefined && ws.readyState === ws.OPEN && ws.send(Buffer.from(trustScreen(cwd, size), 'utf8'), { binary: true });
+    const fail = (error: string, code = 1008) => {
+      ws.send(JSON.stringify({ type: 'error', error }));
+      ws.close(code);
+    };
+    ws.on('close', () => {
+      if (trustAdmitted === ws) trustAdmitted = undefined;
+      if (trustRunning?.ws === ws) {
+        records.trustEnds.push({ cwd: trustRunning.cwd, how: 'closed' });
+        trustRunning = undefined;
+      }
+    });
+    handshake(
+      ws,
+      () => {
+        if (trustAdmitted !== undefined) return fail(TRUST_BUSY, protocol.WS_CLOSE_TOO_MANY);
+        trustAdmitted = ws;
+        ws.send(JSON.stringify({ type: 'ready' }));
+      },
+      (raw) => {
+        const parsed = parseTrustMessage(Buffer.from(JSON.stringify(raw)));
+        if ('error' in parsed) return fail(parsed.error);
+        const message = parsed.message;
+        if (cwd === undefined) {
+          if (message.type !== 'open') return fail('Send open first.');
+          if (world.rootFor(message.cwd) === undefined || /['\\]/.test(message.cwd)) return fail('Made up: no trust terminal for that folder.');
+          cwd = message.cwd;
+          size = { cols: message.cols, rows: message.rows };
+          trustRunning = { ws, cwd };
+          records.trustOpens.push({ cwd, ...size });
+          ws.send(JSON.stringify({ type: 'started' }));
+          draw();
+          return;
+        }
+        if (message.type === 'resize') {
+          size = { cols: message.cols, rows: message.rows };
+          draw();
+        } else if (message.type === 'input') {
+          records.trustKeys.push({ data: message.data, key: trustKey(message.data) ?? 'dropped' });
+        }
+      },
+    );
+  }
+
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen({ port, host: security.LOOPBACK_HOST }, () => {
@@ -1176,10 +1264,28 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       return records;
     },
     resumeOrder,
+    trust: {
+      get running() {
+        return trustRunning?.cwd;
+      },
+      end(outcome) {
+        const running = trustRunning;
+        if (!running) return false;
+        trustRunning = undefined;
+        if (outcome === 'trusted') trusted.add(running.cwd);
+        records.trustEnds.push({ cwd: running.cwd, how: outcome });
+        running.ws.send(JSON.stringify({ type: 'outcome', outcome }));
+        running.ws.close(1000);
+        return true;
+      },
+    },
     reset(resetOptions) {
       for (const timer of timers) clearTimeout(timer);
       timers.clear();
-      for (const ws of [...indexSockets, ...attachSockets]) ws.terminate();
+      const trustSockets = [trustAdmitted, trustRunning?.ws].filter((ws) => ws !== undefined);
+      trustAdmitted = undefined;
+      trustRunning = undefined;
+      for (const ws of [...indexSockets, ...attachSockets, ...trustSockets]) ws.terminate();
       world.reset(resetOptions);
       records = emptyRecords();
       work = madeUpWork();
@@ -1187,6 +1293,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       failedOnce.clear();
       resumeOrder.listedFirst = false;
       resumeOrder.copyReopens = false;
+      trusted.clear();
     },
     clearRecords() {
       records = emptyRecords();

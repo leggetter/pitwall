@@ -95,6 +95,9 @@ const ARGS = [
   '--hide-scrollbars',
   '--mute-audio',
   '--force-device-scale-factor=1',
+  // The GPU in the browser process: on 2026-11-26 the shell's separate GPU process exited at start on
+  // this Mac ("icudtl.dat not found in bundle", exit code 5) until Chrome gave up and closed (W214).
+  '--in-process-gpu',
   '--disable-features=Translate,MediaRouter,OptimizationHints,AutofillServerCommunication',
   // Every name fails to resolve; 127.0.0.1 is an address, not a name, so the fake server still works.
   '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1',

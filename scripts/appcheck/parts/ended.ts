@@ -41,6 +41,8 @@ const FAILURES = [
     tone: 'danger',
     text: `Couldn't resume the session. Workspace not trusted. Run \`claude\` in ${DEMO_APP} once and accept the trust prompt, then retry.pitwall never trusts a directory for you. Run this in a terminal, accept Claude Code's trust prompt, then resume it again:`,
     command: `cd ${DEMO_APP} && claude`,
+    // Trust this folder… after the command (W214); the trust part opens it.
+    trust: 'Or answer the prompt here, and the session resumes once the folder is trusted.Trust this folder…',
   },
   {
     name: NAMES.endedCopy,
@@ -235,6 +237,7 @@ const part: Part = {
         t.expect(shown.startsWith(failure.text), 'what it says', shown);
         if (failure.tone === 'warning') t.expect(!(await page.evaluate(`!!${ALERT}.querySelector('.alert-detail')`)), "the server's sentence alone, as text");
         if ('command' in failure) t.expectEqual(await page.evaluate(`${ALERT}.querySelector('.command-chip')?.textContent`), failure.command, 'the command to run, in a chip');
+        if ('trust' in failure) t.expect(shown.endsWith(failure.trust), 'then the line and Trust this folder…, after the command (W214)', shown);
         t.expectEqual(await page.evaluate(focused), 'Resume in background', 'focus stays on Resume in background');
         t.expect(await page.evaluate(`${footButton('Resume in background')}.getAttribute('aria-busy') === null`), 'which is idle again');
         t.expectEqual(server.records.attaches, [], 'nothing attached');
