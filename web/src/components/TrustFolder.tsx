@@ -136,6 +136,9 @@ export function TrustFolder({ cwd, onTrusted, resume = false }: TrustFolderProps
           }
           // Asked for with the button: the prompt is what you answer next.
           created.focus();
+          // The whole prompt and Cancel in view: the card is at the foot of a dialog or footer that scrolls,
+          // so focus alone left all but the prompt's first line below the fold.
+          element.closest('.trust-folder')?.scrollIntoView?.({ block: 'nearest' });
         },
         () => finish({ kind: 'error', error: "the terminal couldn't be loaded." }),
       );
