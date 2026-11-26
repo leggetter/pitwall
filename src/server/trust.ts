@@ -148,7 +148,9 @@ export class TrustReader {
       this.#carry = partial[0];
       raw = raw.slice(0, partial.index);
     }
-    const added = screenText(raw);
+    let added = screenText(raw);
+    // A run of spaces that spans two chunks is one space too, as it would be read in one piece.
+    if (added.startsWith(' ') && this.#tail.endsWith(' ')) added = added.slice(1);
     if (added === '') return;
     const longest = 64;
     const from = Math.max(0, this.#tail.length - longest);
