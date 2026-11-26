@@ -41,7 +41,7 @@ The probe, [`020-trust-a-folder/trust_probe.py`](020-trust-a-folder/trust_probe.
    - `/exit` typed while another dialog is up (finding 6's MCP question) goes to that dialog, not the prompt box. A signal doesn't depend on what's on screen.
 3. **The answer holds for `claude --bg`.** In the folder answered No, `claude --bg --name pitwall-test-trust-bg-2 --model haiku -- "Reply with OK."`, with the scrubbed environment and `PWD` set as `spawnArgs()` and `childEnvironment()` do, exited 1 with "Workspace not trusted. Run `claude` in <path> once and accept the trust prompt, then retry." The same command in the folder answered Yes printed `backgrounded · <id> · pitwall-test-trust-bg-4` and the session reached `done`. pitwall's `--plugin-dir` wasn't added; it changes nothing about trust.
 4. **Inheritance.**
-   - Reading only the flags: `~/oss` and `~/work` are trusted (`true`); `~` has an entry with `false`; `~/leggetter` and `~/hookdeck` have none.
+   - Reading only the flags: `~/oss` and `~/work` are trusted (`true`); `~` has an entry with `false`; the folders between `~` and each root have none.
    - In a folder trusted from a PTY, a plain subfolder two levels down started `claude --bg`. So did a plain folder made under `~/oss`.
    - A `git init` folder inside the trusted folder refused, and so did a `git init` folder under `~/oss` and its subfolder. This matches the README's caveat: Claude Code's trust in a folder doesn't cover a git repo inside it.
    - Answering Yes in that repo's subfolder (the prompt said "Accessing workspace: …/pitwall-test-trust-11/sub") wrote `true` on the repo's root, not the subfolder, and afterwards both the root and the subfolder started `claude --bg`.
