@@ -34,6 +34,7 @@ import { OLDER_NOTE, olderText } from './SessionList.js';
 import { ENDED_ASKED_HINT } from './SessionRow.js';
 import { BG_NOTE } from './SessionView.js';
 import type { TerminalHandle } from './Terminal.js';
+import { TRUST_BUTTON, TRUST_HERE } from './TrustFolder.js';
 
 // xterm.js, replaced by a terminal whose screen is a textarea, so where focus goes can be seen.
 class FakeTerminal implements TerminalHandle {
@@ -790,6 +791,45 @@ describe('Resume in background', () => {
     expect(alert.textContent).toContain(RESUME_HINT_TEXT);
     expect(alert.querySelector('.command-chip')?.textContent).toBe(`cd ${DEMO} && claude`);
     expect(within(alert).getByRole('button', { name: 'Copy trust command' })).toBeTruthy();
+    // Then Trust this folder… (W214), after the command.
+    expect(alert.textContent?.endsWith(`${TRUST_HERE.resume}${TRUST_BUTTON}`)).toBe(true);
+  });
+
+  it("Trust this folder… opens the prompt for the session's folder; once trusted it resumes again, once, and Escape there doesn't close the view (W214)", async () => {
+    const untrusted = `Workspace not trusted. Run \`claude\` in ${DEMO} once and accept the trust prompt, then retry.`;
+    const { fetch, sockets } = renderDashboard(snap(), {
+      answers: [{ status: 422, body: { ok: false, error: untrusted, hint: `cd ${DEMO} && claude` } }, { status: 422, body: { ok: false, error: untrusted, hint: `cd ${DEMO} && claude` } }],
+    });
+    await open('demo-ended');
+    fireEvent.click(button('Resume in background'));
+    await settle();
+    const before = sockets.sockets.length;
+    fireEvent.click(within(footer()!.querySelector<HTMLElement>('.resume-failure')!).getByRole('button', { name: TRUST_BUTTON }));
+    await waitFor(() => expect(sockets.sockets).toHaveLength(before + 1));
+    const socket = sockets.last;
+    expect(socket.url).toBe('ws://127.0.0.1:4517/trust');
+    act(() => {
+      socket.open();
+      socket.receive({ type: 'challenge', version: PROTOCOL_VERSION, nonce: NONCE });
+    });
+    await waitFor(() => expect(socket.sent).toHaveLength(1));
+    act(() => socket.receive({ type: 'ready' }));
+    act(() => socket.receive({ type: 'started' }));
+    expect(JSON.parse(socket.sent[1]!)).toEqual({ type: 'open', cwd: DEMO, cols: 80, rows: 24 });
+    fireEvent.keyDown(footer()!.querySelector('.trust-folder-screen textarea')!, { key: 'Escape' });
+    await settle();
+    expect(view()).toBeTruthy();
+    expect(footer()).toBeTruthy();
+
+    act(() => socket.receive({ type: 'outcome', outcome: 'trusted' }));
+    await settle();
+    expect(posts(fetch).map(([url]) => url)).toEqual([resumePath(ENDED), resumePath(ENDED)]);
+    // Still not trusted: the card again, with the button, and nothing more by itself.
+    const again = footer()!.querySelector<HTMLElement>('.resume-failure')!;
+    expect(within(again).getByRole('button', { name: TRUST_BUTTON })).toBeTruthy();
+    await settle();
+    expect(posts(fetch)).toHaveLength(2);
+    expect(sockets.sockets).toHaveLength(before + 1);
   });
 
   it("has Claude Code's line alone when the server sends no command, as for a path with a ' or \\, whose footer note already says why (W87)", async () => {
