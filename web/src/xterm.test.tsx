@@ -38,6 +38,11 @@ vi.mock('@xterm/xterm', () => ({
       },
     };
     loadAddon() {}
+    // W214's keys left to the page: the handler xterm.js asks before it handles a key.
+    keyHandler: ((event: KeyboardEvent) => boolean) | undefined;
+    attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
+      this.keyHandler = handler;
+    }
     // W211's link provider, and the buffer it reads a line from.
     providers: unknown[] = [];
     registerLinkProvider(provider: unknown) {
@@ -121,6 +126,15 @@ afterEach(() => {
 });
 
 describe('createXterm', () => {
+  it('leaves the keys leaveKey names to the page (W214): xterm.js is told not to handle them, and handles the rest; without it, every key is its', async () => {
+    await createXterm(document.createElement('div'));
+    expect((created.terminals.at(-1) as { keyHandler?: unknown }).keyHandler).toBeUndefined();
+    await createXterm(document.createElement('div'), { leaveKey: (event) => event.key === 'Tab' });
+    const handler = (created.terminals.at(-1) as { keyHandler?: (event: KeyboardEvent) => boolean }).keyHandler!;
+    expect(handler(new KeyboardEvent('keydown', { key: 'Tab' }))).toBe(false);
+    expect(handler(new KeyboardEvent('keydown', { key: 'Enter' }))).toBe(true);
+  });
+
   it("sets pitwall's link handler, so xterm.js never uses its default confirm() and window.open, nor any scheme but http and https", async () => {
     await createXterm(document.createElement('div'));
     expect(created.options).toHaveLength(1);

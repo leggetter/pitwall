@@ -6,6 +6,7 @@ import type { UsageSource } from '../usage/service.js';
 import type { DiagnosticsLog } from './diagnostics.js';
 import type { LineageStore } from './lineage.js';
 import type { SpinOffStore } from './spinOffs.js';
+import type { OwnPids } from './trust.js';
 import type { RelayManager } from './relay.js';
 import { startServerWithInternals } from './server.js';
 import type { WorkStore } from './work.js';
@@ -56,6 +57,12 @@ export interface ServerOptions {
   lineage?: LineageStore;
   /** The started and dismissed spin-off proposals (W212), which the CLI also gives the recap engine. Without one, the server makes its own. */
   spinOffs?: SpinOffStore;
+  /**
+   * The trust terminal's pids (W214, trust.ts), which the CLI also gives the indexer's exclude
+   * (isPitwallOwn), so the trust terminal's `claude` never shows in the list. Without one, the server
+   * makes its own, and the index doesn't hide its row.
+   */
+  trustPids?: OwnPids;
   /**
    * Your open pull requests (M4): the poller the CLI makes with createPrPoller(), which the
    * server starts once it's listening and stops on close(). Without it, pull requests are off, as

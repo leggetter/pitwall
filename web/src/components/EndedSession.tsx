@@ -30,6 +30,7 @@ import { Alert, Detail } from './Alert.js';
 import { Button } from './Button.js';
 import { CopyCommand } from './CopyCommand.js';
 import { useToast, type ToastInput } from './Toast.js';
+import { TrustFolder } from './TrustFolder.js';
 import '../actions.css';
 
 /** The footer's note, where an interactive session has its message box. */
@@ -230,7 +231,7 @@ export function EndedFooter({ session, resume, onCopy, note, onFocusLeaving }: E
   return (
     <div className="ended-foot" ref={root}>
       <p className="session-view-note">{gone ? ENDED_GONE_NOTE : (note ?? (onCopy ? ENDED_NOTE : <NoCommandNote />))}</p>
-      {!gone && resume.failure && <ResumeAlert failure={resume.failure} />}
+      {!gone && resume.failure && <ResumeAlert failure={resume.failure} cwd={session.cwd} onTrusted={resume.run} />}
       {!gone && (
         <div className="ended-actions">
           {onCopy && (
@@ -258,11 +259,12 @@ function NoCommandNote() {
 }
 
 /**
- * A refusal or failure in danger, with the command to run when there's one; a copy Claude Code
+ * A refusal or failure in danger, with the command to run when there's one, and Trust this folder…
+ * beside it (W214); a copy Claude Code
  * started, in warning, with no role: its toast, which outlives the footer, is what announces it, so
  * it isn't announced twice.
  */
-function ResumeAlert({ failure }: { failure: ResumeFailure }) {
+function ResumeAlert({ failure, cwd, onTrusted }: { failure: ResumeFailure; cwd: string; onTrusted: () => void }) {
   if (failure.kind === 'copied') {
     return (
       // The server's sentence names the copy, so it's the body alone: pitwall's words, not Claude Code's, so not in code style.
@@ -285,6 +287,8 @@ function ResumeAlert({ failure }: { failure: ResumeFailure }) {
           <p className="spawn-trust">{RESUME_HINT_TEXT}</p>
           {/* Its own name: the footer's Copy command is the resume command's. */}
           <CopyCommand command={failure.hint} label="Copy trust command" />
+          {/* Claude Code's trust prompt in the page (W214): once trusted, the resume goes again, and a second 422 brings this back. */}
+          <TrustFolder cwd={cwd} onTrusted={onTrusted} resume />
         </>
       )}
     </Alert>

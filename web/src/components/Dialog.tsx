@@ -13,7 +13,8 @@
 // - Its header and footer are plain elements, not <header> and <footer>, which outside a sectioning
 //   element would be the page's banner and contentinfo landmarks.
 // - Escape closes it, and goes no further, so the session view behind stays open. An Escape that ends
-//   an input method's composition is the input method's: it closes nothing. A click on the
+//   an input method's composition is the input method's, and one something inside already took
+//   (defaultPrevented), as the trust terminal does (W214), is that thing's: neither closes it. A click on the
 //   backdrop closes it only when nothing has been typed. While its action runs (`busy`), neither does,
 //   and Close is aria-disabled.
 
@@ -95,6 +96,12 @@ export function Dialog({ title, subtitle, size = 'md', onClose, busy = false, di
     if (event.key === 'Escape') {
       // The input method's, ending a composition: nothing closes, and nothing behind hears it either.
       if (isComposing(event.nativeEvent)) {
+        event.stopPropagation();
+        return;
+      }
+      // Something inside took it, as the trust terminal does, where Escape is Claude Code's (W214):
+      // nothing closes, and nothing behind hears it either.
+      if (event.defaultPrevented) {
         event.stopPropagation();
         return;
       }

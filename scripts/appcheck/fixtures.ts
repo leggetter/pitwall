@@ -48,6 +48,8 @@ export const CODE = '/Users/example/code';
 export const OSS = '/Users/example/oss';
 export const API_SERVER = `${CODE}/api-server`;
 export const DEMO_APP = `${CODE}/demo-app`;
+/** A made-up folder under the first root that Claude Code doesn't trust (W214), so a start there gets the 422 until its trust terminal ends trusted. It's in no group: New session takes it typed. */
+export const UNTRUSTED_DIR = `${CODE}/pitwall-test-untrusted`;
 export const BLOG = `${OSS}/blog`;
 /** A directory whose only session ended long ago (W67), so it's in the repo list only with Show older on. */
 export const DOCS_SITE = `${CODE}/docs-site`;
@@ -1812,4 +1814,28 @@ export function terminalScreen(session: SessionSummary, { cols, rows }: Terminal
   const end = FOOTER_END.slice(0, cols);
   lines.push(`${at(rows)}${'  ? for made-up shortcuts'.slice(0, cols - end.length).padEnd(cols - end.length)}\u001b[36m${end}\u001b[0m`);
   return `\u001b[H\u001b[2J${lines.join('')}${at(rows - 1, 3)}\u001b[32m>\u001b[0m `;
+}
+
+/**
+ * Claude Code's trust prompt for `cwd` at `size`, made up, as the trust terminal's PTY would send it
+ * (W214, spike 020): drawn afresh on a cleared screen, each line cut to the columns, with the strings
+ * src/server/trust.ts reads, Yes's and "Enter to confirm", and No first, as Claude Code draws it.
+ */
+export function trustScreen(cwd: string, { cols, rows }: TerminalSize): string {
+  const at = (row: number) => `\u001b[${row};1H`;
+  const fit = (text: string) => text.slice(0, Math.max(0, cols));
+  const lines = [
+    `\u001b[1m${fit('Do you trust the files in this folder?')}\u001b[0m`,
+    '',
+    fit(cwd),
+    '',
+    fit('A made-up trust prompt for the app check. Claude Code may read, edit and run files here.'),
+    '',
+    // No first, and selected: Claude Code's default (spike 020, finding 1).
+    `\u001b[36m${fit('❯ No, exit')}\u001b[0m`,
+    fit('  Yes, I trust this folder'),
+    '',
+    `\u001b[2m${fit('Enter to confirm · Esc to cancel')}\u001b[0m`,
+  ].slice(0, rows);
+  return `\u001b[H\u001b[2J${lines.map((line, i) => `${at(i + 1)}${line}`).join('')}`;
 }

@@ -12,6 +12,8 @@ import { isatty } from 'node:tty';
 
 /** What attach.ts needs from a PTY. node-pty's IPty has all of it. */
 export interface PtyProcess {
+  /** The child's process id. node-pty's IPty has it; the trust terminal (trust.ts) hides its row by it (W214). */
+  readonly pid?: number;
   /** Output, decoded as UTF-8. */
   onData(listener: (data: string) => void): unknown;
   /** `signal` is 0 or undefined when the process exited on its own. */

@@ -220,6 +220,11 @@ export interface XtermOptions {
   onFileLink?: ((ref: FileRef, shown?: string) => void) | undefined;
   /** Where the fonts load from: document.fonts, or a test's stand-in. */
   fonts?: FontLoader | undefined;
+  /**
+   * Keys xterm.js leaves alone, so the page has them: true for one, such as Tab in the trust terminal
+   * (W214), so focus can leave it. xterm.js neither sends nor cancels it.
+   */
+  leaveKey?: ((event: KeyboardEvent) => boolean) | undefined;
 }
 
 /**
@@ -251,6 +256,10 @@ export async function createXterm(container: HTMLElement, options: XtermOptions 
   }
   // Before anything is written, so the program's first request is held too.
   const steady = keepCursorSteady(terminal);
+  if (options.leaveKey) {
+    const leave = options.leaveKey;
+    terminal.attachCustomKeyEventHandler((event) => !leave(event));
+  }
   const fit = new FitAddon();
   terminal.loadAddon(fit);
   terminal.open(container);

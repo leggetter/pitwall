@@ -37,6 +37,7 @@ import { createRelayManager, DEFAULT_PORT, PortInUseError, startServer } from '.
 import { createClaudeDefaultsReader } from './server/claudeDefaults.js';
 import { createWorkStore } from './server/work.js';
 import { isPitwallOwn } from './server/own.js';
+import { OwnPids } from './server/trust.js';
 import { createUsageSource } from './usage/service.js';
 import { type DirCheckContext, LaunchDirError, pitwallHome, prepareLaunchDir, removeWhenUsed, writeLaunchFile } from './server/launch.js';
 import { type ServerFileHandle, claimServerFile } from './server/serverFile.js';
@@ -703,10 +704,12 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   const usage = createUsageSource({ pitwallHome: pitwallHome(), planReads: command.usage, ...(config.runRate === undefined ? {} : { target: config.runRate }) });
   // The diagnostics log (W165): why a row is in Needs you, and what the PR poller found. No off switch; ids and reasons only.
   const diagnostics = new DiagnosticsLog({ home: pitwallHome() });
+  // The trust terminal's `claude` pids (W214): the server adds each while it runs, and the index hides its row.
+  const trustPids = new OwnPids();
   const indexer = startIndexer({
     roots,
     intervalMs,
-    exclude: isPitwallOwn({ relay, recaps, supervisor, usage }),
+    exclude: isPitwallOwn({ relay, recaps, supervisor, usage, trust: trustPids }),
     listing: (result) => {
       lineage.observe(result);
       lineage.backfill(result);
@@ -742,6 +745,7 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
       diagnostics,
       lineage,
       spinOffs,
+      trustPids,
       // Your open PRs (M4), which the server starts fetching once it's listening. With --no-prs, never gh.
       // With the index, each PR is placed under the clone of its repo, or the root that claims its
       // owner, with each configured root's `github.owners` by real path (W105, W103).

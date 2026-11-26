@@ -1,17 +1,28 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { SPAWN_PATH, type IndexSnapshot, type SessionSummary } from '../../../src/shared/protocol.js';
+import { PROTOCOL_VERSION, SPAWN_PATH, TRUST_PATH, type IndexSnapshot, type SessionSummary } from '../../../src/shared/protocol.js';
 import actionsCss from '../actions.css?raw';
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
+import { AttachContext, type AttachEnv } from '../attach.js';
 import type { ConnectionView } from '../connection.js';
 import { directoryChoices, directoryProblem, modelProblem, nameProblem, promptProblem, rootOf } from '../spawn.js';
 import { block, declarations, withoutComments } from '../test/css.js';
-import { group, NOW, session, snapshot } from '../test/fixtures.js';
+import { fakeSockets, group, NOW, session, snapshot, type FakeSocket } from '../test/fixtures.js';
 import { chooseFirstDirectory } from '../test/newSession.js';
 import { hover, unhover } from '../test/tooltips.js';
 import { Dashboard } from './Dashboard.js';
 import dialogCss from './Dialog.css?raw';
 import { NO_TRUST_COMMAND_TEXT, TRUST_TEXT } from './NewSessionDialog.js';
+import { TRUST_BUTTON, TRUST_HERE, TRUST_PROMPT_LINE, TRUSTED } from './TrustFolder.js';
+
+// The trust terminal's xterm.js (W214): a textarea that takes focus, and nothing else.
+vi.mock('../xterm.js', () => ({
+  createXterm: (container: HTMLElement) => {
+    const screen = document.createElement('textarea');
+    container.append(screen);
+    return { cols: 72, rows: 16, write() {}, onData() {}, paste() {}, fit() {}, focus: () => screen.focus(), dispose: () => screen.remove() };
+  },
+}));
 
 // Made-up sessions and directories only.
 
@@ -52,18 +63,39 @@ function posts(fetch: ReturnType<typeof fakeServer>) {
     .map(([url, init]) => ({ url, body: JSON.parse(String(init.body)) as unknown, headers: init.headers as Record<string, string> }));
 }
 
-function renderDashboard(fetch: FetchLike | undefined, first: IndexSnapshot = snap()) {
+function renderDashboard(fetch: FetchLike | undefined, first: IndexSnapshot = snap(), env?: AttachEnv) {
   const api = fetch ? createApiClient({ apiKey: API_KEY, fetch }) : undefined;
   const ui = (s: IndexSnapshot) => {
     const view: ConnectionView = { state: 'live', snapshot: s };
-    return (
-      <ApiContext.Provider value={api}>
-        <Dashboard view={view} />
-      </ApiContext.Provider>
-    );
+    const dashboard = <Dashboard view={view} />;
+    return <ApiContext.Provider value={api}>{env ? <AttachContext.Provider value={env}>{dashboard}</AttachContext.Provider> : dashboard}</ApiContext.Provider>;
   };
   const result = render(ui(first));
   return { ...result, update: (next: IndexSnapshot) => result.rerender(ui(next)) };
+}
+
+/** App's socket, for Trust this folder… (W214). */
+function trustEnv() {
+  const sockets = fakeSockets();
+  const env: AttachEnv = { token: 'pitwall-test-token-0123456789abcdefghijklmnop', createSocket: sockets.factory, host: '127.0.0.1:4517' };
+  return { env, sockets };
+}
+
+/** Presses Trust this folder… and runs the server's side up to `started`. */
+async function openTrust(alert: HTMLElement, sockets: ReturnType<typeof fakeSockets>): Promise<FakeSocket> {
+  const before = sockets.sockets.length;
+  fireEvent.click(within(alert).getByRole('button', { name: TRUST_BUTTON }));
+  await waitFor(() => expect(sockets.sockets).toHaveLength(before + 1));
+  const socket = sockets.last;
+  expect(socket.url).toBe(`ws://127.0.0.1:4517${TRUST_PATH}`);
+  act(() => {
+    socket.open();
+    socket.receive({ type: 'challenge', version: PROTOCOL_VERSION, nonce: 'n'.repeat(43) });
+  });
+  await waitFor(() => expect(socket.sent).toHaveLength(1));
+  act(() => socket.receive({ type: 'ready' }));
+  act(() => socket.receive({ type: 'started' }));
+  return socket;
 }
 
 const settle = () => act(async () => {});
@@ -479,7 +511,7 @@ describe('New session: when it is refused', () => {
   it("shows Claude Code's untrusted-workspace error, and the command to run with a copy button", async () => {
     const writeText = vi.fn(async () => {});
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
-    renderDashboard(fakeServer(untrusted));
+    renderDashboard(fakeServer(untrusted), snap(), trustEnv().env);
     const dialog = openDialog();
     fill(dialog, { prompt: 'go' });
     await submit(dialog);
@@ -496,6 +528,10 @@ describe('New session: when it is refused', () => {
     expect(chip.textContent).toBe(`cd ${REPO} && claude`);
     const copy = within(alert).getByRole('button', { name: 'Copy command' });
     expect(chip.compareDocumentPosition(copy) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Then Trust this folder…, after the command (W214): the alert's whole text, in order.
+    const trust = within(alert).getByRole('button', { name: TRUST_BUTTON });
+    expect(copy.compareDocumentPosition(trust) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(alert.textContent).toBe(`Couldn't start the session. ${untrusted.body.error}${TRUST_TEXT}${chip.textContent}${copy.textContent}${TRUST_HERE.start}${TRUST_BUTTON}`);
     fireEvent.click(copy);
     await settle();
     expect(writeText).toHaveBeenCalledWith(`cd ${REPO} && claude`);
@@ -506,7 +542,7 @@ describe('New session: when it is refused', () => {
 
   it("says in its own words, not in code style, why there's no command when an untrusted directory's 422 has no hint, as for a path with a ' or \\ (W87)", async () => {
     const error = `Workspace not trusted. Run \`claude\` in ${REPO} once and accept the trust prompt, then retry.`;
-    renderDashboard(fakeServer({ status: 422, body: { ok: false, error } }, { status: 409, body: { ok: false, error: 'Something else.' } }));
+    renderDashboard(fakeServer({ status: 422, body: { ok: false, error } }, { status: 409, body: { ok: false, error: 'Something else.' } }), snap(), trustEnv().env);
     const dialog = openDialog();
     fill(dialog, { prompt: 'go' });
     await submit(dialog);
@@ -521,6 +557,8 @@ describe('New session: when it is refused', () => {
     expect(within(alert).queryByText(TRUST_TEXT)).toBeNull();
     expect(alert.querySelector('.command-chip')).toBeNull();
     expect(within(alert).queryByRole('button', { name: 'Copy command' })).toBeNull();
+    // No command, no Trust this folder… either: the server would refuse the folder (W214).
+    expect(within(alert).queryByRole('button', { name: TRUST_BUTTON })).toBeNull();
 
     // Only for a 422: any other refusal without a command has the reason alone.
     await submit(dialog);
@@ -538,6 +576,79 @@ describe('New session: when it is refused', () => {
 
     await submit(dialog);
     expect(within(dialog).getByRole('alert').textContent).toBe("Couldn't start the session (HTTP 500).");
+  });
+});
+
+describe('New session: Trust this folder… (W214)', () => {
+  const untrusted = {
+    status: 422,
+    body: {
+      ok: false,
+      error: `Workspace not trusted. Run \`claude\` in ${REPO} once and accept the trust prompt, then retry.`,
+      hint: `cd ${REPO} && claude`,
+    },
+  };
+
+  it('opens the prompt for the folder the request named, and once trusted sends the same request again, once, which starts the session', async () => {
+    const { env, sockets } = trustEnv();
+    const fetch = fakeServer(untrusted, started);
+    renderDashboard(fetch, snap(), env);
+    const dialog = openDialog();
+    fill(dialog, { prompt: 'go', name: 'pitwall-test-trust' });
+    await submit(dialog);
+    const socket = await openTrust(within(dialog).getByRole('alert'), sockets);
+    expect(JSON.parse(socket.sent[1]!)).toEqual({ type: 'open', cwd: REPO, cols: 72, rows: 16 });
+    expect(within(dialog).getByText(TRUST_PROMPT_LINE)).toBeTruthy();
+    // Escape in the prompt is Claude Code's: the dialog stays open.
+    fireEvent.keyDown(dialog.querySelector('.trust-folder-screen textarea')!, { key: 'Escape' });
+    expect(screen.getByRole('dialog', { name: 'New session' })).toBe(dialog);
+
+    act(() => socket.receive({ type: 'outcome', outcome: 'trusted' }));
+    await settle();
+    const sent = posts(fetch);
+    expect(sent).toHaveLength(2);
+    expect(sent[1]?.url).toBe(SPAWN_PATH);
+    expect(sent[1]?.body).toEqual(sent[0]?.body);
+    // Started: the dialog closes, as for any start.
+    expect(screen.queryByRole('dialog', { name: 'New session' })).toBeNull();
+    expect(sockets.sockets).toHaveLength(1);
+  });
+
+  it('a second 422 after trusted brings the card back with the button, and opens nothing by itself', async () => {
+    const { env, sockets } = trustEnv();
+    const fetch = fakeServer(untrusted, untrusted);
+    renderDashboard(fetch, snap(), env);
+    const dialog = openDialog();
+    fill(dialog, { prompt: 'go' });
+    await submit(dialog);
+    const socket = await openTrust(within(dialog).getByRole('alert'), sockets);
+    act(() => socket.receive({ type: 'outcome', outcome: 'trusted' }));
+    await settle();
+    expect(posts(fetch)).toHaveLength(2);
+    const alert = within(dialog).getByRole('alert');
+    expect(within(alert).getByRole('button', { name: TRUST_BUTTON })).toBeTruthy();
+    expect(within(alert).queryByText(TRUSTED.start)).toBeNull();
+    await settle();
+    expect(posts(fetch)).toHaveLength(2);
+    expect(sockets.sockets).toHaveLength(1);
+  });
+
+  it('declined: says so in the card and sends nothing again', async () => {
+    const { env, sockets } = trustEnv();
+    const fetch = fakeServer(untrusted, started);
+    renderDashboard(fetch, snap(), env);
+    const dialog = openDialog();
+    fill(dialog, { prompt: 'go' });
+    await submit(dialog);
+    const socket = await openTrust(within(dialog).getByRole('alert'), sockets);
+    act(() => socket.receive({ type: 'outcome', outcome: 'declined' }));
+    await settle();
+    expect(posts(fetch)).toHaveLength(1);
+    expect(dialog.querySelector('.trust-folder-notice')?.getAttribute('role')).toBe('status');
+    expect(dialog.querySelector('.trust-folder-notice')?.textContent).toBe(
+      "Claude Code didn't trust this folder, so the session wasn't started. You can try again, or choose another folder.",
+    );
+    expect(within(dialog).getByRole('button', { name: TRUST_BUTTON })).toBeTruthy();
   });
 });
 
