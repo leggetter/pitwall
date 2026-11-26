@@ -34,6 +34,10 @@
 //                               the same Origin rule and handshake, then attach.ts: at most 4
 //                               sockets past the handshake, else 4429, and only a background
 //                               session that resolveSession() finds
+//   WebSocket upgrade at /trust the same Origin rule and handshake, then trust.ts (W214): one socket
+//                               past the handshake, else 4429; a folder under the roots that
+//                               checkDirectory() passes; at most 10 opens a minute; only Up, Down,
+//                               Enter and Esc reach the PTY's bare `claude`
 //   static files                Host only. They are the public build output.
 //
 // The snapshot, on GET /api/snapshot and /ws, carries each session's PR links only to PRs in the
@@ -93,6 +97,7 @@ import {
   supervisorConversationPath,
   subagentConversationPath,
   subagentsPath,
+  TRUST_PATH,
   WS_PATH,
   type ConversationPage,
 } from '../shared/protocol.js';
@@ -145,6 +150,7 @@ import { hasLinkTag, isDocumentNavigation, LinkCodes, withLinkCode } from './lin
 import { createPeerCheck, type PeerCheck } from './peerUid.js';
 import { BUILDING_PAGE, BUILDING_SCRIPT, BUILDING_SCRIPT_PATH, resolveStaticFile } from './static.js';
 import { HandshakeSlots } from './handshake.js';
+import { createTrustServer, OwnPids, type TrustOptions } from './trust.js';
 import { DEFAULT_AUTH_TIMEOUT_MS, handleClient, MAX_PAYLOAD_BYTES } from './websocket.js';
 import { registerUsage } from './usageRoutes.js';
 import { createWorkStore, registerWork } from './work.js';
@@ -223,6 +229,8 @@ export interface ServerInternals {
   /** Clear and continue's waits (W168): tests shorten them. */
   clearTimings?: Partial<ClearTimings>;
   attach?: Partial<Pick<AttachOptions, 'spawnPty' | 'env' | 'agents' | 'spawned' | 'resumed' | 'processAlive' | 'now'>>;
+  /** For the trust socket (W214): tests pass a fake PTY spawner and shorter timings, so they never run `claude`. */
+  trust?: Partial<Pick<TrustOptions, 'spawnPty' | 'env' | 'claudeBin' | 'timeLimitMs' | 'settleMs' | 'killGraceMs' | 'now'>>;
   /** The directory list (W70, directories.ts): tests pass a wrapped readdir, a clock and limits. */
   directories?: DirectoryOptions;
   /**
@@ -470,7 +478,7 @@ export async function startServerWithInternals(
 
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_BYTES, perMessageDeflate: false });
   const authTimeoutMs = internals.authTimeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS;
-  // Connections still in the handshake, on /ws and /attach together. Extras close with 1013.
+  // Connections still in the handshake, on /ws, /attach and /trust together. Extras close with 1013.
   const slots = new HandshakeSlots();
   // The CLI's hook, which deletes the launch file. It must never break a handshake.
   const onAuthenticated = () => {
@@ -492,6 +500,18 @@ export async function startServerWithInternals(
     slots,
     ...internals.attach,
   });
+  // The trust terminal (W214): its pids go to the CLI's OwnPids, so the index hides its `claude`.
+  const trust = createTrustServer({
+    indexer,
+    token,
+    origin: () => serverOrigin(port ?? -1),
+    authTimeoutMs,
+    spawnPty,
+    onAuthenticated,
+    slots,
+    own: options.trustPids ?? new OwnPids(),
+    ...internals.trust,
+  });
 
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     socket.on('error', () => socket.destroy());
@@ -499,10 +519,11 @@ export async function startServerWithInternals(
     const status = gateStatus(req, port);
     if (status !== undefined) return rejectUpgrade(socket, status);
     const path = req.url?.split('?')[0];
-    if (path !== WS_PATH && path !== ATTACH_PATH) return rejectUpgrade(socket, 404);
+    if (path !== WS_PATH && path !== ATTACH_PATH && path !== TRUST_PATH) return rejectUpgrade(socket, 404);
     // Browsers always send Origin on a WebSocket upgrade, so a missing one is refused.
     if (!isAllowedOrigin(req.headers.origin, port!)) return rejectUpgrade(socket, 403);
     if (path === ATTACH_PATH) return attach.handleUpgrade(req, socket, head);
+    if (path === TRUST_PATH) return trust.handleUpgrade(req, socket, head);
     wss.handleUpgrade(req, socket, head, (ws) =>
       handleClient(ws, { indexer: snapshots, token, origin: serverOrigin(port!), apiKey, authTimeoutMs, onAuthenticated, slots, prs, linkCodes }),
     );
@@ -551,6 +572,8 @@ export async function startServerWithInternals(
           closing = true;
         }),
         attach.close(),
+        // The trust terminal's socket closed with 1001 and its `claude` ended (W214).
+        trust.close(),
         // A Clear and continue in flight types nothing further and kills its PTY (W168).
         clearAndContinue.close(),
         relay.close(),
@@ -717,6 +740,7 @@ function createApp({ snapshots, indexer, token, apiKey, linkCodes, peerCheck, we
   // A plain request to a WebSocket path, without an upgrade.
   app.all(WS_PATH, (c) => c.body(null, 426));
   app.all(ATTACH_PATH, (c) => c.body(null, 426));
+  app.all(TRUST_PATH, (c) => c.body(null, 426));
 
   // Loaded by the "still building" page so it reloads itself, keeping the URL
   // and its #token fragment. Served from here because webRoot doesn't exist yet.
