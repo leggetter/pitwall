@@ -18,8 +18,8 @@
 //                                     strings (hasScreenMarker()), which would fool the reader. Then
 //                                     `claude` with no arguments, in that folder's realpath, with
 //                                     childEnvironment() and PWD. At most TRUST_OPENS a minute, else
-//                                     `error` and close 1013. No `open` in OPEN_TIMEOUT_MS, or no
-//                                     `started` in that time after it, is `error` and close 1013 too
+//                                     `error` and close 1013. No `started` within OPEN_TIMEOUT_MS of
+//                                     `ready` is `error` and close 1013 too
 //   server  started                   then the PTY's output as binary frames
 //   client  input / resize            input is written only when it is exactly Up, Down, Enter or Esc
 //                                     (trustKey()), and only while a question is open on the screen:
@@ -117,7 +117,9 @@ function foldScreenText(text: string): string {
   return text.replace(/\s+/g, ' ').toLowerCase();
 }
 const SCREEN_MARKERS = [TRUST_SCREEN.prompt, TRUST_SCREEN.question, TRUST_SCREEN.banner].map(foldScreenText);
-const DECLINED_ANY_CASE = new RegExp(TRUST_SCREEN.declined.source, 'i');
+/** The markers with no whitespace at all: the reader makes each escape a space, so a path the screen wraps can gain one. */
+const SCREEN_MARKERS_COMPACT = SCREEN_MARKERS.map((marker) => marker.replace(/ /g, ''));
+const DECLINED_ANY_CASE = new RegExp(TRUST_SCREEN.declined.source.replaceAll('\\s+', '\\s*'), 'i');
 
 /**
  * Whether `path` has one of TRUST_SCREEN's strings in it, in any case and however it's spaced.
@@ -128,7 +130,12 @@ const DECLINED_ANY_CASE = new RegExp(TRUST_SCREEN.declined.source, 'i');
  */
 export function hasScreenMarker(path: string): boolean {
   const folded = foldScreenText(path);
-  return SCREEN_MARKERS.some((marker) => folded.includes(marker)) || DECLINED_ANY_CASE.test(folded);
+  const compact = folded.replace(/ /g, '');
+  return (
+    SCREEN_MARKERS.some((marker) => folded.includes(marker)) ||
+    SCREEN_MARKERS_COMPACT.some((marker) => compact.includes(marker)) ||
+    DECLINED_ANY_CASE.test(folded)
+  );
 }
 
 /** The error when `started` doesn't come within OPEN_TIMEOUT_MS of `ready`, or the time limit of `open`. */
