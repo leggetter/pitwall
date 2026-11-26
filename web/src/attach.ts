@@ -175,7 +175,8 @@ export function parseAttachMessage(data: unknown): AttachServerMessage | undefin
   }
 }
 
-function toBytes(data: unknown): Uint8Array | undefined {
+/** A binary frame's bytes, or undefined for a text frame. */
+export function toBytes(data: unknown): Uint8Array | undefined {
   if (data instanceof ArrayBuffer) return new Uint8Array(data);
   if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
   return undefined;

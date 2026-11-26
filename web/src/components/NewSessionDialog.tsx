@@ -110,6 +110,7 @@ import { Icon } from './Icon.js';
 import { KeyCaps, modEnter } from './KeyCaps.js';
 import { Spinner } from './Spinner.js';
 import { Tooltip } from './Tooltip.js';
+import { TrustFolder } from './TrustFolder.js';
 import '../actions.css';
 
 /** The picker's "type one" choice. No path can contain a NUL, so it can't collide with one. */
@@ -223,6 +224,8 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
   const ids = { dir: useId(), name: useId(), profile: useId(), model: useId(), customModel: useId(), effort: useId(), subagents: useId(), prompt: useId() };
   const alive = useRef(true);
   const submitting = useRef(false);
+  // The last request sent, which Trust this folder… sends again once Claude Code has trusted the folder (W214).
+  const lastRequest = useRef<SpawnRequest | undefined>(undefined);
 
   // A prefilled directory no group has, as a new clone or a worktree, goes first.
   const prefilledCwd = prefill?.cwd;
@@ -497,6 +500,16 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
     if (subagents !== '') request.subagentModel = subagents;
     else if (request.profile !== undefined && pickedProfile?.subagentModel !== undefined) request.subagentModel = latestWork?.effective.subagents.model ?? WORK_DEFAULT;
     if (attachments.ids.length > 0) request.attachments = [...attachments.ids];
+    await send(request);
+  };
+
+  /**
+   * Sends `request`, as Start session built it, or again, unchanged, once Claude Code has trusted the
+   * folder from the card (W214): its answer is the proof, and a second 422 brings the card back.
+   */
+  const send = async (request: SpawnRequest) => {
+    if (submitting.current || !api) return;
+    lastRequest.current = request;
     submitting.current = true;
     setBusy(true);
     setFailure(undefined);
@@ -873,6 +886,15 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
             <>
               <p className="spawn-trust">{TRUST_TEXT}</p>
               <CopyCommand command={failure.hint} />
+              {lastRequest.current !== undefined && (
+                <TrustFolder
+                  cwd={lastRequest.current.cwd}
+                  onTrusted={() => {
+                    const request = lastRequest.current;
+                    if (request) void send(request);
+                  }}
+                />
+              )}
             </>
           )}
           {failure.kind === 'refused' && failure.hint === undefined && failure.status === 422 && <NoTrustCommand />}
