@@ -1819,7 +1819,7 @@ export function terminalScreen(session: SessionSummary, { cols, rows }: Terminal
 /**
  * Claude Code's trust prompt for `cwd` at `size`, made up, as the trust terminal's PTY would send it
  * (W214, spike 020): drawn afresh on a cleared screen, each line cut to the columns, with the strings
- * src/server/trust.ts reads, Yes's and "Enter to confirm".
+ * src/server/trust.ts reads, Yes's and "Enter to confirm", and No first, as Claude Code draws it.
  */
 export function trustScreen(cwd: string, { cols, rows }: TerminalSize): string {
   const at = (row: number) => `\u001b[${row};1H`;
@@ -1831,8 +1831,9 @@ export function trustScreen(cwd: string, { cols, rows }: TerminalSize): string {
     '',
     fit('A made-up trust prompt for the app check. Claude Code may read, edit and run files here.'),
     '',
-    `\u001b[36m${fit('❯ 1. Yes, I trust this folder')}\u001b[0m`,
-    fit('  2. No, exit'),
+    // No first, and selected: Claude Code's default (spike 020, finding 1).
+    `\u001b[36m${fit('❯ No, exit')}\u001b[0m`,
+    fit('  Yes, I trust this folder'),
     '',
     `\u001b[2m${fit('Enter to confirm · Esc to cancel')}\u001b[0m`,
   ].slice(0, rows);

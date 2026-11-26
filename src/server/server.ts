@@ -230,7 +230,7 @@ export interface ServerInternals {
   clearTimings?: Partial<ClearTimings>;
   attach?: Partial<Pick<AttachOptions, 'spawnPty' | 'env' | 'agents' | 'spawned' | 'resumed' | 'processAlive' | 'now'>>;
   /** For the trust socket (W214): tests pass a fake PTY spawner and shorter timings, so they never run `claude`. */
-  trust?: Partial<Pick<TrustOptions, 'spawnPty' | 'env' | 'claudeBin' | 'timeLimitMs' | 'settleMs' | 'killGraceMs' | 'now'>>;
+  trust?: Partial<Pick<TrustOptions, 'spawnPty' | 'env' | 'claudeBin' | 'timeLimitMs' | 'openTimeoutMs' | 'settleMs' | 'killGraceMs' | 'now'>>;
   /** The directory list (W70, directories.ts): tests pass a wrapped readdir, a clock and limits. */
   directories?: DirectoryOptions;
   /**

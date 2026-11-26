@@ -14,20 +14,31 @@
 //   client  open                      cwd, cols, rows. The server checks cwd with checkDirectory(), as
 //                                     New session does, under the snapshot's roots, and needs a word for
 //                                     it from trustHint(), so only a folder whose 422 has a command to
-//                                     copy gets a terminal. Then `claude` with no arguments, in that
-//                                     folder's realpath, with childEnvironment() and PWD. At most
-//                                     TRUST_OPENS a minute, else `error` and close 1013
+//                                     copy gets a terminal, and whose path has none of TRUST_SCREEN's
+//                                     strings (hasScreenMarker()), which would fool the reader. Then
+//                                     `claude` with no arguments, in that folder's realpath, with
+//                                     childEnvironment() and PWD. At most TRUST_OPENS a minute, else
+//                                     `error` and close 1013. No `open` in OPEN_TIMEOUT_MS, or no
+//                                     `started` in that time after it, is `error` and close 1013 too
 //   server  started                   then the PTY's output as binary frames
 //   client  input / resize            input is written only when it is exactly Up, Down, Enter or Esc
-//                                     (trustKey()); anything else is dropped, here on the server
+//                                     (trustKey()), and only while a question is open on the screen:
+//                                     the trust prompt, or one before or after the banner
+//                                     (TrustReader.questionOpen()). Anything else is dropped, here on
+//                                     the server: once the banner shows with no question open, the
+//                                     screen is `claude`'s prompt box, where Up recalls a past prompt
+//                                     for the folder and Enter sends it
 //   server  outcome                   once `claude` has exited, then close 1000
 //
 // How it ends (TrustReader reads the screen, escapes stripped, against TRUST_SCREEN's strings):
 // - `claude` exits by itself: No or Esc, so 'declined'; or before its trust prompt showed, 'unclear'.
 // - the banner shows and no question is open for SETTLE_MS: 'trusted'. pitwall ends `claude` with
-//   SIGHUP, then SIGKILL after KILL_GRACE_MS. A question after the banner, such as a project
-//   `.mcp.json`'s "New MCP server found", stays open for you to answer with the same four keys.
-// - TRUST_TIME_LIMIT_MS passes first: 'unclear', and pitwall ends it the same way.
+//   SIGHUP, then SIGKILL after KILL_GRACE_MS. A question before or after the banner, such as a
+//   project `.mcp.json`'s "New MCP server found", stays open for you to answer with the same four keys.
+// - TRUST_TIME_LIMIT_MS passes first, counted from `open`: 'unclear', and pitwall ends it the same
+//   way, or, before `claude` started, `error` and close 1013.
+// - pitwall closes the socket for any other reason, such as a refused message: it ends `claude`
+//   at once, not when the page answers the close frame.
 // Closing the socket ends it too, and so does close(). While it runs, its row in `claude agents`
 // is hidden from the list by its pid (OwnPids, src/server/own.ts).
 import type { IncomingMessage } from 'node:http';
@@ -51,6 +62,9 @@ export const SETTLE_MS = 1000;
 /** How long `claude` has to exit after SIGHUP before it gets SIGKILL. */
 export const KILL_GRACE_MS = 3000;
 
+/** How long a socket past the handshake has to send `open` and see `started`, so it can't hold the one trust slot for ever. */
+export const OPEN_TIMEOUT_MS = 10_000;
+
 /** At most this many trust terminals opened in a minute, so a stuck page can't start `claude` over and over. */
 export const TRUST_OPENS = { max: 10, windowMs: 60_000 } as const;
 
@@ -64,7 +78,8 @@ const CLOSE_GRACE_MS = 250;
  * The keys the trust terminal forwards, as xterm.js sends them: the arrows in both cursor modes
  * (normal `ESC [`, and application `ESC O`, which a program can switch on), Enter's carriage return
  * and Escape. They answer the trust prompt and a question after it, and can't type a prompt into the
- * `claude` that's trusted once Yes is chosen (Phil, 2026-11-26).
+ * `claude` that's trusted once Yes is chosen (Phil, 2026-11-26). Up and Enter could still send a past
+ * one from the prompt box's history, so they go only while a question is open (see onMessage).
  */
 export const TRUST_KEYS: ReadonlyMap<string, 'up' | 'down' | 'enter' | 'esc'> = new Map([
   ['\u001b[A', 'up'],
@@ -97,6 +112,31 @@ export const TRUST_SCREEN = {
   declined: /didn.t\s+start\s+because\s+this\s+folder\s+isn.t\s+trusted/g,
 } as const;
 
+/** Whitespace runs made one space, and lower case: wider than the reader's own matching, so nothing it would match slips through. */
+function foldScreenText(text: string): string {
+  return text.replace(/\s+/g, ' ').toLowerCase();
+}
+const SCREEN_MARKERS = [TRUST_SCREEN.prompt, TRUST_SCREEN.question, TRUST_SCREEN.banner].map(foldScreenText);
+const DECLINED_ANY_CASE = new RegExp(TRUST_SCREEN.declined.source, 'i');
+
+/**
+ * Whether `path` has one of TRUST_SCREEN's strings in it, in any case and however it's spaced.
+ * Claude Code shows the folder's path on the trust prompt and in the banner, so such a path would
+ * fool TrustReader: "Claude Code v" reads as the banner on the trust prompt itself, so Esc would
+ * read as 'trusted', and "Enter to confirm" after the banner holds the terminal open, with keys
+ * going to it. pitwall refuses those folders, and the page shows the command to copy instead.
+ */
+export function hasScreenMarker(path: string): boolean {
+  const folded = foldScreenText(path);
+  return SCREEN_MARKERS.some((marker) => folded.includes(marker)) || DECLINED_ANY_CASE.test(folded);
+}
+
+/** The error when `started` doesn't come within OPEN_TIMEOUT_MS of `ready`, or the time limit of `open`. */
+export const TRUST_OPEN_LATE = "The trust prompt didn't open in time. Try again.";
+
+/** The answer to an `open` for a folder whose path hasScreenMarker(). */
+export const TRUST_MARKER_PATH = "pitwall can't read Claude Code's prompt for a folder whose name contains its prompt text. Use the command above.";
+
 /** The escapes the spike's probe strips: CSI, OSC, DCS, PM and APC, character sets, and single-byte escapes. */
 const ESCAPES = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[P^_][^\u001b]*\u001b\\|\u001b[()][0-9A-Za-z]|\u001b[^[\]P^_()]/g;
 /** An escape cut off at the end of a chunk: the rest of it is in the next. */
@@ -116,8 +156,9 @@ export function screenText(raw: string): string {
  * - promptSeen: the trust prompt showed;
  * - bannerSeen: the banner showed, so the folder is trusted;
  * - declinedSeen: No or Esc's line showed;
+ * - questionOpen(): a question is on the screen, drawn since the last Enter or Esc (answered());
  * - settled(): the banner has shown and no question is open: none after the banner, or every one
- *   after it answered with Enter or Esc (answered()) and none drawn since.
+ *   after it answered with Enter or Esc and none drawn since.
  * It keeps only where each string was last seen, by its offset in all the text so far, and a short
  * tail, so a string split over two chunks is still found.
  */
@@ -172,6 +213,12 @@ export class TrustReader {
     this.#answeredAt = this.#base + this.#tail.length;
   }
 
+  /** A question, the trust prompt or one after it, was drawn after the last Enter or Esc. */
+  questionOpen(): boolean {
+    const { question } = this.#last;
+    return question >= 0 && question >= this.#answeredAt;
+  }
+
   /** The banner has shown, and no question drawn after it is still unanswered. */
   settled(): boolean {
     const { banner, question } = this.#last;
@@ -180,7 +227,8 @@ export class TrustReader {
 
   /** What it means when `claude` exited by itself, before pitwall ended it. */
   exitOutcome(): TrustOutcome {
-    if (this.bannerSeen) return 'trusted';
+    // The declined line after the banner: the banner was something else, such as the folder's path.
+    if (this.bannerSeen) return this.#last.declined > this.#last.banner ? 'declined' : 'trusted';
     return this.promptSeen || this.declinedSeen ? 'declined' : 'unclear';
   }
 }
@@ -235,6 +283,7 @@ export interface TrustOptions {
   /** Where each trust terminal's pid goes while it runs, for the index's exclude. */
   own: OwnPids;
   timeLimitMs?: number;
+  openTimeoutMs?: number;
   settleMs?: number;
   killGraceMs?: number;
   /** Milliseconds since the epoch, for TRUST_OPENS. Default Date.now. */
@@ -255,6 +304,7 @@ export function createTrustServer(options: TrustOptions): TrustServer {
   const { indexer, token, authTimeoutMs, spawnPty, own } = options;
   const claudeBin = options.claudeBin ?? 'claude';
   const timeLimitMs = options.timeLimitMs ?? TRUST_TIME_LIMIT_MS;
+  const openTimeoutMs = options.openTimeoutMs ?? OPEN_TIMEOUT_MS;
   const settleMs = options.settleMs ?? SETTLE_MS;
   const killGraceMs = options.killGraceMs ?? KILL_GRACE_MS;
   const opens = new RateWindow(TRUST_OPENS, options.now ?? Date.now);
@@ -273,22 +323,27 @@ export function createTrustServer(options: TrustOptions): TrustServer {
     const reader = new TrustReader();
     let settleTimer: NodeJS.Timeout | undefined;
     let limitTimer: NodeJS.Timeout | undefined;
+    let openTimer: NodeJS.Timeout | undefined;
 
     const send = (message: TrustServerMessage) => {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(message));
     };
-    const end = (code: number, message?: TrustServerMessage) => {
-      if (state === 'done') return;
-      state = 'done';
-      if (message) send(message);
-      ws.close(code);
-    };
-    const fail = (error: string, code = WS_CLOSE_POLICY) => end(code, { type: 'error', error });
     const stopTimers = () => {
       clearTimeout(settleTimer);
       clearTimeout(limitTimer);
+      clearTimeout(openTimer);
       settleTimer = undefined;
     };
+    const end = (code: number, message?: TrustServerMessage) => {
+      if (state === 'done') return;
+      state = 'done';
+      stopTimers();
+      if (message) send(message);
+      ws.close(code);
+      // Now, not in the 'close' handler: ws waits up to 30 s for a peer that never answers the close frame.
+      if (pty) ptys.get(pty)?.kill();
+    };
+    const fail = (error: string, code = WS_CLOSE_POLICY) => end(code, { type: 'error', error });
     /** Decides how it ended, once, and ends `claude`; the outcome goes out when it has exited. */
     const finish = (outcome: TrustOutcome) => {
       if (decided !== undefined) return;
@@ -314,12 +369,20 @@ export function createTrustServer(options: TrustOptions): TrustServer {
       const snapshot = indexer.latest();
       if (snapshot === undefined) return fail("pitwall hasn't listed the sessions yet. Try again in a moment.", WS_CLOSE_TRY_AGAIN);
       state = 'opening';
+      // From `open`, so it bounds a checkDirectory() that hangs as well as `claude` itself.
+      limitTimer = setTimeout(() => {
+        if (state === 'running') finish('unclear');
+        else fail(TRUST_OPEN_LATE, WS_CLOSE_TRY_AGAIN);
+      }, timeLimitMs);
+      limitTimer.unref();
       const dir = await checkDirectory(message.cwd, snapshot.roots);
       if (state !== 'opening' || ws.readyState !== ws.OPEN) return;
       if (closing) return end(1001);
       if (!dir.ok) return fail(dir.error);
       // Only where the card has a command to copy: a path with a ' or \ has none (W87).
       if (trustHint(dir.path) === undefined) return fail("pitwall has no trust terminal for a folder whose path has a ' or \\.");
+      // The path shows on the trust prompt and in the banner, where one of the reader's strings would fool it.
+      if (hasScreenMarker(dir.path)) return fail(TRUST_MARKER_PATH);
       const taken = opens.take();
       if (!taken.ok) return fail(`pitwall opens at most ${TRUST_OPENS.max} trust prompts a minute. Try again in ${taken.retryAfterSeconds}s.`, WS_CLOSE_TRY_AGAIN);
 
@@ -340,6 +403,7 @@ export function createTrustServer(options: TrustOptions): TrustServer {
       const pid = typeof started.pid === 'number' && Number.isInteger(started.pid) && started.pid > 0 ? started.pid : undefined;
       if (pid !== undefined) own.add(pid);
       state = 'running';
+      clearTimeout(openTimer);
       send({ type: 'started' });
 
       let exited!: () => void;
@@ -367,8 +431,6 @@ export function createTrustServer(options: TrustOptions): TrustServer {
         exited();
         end(1000, { type: 'outcome', outcome: decided ?? reader.exitOutcome() });
       });
-      limitTimer = setTimeout(() => finish('unclear'), timeLimitMs);
-      limitTimer.unref();
     };
 
     const onMessage = (data: RawData, isBinary: boolean) => {
@@ -390,6 +452,9 @@ export function createTrustServer(options: TrustOptions): TrustServer {
       // Up, Down, Enter and Esc alone. Anything else, a paste or a typed letter included, is dropped.
       const key = trustKey(message.data);
       if (key === undefined) return;
+      // And only while a question is open. With none, the screen is the prompt box (or not drawn yet):
+      // there Up recalls a past prompt for this folder and Enter sends it, maybe in auto mode.
+      if (!reader.questionOpen() || reader.settled()) return;
       if (key === 'enter' || key === 'esc') reader.answered();
       const keyData = message.data;
       safely(() => pty?.write(keyData));
@@ -417,6 +482,11 @@ export function createTrustServer(options: TrustOptions): TrustServer {
         state = 'ready';
         ws.on('message', onMessage);
         send({ type: 'ready' });
+        // Until `started`: a socket that never sends `open`, or whose checks hang, gives the slot back.
+        openTimer = setTimeout(() => {
+          if (state === 'ready' || state === 'opening') fail(TRUST_OPEN_LATE, WS_CLOSE_TRY_AGAIN);
+        }, openTimeoutMs);
+        openTimer.unref();
       },
     });
   };

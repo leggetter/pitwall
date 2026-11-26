@@ -17,8 +17,30 @@ import { WS_CLOSE_TRY_AGAIN } from './handshake.js';
 import type { RunningServer } from './index.js';
 import type { PtyProcess, PtySpawnOptions } from './pty.js';
 import { pitwallOrigin, proofFor as contractProof } from '../test/proof.js';
+import { checkDirectory } from './actions.js';
 import { startServerWithInternals, type ServerInternals } from './server.js';
-import { HIDE_AFTER_EXIT_MS, KILL_GRACE_MS, OwnPids, SETTLE_MS, TRUST_BUSY, TRUST_KEYS, TRUST_OPENS, TrustReader, screenText, trustKey } from './trust.js';
+import {
+  HIDE_AFTER_EXIT_MS,
+  KILL_GRACE_MS,
+  OPEN_TIMEOUT_MS,
+  OwnPids,
+  SETTLE_MS,
+  TRUST_BUSY,
+  TRUST_KEYS,
+  TRUST_MARKER_PATH,
+  TRUST_OPEN_LATE,
+  TRUST_OPENS,
+  TrustReader,
+  hasScreenMarker,
+  screenText,
+  trustKey,
+} from './trust.js';
+
+// The real checkDirectory(), which a test can make hang for one call.
+vi.mock('./actions.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./actions.js')>();
+  return { ...actual, checkDirectory: vi.fn(actual.checkDirectory) };
+});
 
 // No test here runs `claude`: every PTY is a FakePty. The screens are written by hand from spike 020's
 // strings (TRUST_SCREEN), not taken from a real transcript.
@@ -29,18 +51,20 @@ const ENV = { PATH: '/usr/bin:/bin', HOME: '/Users/example', PITWALL_TOKEN: TOKE
 // ---------------------------------------------------------------- screens
 
 const ESC = '\u001b';
-/** The trust prompt, drawn with colours and cursor moves, as Ink draws it. */
+/** The trust prompt, drawn with colours and cursor moves, as Ink draws it: No first, and selected (spike 020, finding 1). */
 const PROMPT_SCREEN =
   `${ESC}[2J${ESC}[H${ESC}[1mDo you trust the files in this folder?${ESC}[22m\r\n` +
-  `${ESC}[36m❯ 1. Yes, I trust this folder${ESC}[39m\r\n  2. No, exit\r\n\r\n` +
+  `${ESC}[36m❯ No, exit${ESC}[39m\r\n  Yes, I trust this folder\r\n\r\n` +
   `${ESC}[2mEnter to confirm · Esc to cancel${ESC}[22m\r\n`;
 /** The welcome banner, once trusted. */
 const BANNER_SCREEN = `${ESC}[2J${ESC}[H${ESC}[38;5;174m✻${ESC}[39m Welcome to ${ESC}[1mClaude Code v2.1.332${ESC}[22m\r\n  cwd: /tmp/x\r\n`;
-/** A project .mcp.json's question after the banner. */
+/** A project .mcp.json's question, which spike 020 saw between Yes and the banner. */
 const MCP_SCREEN = `\r\n${ESC}[1mNew MCP server found in .mcp.json: example${ESC}[22m\r\n❯ 1. Use this MCP server\r\n  2. Continue without\r\n${ESC}[2mEnter to confirm · Esc to reject${ESC}[22m\r\n`;
 /** The prompt line after it's answered, and the empty input box. */
 const IDLE_SCREEN = `\r\n${ESC}[2m> ${ESC}[22m\r\n`;
 /** What No and Esc print before `claude` exits. */
+const UP = '\u001b[A';
+const DOWN = '\u001b[B';
 const DECLINED_SCREEN = `\r\n${ESC}[31mClaude Code didn’t start because this folder isn’t trusted.${ESC}[39m\r\n`;
 
 // ---------------------------------------------------------------- unit: keys
@@ -99,7 +123,7 @@ describe('TrustReader', () => {
     expect(reader.promptSeen).toBe(true);
     expect(reader.bannerSeen).toBe(false);
     expect(reader.settled()).toBe(false);
-    // Yes is the first option: Enter.
+    // No is the default, so Yes is Down, then Enter, which answers it.
     reader.answered();
     expect(reader.settled()).toBe(false);
     reader.feed(BANNER_SCREEN);
@@ -170,6 +194,37 @@ describe('TrustReader', () => {
     expect(reader.settled()).toBe(false);
   });
 
+  it('keeps a question before the banner open until it is answered, then settles on the banner', () => {
+    const reader = new TrustReader();
+    reader.feed(PROMPT_SCREEN);
+    expect(reader.questionOpen()).toBe(true);
+    reader.answered();
+    expect(reader.questionOpen()).toBe(false);
+    reader.feed(MCP_SCREEN);
+    expect(reader.questionOpen()).toBe(true);
+    expect(reader.settled()).toBe(false);
+    reader.answered();
+    expect(reader.questionOpen()).toBe(false);
+    expect(reader.settled()).toBe(false);
+    reader.feed(BANNER_SCREEN);
+    expect(reader.settled()).toBe(true);
+  });
+
+  it('has a question open only from its drawing to the next Enter or Esc', () => {
+    const reader = new TrustReader();
+    expect(reader.questionOpen()).toBe(false);
+    reader.feed(BANNER_SCREEN + IDLE_SCREEN);
+    expect(reader.questionOpen()).toBe(false);
+    reader.feed(MCP_SCREEN);
+    expect(reader.questionOpen()).toBe(true);
+    reader.feed(`${ESC}[2K`);
+    expect(reader.questionOpen()).toBe(true);
+    reader.answered();
+    expect(reader.questionOpen()).toBe(false);
+    reader.feed(IDLE_SCREEN);
+    expect(reader.questionOpen()).toBe(false);
+  });
+
   it('keeps the banner and a question in one chunk unsettled', () => {
     const reader = new TrustReader();
     reader.feed(PROMPT_SCREEN);
@@ -201,6 +256,36 @@ describe('TrustReader', () => {
     const trusted = new TrustReader();
     trusted.feed(BANNER_SCREEN);
     expect(trusted.exitOutcome()).toBe('trusted');
+  });
+
+  it('gives declined for the declined line after the banner, as a path with the banner in it would show', () => {
+    const reader = new TrustReader();
+    reader.feed(PROMPT_SCREEN.replace('this folder?', 'this folder?\r\n/tmp/Claude Code v1'));
+    expect(reader.bannerSeen).toBe(true);
+    reader.answered();
+    reader.feed(DECLINED_SCREEN);
+    expect(reader.exitOutcome()).toBe('declined');
+    // The declined line before a real banner doesn't undo it.
+    const before = new TrustReader();
+    before.feed(DECLINED_SCREEN + BANNER_SCREEN);
+    expect(before.exitOutcome()).toBe('trusted');
+  });
+});
+
+describe('hasScreenMarker', () => {
+  it.each([
+    ['the banner', '/r/Claude Code v2'],
+    ['the banner in another case and spacing', '/r/claude   CODE\tv'],
+    ['the question', '/r/enter to confirm'],
+    ["Yes's text", '/r/Yes, I trust this folder'],
+    ['the declined line', "/r/didn't start because this folder isn't trusted"],
+    ['the declined line with a curly quote, spaced, in capitals', '/r/DIDN’T  START because this folder ISN’T trusted'],
+  ])('finds %s', (_name, path) => {
+    expect(hasScreenMarker(path)).toBe(true);
+  });
+
+  it.each(['/r/project', '/r/claude-code', '/r/Claude Code', '/r/enter-to-confirm', '/r/trust this folder'])('passes %s', (path) => {
+    expect(hasScreenMarker(path)).toBe(false);
   });
 });
 
@@ -262,6 +347,8 @@ let outside: string;
 let link: string;
 let file: string;
 let quoted: string;
+let bannerDir: string;
+let questionDir: string;
 
 beforeAll(async () => {
   base = await realpath(await mkdtemp(join(tmpdir(), 'pitwall-test-trust-')));
@@ -271,9 +358,13 @@ beforeAll(async () => {
   link = join(root, 'link-out');
   file = join(root, 'notes.txt');
   quoted = join(root, "it's");
+  bannerDir = join(root, 'Claude Code v9');
+  questionDir = join(root, 'press ENTER  to confirm');
   await mkdir(inside, { recursive: true });
   await mkdir(outside, { recursive: true });
   await mkdir(quoted, { recursive: true });
+  await mkdir(bannerDir, { recursive: true });
+  await mkdir(questionDir, { recursive: true });
   await symlink(outside, link);
   await writeFile(file, 'not a folder\n');
 });
@@ -612,6 +703,8 @@ describe('the trust socket', () => {
       ['a relative path', () => 'project', /absolute/],
       ['the empty string', () => '', /required/],
       ["a path with a ' (no command to copy)", () => quoted, /has a ' or/],
+      ["a path with the banner's text", () => bannerDir, TRUST_MARKER_PATH],
+      ["a path with the question's text, in another case and spacing", () => questionDir, TRUST_MARKER_PATH],
     ])('refuses %s', async (_name, cwd, error) => {
       const { server, spawner } = await start();
       const client = await ready(server.port);
@@ -701,6 +794,7 @@ describe('the trust socket', () => {
       const { server, spawner } = await start();
       const client = await opened(server.port);
       const pty = spawner.last;
+      pty.emit(PROMPT_SCREEN);
       const dropped = ['y', 'hello', '\u0003', '\t', '\n', '\u001b[C', '\u001b[A\u001b[A', '\u001b[Ax', 'y\r', '\u001b[200~claude\u001b[201~'];
       const kept = ['\u001b[B', '\u001b[A', '\u001bOB', '\u001bOA', '\r'];
       for (const data of [...dropped, ...kept]) send(client, { type: 'input', data });
@@ -709,6 +803,57 @@ describe('the trust socket', () => {
       expect(pty.written).toEqual(kept);
       expect(pty.sizes).toEqual([[120, 40]]);
       client.ws.close();
+    });
+
+    it('forwards keys only while a question is open: never at the prompt box after the banner', async () => {
+      // A long settle, so the terminal stays open through the banner for the keys after it.
+      const { server, spawner } = await start({ trust: { settleMs: 60_000 } });
+      const client = await opened(server.port);
+      const pty = spawner.last;
+      /** Sends `keys`, then a resize, and waits for the resize, so every key before it was handled. */
+      let resizes = 0;
+      const keys = async (...data: string[]) => {
+        for (const key of data) send(client, { type: 'input', data: key });
+        send(client, { type: 'resize', cols: 100, rows: 30 });
+        resizes += 1;
+        await waitFor(() => pty.sizes.length === resizes);
+      };
+      // Nothing on the screen yet.
+      await keys(UP, '\r');
+      expect(pty.written).toEqual([]);
+      // The trust prompt: Yes is Down, then Enter.
+      pty.emit(PROMPT_SCREEN);
+      await keys(DOWN, '\r');
+      expect(pty.written).toEqual([DOWN, '\r']);
+      // The banner and the prompt box, with no question: Up would recall a past prompt, and Enter send it.
+      pty.emit(BANNER_SCREEN + IDLE_SCREEN);
+      await keys(UP, '\r', '\u001b');
+      expect(pty.written).toEqual([DOWN, '\r']);
+      // A question after the banner takes the keys.
+      pty.emit(MCP_SCREEN);
+      await keys(DOWN, '\r');
+      expect(pty.written).toEqual([DOWN, '\r', DOWN, '\r']);
+      // Answered, and settled again: dropped again.
+      pty.emit(IDLE_SCREEN);
+      await keys(UP, '\r');
+      expect(pty.written).toEqual([DOWN, '\r', DOWN, '\r']);
+      expect(pty.killed).toEqual([]);
+      client.ws.close();
+    });
+
+    it('ends claude as it refuses a message, before the page answers the close frame', async () => {
+      const { server, spawner } = await start();
+      const client = await opened(server.port);
+      const pty = spawner.last;
+      pty.stubborn = true;
+      send(client, { type: 'open', cwd: inside, cols: 80, rows: 24 });
+      const message = await client.next();
+      expect(message).toEqual({ type: 'error', error: 'Already open.' });
+      // The client hasn't answered the close frame yet, so the socket's 'close' hasn't run on the server.
+      expect(pty.killed).toEqual(['SIGHUP']);
+      expect((await client.closed).code).toBe(WS_CLOSE_POLICY);
+      await waitFor(() => pty.exited);
+      expect(pty.killed).toEqual(['SIGHUP', 'SIGKILL']);
     });
 
     it('sends the PTY output as binary frames', async () => {
@@ -726,8 +871,9 @@ describe('the trust socket', () => {
       const client = await opened(server.port);
       const pty = spawner.last;
       pty.emit(PROMPT_SCREEN);
+      send(client, { type: 'input', data: DOWN });
       send(client, { type: 'input', data: '\r' });
-      await waitFor(() => pty.written.length === 1);
+      await waitFor(() => pty.written.length === 2);
       pty.emit(BANNER_SCREEN);
       await expectOutcome(client, 'trusted');
       expect(pty.killed).toEqual(['SIGHUP']);
@@ -739,8 +885,9 @@ describe('the trust socket', () => {
       const pty = spawner.last;
       pty.stubborn = true;
       pty.emit(PROMPT_SCREEN);
+      send(client, { type: 'input', data: DOWN });
       send(client, { type: 'input', data: '\r' });
-      await waitFor(() => pty.written.length === 1);
+      await waitFor(() => pty.written.length === 2);
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       pty.emit(BANNER_SCREEN);
       vi.advanceTimersByTime(SETTLE_MS - 1);
@@ -773,18 +920,40 @@ describe('the trust socket', () => {
       const client = await opened(server.port);
       const pty = spawner.last;
       pty.emit(PROMPT_SCREEN);
+      send(client, { type: 'input', data: DOWN });
       send(client, { type: 'input', data: '\r' });
-      await waitFor(() => pty.written.length === 1);
+      await waitFor(() => pty.written.length === 2);
       pty.emit(BANNER_SCREEN + MCP_SCREEN);
       await delay(100);
       expect(pty.killed).toEqual([]);
-      send(client, { type: 'input', data: '\u001b[B' });
-      await waitFor(() => pty.written.length === 2);
+      send(client, { type: 'input', data: DOWN });
+      await waitFor(() => pty.written.length === 3);
       await delay(60);
       expect(pty.killed).toEqual([]);
       send(client, { type: 'input', data: '\r' });
       await expectOutcome(client, 'trusted');
-      expect(pty.written).toEqual(['\r', '\u001b[B', '\r']);
+      expect(pty.written).toEqual([DOWN, '\r', DOWN, '\r']);
+    });
+
+    it('keeps the terminal open for a question before the banner, as spike 020 saw the MCP question', async () => {
+      const { server, spawner } = await start();
+      const client = await opened(server.port);
+      const pty = spawner.last;
+      pty.emit(PROMPT_SCREEN);
+      send(client, { type: 'input', data: DOWN });
+      send(client, { type: 'input', data: '\r' });
+      await waitFor(() => pty.written.length === 2);
+      pty.emit(MCP_SCREEN);
+      await delay(100);
+      expect(pty.killed).toEqual([]);
+      send(client, { type: 'input', data: DOWN });
+      send(client, { type: 'input', data: '\r' });
+      await waitFor(() => pty.written.length === 4);
+      await delay(60);
+      expect(pty.killed).toEqual([]);
+      pty.emit(BANNER_SCREEN);
+      await expectOutcome(client, 'trusted');
+      expect(pty.written).toEqual([DOWN, '\r', DOWN, '\r']);
     });
 
     it('disarms the settle timer when a question shows within SETTLE_MS of the banner', async () => {
@@ -826,6 +995,58 @@ describe('the trust socket', () => {
       spawner.last.emit(PROMPT_SCREEN);
       await expectOutcome(client, 'unclear');
       expect(spawner.last.killed).toEqual(['SIGHUP']);
+    });
+
+    it('closes 1013 when no open comes within OPEN_TIMEOUT_MS of ready, and gives the slot back', async () => {
+      const { server, spawner } = await start();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const client = await ready(server.port);
+      vi.advanceTimersByTime(OPEN_TIMEOUT_MS - 1);
+      for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve));
+      expect(client.messages).toEqual([]);
+      vi.advanceTimersByTime(1);
+      expect(await expectRefused(client, WS_CLOSE_TRY_AGAIN)).toBe(TRUST_OPEN_LATE);
+      vi.useRealTimers();
+      expect(spawner.spawn).not.toHaveBeenCalled();
+      const next = await opened(server.port);
+      next.ws.close();
+    });
+
+    it('closes 1013 when the folder check hangs past OPEN_TIMEOUT_MS', async () => {
+      const { server, spawner } = await start();
+      let checking!: () => void;
+      const checked = new Promise<void>((resolve) => (checking = resolve));
+      vi.mocked(checkDirectory).mockImplementationOnce(() => {
+        checking();
+        return new Promise(() => {});
+      });
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const client = await ready(server.port);
+      send(client, { type: 'open', cwd: inside, cols: 80, rows: 24 });
+      await checked;
+      vi.advanceTimersByTime(OPEN_TIMEOUT_MS);
+      expect(await expectRefused(client, WS_CLOSE_TRY_AGAIN)).toBe(TRUST_OPEN_LATE);
+      expect(spawner.spawn).not.toHaveBeenCalled();
+    });
+
+    it('counts the time limit from open, so it bounds a folder check that hangs too', async () => {
+      const { server, spawner } = await start({ trust: { timeLimitMs: 1000, openTimeoutMs: 60_000 } });
+      let checking!: () => void;
+      const checked = new Promise<void>((resolve) => (checking = resolve));
+      vi.mocked(checkDirectory).mockImplementationOnce(() => {
+        checking();
+        return new Promise(() => {});
+      });
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const client = await ready(server.port);
+      send(client, { type: 'open', cwd: inside, cols: 80, rows: 24 });
+      await checked;
+      vi.advanceTimersByTime(999);
+      for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve));
+      expect(client.messages).toEqual([]);
+      vi.advanceTimersByTime(1);
+      expect(await expectRefused(client, WS_CLOSE_TRY_AGAIN)).toBe(TRUST_OPEN_LATE);
+      expect(spawner.spawn).not.toHaveBeenCalled();
     });
 
     it('ends claude when the socket closes', async () => {
