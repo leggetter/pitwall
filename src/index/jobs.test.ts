@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from 'node:fs/p
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CACHE_SETTLE_MS, CHILDREN_MAX, createJobReader, JOB_FILE_MAX_BYTES, NEEDS_MAX, needsText, onlyPrOf, parseJobState, parseJobSessionIds, parseSavedPermission, readJobSessionIds, readSavedPermission } from './jobs.js';
+import { CACHE_SETTLE_MS, CHILDREN_MAX, createJobReader, JOB_FILE_MAX_BYTES, NEEDS_MAX, needsText, onlyPrOf, parseJobState, prsOf, parseJobSessionIds, parseSavedPermission, readJobSessionIds, readSavedPermission } from './jobs.js';
 
 // Synthetic job folders, shaped like Claude Code 2.1.311's `~/.claude/jobs/<shortId>/state.json`
 // (spike 007, finding 1). Made up: never a real job's file.
@@ -58,8 +58,10 @@ describe("a job's one PR, from its children (W170)", () => {
   const child = (n: number, repo = 'example/demo-app') => ({ kind: 'pr', id: String(n), href: `https://github.com/${repo}/pull/${n}` });
 
   it('takes the one PR its children link, beside its line or none', () => {
-    expect(parseJobState(state({ state: 'done', children: [child(6089)] }), SID)).toEqual({ kind: 'none', pr: { repo: 'example/demo-app', number: 6089 } });
-    expect(parseJobState(state({ needs: 'Tea?', children: [child(42, 'Example/Demo-App')] }), SID)).toEqual({ kind: 'needs', text: 'Tea?', pr: { repo: 'example/demo-app', number: 42 } });
+    const demo = { repo: 'example/demo-app', number: 6089 };
+    expect(parseJobState(state({ state: 'done', children: [child(6089)] }), SID)).toEqual({ kind: 'none', pr: demo, prs: [demo] });
+    const lower = { repo: 'example/demo-app', number: 42 };
+    expect(parseJobState(state({ needs: 'Tea?', children: [child(42, 'Example/Demo-App')] }), SID)).toEqual({ kind: 'needs', text: 'Tea?', pr: lower, prs: [lower] });
     // The same PR twice is still one.
     expect(onlyPrOf([child(7), child(7)])).toEqual({ repo: 'example/demo-app', number: 7 });
   });
@@ -68,7 +70,24 @@ describe("a job's one PR, from its children (W170)", () => {
     expect(onlyPrOf([child(7), child(8)])).toBeUndefined();
     expect(onlyPrOf([child(7), child(7, 'example/other')])).toBeUndefined();
     expect(onlyPrOf([])).toBeUndefined();
-    expect(parseJobState(state({ children: [child(7), child(8)] }), SID)).toEqual({ kind: 'none' });
+    // Every one is still in prs (W225).
+    expect(parseJobState(state({ children: [child(7), child(8)] }), SID)).toEqual({
+      kind: 'none',
+      prs: [
+        { repo: 'example/demo-app', number: 7 },
+        { repo: 'example/demo-app', number: 8 },
+      ],
+    });
+  });
+
+  it('lists every PR its children link, each once, in order (W225)', () => {
+    expect(prsOf([child(7), child(8, 'example/other'), child(7), { kind: 'frame', href: 'https://example.com/' }])).toEqual([
+      { repo: 'example/demo-app', number: 7 },
+      { repo: 'example/other', number: 8 },
+    ]);
+    expect(prsOf([])).toEqual([]);
+    expect(prsOf({})).toEqual([]);
+    expect(prsOf(Array.from({ length: CHILDREN_MAX + 1 }, () => child(7)))).toEqual([]);
   });
 
   it('passes over what isn’t a PR URL, or isn’t a pr entry, without making the file unknown', () => {

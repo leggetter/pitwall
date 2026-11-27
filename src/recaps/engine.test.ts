@@ -591,7 +591,8 @@ describe('the two waits after a turn ends (W132)', () => {
     expect(RECAP_UPDATE_DEBOUNCE_MS).toBe(15 * MINUTE);
     const h = harness();
     h.start();
-    let a = h.add('a', { state: 'working', lastActivityAt: new Date(h.clock.now - RECAP_DEBOUNCE_MS + 1000).toISOString() });
+    // An interactive session: a background job whose turn has ended gets the short wait (W162, W225).
+    let a = h.add('a', { kind: 'interactive', lastActivityAt: new Date(h.clock.now - RECAP_DEBOUNCE_MS + 1000).toISOString() });
     await h.poll([a]);
     expect(h.calls).toHaveLength(0);
     h.clock.now += 1000;
@@ -662,11 +663,18 @@ describe('a finished background job is updated after the short wait (W162)', () 
     expect(await update({ state: 'done' }, { turnEnded: true }, RECAP_DEBOUNCE_MS)).toBe(1);
   });
 
-  it('keeps the long wait for a job that is working or blocked', async () => {
-    for (const state of ['working', 'blocked'] as const) {
-      expect(await update({ state }, { turnEnded: true }, RECAP_DEBOUNCE_MS)).toBe(0);
-      expect(await update({ state }, { turnEnded: true }, RECAP_UPDATE_DEBOUNCE_MS)).toBe(1);
-    }
+  it('keeps the long wait for a job that is blocked', async () => {
+    expect(await update({ state: 'blocked' }, { turnEnded: true }, RECAP_DEBOUNCE_MS)).toBe(0);
+    expect(await update({ state: 'blocked' }, { turnEnded: true }, RECAP_UPDATE_DEBOUNCE_MS)).toBe(1);
+  });
+
+  it('waits the short debounce for a working job whose transcript marks its turn ended, as a monitor keeps it busy (W225)', async () => {
+    expect(await update({ state: 'working', status: 'busy' }, { turnEnded: true }, RECAP_DEBOUNCE_MS - 1000)).toBe(0);
+    expect(await update({ state: 'working', status: 'busy' }, { turnEnded: true }, RECAP_DEBOUNCE_MS)).toBe(1);
+  });
+
+  it('keeps the long wait for a working job with no turn mark', async () => {
+    expect(await update({ state: 'working', status: 'idle' }, {}, RECAP_DEBOUNCE_MS)).toBe(0);
   });
 
   it('makes none while the turn has not ended, whatever the wait', async () => {

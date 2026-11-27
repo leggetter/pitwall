@@ -1,8 +1,8 @@
 // The Needs you rules the page and the server share (W165). The page's own cases are in web/src/sessions.test.tsx and work.test.tsx.
 import { describe, expect, it } from 'vitest';
 import { parsePullRequest } from '../prs/parse.js';
-import { prNode, reviewRequests, VIEWER } from '../test/prs.js';
-import { needsYouReason, ownedPrsBySession, prHeldBy, prNeedKind, prNeedOf, prWakeOf } from './needsYou.js';
+import { checkRun, prNode, reviewRequests, rollup, VIEWER } from '../test/prs.js';
+import { indexNeedsYou, needsAttention, needsYouReason, ownedPrsBySession, prHeldBy, prNeedKind, prNeedOf, prWakeOf } from './needsYou.js';
 import type { PullRequestSummary, SessionSummary } from './protocol.js';
 
 const base: SessionSummary = { sessionId: '22222222-2222-4222-8222-222222222222', name: 'pitwall-test-shared', kind: 'interactive', cwd: '/tmp/pitwall-test-root/repo', alive: true, startedAt: '2026-11-06T00:00:00.000Z', stale: false, finished: false, transcript: 'ok' };
@@ -15,6 +15,41 @@ describe('prNeedKind', () => {
     expect(prNeedKind(mine({ reviewDecision: 'CHANGES_REQUESTED' }))).toBe('changes-requested');
     expect(prNeedKind(mine({}))).toBeUndefined();
     expect(prNeedKind(parsePullRequest(prNode({ number: 3, reviewRequests: reviewRequests({ team: 'example/reviewers' }) }), 'review-requested', VIEWER)!)).toBe('review-requested');
+  });
+});
+
+describe("a job that carries on after /clear owns the PRs its job's file links (W225)", () => {
+  // 2026-11-27: the PR's checks failed, but the session that opened it had been cleared, so the job's new
+  // session only mentioned it and no session owned it.
+  const failing = parsePullRequest(prNode({ number: 3, checks: rollup('FAILURE', [checkRun('build', 'FAILURE')]) }))!;
+  const mentioned: SessionSummary = { ...base, kind: 'background', prLinks: [{ kind: 'mentioned', repo: 'example/demo-app', number: 3, lastAt: '2026-11-27T15:55:00.000Z' }] };
+  const fromJob: SessionSummary = { ...mentioned, prLinks: [...mentioned.prLinks!, { kind: 'linked', repo: 'example/demo-app', number: 3, lastAt: base.startedAt }] };
+
+  it('is in Needs you for the PR only with the job link', () => {
+    expect(failing.checks).toBe('failing');
+    expect(ownedPrsBySession([mentioned], [failing]).size).toBe(0);
+    expect(ownedPrsBySession([fromJob], [failing]).get(base.sessionId)).toEqual([failing]);
+    expect(needsYouReason(fromJob, [failing])).toMatchObject({ attention: true, pr: { need: 'checks-failing', ref: 'example/demo-app#3' }, won: 'pr' });
+  });
+});
+
+describe("a hand-off's Needs you ends once its proposal is settled (W225)", () => {
+  const prompt = `Continues session ${base.sessionId}.\nRead NOW.md.`;
+  const handedOff: SessionSummary = {
+    ...base,
+    needsYou: { reason: 'handed-off' },
+    spinOff: { kind: 'proposal', key: 'fedcba9876543210', folder: '/tmp/pitwall-test-root/repo', prompt },
+  };
+
+  it('needs you while the proposal waits', () => {
+    expect(indexNeedsYou(handedOff)).toBe(true);
+    expect(needsYouReason(handedOff, undefined)).toEqual({ attention: true, own: 'handed-off', won: 'own' });
+  });
+
+  it.each(['started', 'dismissed'] as const)("doesn't once you've %s it", (how) => {
+    const settled: SessionSummary = { ...handedOff, spinOff: { ...handedOff.spinOff!, settled: { how, at: '2026-11-27T16:00:00.000Z' } } as SessionSummary['spinOff'] };
+    expect(indexNeedsYou(settled)).toBe(false);
+    expect(needsAttention(settled)).toBe(false);
   });
 });
 

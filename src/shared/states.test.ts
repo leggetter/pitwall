@@ -10,7 +10,7 @@ const doc = readFileSync(new URL('../../docs/states.md', import.meta.url), 'utf8
 // Records, so a new value in the protocol's types is a compile error here until it is listed.
 const BACKGROUND: Record<BackgroundState, true> = { working: true, blocked: true, done: true, failed: true, stopped: true };
 const PROCESS: Record<ProcessStatus, true> = { busy: true, waiting: true, idle: true };
-const REASONS: Record<NeedsYou['reason'], true> = { prompt: true, 'claude-code': true, asked: true, recap: true, restarted: true, blocked: true };
+const REASONS: Record<NeedsYou['reason'], true> = { prompt: true, 'claude-code': true, asked: true, 'handed-off': true, recap: true, restarted: true, blocked: true };
 
 describe('docs/states.md', () => {
   const cases: [string, string[]][] = [

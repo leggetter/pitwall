@@ -78,7 +78,7 @@ export const FLAGS_HELD_MAX = 500;
 /** A FlagRequest is a few dozen bytes. */
 export const FLAG_BODY_MAX_BYTES = 4 * 1024;
 
-const REASONS: readonly NeedsYou['reason'][] = ['prompt', 'claude-code', 'asked', 'recap', 'restarted', 'blocked'];
+const REASONS: readonly NeedsYou['reason'][] = ['prompt', 'claude-code', 'asked', 'handed-off', 'recap', 'restarted', 'blocked'];
 const FROMS: readonly FlagFrom[] = ['row', 'view'];
 const RELAY_STATUSES: readonly RelayStatus[] = ['delivered', 'held', 'refused', 'failed', 'uncertain'];
 
@@ -111,7 +111,7 @@ export function needKey(session: SessionSummary): string | undefined {
   const need = session.needsYou;
   if (need === undefined) return undefined;
   // A reason without text of its own is the same every time ('permission prompt', 'blocked'), so its last activity tells one wait from the next.
-  const episode = need.reason === 'recap' ? (session.recap?.at ?? null) : need.reason === 'prompt' || need.reason === 'blocked' || need.reason === 'restarted' ? (session.lastActivityAt ?? null) : null;
+  const episode = need.reason === 'recap' ? (session.recap?.at ?? null) : need.reason === 'handed-off' ? (session.spinOff?.key ?? null) : need.reason === 'prompt' || need.reason === 'blocked' || need.reason === 'restarted' ? (session.lastActivityAt ?? null) : null;
   const parts = [need.reason, need.text ?? null, session.askedYou?.excerpt ?? null, session.waitingFor ?? null, episode];
   return createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 32);
 }
@@ -138,6 +138,8 @@ function askedFor(session: SessionSummary): string {
       return 'the prompt on your screen';
     case 'asked':
       return 'the question at the end of your last message';
+    case 'handed-off':
+      return 'the hand-off at the end of your last message, to clear and continue you';
     case 'claude-code':
       return 'what Claude Code says you need from me';
     case 'recap':
