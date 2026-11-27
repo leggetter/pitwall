@@ -19,6 +19,8 @@ import { SESSION_VIEW_ID, SessionRow } from './SessionRow.js';
 export interface LeadsOpen {
   isOpen: (leadId: string) => boolean;
   toggle: (leadId: string, open: boolean) => void;
+  /** A worker's "reported 10:42" (W218 piece 2): opens its view on the Conversation tab. No link without it. */
+  onReported?: ((sessionId: string) => void) | undefined;
 }
 
 export function useLeadsOpen(storage: StorageSource = browserStorage): LeadsOpen {
@@ -78,6 +80,7 @@ function plainRow(row: ArrangedListed, shared: RowShared, extra: { lead?: Parame
       offerResume={shared.offerResume ?? false}
       lead={extra.lead}
       under={row.under?.leadName}
+      onReported={shared.leads?.onReported}
     />
   );
 }

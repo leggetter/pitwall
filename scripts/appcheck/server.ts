@@ -41,6 +41,8 @@ import type {
   EditorList,
   EndSessionResult,
   IndexSnapshot,
+  LeadBriefResult,
+  LeadResult,
   PullRequestList,
   RecapRefreshResult,
   RelayResult,
@@ -112,6 +114,10 @@ export interface Records {
     subagentModel?: string | undefined;
     promptLength: number;
     attachments?: string[] | undefined;
+    /** Start a worker…'s lead (W218 piece 2), when the request named one. */
+    lead?: string | undefined;
+    /** With it, the lead's name the dialog's paragraph showed (the review's F3). */
+    leadName?: string | undefined;
   }>;
   /** Each POST of WORK_PATH (W119): the overrides sent, and the status they got. */
   workPosts: Array<{ overrides: unknown; status: number }>;
@@ -213,6 +219,10 @@ const emptyRecords = (): Records => ({
 
 /** How long a made-up clone takes, so Clone shows it's busy (W107). */
 const CLONE_MS = 600;
+
+/** The made-up paragraph a worker is given about its lead (W218 piece 2), in the real one's shape, not its words. */
+export const briefText = (leadName: string) =>
+  `Made up for the app check: you're a worker for the Claude Code session named "${leadName}". When you finish a piece of work, or need a decision, send a short report to "${leadName}" with SendMessage, then carry on.`;
 
 /** How long a refresh's made-up fetch takes, so Refresh shows its spinner (W95). */
 const PRS_FETCH_MS = 700;
@@ -486,7 +496,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
     const recapRefresh = /^\/api\/sessions\/([^/]+)\/recap\/refresh$/.exec(url.pathname);
     if (recapRefresh && method === 'POST') return refreshRecap(req, res, decodeURIComponent(recapRefresh[1]!));
 
-    const match = /^\/api\/sessions\/([^/]+)\/(conversation\/spin-off|conversation|relay|flag|unflag|snooze|unsnooze|spin-off\/settle|spin-off|clear-and-continue|continued|stop|remove|resume|open|open-file|subagents|end|recap)$/.exec(url.pathname);
+    const match = /^\/api\/sessions\/([^/]+)\/(conversation\/spin-off|conversation|relay|flag|unflag|snooze|unsnooze|spin-off\/settle|spin-off|clear-and-continue|continued|stop|remove|resume|open|open-file|subagents|end|recap|worker|worker-started|lead-brief|worker-brief)$/.exec(url.pathname);
     if (!match) return end(res, 404);
     const session = world.session(decodeURIComponent(match[1]!));
     if (!session) return end(res, 404);
@@ -513,6 +523,27 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       const recap = world.recapHealth() ? world.recap(session.sessionId) : undefined;
       records.recapFetches.push({ name: session.name, status: recap ? 200 : 404 });
       return recap ? json(res, 200, recap satisfies SessionRecap) : end(res, 404);
+    }
+    // Report to… (W218): POST workerPath(id), { lead }, links it to a listed lead; { lead: null } unlinks it.
+    if (route === 'worker' && method === 'POST') {
+      const body = await readJson(req);
+      if (!isRecord(body) || (body.lead !== null && typeof body.lead !== 'string')) return json(res, 400, { ok: false, error: 'Made up: no lead.' } satisfies LeadResult);
+      if (body.lead !== null && !world.session(body.lead)?.lead) return json(res, 409, { ok: false, error: 'Made up: that lead isn’t in pitwall’s list.' } satisfies LeadResult);
+      // Only a trusted lead (the review's F2), in the real server's words.
+      if (body.lead !== null && world.session(body.lead)?.lead?.trusted !== true) {
+        return json(res, 409, { ok: false, error: 'That session is a lead only by its own transcript’s word. Choose Confirm as lead on it first.' } satisfies LeadResult);
+      }
+      world.reportTo(session.sessionId, body.lead);
+      json(res, 200, { ok: true } satisfies LeadResult);
+      return void broadcast();
+    }
+    // Start a worker…'s link once the job is listed (W218): taken, as the real server takes it.
+    if (route === 'worker-started' && method === 'POST') return json(res, 200, { ok: true } satisfies LeadResult);
+    // The paragraph a worker is given about its lead (W218 piece 2): made up, for a listed, trusted lead, or a worker's.
+    if ((route === 'lead-brief' || route === 'worker-brief') && method === 'GET') {
+      const lead = route === 'lead-brief' ? session : session.workerOf ? world.session(session.workerOf.lead) : undefined;
+      if (lead?.lead?.trusted !== true) return json(res, 409, { ok: false, error: 'Made up: pitwall can’t name the lead it reports to.' } satisfies LeadBriefResult);
+      return json(res, 200, { ok: true, leadId: lead.sessionId, leadName: lead.name, text: briefText(lead.name) } satisfies LeadBriefResult);
     }
     if (route === 'relay' && method === 'POST') {
       if (session.kind !== 'interactive' || !session.alive) return json(res, 409, { status: 'failed', detail: 'Made up: only a running interactive session.' } satisfies RelayResult);
@@ -1067,6 +1098,14 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       attachments = ids as string[];
       for (const id of attachments) uploaded.set(id, { used: true });
     }
+    // Start a worker… (the review's F3): the lead's name the dialog showed must be the paragraph's now, or nothing starts.
+    if (typeof body.lead === 'string') {
+      const lead = world.session(body.lead);
+      if (lead?.lead?.trusted !== true) return json(res, 409, { ok: false, error: 'Made up: pitwall can’t name that lead.' } satisfies SpawnResult);
+      if (body.leadName !== lead.name) {
+        return json(res, 409, { ok: false, error: `The lead’s name is ${lead.name} now, not the name the dialog showed, so nothing started. Open Start a worker… again to see the paragraph pitwall would add.` } satisfies SpawnResult);
+      }
+    }
     const request: SpawnRequest = {
       cwd: body.cwd,
       prompt: body.prompt,
@@ -1076,8 +1115,10 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       ...(typeof body.effort === 'string' && (protocol.EFFORT_LEVELS as readonly string[]).includes(body.effort) ? { effort: body.effort as SpawnRequest['effort'] } : {}),
       ...(body.subagentModel === protocol.WORK_DEFAULT || protocol.isWorkModel(body.subagentModel, 'subagents') ? { subagentModel: body.subagentModel as string } : {}),
       ...(attachments ? { attachments } : {}),
+      ...(typeof body.lead === 'string' ? { lead: body.lead } : {}),
+      ...(typeof body.leadName === 'string' ? { leadName: body.leadName } : {}),
     };
-    records.spawns.push({ cwd: request.cwd, name: request.name, profile: request.profile, model: request.model, effort: request.effort, subagentModel: request.subagentModel, promptLength: request.prompt.length, attachments: request.attachments });
+    records.spawns.push({ cwd: request.cwd, name: request.name, profile: request.profile, model: request.model, effort: request.effort, subagentModel: request.subagentModel, promptLength: request.prompt.length, attachments: request.attachments, ...(request.lead === undefined ? {} : { lead: request.lead }), ...(request.leadName === undefined ? {} : { leadName: request.leadName }) });
     const started = world.spawn(request, root);
     json(res, 201, { ok: true, shortId: started.summary.shortId ?? '', name: started.summary.name } satisfies SpawnResult);
     later(options.listDelayMs ?? 800, () => {

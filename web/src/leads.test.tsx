@@ -33,12 +33,12 @@ const docs = group({ key: `${ROOT}/docs`, label: 'docs', sessions: [] });
 
 /** A lead in app with three workers: one in app, one finished in app, one in docs; plus a plain session and a worker of a docs lead. */
 function made() {
-  const lead = session({ sessionId: id(1), name: 'design', cwd: `${ROOT}/app`, lead: { workers: [id(2), id(3), id(4)] } });
+  const lead = session({ sessionId: id(1), name: 'design', cwd: `${ROOT}/app`, lead: { workers: [id(2), id(3), id(4)], trusted: true } });
   const spike = session({ sessionId: id(2), name: 'spike', cwd: `${ROOT}/app`, workerOf: { lead: id(1), how: 'started' } });
   const flaky = session({ sessionId: id(3), name: 'flaky', cwd: `${ROOT}/app`, finished: true, alive: false, workerOf: { lead: id(1), how: 'reported' } });
   const fix = session({ sessionId: id(4), name: 'docs fix', cwd: `${ROOT}/docs`, status: 'waiting', waitingFor: 'permission prompt', workerOf: { lead: id(1), how: 'launched' } });
   const notes = session({ sessionId: id(5), name: 'notes', cwd: `${ROOT}/app` });
-  const other = session({ sessionId: id(6), name: 'other lead', cwd: `${ROOT}/docs`, lead: { workers: [id(7)] } });
+  const other = session({ sessionId: id(6), name: 'other lead', cwd: `${ROOT}/docs`, lead: { workers: [id(7)], trusted: true } });
   const helper = session({ sessionId: id(7), name: 'helper', cwd: `${ROOT}/app`, workerOf: { lead: id(6), how: 'reported' } });
   return { lead, spike, flaky, fix, notes, other, helper };
 }
@@ -194,10 +194,21 @@ describe('the menu', () => {
     expect(leadActions(m.flaky, false)).toEqual(['not-worker']);
   });
 
+  it("offers Confirm as lead, and no Start a worker…, on a lead only by its own transcript's word (the review's F2, the fix check's N1 and N2)", () => {
+    const m = made();
+    expect(leadActions({ ...m.lead, lead: { workers: [] } }, true)).toEqual(['confirm-lead', 'not-lead']);
+  });
+
   it("lists every lead but the session itself, by name, for Report to…", () => {
     const m = made();
     expect(leadChoices(every(m).values(), m.notes.sessionId).map((l) => l.session.name)).toEqual(['design', 'other lead']);
     expect(leadChoices(every(m).values(), m.lead.sessionId).map((l) => l.session.name)).toEqual(['other lead']);
+  });
+
+  it("leaves out a lead only by its own transcript's word (the review's F2)", () => {
+    const m = made();
+    const untrusted = { ...m.other, lead: { workers: [id(7)] } };
+    expect(leadChoices(every({ ...m, other: untrusted }).values(), m.notes.sessionId).map((l) => l.session.name)).toEqual(['design']);
   });
 });
 

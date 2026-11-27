@@ -1481,15 +1481,39 @@ export class World {
     this.#sessions.set(sessionId, lineage === undefined ? rest : { ...rest, lineage });
   }
 
-  /** Until the next reset, `leadId` is a lead (W218) with `workerIds` as its workers, oldest link first; none and `marked`, a lead you marked. */
-  leads(leadId: string, workerIds: readonly string[], marked = false): void {
+  /**
+   * Until the next reset, `leadId` is a lead (W218) with `workerIds` as its workers, oldest link first; none and
+   * `marked`, a lead you marked. `trusted` false makes it a lead only by its own transcript's word (the review's F2).
+   */
+  leads(leadId: string, workerIds: readonly string[], marked = false, trusted = true): void {
     const lead = this.#sessions.get(leadId);
     if (!lead) return;
-    this.#sessions.set(leadId, { ...lead, lead: { workers: [...workerIds], ...(marked ? { marked: true as const } : {}) } });
+    this.#sessions.set(leadId, { ...lead, lead: { workers: [...workerIds], ...(marked ? { marked: true as const } : {}), ...(trusted ? { trusted: true as const } : {}) } });
     for (const id of workerIds) {
       const worker = this.#sessions.get(id);
       if (worker) this.#sessions.set(id, { ...worker, workerOf: { lead: leadId, how: 'reported' } });
     }
+  }
+
+  /** Report to… (W218): until the next reset, the session reports to `leadId`, or to none. */
+  reportTo(sessionId: string, leadId: string | null): void {
+    const session = this.#sessions.get(sessionId);
+    if (!session) return;
+    const { workerOf: _old, ...rest } = session;
+    this.#sessions.set(sessionId, leadId === null ? rest : { ...rest, workerOf: { lead: leadId, how: 'reported' } });
+    for (const [id, each] of this.#sessions) {
+      if (!each.lead) continue;
+      const workers = each.lead.workers.filter((worker) => worker !== sessionId);
+      if (id === leadId) workers.push(sessionId);
+      this.#sessions.set(id, { ...each, lead: { ...each.lead, workers } });
+    }
+  }
+
+  /** Until the next reset, a worker's newest report to its lead was at `at` (W218 piece 2). */
+  reported(sessionId: string, at: string): void {
+    const session = this.#sessions.get(sessionId);
+    if (!session?.workerOf) return;
+    this.#sessions.set(sessionId, { ...session, workerOf: { ...session.workerOf, reportedAt: at } });
   }
 
   /** Until the next reset, the session proposes a new session (W163), or proposes nothing. */

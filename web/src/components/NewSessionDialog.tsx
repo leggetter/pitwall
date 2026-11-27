@@ -177,6 +177,14 @@ export interface NewSessionDialogProps {
   subtitle?: ReactNode;
   /** At the top of the body: what happened before it opened, such as a clone, and what to do next. */
   notice?: ReactNode;
+  /**
+   * Start a worker… (W218 piece 2): the lead's session id and the name its paragraph showed, sent as the
+   * request's `lead` and `leadName`, so the server adds its own paragraph about the lead to the first
+   * prompt, and starts nothing if the name is no longer the one shown (the review's F3). Never the text.
+   */
+  lead?: { id: string; name: string } | undefined;
+  /** Why Start session waits, such as Start a worker…'s paragraph still loading: it's off until this is undefined. */
+  waiting?: string | undefined;
 }
 
 /**
@@ -219,7 +227,7 @@ function directoryAnnouncement(listing: Listing, truncated: boolean, listed: num
   return truncated ? `${count} Not every directory is listed.` : count;
 }
 
-export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, noDirectory = false, subtitle, notice }: NewSessionDialogProps) {
+export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, noDirectory = false, subtitle, notice, lead, waiting }: NewSessionDialogProps) {
   const api = useContext(ApiContext);
   const ids = { dir: useId(), name: useId(), profile: useId(), model: useId(), customModel: useId(), effort: useId(), subagents: useId(), prompt: useId() };
   const alive = useRef(true);
@@ -463,11 +471,11 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
   // Something typed, or a file added: a click on the backdrop leaves the dialog open. A prefill isn't typing.
   const dirty =
     customDir !== (first?.label ?? '') || name !== (prefill?.name ?? '') || customModel !== '' || prompt !== (prefill?.prompt ?? '') || attachments.items.length > 0;
-  // Why Start session is off: a file uploading or failed. Busy says so itself, with its label.
-  const startOff = busy ? undefined : problems.attachments;
+  // Why Start session is off: what it waits for, or a file uploading or failed. Busy says so itself, with its label.
+  const startOff = busy ? undefined : (waiting ?? problems.attachments);
 
   const submit = async () => {
-    if (submitting.current) return;
+    if (submitting.current || waiting !== undefined) return;
     setChecked(true);
     const firstProblem = (['cwd', 'name', 'model', 'prompt', 'attachments'] as const).find((field) => problems[field] !== undefined);
     if (firstProblem === 'attachments') {
@@ -500,6 +508,10 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
     if (subagents !== '') request.subagentModel = subagents;
     else if (request.profile !== undefined && pickedProfile?.subagentModel !== undefined) request.subagentModel = latestWork?.effective.subagents.model ?? WORK_DEFAULT;
     if (attachments.ids.length > 0) request.attachments = [...attachments.ids];
+    if (lead !== undefined) {
+      request.lead = lead.id;
+      request.leadName = lead.name;
+    }
     await send(request);
   };
 

@@ -1,12 +1,16 @@
 // The routes for leads and workers (W218, spike 021, option B): Make lead and Not a lead, Report to… and
 // Not a worker, and Start a worker…'s note of the session it started. Each records ids in the LeadStore
-// (src/server/leads.ts) and nothing else: no message goes to any session from here.
+// (src/server/leads.ts) and nothing else: no message goes to any session from here. Piece 2's two GETs
+// answer the paragraph a worker is given about its lead (src/server/leadBrief.ts), which the page shows
+// and, for Report to…, sends through the relay's own route on your click.
 //
 // Behind the /api/* checks in server.ts, like every route: the token or apiKey, Host and Origin, and for
 // a POST the apiKey and this Origin. Here:
 //   POST leadPath(id)          { on: boolean }       Make lead, or Not a lead
 //   POST workerPath(id)        { lead: id | null }   Report to… that lead, or Not a worker
 //   POST workerStartedPath(id) { shortId }           Start a worker… started `shortId` for this session
+//   GET  leadBriefPath(id)                           Start a worker…'s paragraph for this lead
+//   GET  workerBriefPath(id)                         Report to…'s paragraph for this worker's lead
 // Each answers a LeadResult, Cache-Control: no-store:
 //   200  done, or nothing to do
 //   400  a session id that isn't a canonical UUID, a body that isn't the one above, or JSON that doesn't parse
@@ -16,12 +20,16 @@
 //   413  the body is over LEAD_BODY_MAX_BYTES
 //   415  not application/json
 //   503  pitwall hasn't listed the sessions yet
+// The GETs answer a LeadBriefResult: 200 with the paragraph; 400, 404 and 503 as above; 409 when
+// pitwall has no lead you set to name (the review's F2: never one a `derived-from` `clear` gives), the
+// lead isn't listed, or its name can't be the address.
 // No rate limit, as for flags and snoozes: a change is one small entry, the file is capped, and nothing runs.
 import type { Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { isRecord } from '../index/guards.js';
 import { isSessionUuid } from '../index/transcripts.js';
-import { leadPath, workerPath, workerStartedPath, type LeadResult } from '../shared/protocol.js';
+import { leadBriefPath, leadPath, workerBriefPath, workerPath, workerStartedPath, type LeadBriefResult, type LeadResult } from '../shared/protocol.js';
+import { leadBrief, workerBrief, type LiveNames } from './leadBrief.js';
 import type { LeadStore } from './leads.js';
 import type { RecentSpawns } from './recentSpawns.js';
 import { findSession, resolveSession } from './sessions.js';
@@ -33,6 +41,8 @@ export const LEAD_BODY_MAX_BYTES = 1024;
 const LEAD_ROUTE = decodeURIComponent(leadPath(':sessionId'));
 const WORKER_ROUTE = decodeURIComponent(workerPath(':sessionId'));
 const WORKER_STARTED_ROUTE = decodeURIComponent(workerStartedPath(':sessionId'));
+const LEAD_BRIEF_ROUTE = decodeURIComponent(leadBriefPath(':sessionId'));
+const WORKER_BRIEF_ROUTE = decodeURIComponent(workerBriefPath(':sessionId'));
 const SHORT_ID = /^[0-9a-f]{8}$/;
 
 const LOOKUP_ERRORS = {
@@ -44,9 +54,11 @@ const LOOKUP_ERRORS = {
 export interface LeadRouteSources {
   /** The snapshot the page sees: the session in the path, and a body's lead, must be listed in it. */
   snapshots: Pick<SnapshotView, 'latest'>;
-  store: Pick<LeadStore, 'mark' | 'link' | 'unlink' | 'expectWorker' | 'isWorker'>;
+  store: Pick<LeadStore, 'mark' | 'link' | 'unlink' | 'expectWorker' | 'isWorker' | 'tree' | 'trustedLead' | 'reportTarget'>;
   /** The short ids this pitwall's New session started a moment ago (W168's check). Without it, worker-started refuses every one. */
   spawned?: Pick<RecentSpawns, 'has'>;
+  /** The live rows a lead's name must not share (leadBrief.ts' LiveNames, the review's F4). Without it, only the listing's sessions are checked. */
+  live?: () => LiveNames;
 }
 
 type Status = 200 | 400 | 404 | 409 | 413 | 415 | 503;
@@ -105,9 +117,23 @@ export function registerLeads(app: Hono, sources: LeadRouteSources): void {
     if (typeof body.value !== 'string' || !SHORT_ID.test(body.value)) return answer(c, { ok: false, error: 'The body must be { shortId }, a job’s short id.' }, 400);
     // A worker isn't a lead, so it can't have workers of its own.
     if (sources.store.isWorker(body.sessionId)) return answer(c, { ok: false, error: 'It’s a worker, so it can’t have workers. Choose Not a worker on it first.' }, 409);
+    // A lead only by its own transcript's word doesn't become one pitwall names by starting a worker (the fix check's N1).
+    if (sources.store.tree().leads.has(body.sessionId) && sources.store.trustedLead(body.sessionId) === undefined) {
+      return answer(c, { ok: false, error: 'That session is a lead only by its own transcript’s word. Choose Confirm as lead on it first.' }, 409);
+    }
     // Only a session this pitwall started a moment ago, so the page can't link two sessions that merely exist.
     if (sources.spawned?.has(body.value) !== true) return answer(c, { ok: false, error: 'pitwall didn’t start that session a moment ago, so it won’t link it.' }, 409);
     if (!sources.store.expectWorker(body.value, body.sessionId)) return answer(c, { ok: false, error: 'pitwall couldn’t note that link.' }, 409);
     return answer(c, { ok: true }, 200);
   });
+
+  const brief = (c: Context, of: (sessionId: string) => LeadBriefResult) => {
+    const lookup = resolveSession(sources.snapshots, c.req.param('sessionId'));
+    if (!lookup.ok) return c.json({ ok: false, error: LOOKUP_ERRORS[lookup.status] } satisfies LeadBriefResult, lookup.status, { 'Cache-Control': 'no-store' });
+    if (!isSessionUuid(lookup.session.sessionId)) return c.json({ ok: false, error: LOOKUP_ERRORS[400] } satisfies LeadBriefResult, 400, { 'Cache-Control': 'no-store' });
+    const result = of(lookup.session.sessionId);
+    return c.json(result, result.ok ? 200 : 409, { 'Cache-Control': 'no-store' });
+  };
+  app.get(LEAD_BRIEF_ROUTE, (c) => brief(c, (id) => leadBrief(sources.store, sources.snapshots.latest(), id, sources.live?.())));
+  app.get(WORKER_BRIEF_ROUTE, (c) => brief(c, (id) => workerBrief(sources.store, sources.snapshots.latest(), id, sources.live?.())));
 }

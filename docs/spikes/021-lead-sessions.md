@@ -160,6 +160,13 @@ A new kind of lineage line (ids only, the log's existing checks), a new route fo
 2. **The first prompt's paragraph and the report on the row,** with the two `SendMessage` checks from finding 4 on `pitwall-test-*` sessions.
 3. **The rule** in the plugin's skill and on the spin-off card.
 
+## Piece 2 checks (2026-11-27, Claude Code 2.1.332)
+
+Finding 4's two questions, on throwaway `pitwall-test-w218p2-*` background jobs on Haiku, started with `childEnvironment()`'s environment as `src/server/actions.ts` spawns, each worker told to call `SendMessage` once with a given `to`, all removed with `claude rm` afterwards:
+
+1. **`to` takes the name only.** To the lead's full session id, and to its job's short id, `SendMessage` answered `success: false`, "No agent named '<id>' is reachable". To the name `ListAgents` prints (`pitwall-test-w218p2-lead`) it answered `success: true` with a `msg_id`, and the lead's transcript got the message as a user entry with `origin.kind: "peer"`, `origin.name` the sender's name and `origin.msg_id` the same id. The tool's own description says the same: "the name IS the address". So the paragraph names the lead by its name, and pitwall checks no other running session has it, as the relay does (D8).
+2. **The name survives /clear.** After `/clear` typed into the lead through `claude attach` in a PTY (spike 014's way), the job listed a new session id under the same name. A send to the name then reached the new session's transcript; sends to the old and the new session id both failed as above. A hand-off to a new session (W168's Start) gives it a new name, so a worker's reports to the old name stop reaching the chain: not handled in piece 2.
+
 ## Left on this machine
 
 - **A transcript folder** under `~/.claude/projects` for the removed `pitwall-test-w218-parent` session, named after `.worktrees/w218-lead-design`. `claude rm 4d1f2c63` removed the job, not the transcript.

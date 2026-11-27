@@ -37,6 +37,8 @@
 
   --pw-repo-list-w: 240px;
   --pw-list-min-w: 360px;
+  /* A collapsed column's rail (W224). */
+  --pw-rail-w: 40px;
   --pw-session-pane-w: 760px;
   --pw-session-pane-min-w: 560px;
   --pw-view-w: var(--pw-session-pane-w);

@@ -151,6 +151,8 @@ afterEach(async () => {
 
 /** Leads' `derived-from` reader, so no server test reads the user's transcripts (W218 review, F6). */
 const noDerived = async () => ({});
+// No report read reaches them either (W218 piece 2).
+const noReport = async () => ({});
 
 async function start(
   indexer: Indexer = fakeIndexer(),
@@ -160,7 +162,7 @@ async function start(
   const server = await startServerWithInternals(
     { indexer, token: TOKEN, webRoot: overrides.webRoot ?? webRoot, port: overrides.port ?? 0 },
     // No `derived-from` read reaches the user's transcripts (W218 review, F6).
-    { readDerived: noDerived, ...internals },
+    { readDerived: noDerived, readReport: noReport, ...internals },
   );
   running.push(server);
   return server;
@@ -1351,7 +1353,7 @@ describe('startServer', () => {
       const onAuthenticated = vi.fn(() => {
         throw new Error('the hook failed');
       });
-      const server = await startServerWithInternals({ indexer: fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')), token: TOKEN, webRoot, port: 0, onAuthenticated }, { readDerived: noDerived });
+      const server = await startServerWithInternals({ indexer: fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')), token: TOKEN, webRoot, port: 0, onAuthenticated }, { readDerived: noDerived, readReport: noReport });
       running.push(server);
 
       const wrong = await challenged(server.port);
@@ -1666,7 +1668,7 @@ describe('startServer', () => {
   describe('close()', () => {
     it('closes WebSocket clients and the HTTP server, but not the indexer', async () => {
       const indexer = fakeIndexer(snapshot('2026-10-16T00:00:00.000Z'));
-      const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0 }, { readDerived: noDerived });
+      const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0 }, { readDerived: noDerived, readReport: noReport });
       const client = await authedClient(server.port);
       await client.nextMessage();
 
@@ -1721,7 +1723,7 @@ describe('leads and workers (W218)', () => {
     const res = await post(server.port, leadPath(SID), { authorization: `Bearer ${apiKey}`, origin: origin(server.port) }, '{"on":true}');
     expect(res.status).toBe(200);
     expect(JSON.parse(res.body)).toEqual({ ok: true });
-    expect((await snapshotOf()).groups.flatMap((group) => group.sessions)[0]?.lead).toEqual({ workers: [], marked: true });
+    expect((await snapshotOf()).groups.flatMap((group) => group.sessions)[0]?.lead).toEqual({ workers: [], marked: true, trusted: true });
   });
 });
 
@@ -1735,7 +1737,7 @@ describe('the diagnostics log (W165)', () => {
       const indexer = fakeIndexer(needing);
       const server = await startServerWithInternals(
         { indexer, token: TOKEN, webRoot, port: 0, diagnostics: new DiagnosticsLog({ home }) },
-        { diagnosticsIntervalMs: 10, readDerived: noDerived },
+        { diagnosticsIntervalMs: 10, readDerived: noDerived, readReport: noReport },
       );
       running.push(server);
       await waitFor(() => readDiagnosticsLog(file).some((line) => line.kind === 'enter'));
