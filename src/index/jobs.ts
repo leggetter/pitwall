@@ -106,6 +106,17 @@ interface Cached {
   needs: JobNeeds;
 }
 
+/**
+ * The job's latest session (W228). After `/clear` Claude Code keeps the job's first session id in
+ * `sessionId` and writes the current one to `resumeSessionId`, so the latest is `resumeSessionId` when
+ * it is a canonical session UUID (isSessionUuid(), the rule parseJobSessionIds() uses too), otherwise `sessionId`. The job's first session, once resumed, matches nothing.
+ */
+export function latestSessionIdOf(state: Record<string, unknown>): unknown {
+  const resumed = state.resumeSessionId;
+  if (typeof resumed === 'string' && isSessionUuid(resumed)) return resumed;
+  return state.sessionId;
+}
+
 /** What a `state.json`'s text says the job's saved permission mode is, for the session `sessionId`. Pure; never throws. */
 export function parseSavedPermission(text: string, sessionId: string): SavedPermission {
   let parsed: unknown;
@@ -114,7 +125,7 @@ export function parseSavedPermission(text: string, sessionId: string): SavedPerm
   } catch {
     return { kind: 'unknown' };
   }
-  if (!isRecord(parsed) || parsed.sessionId !== sessionId) return { kind: 'unknown' };
+  if (!isRecord(parsed) || latestSessionIdOf(parsed) !== sessionId) return { kind: 'unknown' };
   const flags = parsed.respawnFlags;
   if (!Array.isArray(flags) || flags.length > 200 || !flags.every((flag) => typeof flag === 'string')) return { kind: 'unknown' };
   let found: PermissionModeName | undefined;
@@ -264,7 +275,7 @@ export function parseJobState(text: string, sessionId: string): JobNeeds {
   } catch {
     return UNKNOWN;
   }
-  if (!isRecord(parsed) || parsed.sessionId !== sessionId) return UNKNOWN;
+  if (!isRecord(parsed) || latestSessionIdOf(parsed) !== sessionId) return UNKNOWN;
   const needs = parsed.needs;
   if (needs !== undefined && needs !== null && typeof needs !== 'string') return UNKNOWN;
   const pr = onlyPrOf(parsed.children);

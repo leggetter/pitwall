@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from 'node:fs/p
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CACHE_SETTLE_MS, CHILDREN_MAX, createJobReader, JOB_FILE_MAX_BYTES, NEEDS_MAX, needsText, onlyPrOf, parseJobState, prsOf, parseJobSessionIds, parseSavedPermission, readJobSessionIds, readSavedPermission } from './jobs.js';
+import { CACHE_SETTLE_MS, CHILDREN_MAX, createJobReader, JOB_FILE_MAX_BYTES, NEEDS_MAX, needsText, onlyPrOf, latestSessionIdOf, parseJobState, prsOf, parseJobSessionIds, parseSavedPermission, readJobSessionIds, readSavedPermission } from './jobs.js';
 
 // Synthetic job folders, shaped like Claude Code 2.1.311's `~/.claude/jobs/<shortId>/state.json`
 // (spike 007, finding 1). Made up: never a real job's file.
@@ -401,5 +401,32 @@ describe('the job’s session ids (W167)', () => {
     } finally {
       await rm(jobsDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("a job's state is read for its latest session after /clear (W228)", () => {
+  const NEW = '88888888-8888-4888-8888-888888888888';
+  const PR = [{ kind: 'pr', href: 'https://github.com/example/repo/pull/7' }];
+  const fields = (extra: Record<string, unknown>) => JSON.stringify({ sessionId: SID, needs: 'Go ahead?', children: PR, respawnFlags: ['--permission-mode', 'plan'], ...extra });
+  const NEEDS = { kind: 'needs', text: 'Go ahead?', pr: { repo: 'example/repo', number: 7 }, prs: [{ repo: 'example/repo', number: 7 }] };
+
+  it('uses sessionId when there is no resumeSessionId', () => {
+    expect(parseJobState(fields({}), SID)).toEqual(NEEDS);
+    expect(parseJobState(fields({}), NEW)).toEqual({ kind: 'unknown' });
+  });
+
+  it('reads the file for the session resumeSessionId names', () => {
+    expect(parseJobState(fields({ resumeSessionId: NEW }), NEW)).toEqual(NEEDS);
+    expect(parseSavedPermission(fields({ resumeSessionId: NEW }), NEW)).toEqual({ kind: 'mode', mode: 'plan' });
+  });
+
+  it('gives the job’s first session nothing once the job has resumed', () => {
+    expect(parseJobState(fields({ resumeSessionId: NEW }), SID)).toEqual({ kind: 'unknown' });
+    expect(parseSavedPermission(fields({ resumeSessionId: NEW }), SID)).toEqual({ kind: 'unknown' });
+  });
+
+  it.each([[''], [42], [null], ['x'], ['../../etc/passwd'], ['a'.repeat(200)], ['abcdefgh'], ['88888888-8888-4888-8888-88888888888']])('falls back to sessionId for a malformed resumeSessionId (%j)', (bad) => {
+    expect(latestSessionIdOf({ sessionId: SID, resumeSessionId: bad })).toBe(SID);
+    expect(parseJobState(fields({ resumeSessionId: bad }), SID)).toEqual(NEEDS);
   });
 });
