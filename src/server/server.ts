@@ -77,17 +77,27 @@
 // that answered a challenge gets, can read it too, and is the only credential
 // for state-changing requests. Neither is ever logged. No response carries
 // CORS headers.
-import { createServer, STATUS_CODES, type IncomingMessage, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
-import type { Duplex } from 'node:stream';
-import { getRequestListener } from '@hono/node-server';
-import { Hono, type Context } from 'hono';
-import { WebSocketServer, type WebSocket } from 'ws';
-import { readFileSync } from 'node:fs';
-import { createAgentsSource } from '../index/agents.js';
-import { ConversationCursorError, isSafeAgentId, isWellFormedCursor, type Indexer } from '../index/index.js';
-import { readSavedPermission } from '../index/jobs.js';
-import { prsOff } from '../prs/index.js';
+import {
+  createServer,
+  STATUS_CODES,
+  type IncomingMessage,
+  type Server,
+} from "node:http";
+import type { AddressInfo } from "node:net";
+import type { Duplex } from "node:stream";
+import { getRequestListener } from "@hono/node-server";
+import { Hono, type Context } from "hono";
+import { WebSocketServer, type WebSocket } from "ws";
+import { readFileSync } from "node:fs";
+import { createAgentsSource } from "../index/agents.js";
+import {
+  ConversationCursorError,
+  isSafeAgentId,
+  isWellFormedCursor,
+  type Indexer,
+} from "../index/index.js";
+import { readSavedPermission } from "../index/jobs.js";
+import { prsOff } from "../prs/index.js";
 import {
   ATTACH_PATH,
   CONVERSATION_STALE_STATUS,
@@ -100,40 +110,78 @@ import {
   TRUST_PATH,
   WS_PATH,
   type ConversationPage,
-} from '../shared/protocol.js';
-import { checkDirectory, CommandSlots, createResumeRunner, createSpawnRunner, DEFAULT_MAX_CONCURRENT_COMMANDS, registerActions, type ActionOptions } from './actions.js';
-import { createAttachServer, REREAD_TIMEOUT_MS, type AttachOptions } from './attach.js';
-import { AttachmentStore, registerAttachments, type AttachmentStoreOptions } from './attachments.js';
-import { createCloneRoute, type CloneOptions } from './clone.js';
-import { registerDirectories, type DirectoryOptions } from './directories.js';
-import { registerEditors, type EditorOptions } from './editors.js';
-import { registerEndSession, type EndOptions } from './end.js';
-import type { RunningServer, ServerOptions } from './index.js';
-import { registerMcp } from './mcp.js';
-import { createSupervisorTools } from './mcpTools.js';
-import { readStatesDoc } from './referenceDocs.js';
-import { PrDismissalStore, registerPrDismissals, withDismissals } from './prDismissals.js';
-import { registerPrs } from './prs.js';
-import { registerRecaps } from './recapRoutes.js';
-import { createSnapshotView, type SnapshotView } from './snapshotLinks.js';
-import { createDecoratedView, createRecapView } from './snapshotRecaps.js';
-import { createSupervisorView } from './snapshotSupervisor.js';
-import { createApproveTool, createResumeSessionTool, createSpawnSessionTool, recipientNames, type SupervisorActionSources } from './supervisorActions.js';
-import { registerSupervisor } from './supervisorRoutes.js';
-import type { Supervisor } from '../supervisor/supervisor.js';
-import { createRelayManager } from './relay.js';
-import { registerRelay } from './relayRoute.js';
-import { DIAGNOSTICS_INTERVAL_MS, DiagnosticsLog, NeedsYouRecorder } from './diagnostics.js';
-import { createFlagView, FlagStore, registerFlags } from './flags.js';
-import { createLeadsView, LeadStore, type LeadStoreOptions } from './leads.js';
-import { registerLeads } from './leadRoutes.js';
-import { leadBrief, type LiveNames } from './leadBrief.js';
-import { createLineageView, LineageStore } from './lineage.js';
-import { createSnoozeView, registerSnoozes, SnoozeStore } from './snoozes.js';
-import { SessionLaunches } from './sessionLaunches.js';
-import { registerSpinOffs } from './spinOffRoutes.js';
-import { createSpinOffView, registerSpinOffSettle, SpinOffStore } from './spinOffs.js';
-import { createClearAndContinue, type ClearTimings, registerClearAndContinue } from './clearAndContinue.js';
+} from "../shared/protocol.js";
+import {
+  checkDirectory,
+  CommandSlots,
+  createResumeRunner,
+  createSpawnRunner,
+  DEFAULT_MAX_CONCURRENT_COMMANDS,
+  registerActions,
+  type ActionOptions,
+} from "./actions.js";
+import {
+  createAttachServer,
+  REREAD_TIMEOUT_MS,
+  type AttachOptions,
+} from "./attach.js";
+import {
+  AttachmentStore,
+  registerAttachments,
+  type AttachmentStoreOptions,
+} from "./attachments.js";
+import { createCloneRoute, type CloneOptions } from "./clone.js";
+import { registerDirectories, type DirectoryOptions } from "./directories.js";
+import { registerEditors, type EditorOptions } from "./editors.js";
+import { registerEndSession, type EndOptions } from "./end.js";
+import type { RunningServer, ServerOptions } from "./index.js";
+import { registerMcp } from "./mcp.js";
+import { createSupervisorTools } from "./mcpTools.js";
+import { readStatesDoc } from "./referenceDocs.js";
+import {
+  PrDismissalStore,
+  registerPrDismissals,
+  withDismissals,
+} from "./prDismissals.js";
+import { registerPrs } from "./prs.js";
+import { registerRecaps } from "./recapRoutes.js";
+import { createSnapshotView, type SnapshotView } from "./snapshotLinks.js";
+import { createDecoratedView, createRecapView } from "./snapshotRecaps.js";
+import { createSupervisorView } from "./snapshotSupervisor.js";
+import {
+  createApproveTool,
+  createResumeSessionTool,
+  createSpawnSessionTool,
+  recipientNames,
+  type SupervisorActionSources,
+} from "./supervisorActions.js";
+import { registerSupervisor } from "./supervisorRoutes.js";
+import type { Supervisor } from "../supervisor/supervisor.js";
+import { createRelayManager } from "./relay.js";
+import { registerRelay } from "./relayRoute.js";
+import {
+  DIAGNOSTICS_INTERVAL_MS,
+  DiagnosticsLog,
+  NeedsYouRecorder,
+} from "./diagnostics.js";
+import { createFlagView, FlagStore, registerFlags } from "./flags.js";
+import { createLeadsView, LeadStore, type LeadStoreOptions } from "./leads.js";
+import { registerLeads } from "./leadRoutes.js";
+import { leadBrief, workerBrief, type LiveNames } from "./leadBrief.js";
+import { createLineageView, LineageStore } from "./lineage.js";
+import { createSnoozeView, registerSnoozes, SnoozeStore } from "./snoozes.js";
+import { SessionLaunches } from "./sessionLaunches.js";
+import { registerSpinOffs } from "./spinOffRoutes.js";
+import {
+  createSpinOffView,
+  registerSpinOffSettle,
+  SpinOffStore,
+} from "./spinOffs.js";
+import {
+  createClearAndContinue,
+  type ClearTimings,
+  registerClearAndContinue,
+} from "./clearAndContinue.js";
 import {
   bearerToken,
   identifyCredential,
@@ -145,18 +193,32 @@ import {
   randomSecret,
   securityHeaders,
   serverOrigin,
-} from './security.js';
-import { spawnPty } from './pty.js';
-import { RecentSpawns } from './recentSpawns.js';
-import { resolveSession } from './sessions.js';
-import { hasLinkTag, isDocumentNavigation, LinkCodes, withLinkCode } from './linkCodes.js';
-import { createPeerCheck, type PeerCheck } from './peerUid.js';
-import { BUILDING_PAGE, BUILDING_SCRIPT, BUILDING_SCRIPT_PATH, resolveStaticFile } from './static.js';
-import { HandshakeSlots } from './handshake.js';
-import { createTrustServer, OwnPids, type TrustOptions } from './trust.js';
-import { DEFAULT_AUTH_TIMEOUT_MS, handleClient, MAX_PAYLOAD_BYTES } from './websocket.js';
-import { registerUsage } from './usageRoutes.js';
-import { createWorkStore, registerWork } from './work.js';
+} from "./security.js";
+import { spawnPty } from "./pty.js";
+import { RecentSpawns } from "./recentSpawns.js";
+import { resolveSession } from "./sessions.js";
+import {
+  hasLinkTag,
+  isDocumentNavigation,
+  LinkCodes,
+  withLinkCode,
+} from "./linkCodes.js";
+import { createPeerCheck, type PeerCheck } from "./peerUid.js";
+import {
+  BUILDING_PAGE,
+  BUILDING_SCRIPT,
+  BUILDING_SCRIPT_PATH,
+  resolveStaticFile,
+} from "./static.js";
+import { HandshakeSlots } from "./handshake.js";
+import { createTrustServer, OwnPids, type TrustOptions } from "./trust.js";
+import {
+  DEFAULT_AUTH_TIMEOUT_MS,
+  handleClient,
+  MAX_PAYLOAD_BYTES,
+} from "./websocket.js";
+import { registerUsage } from "./usageRoutes.js";
+import { createWorkStore, registerWork } from "./work.js";
 
 export const DEFAULT_PORT = 4517;
 
@@ -165,20 +227,24 @@ export const DEFAULT_PORT = 4517;
  * argument, which would turn `:sessionId` into `%3AsessionId`, so the
  * pattern is decoded back.
  */
-const CONVERSATION_ROUTE = decodeURIComponent(conversationPath(':sessionId'));
+const CONVERSATION_ROUTE = decodeURIComponent(conversationPath(":sessionId"));
 /** The sub-agent routes (W76), decoded the same way. */
-const SUBAGENTS_ROUTE = decodeURIComponent(subagentsPath(':sessionId'));
-const SUBAGENT_CONVERSATION_ROUTE = decodeURIComponent(subagentConversationPath(':sessionId', ':agentId'));
+const SUBAGENTS_ROUTE = decodeURIComponent(subagentsPath(":sessionId"));
+const SUBAGENT_CONVERSATION_ROUTE = decodeURIComponent(
+  subagentConversationPath(":sessionId", ":agentId"),
+);
 /** The supervisor's own conversation (W113). */
 const SUPERVISOR_CONVERSATION_ROUTE = supervisorConversationPath();
 
 /** pitwall's version, for the MCP server's serverInfo: package.json's, two folders up from src/server and dist/server alike. */
 function packageVersion(): string {
   try {
-    const parsed = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version?: unknown };
-    return typeof parsed.version === 'string' ? parsed.version : '0.0.0';
+    const parsed = JSON.parse(
+      readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+    ) as { version?: unknown };
+    return typeof parsed.version === "string" ? parsed.version : "0.0.0";
   } catch {
-    return '0.0.0';
+    return "0.0.0";
   }
 }
 
@@ -204,7 +270,7 @@ export class PortInUseError extends Error {
 
   constructor(port: number, options?: ErrorOptions) {
     super(`${LOOPBACK_HOST}:${port} is already in use`, options);
-    this.name = 'PortInUseError';
+    this.name = "PortInUseError";
     this.port = port;
   }
 }
@@ -229,42 +295,67 @@ export interface ServerInternals {
    * For the attach socket. Tests pass a fake PTY spawner and agents source,
    * so they never run `claude`.
    */
+  /** The only text the relay route sends a background session (W226). Tests pass their own; the server's is workerBrief()'s. */
+  relayWorkerText?: (sessionId: string) => string | undefined;
   /** Clear and continue's waits (W168): tests shorten them. */
   clearTimings?: Partial<ClearTimings>;
-  attach?: Partial<Pick<AttachOptions, 'spawnPty' | 'env' | 'agents' | 'spawned' | 'resumed' | 'processAlive' | 'now'>>;
+  attach?: Partial<
+    Pick<
+      AttachOptions,
+      | "spawnPty"
+      | "env"
+      | "agents"
+      | "spawned"
+      | "resumed"
+      | "processAlive"
+      | "now"
+    >
+  >;
   /** For the trust socket (W214): tests pass a fake PTY spawner and shorter timings, so they never run `claude`. */
-  trust?: Partial<Pick<TrustOptions, 'spawnPty' | 'env' | 'claudeBin' | 'timeLimitMs' | 'openTimeoutMs' | 'settleMs' | 'killGraceMs' | 'now'>>;
+  trust?: Partial<
+    Pick<
+      TrustOptions,
+      | "spawnPty"
+      | "env"
+      | "claudeBin"
+      | "timeLimitMs"
+      | "openTimeoutMs"
+      | "settleMs"
+      | "killGraceMs"
+      | "now"
+    >
+  >;
   /** The directory list (W70, directories.ts): tests pass a wrapped readdir, a clock and limits. */
   directories?: DirectoryOptions;
   /**
    * Open in an editor (W72, editors.ts): tests pass the editors found and a fake runFile, so nothing
    * depends on this machine's editors and none is ever opened. Its limit is `actions.maxConcurrentCommands`.
    */
-  editors?: Omit<EditorOptions, 'slots'>;
+  editors?: Omit<EditorOptions, "slots">;
   /**
    * End session (W90, end.ts): tests pass a fake agents source, process lookups and signaller, so no
    * test signals a process. Its limit of 4 at once is `actions.maxConcurrentCommands`.
    */
-  end?: Omit<EndOptions, 'slots'>;
+  end?: Omit<EndOptions, "slots">;
   /**
    * Attachments (W79, attachments.ts): tests pass a clock, a sweep interval, a uid, and the cap, the
    * clean-up's bounds and its log (W84). The folder is ServerOptions.pitwallHome's.
    */
-  attachments?: Omit<AttachmentStoreOptions, 'home'>;
+  attachments?: Omit<AttachmentStoreOptions, "home">;
   /** Clone and start (W107, clone.ts): tests pass a fake runFile and file system calls, so no test runs gh or touches a real root. */
   clone?: CloneOptions;
   /**
    * A resume card's saved permission mode (W129), from a background job's state.json by the job-file
    * adapter (src/index/jobs.ts): tests pass a fake, so none reads the user's jobs folder.
    */
-  savedPermission?: SupervisorActionSources['savedPermission'];
+  savedPermission?: SupervisorActionSources["savedPermission"];
   /**
    * Reads a session's `derived-from` entry for leads and workers (W218, leads.ts): tests pass a fake, so
    * none reads the user's transcripts under ~/.claude/projects (W218 review, F6).
    */
-  readDerived?: LeadStoreOptions['readDerived'];
+  readDerived?: LeadStoreOptions["readDerived"];
   /** W218 piece 2: the reads of workers' reports to their leads, for tests. */
-  readReport?: LeadStoreOptions['readReport'];
+  readReport?: LeadStoreOptions["readReport"];
 }
 
 export async function startServerWithInternals(
@@ -272,8 +363,10 @@ export async function startServerWithInternals(
   internals: ServerInternals = {},
 ): Promise<RunningServer> {
   const { indexer, token, webRoot } = options;
-  if (typeof token !== 'string' || token.length < MIN_TOKEN_LENGTH) {
-    throw new Error(`startServer: the token must be at least ${MIN_TOKEN_LENGTH} characters`);
+  if (typeof token !== "string" || token.length < MIN_TOKEN_LENGTH) {
+    throw new Error(
+      `startServer: the token must be at least ${MIN_TOKEN_LENGTH} characters`,
+    );
   }
 
   // Authorizes HTTP API calls for clients that answered a challenge. One per
@@ -297,15 +390,25 @@ export async function startServerWithInternals(
   // The ended sessions resume brought back lately, by session id, which the snapshot shows as ended until its next poll.
   const resumed = new RecentSpawns();
   // Stop, remove, resume, open in an editor and end session, running now: one limit for all five.
-  const commandSlots = internals.actions?.slots ?? new CommandSlots(internals.actions?.maxConcurrentCommands ?? DEFAULT_MAX_CONCURRENT_COMMANDS);
+  const commandSlots =
+    internals.actions?.slots ??
+    new CommandSlots(
+      internals.actions?.maxConcurrentCommands ??
+        DEFAULT_MAX_CONCURRENT_COMMANDS,
+    );
   // Uploads for New session's first prompt (W79), which spawn looks up. Swept once listening.
-  const attachments = new AttachmentStore({ ...internals.attachments, home: options.pitwallHome });
+  const attachments = new AttachmentStore({
+    ...internals.attachments,
+    home: options.pitwallHome,
+  });
   // The model and effort for each kind of work (W119): the CLI's store, or pitwall's own defaults.
   const work = options.work ?? createWorkStore();
   // Your open PRs (M4): the CLI's poller, or off. Started once listening, stopped on close(). With
   // Not for me (W188): each PR you dismissed carries `dismissed` until something new happens, in every
   // list the page, the supervisor and recaps read.
-  const prDismissals = new PrDismissalStore(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
+  const prDismissals = new PrDismissalStore(
+    options.pitwallHome === undefined ? {} : { home: options.pitwallHome },
+  );
   const prs = withDismissals(options.prs ?? prsOff(), prDismissals);
   // Per-session recaps (M5, W110), or off. Started once listening, closed on close().
   const recaps = options.recaps;
@@ -313,7 +416,9 @@ export async function startServerWithInternals(
   // What each session started with a work profile used, kept in pitwall's home, for its resume (W155),
   // each linked to its session id as a snapshot read through the views lists its short id. A view
   // that changes nothing, so it adds no subscription of its own.
-  const launches = new SessionLaunches(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
+  const launches = new SessionLaunches(
+    options.pitwallHome === undefined ? {} : { home: options.pitwallHome },
+  );
   const linked = createDecoratedView(indexer, {
     decorate: (snapshot) => {
       try {
@@ -322,36 +427,71 @@ export async function startServerWithInternals(
         // Fails soft: a record not linked yet is still found by its short id.
       }
       // The header's run rate (W159): the page asks for it only when the snapshot says it's on.
-      return options.usage?.planReads === true ? { ...snapshot, planUsage: 'on' } : snapshot;
+      return options.usage?.planReads === true
+        ? { ...snapshot, planUsage: "on" }
+        : snapshot;
     },
     version: () => 0,
     subscribe: () => () => {},
   });
-  const recapped = recaps === undefined ? undefined : createRecapView(linked, recaps);
+  const recapped =
+    recaps === undefined ? undefined : createRecapView(linked, recaps);
   // Flags, "It doesn't need me" (W153): each flagged session's `flagged`, over recaps, since a 'recap' flag is for its recap.
-  const flags = new FlagStore(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
+  const flags = new FlagStore(
+    options.pitwallHome === undefined ? {} : { home: options.pitwallHome },
+  );
   const flagged = createFlagView(recapped ?? linked, flags);
   // Snoozes (W154): each snoozed session's `snoozed`, and why one came back, over flags. Ended by time or a wake.
-  const snoozes = new SnoozeStore({ prs, ...(options.pitwallHome === undefined ? {} : { home: options.pitwallHome }) });
+  const snoozes = new SnoozeStore({
+    prs,
+    ...(options.pitwallHome === undefined ? {} : { home: options.pitwallHome }),
+  });
   const snoozed = createSnoozeView(flagged, snoozes);
   // Session lineage (W167): each session's `lineage`, the ids of the session it continues and the one that continues it.
-  const lineage = options.lineage ?? new LineageStore(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
+  const lineage =
+    options.lineage ??
+    new LineageStore(
+      options.pitwallHome === undefined ? {} : { home: options.pitwallHome },
+    );
   const lineaged = createLineageView(snoozed, lineage);
   // Leads and workers (W218): each lead's `lead` and each worker's `workerOf`, ids only, over lineage, since a lead keeps its workers through its chain.
-  const leads = new LeadStore({ lineage, ...(options.pitwallHome === undefined ? {} : { home: options.pitwallHome }), ...(internals.readDerived === undefined ? {} : { readDerived: internals.readDerived }), ...(internals.readReport === undefined ? {} : { readReport: internals.readReport }) });
+  const leads = new LeadStore({
+    lineage,
+    ...(options.pitwallHome === undefined ? {} : { home: options.pitwallHome }),
+    ...(internals.readDerived === undefined
+      ? {}
+      : { readDerived: internals.readDerived }),
+    ...(internals.readReport === undefined
+      ? {}
+      : { readReport: internals.readReport }),
+  });
   const led = createLeadsView(lineaged, leads);
   // Started and dismissed spin-off proposals (W212): each one's `settled`, from a click on any page or a session found with its name and folder.
-  const spinOffs = options.spinOffs ?? new SpinOffStore({ ...(options.pitwallHome === undefined ? {} : { home: options.pitwallHome }), predecessorOf: (id) => lineage.linksOf(id).from });
+  const spinOffs =
+    options.spinOffs ??
+    new SpinOffStore({
+      ...(options.pitwallHome === undefined
+        ? {}
+        : { home: options.pitwallHome }),
+      predecessorOf: (id) => lineage.linksOf(id).from,
+    });
   const spunOff = createSpinOffView(led, spinOffs);
   // The supervisor (M5, W113), or off. Started only when the page asks, stopped on close().
   const supervisor = options.supervisor;
   // With it, the snapshot carries its state, under W105's view.
-  const supervised = supervisor === undefined ? undefined : createSupervisorView(spunOff, supervisor);
+  const supervised =
+    supervisor === undefined
+      ? undefined
+      : createSupervisorView(spunOff, supervisor);
   // The snapshot clients get: each session's PR links cut to those matching a PR in the list (D14, W105).
   const snapshots = createSnapshotView(supervised ?? spunOff, prs);
   // The diagnostics log (W165): why each row is in Needs you, from the snapshot the page gets and the PR list, with no off switch.
   // Written every DIAGNOSTICS_INTERVAL_MS, and on a PR list change, flag and snooze, and only when a session's state changes.
-  const diagnostics = options.diagnostics ?? new DiagnosticsLog(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
+  const diagnostics =
+    options.diagnostics ??
+    new DiagnosticsLog(
+      options.pitwallHome === undefined ? {} : { home: options.pitwallHome },
+    );
   const recorder = new NeedsYouRecorder(diagnostics);
   const record = () => {
     try {
@@ -363,16 +503,41 @@ export async function startServerWithInternals(
   };
   // Not a subscription to the snapshot, which would be one more listener on the index (its clients are its listeners); a timer at the index's
   // own pace, with the PR list, flags and snoozes telling it sooner.
-  const recordTimer = setInterval(record, internals.diagnosticsIntervalMs ?? DIAGNOSTICS_INTERVAL_MS);
+  const recordTimer = setInterval(
+    record,
+    internals.diagnosticsIntervalMs ?? DIAGNOSTICS_INTERVAL_MS,
+  );
   recordTimer.unref();
-  const offDiagnostics = [() => clearInterval(recordTimer), prs.subscribe(record), flags.subscribe(record), snoozes.subscribe(record)];
+  const offDiagnostics = [
+    () => clearInterval(recordTimer),
+    prs.subscribe(record),
+    flags.subscribe(record),
+    snoozes.subscribe(record),
+  ];
   // Every session this pitwall started or resumed, for its run: only those resume with the defaults for sessions (W119's review).
   const started = new Set<string>();
   // New sessions, from the spawn route and the supervisor's spawn_session (W115): one set of limits.
-  const actionOptions: ActionOptions = { token, spawned, resumed, work, started, launches, ...internals.actions, slots: commandSlots, attachments };
-  const spawner = internals.actions?.spawner ?? createSpawnRunner(actionOptions);
+  const actionOptions: ActionOptions = {
+    token,
+    spawned,
+    resumed,
+    work,
+    started,
+    launches,
+    ...internals.actions,
+    slots: commandSlots,
+    attachments,
+  };
+  const spawner =
+    internals.actions?.spawner ?? createSpawnRunner(actionOptions);
   // Resuming, from the Resume route and the supervisor's resume_session (W127): one set of checks and limits.
-  const resumer = internals.actions?.resumer ?? createResumeRunner(indexer, { ...actionOptions, slots: commandSlots, limiter: spawner.limiter });
+  const resumer =
+    internals.actions?.resumer ??
+    createResumeRunner(indexer, {
+      ...actionOptions,
+      slots: commandSlots,
+      limiter: spawner.limiter,
+    });
   // What the supervisor can do behind your click (W115): its approvals, checked against this snapshot.
   const supervisorActions: SupervisorActionSources | undefined =
     supervisor === undefined
@@ -385,11 +550,21 @@ export async function startServerWithInternals(
           onSpawned: () => indexer.pollSoon(),
           resumer,
           // The recipient's fresh, unfiltered check (W120), as the relay's and resume's.
-          agents: internals.actions?.agents ?? createAgentsSource(internals.actions?.claudeBin === undefined ? {} : { claudeBin: internals.actions.claudeBin }),
+          agents:
+            internals.actions?.agents ??
+            createAgentsSource(
+              internals.actions?.claudeBin === undefined
+                ? {}
+                : { claudeBin: internals.actions.claudeBin },
+            ),
           // What a resume card says of its permission mode (W129, L1), behind the job-file adapter, failing soft.
-          savedPermission: internals.savedPermission ?? ((shortId, sessionId) => readSavedPermission(shortId, sessionId)),
+          savedPermission:
+            internals.savedPermission ??
+            ((shortId, sessionId) => readSavedPermission(shortId, sessionId)),
           // What a resume card says it resumes on, for a session started with a profile (W155): what the resumer reads.
-          ...(actionOptions.launches === undefined ? {} : { launches: actionOptions.launches }),
+          ...(actionOptions.launches === undefined
+            ? {}
+            : { launches: actionOptions.launches }),
           // The work profiles spawn_session and resume_session take, and the defaults each card resolves them with (W156).
           work,
         };
@@ -404,7 +579,8 @@ export async function startServerWithInternals(
           tools: [
             ...createSupervisorTools({
               snapshots,
-              conversation: (sessionId, before) => indexer.conversation(sessionId, before),
+              conversation: (sessionId, before) =>
+                indexer.conversation(sessionId, before),
               ...(recaps === undefined ? {} : { recaps }),
               prs,
               // session_lineage (W167): the chain of sessions around one.
@@ -425,7 +601,14 @@ export async function startServerWithInternals(
     supervisor === undefined
       ? undefined
       : (() => {
-          const update = () => supervisor.setRecipients(recipientNames(snapshots.latest(), supervisor.ownSessionIds(), indexer.liveRows?.()));
+          const update = () =>
+            supervisor.setRecipients(
+              recipientNames(
+                snapshots.latest(),
+                supervisor.ownSessionIds(),
+                indexer.liveRows?.(),
+              ),
+            );
           update();
           return snapshots.subscribe(update);
         })();
@@ -439,23 +622,46 @@ export async function startServerWithInternals(
   const clearAndContinue = createClearAndContinue({
     spawnPty: internals.attach?.spawnPty ?? spawnPty,
     token,
-    ...(internals.attach?.env === undefined ? {} : { env: internals.attach.env }),
-    agents: internals.attach?.agents ?? createAgentsSource({ timeoutMs: REREAD_TIMEOUT_MS }),
+    ...(internals.attach?.env === undefined
+      ? {}
+      : { env: internals.attach.env }),
+    agents:
+      internals.attach?.agents ??
+      createAgentsSource({ timeoutMs: REREAD_TIMEOUT_MS }),
     lineage,
-    ...(internals.clearTimings === undefined ? {} : { timings: internals.clearTimings }),
+    ...(internals.clearTimings === undefined
+      ? {}
+      : { timings: internals.clearTimings }),
   });
   const reads = createReadLimit(MAX_CONVERSATION_READS);
   // A lead's name in a worker's paragraph must be no other live session's (W218 piece 2, the review's F4):
   // every row of the last listing with a pid but the relay's, as the relay's name check reads it (the fix check's N3).
-  const liveNames = (): LiveNames => ({ rows: indexer.liveRows?.(), isOwn: (row) => relay.isRelay(row) });
+  const liveNames = (): LiveNames => ({
+    rows: indexer.liveRows?.(),
+    isOwn: (row) => relay.isRelay(row),
+  });
   const routes = (app: Hono) => {
     registerDirectories(app, indexer, internals.directories);
     registerPrs(app, prs);
     registerPrDismissals(app, { prs, store: prDismissals });
     clone.register(app);
     registerAttachments(app, attachments);
-    registerActions(app, indexer, { ...actionOptions, spawner, resumer, workerBrief: actionOptions.workerBrief ?? ((leadId) => leadBrief(leads, snapshots.latest(), leadId, liveNames())) });
-    registerEditors(app, indexer, { token, ...(options.defaultEditor === undefined ? {} : { defaultEditor: options.defaultEditor }), ...internals.editors, slots: commandSlots });
+    registerActions(app, indexer, {
+      ...actionOptions,
+      spawner,
+      resumer,
+      workerBrief:
+        actionOptions.workerBrief ??
+        ((leadId) => leadBrief(leads, snapshots.latest(), leadId, liveNames())),
+    });
+    registerEditors(app, indexer, {
+      token,
+      ...(options.defaultEditor === undefined
+        ? {}
+        : { defaultEditor: options.defaultEditor }),
+      ...internals.editors,
+      slots: commandSlots,
+    });
     registerEndSession(app, indexer, {
       isRelay: (row) => relay.isRelay(row) || recaps?.isOwn(row) === true,
       isSupervisor: (row) => supervisor?.isOwn(row) === true,
@@ -463,14 +669,33 @@ export async function startServerWithInternals(
       ...internals.end,
       slots: commandSlots,
     });
-    registerRelay(app, indexer, relay);
+    registerRelay(app, indexer, relay, {
+      workerText:
+        internals.relayWorkerText ??
+        ((id) => {
+          const brief = workerBrief(leads, snapshots.latest(), id, liveNames());
+          return brief.ok ? brief.text : undefined;
+        }),
+    });
     registerRecaps(app, indexer, recaps);
     registerFlags(app, { snapshots: flagged, store: flags, relay, recaps });
     registerSnoozes(app, { snapshots: snoozed, store: snoozes });
     registerLeads(app, { snapshots, store: leads, spawned, live: liveNames });
-    registerSpinOffs(app, { snapshots, conversation: (id, before) => indexer.conversation(id, before), reads });
+    registerSpinOffs(app, {
+      snapshots,
+      conversation: (id, before) => indexer.conversation(id, before),
+      reads,
+    });
     registerSpinOffSettle(app, { snapshots, store: spinOffs });
-    registerClearAndContinue(app, { snapshots, runner: clearAndContinue, spawned, lineage, ...(recaps === undefined ? {} : { recapHandoff: (session) => recaps.handoffOf(session) }) });
+    registerClearAndContinue(app, {
+      snapshots,
+      runner: clearAndContinue,
+      spawned,
+      lineage,
+      ...(recaps === undefined
+        ? {}
+        : { recapHandoff: (session) => recaps.handoffOf(session) }),
+    });
     registerSupervisor(app, supervisor, supervisorActions);
     registerMcp(app, mcp);
     registerUsage(app, options.usage);
@@ -480,20 +705,36 @@ export async function startServerWithInternals(
     });
     internals.routes?.(app);
   };
-  const app = createApp({ snapshots, indexer, token, apiKey, linkCodes, peerCheck, webRoot, port: () => port ?? -1, routes, reads, ...(supervisor === undefined ? {} : { supervisor }) });
+  const app = createApp({
+    snapshots,
+    indexer,
+    token,
+    apiKey,
+    linkCodes,
+    peerCheck,
+    webRoot,
+    port: () => port ?? -1,
+    routes,
+    reads,
+    ...(supervisor === undefined ? {} : { supervisor }),
+  });
   const honoListener = getRequestListener(app.fetch);
 
   const server = createServer((req, res) => {
     for (const [name, value] of headers) res.setHeader(name, value);
     const status = gateStatus(req, port);
     if (status !== undefined) {
-      res.writeHead(status, { 'Content-Length': 0 }).end();
+      res.writeHead(status, { "Content-Length": 0 }).end();
       return;
     }
     void honoListener(req, res);
   });
 
-  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_BYTES, perMessageDeflate: false });
+  const wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: MAX_PAYLOAD_BYTES,
+    perMessageDeflate: false,
+  });
   const authTimeoutMs = internals.authTimeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS;
   // Connections still in the handshake, on /ws, /attach and /trust together. Extras close with 1013.
   const slots = new HandshakeSlots();
@@ -530,19 +771,31 @@ export async function startServerWithInternals(
     ...internals.trust,
   });
 
-  server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-    socket.on('error', () => socket.destroy());
+  server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    socket.on("error", () => socket.destroy());
     if (closing) return rejectUpgrade(socket, 503);
     const status = gateStatus(req, port);
     if (status !== undefined) return rejectUpgrade(socket, status);
-    const path = req.url?.split('?')[0];
-    if (path !== WS_PATH && path !== ATTACH_PATH && path !== TRUST_PATH) return rejectUpgrade(socket, 404);
+    const path = req.url?.split("?")[0];
+    if (path !== WS_PATH && path !== ATTACH_PATH && path !== TRUST_PATH)
+      return rejectUpgrade(socket, 404);
     // Browsers always send Origin on a WebSocket upgrade, so a missing one is refused.
-    if (!isAllowedOrigin(req.headers.origin, port!)) return rejectUpgrade(socket, 403);
+    if (!isAllowedOrigin(req.headers.origin, port!))
+      return rejectUpgrade(socket, 403);
     if (path === ATTACH_PATH) return attach.handleUpgrade(req, socket, head);
     if (path === TRUST_PATH) return trust.handleUpgrade(req, socket, head);
     wss.handleUpgrade(req, socket, head, (ws) =>
-      handleClient(ws, { indexer: snapshots, token, origin: serverOrigin(port!), apiKey, authTimeoutMs, onAuthenticated, slots, prs, linkCodes }),
+      handleClient(ws, {
+        indexer: snapshots,
+        token,
+        origin: serverOrigin(port!),
+        apiKey,
+        authTimeoutMs,
+        onAuthenticated,
+        slots,
+        prs,
+        linkCodes,
+      }),
     );
   });
 
@@ -551,7 +804,8 @@ export async function startServerWithInternals(
     port = await listen(server, requested);
   } catch (error) {
     if (!isAddressInUse(error)) throw error;
-    if (options.port !== undefined) throw new PortInUseError(requested, { cause: error });
+    if (options.port !== undefined)
+      throw new PortInUseError(requested, { cause: error });
     port = await listen(server, 0);
   }
   headers = Object.entries(securityHeaders(port));
@@ -572,7 +826,9 @@ export async function startServerWithInternals(
     port,
     close() {
       // The supervisor's drafts denied first, while their calls can still be answered (W115).
-      supervisor?.approvals().cancelAll("pitwall is closing, so this wasn't sent.");
+      supervisor
+        ?.approvals()
+        .cancelAll("pitwall is closing, so this wasn't sent.");
       offRecipients?.();
       // No more fetches, and no more 'prs' messages to clients that are closing.
       for (const off of offDiagnostics) off();
@@ -611,12 +867,15 @@ export async function startServerWithInternals(
 }
 
 /** The status to refuse a request or upgrade with before routing, or undefined to let it through. */
-function gateStatus(req: IncomingMessage, port: number | undefined): number | undefined {
+function gateStatus(
+  req: IncomingMessage,
+  port: number | undefined,
+): number | undefined {
   if (port === undefined) return 503;
   if (!isAllowedHost(req.headers.host, port)) return 403;
   // Origin-form only (`/path`), so Host is always the authority that was checked.
   // Browsers never send absolute-form request targets to a server that isn't a proxy.
-  if (!req.url?.startsWith('/')) return 400;
+  if (!req.url?.startsWith("/")) return 400;
   return undefined;
 }
 
@@ -629,7 +888,11 @@ export interface ReadLimit {
 
 function createReadLimit(max: number): ReadLimit {
   let busy = 0;
-  return { full: () => busy >= max, take: () => void (busy += 1), release: () => void (busy -= 1) };
+  return {
+    full: () => busy >= max,
+    take: () => void (busy += 1),
+    release: () => void (busy -= 1),
+  };
 }
 
 interface AppContext {
@@ -642,32 +905,52 @@ interface AppContext {
   peerCheck: PeerCheck;
   webRoot: string;
   port(): number;
-  routes: ServerInternals['routes'];
+  routes: ServerInternals["routes"];
   /** Transcript reads being made now: the conversation's pages, sub-agents' and the spin-off check's (W209), under MAX_CONVERSATION_READS. */
   reads: ReadLimit;
   /** The supervisor, for its conversation's pages (W113). Absent with --no-supervisor. */
-  supervisor?: Pick<Supervisor, 'conversation'>;
+  supervisor?: Pick<Supervisor, "conversation">;
 }
 
-function createApp({ snapshots, indexer, token, apiKey, linkCodes, peerCheck, webRoot, port, routes, supervisor, reads }: AppContext): Hono {
+function createApp({
+  snapshots,
+  indexer,
+  token,
+  apiKey,
+  linkCodes,
+  peerCheck,
+  webRoot,
+  port,
+  routes,
+  supervisor,
+  reads,
+}: AppContext): Hono {
   const app = new Hono();
 
-  app.use('/api/*', async (c, next) => {
-    const origin = c.req.header('origin');
-    if (origin !== undefined && !isAllowedOrigin(origin, port())) return c.body(null, 403);
-    const presented = bearerToken(c.req.header('authorization'));
-    const credential = presented === undefined ? undefined : identifyCredential(presented, apiKey, token);
+  app.use("/api/*", async (c, next) => {
+    const origin = c.req.header("origin");
+    if (origin !== undefined && !isAllowedOrigin(origin, port()))
+      return c.body(null, 403);
+    const presented = bearerToken(c.req.header("authorization"));
+    const credential =
+      presented === undefined
+        ? undefined
+        : identifyCredential(presented, apiKey, token);
     if (credential === undefined) return c.body(null, 401);
     // Anything that can change state needs the apiKey, which only a page that
     // answered a challenge holds, and must come from this server's own page.
     // Browsers send Origin on every such request. 403, not 401: the web UI
     // takes a 401 to mean its apiKey is stale and reconnects.
-    if (isStateChanging(c.req.method) && (credential !== 'apiKey' || origin === undefined)) return c.body(null, 403);
+    if (
+      isStateChanging(c.req.method) &&
+      (credential !== "apiKey" || origin === undefined)
+    )
+      return c.body(null, 403);
     await next();
   });
 
   app.get(SNAPSHOT_PATH, (c) => {
-    c.header('Cache-Control', 'no-store');
+    c.header("Cache-Control", "no-store");
     const snapshot = snapshots.latest();
     if (!snapshot) return c.body(null, 503);
     return c.json(snapshot);
@@ -678,13 +961,17 @@ function createApp({ snapshots, indexer, token, apiKey, linkCodes, peerCheck, we
    * cursor is checked before the index sees it, the shared limit applies, and a cursor the index
    * can't use is 400, or 410 when it's stale.
    */
-  async function pageOf(c: Context, read: (before: string | undefined) => Promise<ConversationPage | undefined>): Promise<Response> {
-    const cursors = c.req.queries('before');
+  async function pageOf(
+    c: Context,
+    read: (before: string | undefined) => Promise<ConversationPage | undefined>,
+  ): Promise<Response> {
+    const cursors = c.req.queries("before");
     if (cursors !== undefined && cursors.length !== 1) return c.body(null, 400);
     const before = cursors?.[0];
-    if (before !== undefined && !isWellFormedCursor(before)) return c.body(null, 400);
+    if (before !== undefined && !isWellFormedCursor(before))
+      return c.body(null, 400);
     if (reads.full()) {
-      c.header('Retry-After', '1');
+      c.header("Retry-After", "1");
       return c.body(null, 429);
     }
     reads.take();
@@ -693,7 +980,10 @@ function createApp({ snapshots, indexer, token, apiKey, linkCodes, peerCheck, we
       page = await read(before);
     } catch (error) {
       if (error instanceof ConversationCursorError) {
-        return c.body(null, error.reason === 'stale' ? STALE_CURSOR_STATUS : 400);
+        return c.body(
+          null,
+          error.reason === "stale" ? STALE_CURSOR_STATUS : 400,
+        );
       }
       throw error;
     } finally {
@@ -707,20 +997,22 @@ function createApp({ snapshots, indexer, token, apiKey, linkCodes, peerCheck, we
   // page, only for sessions in the latest snapshot. The guard checks the id
   // first, and the cursor is checked before the index sees it.
   app.get(CONVERSATION_ROUTE, async (c) => {
-    c.header('Cache-Control', 'no-store');
-    const lookup = resolveSession(indexer, c.req.param('sessionId'));
+    c.header("Cache-Control", "no-store");
+    const lookup = resolveSession(indexer, c.req.param("sessionId"));
     if (!lookup.ok) return c.body(null, lookup.status);
-    return pageOf(c, (before) => indexer.conversation(lookup.session.sessionId, before));
+    return pageOf(c, (before) =>
+      indexer.conversation(lookup.session.sessionId, before),
+    );
   });
 
   // A listed session's sub-agents (W76), from its folder and its transcripts. Under the same limit
   // as the pages, since it can read what's new in every sub-agent's transcript.
   app.get(SUBAGENTS_ROUTE, async (c) => {
-    c.header('Cache-Control', 'no-store');
-    const lookup = resolveSession(indexer, c.req.param('sessionId'));
+    c.header("Cache-Control", "no-store");
+    const lookup = resolveSession(indexer, c.req.param("sessionId"));
     if (!lookup.ok) return c.body(null, lookup.status);
     if (reads.full()) {
-      c.header('Retry-After', '1');
+      c.header("Retry-After", "1");
       return c.body(null, 429);
     }
     reads.take();
@@ -736,25 +1028,28 @@ function createApp({ snapshots, indexer, token, apiKey, linkCodes, peerCheck, we
   // agent id is checked before the index sees it, and the index finds its file only by listing
   // the session's folder, never by building a path from the id.
   app.get(SUBAGENT_CONVERSATION_ROUTE, async (c) => {
-    c.header('Cache-Control', 'no-store');
-    const lookup = resolveSession(indexer, c.req.param('sessionId'));
+    c.header("Cache-Control", "no-store");
+    const lookup = resolveSession(indexer, c.req.param("sessionId"));
     if (!lookup.ok) return c.body(null, lookup.status);
-    const agentId = c.req.param('agentId');
-    if (agentId === undefined || !isSafeAgentId(agentId)) return c.body(null, 404);
-    return pageOf(c, (before) => indexer.subagentConversation(lookup.session.sessionId, agentId, before));
+    const agentId = c.req.param("agentId");
+    if (agentId === undefined || !isSafeAgentId(agentId))
+      return c.body(null, 404);
+    return pageOf(c, (before) =>
+      indexer.subagentConversation(lookup.session.sessionId, agentId, before),
+    );
   });
 
   // The supervisor's own conversation (W113), from its transcript, which the index never lists, paged
   // and limited as a session's is. 404 before it has one, and with --no-supervisor.
   app.get(SUPERVISOR_CONVERSATION_ROUTE, async (c) => {
-    c.header('Cache-Control', 'no-store');
+    c.header("Cache-Control", "no-store");
     if (supervisor === undefined) return c.body(null, 404);
     return pageOf(c, (before) => supervisor.conversation(before));
   });
 
   routes?.(app);
 
-  app.all('/api/*', (c) => c.body(null, 404));
+  app.all("/api/*", (c) => c.body(null, 404));
 
   // A plain request to a WebSocket path, without an upgrade.
   app.all(WS_PATH, (c) => c.body(null, 426));
@@ -764,39 +1059,52 @@ function createApp({ snapshots, indexer, token, apiKey, linkCodes, peerCheck, we
   // Loaded by the "still building" page so it reloads itself, keeping the URL
   // and its #token fragment. Served from here because webRoot doesn't exist yet.
   app.get(BUILDING_SCRIPT_PATH, (c) => {
-    c.header('Content-Type', 'text/javascript; charset=utf-8');
-    c.header('Cache-Control', 'no-store');
+    c.header("Content-Type", "text/javascript; charset=utf-8");
+    c.header("Cache-Control", "no-store");
     return c.body(BUILDING_SCRIPT);
   });
 
-  app.get('*', async (c) => {
-    const result = await resolveStaticFile(webRoot, new URL(c.req.url).pathname);
+  app.get("*", async (c) => {
+    const result = await resolveStaticFile(
+      webRoot,
+      new URL(c.req.url).pathname,
+    );
     switch (result.kind) {
-      case 'file':
-        c.header('Content-Type', result.contentType);
-        if (result.isIndex) c.header('Cache-Control', 'no-store');
+      case "file":
+        c.header("Content-Type", result.contentType);
+        if (result.isIndex) c.header("Cache-Control", "no-store");
         // A page loaded by a navigation is given a link code (W175), and no other request is.
-        if (result.isIndex && c.req.method === 'GET' && isDocumentNavigation((name) => c.req.header(name))) {
-          const html = result.body.toString('utf8');
+        if (
+          result.isIndex &&
+          c.req.method === "GET" &&
+          isDocumentNavigation((name) => c.req.header(name))
+        ) {
+          const html = result.body.toString("utf8");
           // And only when the client process is this server's own user's (W175's F2): any failure is no code.
-          if (hasLinkTag(html) && (await peerCheck(((c.env as { incoming?: IncomingMessage } | undefined)?.incoming?.socket) ?? {}))) {
+          if (
+            hasLinkTag(html) &&
+            (await peerCheck(
+              (c.env as { incoming?: IncomingMessage } | undefined)?.incoming
+                ?.socket ?? {},
+            ))
+          ) {
             return c.body(withLinkCode(html, linkCodes.issue()));
           }
         }
         return c.body(new Uint8Array(result.body));
-      case 'building':
-        c.header('Cache-Control', 'no-store');
-        c.header('Retry-After', '1');
+      case "building":
+        c.header("Cache-Control", "no-store");
+        c.header("Retry-After", "1");
         return c.html(BUILDING_PAGE, 503);
-      case 'not-found':
+      case "not-found":
         return c.body(null, 404);
     }
   });
 
-  app.all('*', (c) => c.body(null, 405));
+  app.all("*", (c) => c.body(null, 405));
 
   app.onError((error, c) => {
-    console.error('pitwall: request failed:', error);
+    console.error("pitwall: request failed:", error);
     return c.body(null, 500);
   });
 
@@ -804,31 +1112,37 @@ function createApp({ snapshots, indexer, token, apiKey, linkCodes, peerCheck, we
 }
 
 function rejectUpgrade(socket: Duplex, status: number): void {
-  socket.once('finish', () => socket.destroy());
-  socket.end(`HTTP/1.1 ${status} ${STATUS_CODES[status]}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+  socket.once("finish", () => socket.destroy());
+  socket.end(
+    `HTTP/1.1 ${status} ${STATUS_CODES[status]}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
+  );
 }
 
 function listen(server: Server, port: number): Promise<number> {
   return new Promise((resolve, reject) => {
     const onError = (error: Error) => {
-      server.off('listening', onListening);
+      server.off("listening", onListening);
       reject(error);
     };
     const onListening = () => {
-      server.off('error', onError);
+      server.off("error", onError);
       resolve((server.address() as AddressInfo).port);
     };
-    server.once('error', onError);
-    server.once('listening', onListening);
+    server.once("error", onError);
+    server.once("listening", onListening);
     server.listen({ port, host: LOOPBACK_HOST });
   });
 }
 
 function isAddressInUse(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException | undefined)?.code === 'EADDRINUSE';
+  return (error as NodeJS.ErrnoException | undefined)?.code === "EADDRINUSE";
 }
 
-async function closeAll(server: Server, wss: WebSocketServer, markClosing: () => void): Promise<void> {
+async function closeAll(
+  server: Server,
+  wss: WebSocketServer,
+  markClosing: () => void,
+): Promise<void> {
   markClosing();
   const clients = [...wss.clients];
   for (const ws of clients) ws.close(1001);
@@ -844,10 +1158,13 @@ async function closeAll(server: Server, wss: WebSocketServer, markClosing: () =>
 
 function closedPromise(ws: WebSocket): Promise<void> {
   if (ws.readyState === ws.CLOSED) return Promise.resolve();
-  return new Promise((resolve) => ws.once('close', () => resolve()));
+  return new Promise((resolve) => ws.once("close", () => resolve()));
 }
 
-async function settleWithin(promises: Promise<void>[], ms: number): Promise<void> {
+async function settleWithin(
+  promises: Promise<void>[],
+  ms: number,
+): Promise<void> {
   let timer: NodeJS.Timeout | undefined;
   await Promise.race([
     Promise.all(promises),

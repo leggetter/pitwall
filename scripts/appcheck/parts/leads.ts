@@ -4,13 +4,14 @@
 // reload; the pointer a worker leaves in its own repo group; "under <lead>" in Needs you; the session
 // view's menu items and Report to…'s dialog; and a worker's "worker for <lead>" line. Nothing overflows.
 // W218 piece 2: the paragraph Start a worker… adds after the prompt, shown above New session's fields;
-// Report to…'s second step, Copy message for a background session and Send for an interactive one; and a
+// Report to…'s second step, Send for a running session, background or interactive (W226), and Copy message for
+// one that isn't running; and a
 // worker's "reported HH:MM" on its row, which opens it on its Conversation tab.
 
 import { NAMES } from '../fixtures.js';
 import type { Part } from '../runner.js';
 import { briefText } from '../server.js';
-import { chooseInRepoList, DIALOG, dialogButton, dialogName, openFromRow, row, VIEW, toasts, viewClose, viewName, viewTab } from './_dom.js';
+import { chooseInRepoList, DIALOG, dialogButton, dialogName, openFinished, openFromRow, row, VIEW, toasts, viewClose, viewName, viewTab } from './_dom.js';
 
 const q = JSON.stringify;
 const LEAD = NAMES.conversation;
@@ -139,9 +140,31 @@ const part: Part = {
         wide: ${DIALOG}.scrollWidth > ${DIALOG}.clientWidth + 1,
       }))()`);
       t.expectEqual(step.text, briefText(LEAD), 'the server’s paragraph, as it is');
-      t.expectEqual([step.copy, step.send], [true, false], 'a background session gets Copy message, not Send');
+      t.expectEqual([step.copy, step.send], [false, true], 'a running background session gets Send, not Copy message (W226)');
       t.expect(step.boxed === true, 'the paragraph sits in its quiet box');
       t.expect(step.wide === false, 'nothing overflows the dialog');
+      t.expectEqual(server.records.relays.length, 0, 'nothing sent before Send');
+      await t.shot('tell-worker-background-send');
+      await page.click('Send', dialogButton('Send'));
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+      t.expectEqual(server.records.relays, [{ name: NAMES.running, length: briefText(LEAD).length }], 'the paragraph, sent once to the background session');
+      await page.waitFor('the toast', `${toasts}.includes(${q(`Sent to ${NAMES.running}.`)})`);
+      await page.evaluate(`document.querySelectorAll('.toasts .toast:not(.leaving) .toast-dismiss').forEach((b) => b.click())`);
+      await page.waitFor('the toasts to go', `${toasts}.length === 0`);
+      server.records.relays.length = 0;
+      await closeView();
+    });
+
+    await t.step('Report to… on a background session that isn’t running offers Copy message, not Send (W226)', async () => {
+      await openFinished(t);
+      await openFromRow(t, NAMES.finished);
+      await page.click('Session actions', MENU_BUTTON);
+      await page.click('Report to…', menuItem('Report to…'));
+      await page.waitFor('the dialog', `${dialogName} === 'Report to a lead'`);
+      await page.click('Report to lead', dialogButton('Report to lead'));
+      await page.waitFor('the second step', `${dialogName} === 'Tell it where to report' && !!${BRIEF_IN_DIALOG}`);
+      const step = await page.evaluate<Record<string, unknown>>(`(() => ({ copy: !!${dialogButton('Copy message')}, send: !!${dialogButton('Send')}, wide: ${DIALOG}.scrollWidth > ${DIALOG}.clientWidth + 1 }))()`);
+      t.expectEqual([step.copy, step.send, step.wide], [true, false, false], 'Copy message, no Send, nothing overflows');
       await t.shot('tell-worker-copy');
       await page.click('Done', dialogButton('Done'));
       await page.waitFor('the dialog to close', `!${DIALOG}`);

@@ -546,7 +546,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       return json(res, 200, { ok: true, leadId: lead.sessionId, leadName: lead.name, text: briefText(lead.name) } satisfies LeadBriefResult);
     }
     if (route === 'relay' && method === 'POST') {
-      if (session.kind !== 'interactive' || !session.alive) return json(res, 409, { status: 'failed', detail: 'Made up: only a running interactive session.' } satisfies RelayResult);
+      if (!session.alive) return json(res, 409, { status: 'failed', detail: 'Made up: only a running session.' } satisfies RelayResult);
       const body = await readJson(req);
       if (!isRecord(body) || typeof body.text !== 'string' || body.text.trim() === '') return json(res, 400, { status: 'failed', detail: 'Made up: no text.' } satisfies RelayResult);
       records.relays.push({ name: session.name, length: body.text.length });

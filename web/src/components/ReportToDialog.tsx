@@ -4,14 +4,15 @@
 //
 // Then (W218 piece 2) a second step offers the paragraph the server writes about the lead it reports to
 // (workerBriefPath()), so the worker knows where to send its reports. A running interactive session can
-// be sent it, as you, through the relay (D8), only on Send; Not now sends nothing. A background session
-// takes messages only in its terminal, so it gets the text and Copy. The page sends the server's text as
-// the server gave it, never its own.
+// be sent it, as you, through the relay (D8), only on Send; Not now sends nothing. So can a running
+// background session (W226): the relay reaches it by name, and the server accepts only this paragraph for
+// it. A session that isn't running gets the text and Copy. The page sends the server's text as the
+// server gave it, never its own.
 
 import { useContext, useRef, useState } from 'react';
 import { workerBriefPath, type SessionSummary } from '../../../src/shared/protocol.js';
 import { plainText } from '../format.js';
-import { canMessage, sendRelay, STATUS_TEXT } from '../relay.js';
+import { canTellWorker, sendRelay, STATUS_TEXT } from '../relay.js';
 import { groupLabel, type Listed } from '../sessions.js';
 import { ApiContext } from '../api.js';
 import { Alert } from './Alert.js';
@@ -33,9 +34,9 @@ export const TELL_WORKER_SEND = 'Send';
 export const TELL_WORKER_NOT_NOW = 'Not now';
 export const TELL_WORKER_COPY = 'Copy message';
 /** What the second step says over the paragraph. */
-export const tellWorkerHint = (name: string, background: boolean) =>
-  background
-    ? `${name} is a background session, which takes messages only in its terminal. Copy this and paste it there, so it knows where to report.`
+export const tellWorkerHint = (name: string, copyOnly: boolean) =>
+  copyOnly
+    ? `${name} isn't running, so pitwall can't send this to it. Copy it and paste it in the session once it runs, so it knows where to report.`
     : `Send this to ${name} as you, so it knows where to report? Nothing is sent until you choose Send.`;
 /** The toast once it's sent. */
 export const toldWorkerText = (name: string, held: boolean) => (held ? `Sent to ${name}, held for approval in its terminal.` : `Sent to ${name}.`);
@@ -110,7 +111,7 @@ function TellWorker({ session, onClose }: { session: SessionSummary; onClose: ()
   // After a send that didn't go through, or may have: what to say, and whether Send is still offered.
   const [failure, setFailure] = useState<{ text: string; again: boolean }>();
   const name = plainText(session.name);
-  const sendable = canMessage(session);
+  const sendable = canTellWorker(session);
 
   const send = async () => {
     if (brief.kind !== 'ok' || sending || !api) return;
