@@ -351,7 +351,7 @@ export class LeadStore {
     const tree = this.tree();
     if (!tree.leads.has(newestLead)) return { ok: false, error: 'That session isn’t a lead. Choose Make lead on it first.' };
     // A lead only by a `derived-from` `clear` in its own transcript isn't one to report to (the review's F2).
-    if (this.trustedLead(lead) === undefined) return { ok: false, error: 'That session is a lead only by its own transcript’s word. Choose Make lead on it first.' };
+    if (this.trustedLead(lead) === undefined) return { ok: false, error: 'That session is a lead only by its own transcript’s word. Choose Confirm as lead on it first.' };
     if (tree.leads.has(newestWorker)) return { ok: false, error: 'It’s a lead itself. Choose Not a lead on it first.' };
     if (tree.leadOf.get(newestWorker)?.lead === newestLead) return { ok: true };
     const at = this.#now().toISOString();

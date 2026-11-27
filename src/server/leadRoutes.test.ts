@@ -1,6 +1,6 @@
 // The lead and worker routes (W218): ids validated, listed sessions only, JSON only, a body limit, and 409s.
 import { Hono } from 'hono';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { leadBriefPath, leadPath, workerBriefPath, workerPath, workerStartedPath, type IndexSnapshot, type LeadBriefResult, type LeadResult, type SessionSummary } from '../shared/protocol.js';
 import { workerBriefText, type LiveNames } from './leadBrief.js';
 import { LEAD_BODY_MAX_BYTES, registerLeads } from './leadRoutes.js';
@@ -139,6 +139,18 @@ describe('the lead routes', () => {
     await post(workerPath(B), { lead: A });
     expect((await post(workerStartedPath(B), { shortId: '0f0f0f0f' })).status).toBe(409);
     expect((await setup({ spawned: null }).post(workerStartedPath(A), { shortId: '0f0f0f0f' })).status).toBe(409);
+  });
+
+  it("refuses Start a worker… on a lead only by its own transcript's word (the fix check's N1)", async () => {
+    const { store, post } = setup({ spawned: ['0f0f0f0f'] });
+    // A shows as a lead in the list, but the trusted tree has no lead A.
+    vi.spyOn(store, 'tree').mockReturnValue({ ...store.tree(), leads: new Set([A]) } as ReturnType<typeof store.tree>);
+    const refused = await post(workerStartedPath(A), { shortId: '0f0f0f0f' });
+    expect(refused.status).toBe(409);
+    expect(refused.json).toMatchObject({ ok: false, error: expect.stringContaining('Confirm as lead') });
+    // Confirm as lead (Make lead) makes it one pitwall names, and the start is noted.
+    await post(leadPath(A), { on: true });
+    expect((await post(workerStartedPath(A), { shortId: '0f0f0f0f' })).status).toBe(200);
   });
 
   it('answers the worker paragraph for a lead you set, and for a worker’s lead (W218 piece 2)', async () => {

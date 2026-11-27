@@ -54,7 +54,7 @@ const LOOKUP_ERRORS = {
 export interface LeadRouteSources {
   /** The snapshot the page sees: the session in the path, and a body's lead, must be listed in it. */
   snapshots: Pick<SnapshotView, 'latest'>;
-  store: Pick<LeadStore, 'mark' | 'link' | 'unlink' | 'expectWorker' | 'isWorker' | 'trustedLead' | 'reportTarget'>;
+  store: Pick<LeadStore, 'mark' | 'link' | 'unlink' | 'expectWorker' | 'isWorker' | 'tree' | 'trustedLead' | 'reportTarget'>;
   /** The short ids this pitwall's New session started a moment ago (W168's check). Without it, worker-started refuses every one. */
   spawned?: Pick<RecentSpawns, 'has'>;
   /** The live rows a lead's name must not share (leadBrief.ts' LiveNames, the review's F4). Without it, only the listing's sessions are checked. */
@@ -117,6 +117,10 @@ export function registerLeads(app: Hono, sources: LeadRouteSources): void {
     if (typeof body.value !== 'string' || !SHORT_ID.test(body.value)) return answer(c, { ok: false, error: 'The body must be { shortId }, a job’s short id.' }, 400);
     // A worker isn't a lead, so it can't have workers of its own.
     if (sources.store.isWorker(body.sessionId)) return answer(c, { ok: false, error: 'It’s a worker, so it can’t have workers. Choose Not a worker on it first.' }, 409);
+    // A lead only by its own transcript's word doesn't become one pitwall names by starting a worker (the fix check's N1).
+    if (sources.store.tree().leads.has(body.sessionId) && sources.store.trustedLead(body.sessionId) === undefined) {
+      return answer(c, { ok: false, error: 'That session is a lead only by its own transcript’s word. Choose Confirm as lead on it first.' }, 409);
+    }
     // Only a session this pitwall started a moment ago, so the page can't link two sessions that merely exist.
     if (sources.spawned?.has(body.value) !== true) return answer(c, { ok: false, error: 'pitwall didn’t start that session a moment ago, so it won’t link it.' }, 409);
     if (!sources.store.expectWorker(body.value, body.sessionId)) return answer(c, { ok: false, error: 'pitwall couldn’t note that link.' }, 409);

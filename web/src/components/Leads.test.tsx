@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { leadBriefPath, relayPath, SPAWN_PATH, workerBriefPath, workerStartedPath, type IndexSnapshot, type PullRequestList } from '../../../src/shared/protocol.js';
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import type { StorageSource } from '../groupState.js';
-import { BRIEF_LABEL, BRIEF_WITHOUT, LEADS_STORAGE_KEY, MAKE_LEAD, NOT_A_LEAD, NOT_A_WORKER, REPORT_TO, reportedLinkLabel, START_WORKER } from '../leads.js';
+import { BRIEF_LABEL, BRIEF_WITHOUT, CONFIRM_LEAD, LEADS_STORAGE_KEY, MAKE_LEAD, NOT_A_LEAD, NOT_A_WORKER, REPORT_TO, reportedLinkLabel, START_WORKER } from '../leads.js';
 import { memoryNavigation } from '../selection.js';
 import { createShortcutsStore, ShortcutsStoreContext } from '../shortcuts.js';
 import { group, minutesAgo, NOW, pr, prLink, prList, session, snapshot } from '../test/fixtures.js';
@@ -436,7 +436,7 @@ describe("the security review's F2 and F3 (W218 piece 2)", () => {
     const dialog = screen.getByRole('dialog', { name: REPORT_TO_TITLE });
     expect(within(dialog).getAllByRole('radio').map((radio) => radio.closest('.radio-option')?.querySelector('label')?.textContent)).toEqual(['design']);
     first.unmount();
-    // With design untrusted too, notes has no lead to pick, so no Report to…; an untrusted lead offers Make lead.
+    // With design untrusted too, notes has no lead to pick, so no Report to…; an untrusted lead offers Confirm as lead, and no Start a worker… (the fix check's N1 and N2).
     const base = snapUntrustedPlanner();
     const none = { ...base, groups: base.groups.map((g) => ({ ...g, sessions: g.sessions.map((s) => (s.sessionId === id(1) ? { ...s, lead: { workers: [id(2), id(3)] } } : s)) })) };
     const second = renderDashboard(`?repo=${ROOT}/app&session=${id(4)}`, { snapshot: none });
@@ -446,11 +446,13 @@ describe("the security review's F2 and F3 (W218 piece 2)", () => {
     second.unmount();
     renderDashboard(`?repo=${ROOT}/docs&session=${id(5)}`, { snapshot: none });
     await settle();
-    expect(menuLabels()).toEqual(expect.arrayContaining([MAKE_LEAD, START_WORKER, NOT_A_LEAD]));
+    expect(menuLabels()).toEqual(expect.arrayContaining([CONFIRM_LEAD, NOT_A_LEAD]));
+    expect(menuLabels()).not.toContain(START_WORKER);
+    expect(menuLabels()).not.toContain(MAKE_LEAD);
   });
 
   it("shows Report to…'s 409, a lead only by its transcript's word, in the dialog", async () => {
-    const error = 'That session is a lead only by its own transcript’s word. Choose Make lead on it first.';
+    const error = 'That session is a lead only by its own transcript’s word. Choose Confirm as lead on it first.';
     const fetch = fakeServer({ status: 409, body: { ok: false, error } });
     renderDashboard(`?repo=${ROOT}/app&session=${id(4)}`, { fetch });
     await settle();

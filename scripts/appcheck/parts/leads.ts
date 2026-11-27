@@ -186,8 +186,8 @@ const part: Part = {
       await closeView();
     });
 
-    await t.step('Report to… lists only a trusted lead; one only by its own transcript’s word offers Make lead (the review’s F2)', async () => {
-      // pitwall-test-ended-asked becomes a lead only by its transcript's word: not in Report to…, and its own menu offers Make lead.
+    await t.step('Report to… lists only a trusted lead; one only by its own transcript’s word isn’t listed (the review’s F2)', async () => {
+      // pitwall-test-ended-asked becomes a lead only by its transcript's word: not in Report to…; its own menu offers Confirm as lead (Leads.test.tsx).
       server.world.leads(id(NAMES.endedAsked), [], true, false);
       server.broadcast();
       await openFromRow(t, NAMES.asked);

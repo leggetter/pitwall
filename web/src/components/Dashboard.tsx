@@ -1910,7 +1910,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     if (action === 'report-to') return setReportingTo(session);
     if (action === 'start-worker') return setWorkerFor(session);
     const name = plainText(session.name);
-    const request = action === 'not-worker' ? reportTo(api, session.sessionId, null) : makeLead(api, session.sessionId, action === 'make-lead');
+    const request = action === 'not-worker' ? reportTo(api, session.sessionId, null) : makeLead(api, session.sessionId, action === 'make-lead' || action === 'confirm-lead');
     void request.then((error) => toasts.show({ tone: error === undefined ? 'success' : 'error', key: leadKey(session.sessionId), message: error ?? leadDoneText(action, name) }));
   };
   const leadsOf = (session: SessionSummary) => {

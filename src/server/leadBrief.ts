@@ -30,7 +30,7 @@ export const LEAD_BRIEF_NAME_MAX = 100;
 /**
  * The running sessions a lead's name must not share (the review's F4): the index's last
  * `claude agents --json --all`, unfiltered (Indexer.liveRows()), undefined before one succeeds, and
- * which rows are pitwall's own or the relay's, as the relay's name check leaves those out.
+ * which rows are the relay's, the only ones the relay's name check leaves out (the fix check's N3).
  */
 export interface LiveNames {
   rows: readonly AgentRow[] | undefined;
@@ -78,9 +78,12 @@ export function leadNameProblem(snapshot: IndexSnapshot, lead: SessionSummary, l
   }
   if (live !== undefined) {
     if (live.rows === undefined) return "pitwall hasn't listed the sessions yet. Try again in a moment.";
+    // As strict as the relay's checkName() (the fix check's N3): any other row with the name, or two of the lead's own.
+    let matching = 0;
     for (const row of live.rows) {
-      if (row.pid === undefined || row.sessionId === lead.sessionId || live.isOwn?.(row) === true) continue;
-      if (lookAlikeKey(row.name) === key) return shared;
+      if (row.pid === undefined || live.isOwn?.(row) === true || lookAlikeKey(row.name) !== key) continue;
+      matching += 1;
+      if (row.sessionId !== lead.sessionId || matching > 1) return shared;
     }
   }
   return undefined;
@@ -89,7 +92,7 @@ export function leadNameProblem(snapshot: IndexSnapshot, lead: SessionSummary, l
 function briefFor(snapshot: IndexSnapshot | undefined, leadId: string | undefined, live: LiveNames | undefined): LeadBriefResult {
   if (snapshot === undefined) return { ok: false, error: "pitwall hasn't listed the sessions yet. Try again in a moment." };
   if (leadId === undefined) {
-    return { ok: false, error: 'pitwall names only a lead you set, with Make lead, Report to… or Start a worker…, and the sessions that carry it on. Choose Make lead on the lead first.' };
+    return { ok: false, error: 'pitwall names only a lead you set, with Make lead, Report to… or Start a worker…, and the sessions that carry it on. Choose Make lead on the lead first, or Confirm as lead if it shows as a lead already.' };
   }
   const lead = findSession(snapshot, leadId);
   if (lead === undefined) return { ok: false, error: "That session's lead isn't in pitwall's list." };

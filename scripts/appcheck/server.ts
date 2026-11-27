@@ -531,7 +531,7 @@ export async function startFakeServer(options: FakeServerOptions): Promise<FakeS
       if (body.lead !== null && !world.session(body.lead)?.lead) return json(res, 409, { ok: false, error: 'Made up: that lead isn’t in pitwall’s list.' } satisfies LeadResult);
       // Only a trusted lead (the review's F2), in the real server's words.
       if (body.lead !== null && world.session(body.lead)?.lead?.trusted !== true) {
-        return json(res, 409, { ok: false, error: 'That session is a lead only by its own transcript’s word. Choose Make lead on it first.' } satisfies LeadResult);
+        return json(res, 409, { ok: false, error: 'That session is a lead only by its own transcript’s word. Choose Confirm as lead on it first.' } satisfies LeadResult);
       }
       world.reportTo(session.sessionId, body.lead);
       json(res, 200, { ok: true } satisfies LeadResult);

@@ -82,6 +82,8 @@ describe('leadNameProblem()', () => {
     expect(leadNameProblem(snapshot, lead, { rows: [row(B, 'pitwall-test-lead', { pid: undefined })] })).toBeUndefined();
     expect(leadNameProblem(snapshot, lead, { rows: [row(B, 'pitwall-test-lead')], isOwn: (each) => each.sessionId === B })).toBeUndefined();
     expect(leadNameProblem(snapshot, lead, { rows: undefined })).toMatch(/hasn't listed/);
+    // As strict as the relay's checkName() (the fix check's N3): two live processes on the lead's own id with its name.
+    expect(leadNameProblem(snapshot, lead, { rows: [row(A, 'pitwall-test-lead'), row(A, 'pitwall-test-lead', { pid: 5001 })] })).toMatch(/Another running session/);
     expect(leadBrief({ trustedLead: () => A }, snapshot, A, { rows: [row(C, 'pitwall-test-lead')] })).toMatchObject({ ok: false, error: expect.stringMatching(/Another running session/) });
     expect(workerBrief({ reportTarget: () => A }, snapshot, B, { rows: [row(C, 'pitwall-test-lead')] })).toMatchObject({ ok: false, error: expect.stringMatching(/Another running session/) });
   });

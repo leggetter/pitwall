@@ -103,17 +103,18 @@ import type { CheckedSpinOff } from './SpinOffCards.js';
 import { SessionLineage, type LineageTarget } from './SessionLineage.js';
 import { SessionPrsPanel, sessionPrsCount, type LinkedPr } from './SessionPrs.js';
 import { MenuButton, type MenuEntry } from './Menu.js';
-import { MAKE_LEAD, NOT_A_LEAD, NOT_A_WORKER, REPORT_TO, START_WORKER, WORKER_FOR, type LeadAction } from '../leads.js';
+import { CONFIRM_LEAD, MAKE_LEAD, NOT_A_LEAD, NOT_A_WORKER, REPORT_TO, START_WORKER, WORKER_FOR, type LeadAction } from '../leads.js';
 import type { IconName } from './Icon.js';
 
 const LEAD_ACTION_LABELS: Readonly<Record<LeadAction, string>> = {
   'make-lead': MAKE_LEAD,
+  'confirm-lead': CONFIRM_LEAD,
   'not-lead': NOT_A_LEAD,
   'start-worker': START_WORKER,
   'report-to': REPORT_TO,
   'not-worker': NOT_A_WORKER,
 };
-const LEAD_ACTION_ICONS: Readonly<Record<LeadAction, IconName>> = { 'make-lead': 'subagents', 'not-lead': 'undo', 'start-worker': 'add', 'report-to': 'send', 'not-worker': 'undo' };
+const LEAD_ACTION_ICONS: Readonly<Record<LeadAction, IconName>> = { 'make-lead': 'subagents', 'confirm-lead': 'subagents', 'not-lead': 'undo', 'start-worker': 'add', 'report-to': 'send', 'not-worker': 'undo' };
 import { MiddleEllipsis } from './MiddleEllipsis.js';
 import { RelayBox } from './RelayBox.js';
 import { SessionConfirm, useSessionActions } from './SessionActions.js';

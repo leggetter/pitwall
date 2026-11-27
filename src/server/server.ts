@@ -446,11 +446,8 @@ export async function startServerWithInternals(
   });
   const reads = createReadLimit(MAX_CONVERSATION_READS);
   // A lead's name in a worker's paragraph must be no other live session's (W218 piece 2, the review's F4):
-  // every row of the last listing with a pid, as the relay's name check reads it, its own and pitwall's left out.
-  const liveNames = (): LiveNames => ({
-    rows: indexer.liveRows?.(),
-    isOwn: (row) => relay.isRelay(row) || recaps?.isOwn(row) === true || supervisor?.isOwn(row) === true || options.usage?.isOwn(row) === true,
-  });
+  // every row of the last listing with a pid but the relay's, as the relay's name check reads it (the fix check's N3).
+  const liveNames = (): LiveNames => ({ rows: indexer.liveRows?.(), isOwn: (row) => relay.isRelay(row) });
   const routes = (app: Hono) => {
     registerDirectories(app, indexer, internals.directories);
     registerPrs(app, prs);

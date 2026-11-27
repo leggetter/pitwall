@@ -194,9 +194,9 @@ describe('the menu', () => {
     expect(leadActions(m.flaky, false)).toEqual(['not-worker']);
   });
 
-  it("offers Make lead on a lead only by its own transcript's word, so you can make it one pitwall names (the review's F2)", () => {
+  it("offers Confirm as lead, and no Start a worker…, on a lead only by its own transcript's word (the review's F2, the fix check's N1 and N2)", () => {
     const m = made();
-    expect(leadActions({ ...m.lead, lead: { workers: [] } }, true)).toEqual(['make-lead', 'start-worker', 'not-lead']);
+    expect(leadActions({ ...m.lead, lead: { workers: [] } }, true)).toEqual(['confirm-lead', 'not-lead']);
   });
 
   it("lists every lead but the session itself, by name, for Report to…", () => {

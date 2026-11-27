@@ -501,7 +501,7 @@ describe('LeadStore', () => {
         expect(store.tree().marked.has(C)).toBe(true);
         expect(store.trustedLead(C)).toBeUndefined();
         const refused = store.link(B, C, 'reported');
-        expect(refused).toEqual({ ok: false, error: 'That session is a lead only by its own transcript’s word. Choose Make lead on it first.' });
+        expect(refused).toEqual({ ok: false, error: 'That session is a lead only by its own transcript’s word. Choose Confirm as lead on it first.' });
         expect(store.tree().leadOf.has(B)).toBe(false);
         // Make lead on C doesn't stop at the display tree's mark: it writes C's own, so C is trusted.
         expect(store.mark(C, true)).toEqual({ ok: true });
