@@ -614,6 +614,20 @@ export function SessionView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasSpinOffs, spinSessionId, spinSessionName, proposedKey, settledHow, settledAt, settledSession, settledName]);
   const conversationStatus = conversation.state.status;
+  // The same link followed in this tab while the session is open (W220, ownLinks.ts): the Conversation tab, at the newest card.
+  const [spinOffLinks, setSpinOffLinks] = useState(0);
+  useEffect(() => {
+    if (hidden) return undefined;
+    const follow = () => {
+      if (!wantsLatestSpinOff(browserNavigation.location.search, session.sessionId)) return;
+      latestSpinOff.current = true;
+      setChosen('conversation');
+      setAttachStatus(undefined);
+      setSpinOffLinks((count) => count + 1);
+    };
+    browserNavigation.addEventListener('popstate', follow);
+    return () => browserNavigation.removeEventListener('popstate', follow);
+  }, [hidden, session.sessionId]);
   useLayoutEffect(() => {
     if (!latestSpinOff.current || (conversationStatus !== 'ready' && conversationStatus !== 'missing')) return;
     latestSpinOff.current = false;
@@ -621,7 +635,7 @@ export function SessionView({
     cards?.[cards.length - 1]?.scrollIntoView({ block: 'start' });
     const { pathname, search, hash } = browserNavigation.location;
     browserNavigation.history.replaceState(browserNavigation.history.state, '', `${pathname}${withoutParams(search, [SPIN_OFF_LINK_PARAM])}${hash}`);
-  }, [conversationStatus, conversation.scroller]);
+  }, [conversationStatus, conversation.scroller, spinOffLinks]);
   // The working line at the end of the conversation, and what its status region says (W102).
   const mode = turnMode(session, listed, conversation.state.turnEnded);
   const canAttachHere = background && !terminalOff;

@@ -6,6 +6,7 @@
 // - a confirmation first, showing the full URL the link really opens, as the
 //   browser parsed it (so an internationalised host shows in punycode), never
 //   the link's text;
+// - except a link to pitwall's own address with no fragment, which this tab follows in place (W220, ownLinks.ts);
 // - a new tab with noopener and noreferrer, so the new page gets neither a
 //   handle on this one nor a referrer.
 //
@@ -15,6 +16,7 @@
 // without asking. xterm.js is told to pass every scheme to the handler (allowNonHttpProtocols) only
 // when there's an opener, since this handler is then the only thing deciding.
 import type { IBufferRange, ILinkHandler } from '@xterm/xterm';
+import { followOwnLink, ownLinkSearch, type OwnLinkEnv } from './ownLinks.js';
 import { isOwnFileTarget, parseFileTarget, type FileRef } from './fileLinks.js';
 
 export interface LinkOpeners {
@@ -22,6 +24,8 @@ export interface LinkOpeners {
   open?: (url: string, target: string, features: string) => unknown;
   /** Default window.confirm. */
   confirm?: (message: string) => boolean;
+  /** Default window. A link to pitwall's own address is followed in this tab (W220). */
+  own?: OwnLinkEnv;
 }
 
 /** The question asked before opening `url`. It names the whole URL. */
@@ -54,6 +58,13 @@ export function openTerminalLink(uri: string, openers: LinkOpeners = {}, onFile?
   }
   // file: and, parsed as a scheme, `name.ts:12`, are for the opener, which refuses any other scheme.
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return openFileLink(uri, onFile, shown);
+  // pitwall's own address, with no fragment (W220): this tab, which has the token, follows it. No question, no new tab.
+  const own = openers.own ?? window;
+  const search = ownLinkSearch(uri, own);
+  if (search !== undefined) {
+    followOwnLink(search, own);
+    return true;
+  }
   if (!confirm(confirmMessage(url))) return false;
   open(url.href, '_blank', 'noopener,noreferrer');
   return true;

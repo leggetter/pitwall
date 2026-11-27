@@ -1292,6 +1292,20 @@ describe('Conversation: spin-off blocks', () => {
       expect(window.location.search).toBe(`?session=${SID}`);
     });
 
+    it('follows the same link with the session already open (W220): popstate scrolls to the newest card and takes the parameter out', async () => {
+      const entries = [withBlocks(2, [fenced('One.')], [proposal(KEY, 'One.')]), withBlocks(3, [fenced('Two.')], [proposal(KEY2, 'Two.')])];
+      const { body } = await viewWith(entries, {}, `?session=${SID}`);
+      expect(scrolled).toHaveLength(0);
+      window.history.pushState(null, '', `/?session=${SID}&spinoff=latest`);
+      await act(async () => {
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      });
+      expect(scrolled).toHaveLength(1);
+      expect(scrolled[0]!.getAttribute('data-key')).toBe(KEY2);
+      expect(body.contains(scrolled[0]!)).toBe(true);
+      expect(window.location.search).toBe(`?session=${SID}`);
+    });
+
     it('does nothing for a session with no block, or without the parameter, or for another session', async () => {
       await viewWith([claude(2, 'No block here.')], {}, `?session=${SID}&spinoff=latest`);
       expect(scrolled).toHaveLength(0);

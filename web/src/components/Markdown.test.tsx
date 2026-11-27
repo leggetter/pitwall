@@ -740,6 +740,46 @@ describe("Markdown: links that ask first (W55, W48's F6)", () => {
   });
 });
 
+describe("Markdown: pitwall's own links (W220)", () => {
+  const OWN = `${window.location.origin}/?session=abc&spinoff=latest`;
+  let popstate: ReturnType<typeof vi.fn<() => void>>;
+  beforeEach(() => {
+    popstate = vi.fn<() => void>();
+    window.addEventListener('popstate', popstate);
+  });
+  afterEach(() => window.removeEventListener('popstate', popstate));
+
+  const click = (link: Element, init: MouseEventInit = {}, type: 'click' | 'auxclick' = 'click') => {
+    const event = new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, detail: 1, ...init });
+    act(() => {
+      link.dispatchEvent(event);
+    });
+    return event.defaultPrevented;
+  };
+
+  it('follows a click, a middle click and a modified click in this tab: no question, browser default stopped', () => {
+    const push = vi.spyOn(window.history, 'pushState');
+    const { root } = renderMarkdown(`[the card](${OWN})`);
+    const link = root.querySelector('a')!;
+    expect(click(link)).toBe(true);
+    expect(click(link, { button: 1 }, 'auxclick')).toBe(true);
+    expect(click(link, { metaKey: true })).toBe(true);
+    expect(root.querySelector('.inline-confirm')).toBeNull();
+    expect(push).toHaveBeenCalledWith(null, '', '/?session=abc&spinoff=latest');
+    expect(popstate).toHaveBeenCalled();
+    push.mockRestore();
+    window.history.replaceState(null, '', '/');
+  });
+
+  it('keeps asking, and does not navigate, for an own link with a fragment', () => {
+    const { root } = renderMarkdown(`[a link](${window.location.origin}/#token=x)`);
+    const link = root.querySelector('a')!;
+    click(link);
+    expect(root.querySelector('.inline-confirm')).not.toBeNull();
+    expect(popstate).not.toHaveBeenCalled();
+  });
+});
+
 describe('Markdown: mentions in the supervisor’s replies (W125)', () => {
   const named = session({ name: 'pr-894' });
   const generic = session({ name: 'website' });
