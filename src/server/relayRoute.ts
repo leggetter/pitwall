@@ -131,6 +131,7 @@ export function registerRelay(
         }
         const lead = sources.leadOf?.(session.sessionId);
         const hash = createHash('sha256').update(request.text).digest('hex');
+        for (const [id, entry] of sent) if (now() - entry.at >= WORKER_TEXT_REPEAT_MS) sent.delete(id);
         const before = sent.get(session.sessionId);
         if (before !== undefined && (before.lead !== lead || now() - before.at >= WORKER_TEXT_REPEAT_MS)) sent.delete(session.sessionId);
         else if (before?.hash === hash) {

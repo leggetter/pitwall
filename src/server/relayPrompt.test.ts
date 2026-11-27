@@ -85,7 +85,7 @@ describe('isAddressable', () => {
     expect(isAddressable(name)).toBe(true);
   });
 
-  it.each(['', '   ', 'a<b', 'a>b', 'two\nlines', 'tab\there', 'x'.repeat(301), 'nul\u0000', ' leading', 'trailing ', '\u00a0nbsp', 'uds:/tmp/cc-socks/1.sock', 'bridge:session_1', '*', '/tmp/x', 'a\\b'])('refuses %j', (name) => {
+  it.each(['', '   ', 'a<b', 'a>b', 'two\nlines', 'tab\there', 'x'.repeat(301), 'nul\u0000', ' leading', 'trailing ', '\u00a0nbsp', 'uds:/tmp/cc-socks/1.sock', 'bridge:session_1', '*', '/tmp/x', 'a\\b', 'cse_012345678ABCDEFGHJKLMNPQ', 'session_01234567ABCDEFGHJKLMNPQR', 'local_deadbeef', 'a@b', 'worker [abc123]'])('refuses %j', (name) => {
     expect(isAddressable(name)).toBe(false);
   });
 });
