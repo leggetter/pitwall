@@ -2,7 +2,6 @@
 
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
-
 Last updated: 2026-11-27, on `w218-leads-workers`, by the coordinating session for W218 (a lead session and its workers), ba21807b, handing off at 200K: piece 1 is in [#350](https://github.com/leggetter/pitwall/pull/350) (feat: leads and workers in the sessions list (W218 piece 1)), CI green. xhigh security review: approve with fixes; F1, F3, F5 and F8 fixed and closed by an xhigh fix check; F4 partly (N1 below); F6 fixed for `server.test.ts` only. The next free W number is W221.
 
 **Servers:** 4518 runs `main` at 8a1137a (W220's fix, #348): restarted 2026-11-27 by b0597542 (pid 37100), the second run with the fixed token; Phil's open tab reconnected by itself. A restart runs from the main checkout (`git pull`, `npm run build`, SIGTERM to the old pid, then `PITWALL_TOKEN="$(cat ~/.pitwall/token-4518)" nohup node dist/cli.js ~/hookdeck/git ~/leggetter/git --port 4518 --no-open >> ~/.pitwall/pitwall-4518.log 2>&1 &` with Node 25.1.0 from asdf, `~/.asdf/installs/nodejs/25.1.0/bin`). **4518's token is fixed** (Phil, 2026-11-27): `~/.pitwall/token-4518`, mode 0600, never in the repo or the conversation, and not the `.env` one, which is 4517's dev token. A restart keeps the token, so Phil's open and pinned tabs reconnect by themselves and nothing needs opening. Only the first restart with it, and any tab that says it has no token, needs `open "http://127.0.0.1:4518/#token=$(cat ~/.pitwall/token-4518)"`, which keeps the token out of the conversation; tell him so, and that tabs from before the switch can close. A per-run token, as before 2026-11-27, broke every open tab on each restart. On first poll W212 matched a stuck proposal to its running session (`~/.pitwall/spin-offs.json`), so that card left Needs you. The start logs "ignored 37 kept recaps pitwall couldn't use": those are version 2 files in `~/.pitwall/recap-store` from before W210 (Handed off) raised `RECAP_STORE_VERSION` to 3, for sessions not recapped since; harmless, and they go when their sessions leave the list or expire.
@@ -80,13 +79,9 @@ Still to do:
 ## Open questions for Phil
 
 Asked 2026-11-27:
-
 1. **W221, stop passing `CLAUDE_CODE_SUBAGENT_MODEL` and `CLAUDE_CODE_CHILD_NOTES_DIR` to the sessions pitwall starts?** The #350 fix's live check found `childEnvironment()` (`src/index/exec.ts`) still passes four `CLAUDE_CODE_*` names (also `HOST_SHORT_TEMP_DIRS` and `VERSION`); none makes a false parent, but when 4518 is restarted from inside a session, the sessions it starts inherit that session's sub-agent model. Lean: yes, as W221, after W218.
 2. **Merge #350 (feat: leads and workers in the sessions list (W218 piece 1)) into `main`,** after N1 and N3 are fixed and CI is green, with the builder's four UI calls: a finished lead with an unfinished worker stays in the current rows; the actions are in the session view's menu only; the lead's count covers every listed worker; no "Lead of 3" header yet? Lean: yes. Ask once N1 is fixed.
-
 Answered (Phil, 2026-11-27, W218, spike 021): merge the design (#343) and the answers (#344); option B, with workers indented under their lead in the sessions list; workers report with `SendMessage`; a spin-off block gets one optional line on whether it reports back; the names are **leads** and **workers**. Projects (groups of associated sessions, with roots renamed workspaces) are a future item, W219.
-
-Answered (Phil, 2026-11-26, "yes to all three"): start W214's spike; the 2026-11-25 loop applies to the new Next, stopping at W218's design; W216 waits for W218's design.
 
 Answered (Phil, 2026-11-26, the comparison): a lead session is not the supervisor, so W179 (the supervisor keeps its conversation short) isn't held; W214 first in Next; W218 a priority after it; hand-offs from the Terminal tab are W217, with both options.
 
