@@ -6,7 +6,7 @@
 
 import { NAMES } from '../fixtures.js';
 import type { Part } from '../runner.js';
-import { chooseInRepoList, DIALOG, dialogName, openFromRow, row, VIEW, viewName } from './_dom.js';
+import { chooseInRepoList, DIALOG, dialogName, openFromRow, row, VIEW, viewClose, viewName } from './_dom.js';
 
 const q = JSON.stringify;
 const LEAD = NAMES.conversation;
@@ -31,7 +31,11 @@ const part: Part = {
       // pitwall-test-api leads three: one in demo-app, one in demo-app that needs you, one in api-server.
       server.world.leads(id(LEAD), [id(NAMES.running2), id(NAMES.waiting), id(NAMES.inApi)]);
       server.broadcast();
-      await page.waitFor('the lead’s caret', `!!${CARET}`);
+    };
+    // At 375 the view covers the list, so close it before the next row.
+    const closeView = async () => {
+      await page.click('Close', viewClose);
+      await page.waitFor('the view to close', `!${VIEW}`);
     };
 
     await t.step('a lead’s workers are indented under it, open, the one from api-server named', async () => {
@@ -45,12 +49,15 @@ const part: Part = {
         workers: [...${WORKERS}.querySelectorAll('[data-open-session]')].map((b) => b.textContent.trim()),
         repo: [...${WORKERS}.querySelectorAll('li.session')].map((li) => li.querySelector('.session-group')?.textContent ?? null),
         indented: ${WORKERS}.querySelector('li.session .session-open').getBoundingClientRect().left > ${row(LEAD)}.getBoundingClientRect().left,
+        // How far the guide line's middle is from the caret's.
+        offset: (() => { const c = ${CARET}.getBoundingClientRect(); const line = ${WORKERS}.getBoundingClientRect().left + parseFloat(getComputedStyle(${WORKERS}, '::before').left) + 0.5; return Math.abs(c.left + c.width / 2 - line); })(),
       }))()`);
       t.expectEqual(state.expanded, 'true', 'open by default');
       t.expectEqual([state.badge, state.count], ['Lead', '3 workers'], 'Lead, and the count first on line 2');
       t.expectEqual(state.workers, [NAMES.running2, NAMES.waiting, NAMES.inApi], 'its workers, oldest link first');
       t.expectEqual(state.repo, [null, null, 'api-server'], 'only the one from another repo is named');
       t.expect(state.indented === true, 'the workers are indented');
+      t.expect((state.offset as number) <= 1, 'the guide line is under the caret', String(state.offset));
       t.expect(!(await page.evaluate<boolean>(OVERFLOW)), 'nothing overflows the list');
       await t.shot('open');
     });
@@ -80,18 +87,22 @@ const part: Part = {
 
     await t.step('Needs you says which lead a worker is under', async () => {
       await setUp('?view=needs-you');
-      const label = await page.evaluate(`${row(NAMES.waiting)}?.closest('li.session')?.querySelector('.session-group')?.textContent`);
+      const group = `${row(NAMES.waiting)}?.closest('li.session')?.querySelector('.session-group')?.textContent`;
+      await page.waitFor('under the lead', `(${group} ?? '').includes('under')`);
+      const label = await page.evaluate(group);
       t.expectEqual(label, `demo-app · under ${LEAD}`, 'under the lead');
       t.expect(!(await page.evaluate<boolean>(`!!${POINTER}`)), 'no pointers');
     });
 
     await t.step('the lead’s menu has Start a worker… and Not a lead; a worker’s view says whose it is', async () => {
       await setUp('?view=all');
+      await page.waitFor('the lead’s caret', `!!${CARET}`);
       await openFromRow(t, LEAD);
       await page.click('Session actions', MENU_BUTTON);
       const items = await page.evaluate<string[]>(ITEMS);
       t.expect(items.includes('Start a worker…') && items.includes('Not a lead'), 'the lead’s items', items.join(', '));
       await page.click('Session actions', MENU_BUTTON);
+      await closeView();
       await openFromRow(t, NAMES.running2);
       const line = `${VIEW}?.querySelector('[data-worker-for]')`;
       await page.waitFor('worker for', `!!${line}`);
@@ -99,6 +110,7 @@ const part: Part = {
       await t.shot('worker-view');
       await page.click('the lead’s link', `${line}.querySelector('button')`);
       await page.waitFor('the lead’s view', `${viewName} === ${q(LEAD)}`);
+      await closeView();
     });
 
     await t.step('Report to… lists the leads in a radio group', async () => {
@@ -106,6 +118,7 @@ const part: Part = {
       await page.click('Session actions', MENU_BUTTON);
       const items = await page.evaluate<string[]>(ITEMS);
       t.expect(items.includes('Make lead') && items.includes('Report to…'), 'Make lead and Report to…', items.join(', '));
+      await t.shot('menu');
       await page.click('Report to…', menuItem('Report to…'));
       await page.waitFor('the dialog', `${dialogName} === 'Report to a lead'`);
       const radios = await page.evaluate<string[]>(`[...${DIALOG}.querySelectorAll('.radio-option label')].map((l) => l.textContent)`);

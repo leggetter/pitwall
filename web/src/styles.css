@@ -2139,12 +2139,15 @@ mark.match {
   position: relative;
 }
 
-/* The guide line: under the lead's caret, from its row down to the middle of the last worker's line 1. */
+/*
+ * The guide line: under the middle of the lead's caret (the row's padding, less the caret's negative
+ * margin, plus half its width, less half the line), from the lead's row down to the last worker's line 2.
+ */
 .lead-workers::before {
   position: absolute;
   top: 0;
   bottom: var(--pw-space-5);
-  left: calc(var(--pw-space-4) + var(--pw-space-2) - var(--pw-space-1));
+  left: calc(var(--pw-space-4) - var(--pw-space-1) + var(--pw-space-5) / 2 - 1px);
   border-left: 1px solid var(--pw-border-strong);
   content: '';
   pointer-events: none;
