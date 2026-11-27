@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EDITORS_PATH, openInEditorPath, PROTOCOL_VERSION, type Editor, type IndexSnapshot, type SessionSummary } from '../../src/shared/protocol.js';
 import { ApiContext, createApiClient, type FetchLike } from './api.js';
 import { App } from './App.js';
-import { Dashboard } from './components/Dashboard.js';
+import { AppShell } from './components/AppShell.js';
 import type { ConnectionView } from './connection.js';
 import { EditorsContext, openInEditor, openToast, parseEditorList } from './editors.js';
 import { fakeSockets, group, NOW, session, snapshot, type FakeSocket } from './test/fixtures.js';
@@ -167,14 +167,14 @@ function fakeServer(...answers: Array<{ status: number; body?: unknown } | 'hold
 
 const posts = (fetch: ReturnType<typeof fakeServer>) => fetch.mock.calls.filter(([, init]) => init.method === 'POST').map(([url, init]) => [url, JSON.parse(String(init.body))]);
 
-function renderDashboard(editors: readonly Editor[], fetch: FetchLike = fakeServer(), first: IndexSnapshot = snap()) {
+function renderAppShell(editors: readonly Editor[], fetch: FetchLike = fakeServer(), first: IndexSnapshot = snap()) {
   const api = createApiClient({ apiKey: API_KEY, fetch });
   const ui = (s: IndexSnapshot) => {
     const view: ConnectionView = { state: 'live', snapshot: s };
     return (
       <ApiContext.Provider value={api}>
         <EditorsContext.Provider value={editors}>
-          <Dashboard view={view} />
+          <AppShell view={view} />
         </EditorsContext.Provider>
       </ApiContext.Provider>
     );
@@ -217,42 +217,42 @@ beforeEach(() => {
 
 describe('the actions menu', () => {
   it('has Open in VS Code and Open in Cursor after the copies, with two editors found', async () => {
-    renderDashboard([VSCODE, CURSOR]);
+    renderAppShell([VSCODE, CURSOR]);
     const view = await openView('pitwall-test-bg');
     expect(openMenu(view)).toEqual(['Copy session ID', 'Copy attach command', '—', 'Make lead', '—', 'Open in VS Code', 'Open in Cursor', '—', 'Stop session', 'Remove session']);
   });
 
   it('has the one found, with one', async () => {
-    renderDashboard([CURSOR]);
+    renderAppShell([CURSOR]);
     const view = await openView('pitwall-test-bg');
     expect(openMenu(view)).toEqual(['Copy session ID', 'Copy attach command', '—', 'Make lead', '—', 'Open in Cursor', '—', 'Stop session', 'Remove session']);
   });
 
   it('has neither, and no separator for them, with none found', async () => {
-    renderDashboard([]);
+    renderAppShell([]);
     const view = await openView('pitwall-test-bg');
     expect(openMenu(view)).toEqual(['Copy session ID', 'Copy attach command', '—', 'Make lead', '—', 'Stop session', 'Remove session']);
   });
 
   it('has them for an interactive session', async () => {
-    renderDashboard([CURSOR]);
+    renderAppShell([CURSOR]);
     expect(openMenu(await openView('pitwall-test-interactive'))).toEqual(['Copy session ID', '—', 'Make lead', '—', 'Open in Cursor', '—', 'End session']);
   });
 
   it('has them for an ended session, whose directory may still be there, before Resume in background', async () => {
-    renderDashboard([CURSOR]);
+    renderAppShell([CURSOR]);
     await openFinished();
     expect(openMenu(await openView('pitwall-test-ended'))).toEqual(['Copy session ID', 'Copy resume command', '—', 'Make lead', '—', 'Open in Cursor', '—', 'Resume in background']);
   });
 
   it("doesn't have them when the session's directory has gone", async () => {
-    renderDashboard([VSCODE, CURSOR]);
+    renderAppShell([VSCODE, CURSOR]);
     const menu = openMenu(await openView('pitwall-test-gone'));
     expect(menu).toEqual(['Copy session ID', 'Copy attach command', '—', 'Make lead', '—', 'Stop session', 'Remove session']);
   });
 
   it("doesn't have them once it's no longer listed", async () => {
-    const { update } = renderDashboard([VSCODE, CURSOR]);
+    const { update } = renderAppShell([VSCODE, CURSOR]);
     const view = await openView('pitwall-test-bg');
     expect(openMenu(view)).toContain('Open in Cursor');
     fireEvent.keyDown(within(view).getByRole('menu'), { key: 'Escape' });
@@ -266,7 +266,7 @@ describe('the actions menu', () => {
 describe('opening', () => {
   it("POSTs the editor to the session's open path, then says so in a success toast", async () => {
     const fetch = fakeServer({ status: 200, body: { ok: true } });
-    renderDashboard([VSCODE, CURSOR], fetch);
+    renderAppShell([VSCODE, CURSOR], fetch);
     const view = await openView('pitwall-test-bg');
     choose(view, 'Open in Cursor');
     await waitFor(() => expect(toastMessages()).toEqual(["Opened pitwall-test-bg's directory in Cursor."]));
@@ -276,7 +276,7 @@ describe('opening', () => {
 
   it("says why it didn't open in an error toast, in the server's words after pitwall's sentence", async () => {
     const error = "Cursor didn't open. If it has moved, restart pitwall so it looks again.";
-    renderDashboard([CURSOR], fakeServer({ status: 502, body: { ok: false, error } }));
+    renderAppShell([CURSOR], fakeServer({ status: 502, body: { ok: false, error } }));
     const view = await openView('pitwall-test-bg');
     choose(view, 'Open in Cursor');
     const message = `Couldn't open pitwall-test-bg's directory in Cursor. ${error}`;
@@ -287,7 +287,7 @@ describe('opening', () => {
   it("says when to try again past the opens a minute, in the server's words, and the item works again (W87)", async () => {
     const error = 'pitwall opens at most 10 directories in an editor every 60 seconds. Try again in 42s.';
     const fetch = fakeServer({ status: 429, body: { ok: false, error } }, { status: 200, body: { ok: true } });
-    renderDashboard([CURSOR], fetch);
+    renderAppShell([CURSOR], fetch);
     const view = await openView('pitwall-test-bg');
     choose(view, 'Open in Cursor');
     const message = `Couldn't open pitwall-test-bg's directory in Cursor. ${error}`;
@@ -299,7 +299,7 @@ describe('opening', () => {
   });
 
   it('gives the status when the server gave no reason', async () => {
-    renderDashboard([VSCODE], fakeServer({ status: 500 }));
+    renderAppShell([VSCODE], fakeServer({ status: 500 }));
     const view = await openView('pitwall-test-bg');
     choose(view, 'Open in VS Code');
     await waitFor(() => expect(toastMessages()).toEqual(["Couldn't open pitwall-test-bg's directory in VS Code (HTTP 500)."]));
@@ -307,7 +307,7 @@ describe('opening', () => {
 
   it('turns both items off while one is out, saying why, so a second press sends nothing', async () => {
     const fetch = fakeServer('hold');
-    renderDashboard([VSCODE, CURSOR], fetch);
+    renderAppShell([VSCODE, CURSOR], fetch);
     const view = await openView('pitwall-test-bg');
     choose(view, 'Open in Cursor');
     await settle();
@@ -327,7 +327,7 @@ describe('opening', () => {
 
   it('still says how it went when the view has gone meanwhile', async () => {
     const fetch = fakeServer('hold');
-    renderDashboard([CURSOR], fetch);
+    renderAppShell([CURSOR], fetch);
     const view = await openView('pitwall-test-bg');
     choose(view, 'Open in Cursor');
     await settle();

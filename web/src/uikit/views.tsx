@@ -1,5 +1,5 @@
 // The session view and what's in it (W19, W22, W24, W27, W28): the real SessionView, its conversation,
-// its actions menu and their inline confirmations, RelayBox in every send state, an ended session's
+// its actions menu and their inline confirmations, MessageBox in every send state, an ended session's
 // footer with each result of Resume in background (W67), and the terminal,
 // each given a stub API (stubs.ts) and put into its state by a scenario (kit.tsx), as a person
 // would: opening the menu, choosing an item, opening a tab, opening a fold, scrolling up.
@@ -9,10 +9,10 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import type { ConversationEntry, Editor, SessionSnooze, SessionSummary } from '../../../src/shared/protocol.js';
 import { ApiContext } from '../api.js';
 import { AttachContext } from '../attach.js';
-import { slowFirstSnapshot } from '../components/Dashboard.js';
+import { slowFirstSnapshot } from '../components/AppShell.js';
 import { EndedFooter, useResume } from '../components/EndedSession.js';
 import { MenuButton, type MenuEntry } from '../components/Menu.js';
-import { RelayBox } from '../components/RelayBox.js';
+import { MessageBox } from '../components/MessageBox.js';
 import { SessionView, UnlistedSessionView, WaitingSessionView, type SessionViewProps } from '../components/SessionView.js';
 import { ToastProvider, useToast } from '../components/Toast.js';
 import { WorkingLine } from '../components/WorkingLine.js';
@@ -52,7 +52,7 @@ import { memoryDrafts, scriptedAttach, storedDraft, stubApi, type AttachScript, 
 
 const noop = () => {};
 
-/** Where a session started and worked, as the Dashboard works it out from WORKED_SNAPSHOT. */
+/** Where a session started and worked, as the AppShell works it out from WORKED_SNAPSHOT. */
 const placementOf = (session: SessionSummary) => ({ startedIn: startLabel(WORKED_SNAPSHOT.groups, session), workedIn: workedInLabels(session, WORKED_SNAPSHOT.roots) });
 
 /** A stub API for everything inside, made once from `options` when it mounts. */
@@ -1338,7 +1338,7 @@ function GoesWhileDrafting({ session: shown, goes }: { session: SessionSummary; 
   const [gone, setGone] = useState(false);
   const current = gone && goes === 'stops' ? { ...shown, alive: false, pid: undefined, status: undefined } : shown;
   return (
-    <RelayBox
+    <MessageBox
       session={current}
       listed={!(gone && goes === 'unlisted')}
       onDraftChange={(has) => {
@@ -1357,7 +1357,7 @@ export function MessageBoxes() {
             <KeptDrafts sessionId={box.session.sessionId} draft={box.kept}>
               <MaybeScenario run={box.run}>
                 <footer className="session-view-foot">
-                  <RelayBox session={box.session} replyShown={box.replyShown ?? false} />
+                  <MessageBox session={box.session} replyShown={box.replyShown ?? false} />
                 </footer>
               </MaybeScenario>
             </KeptDrafts>

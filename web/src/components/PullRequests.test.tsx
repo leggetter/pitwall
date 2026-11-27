@@ -22,7 +22,7 @@ import { group, minutesAgo, NOW, pr, prLink, prList, session, snapshot } from '.
 import { fakeHistory } from '../test/history.js';
 import { toastMessages } from '../test/toasts.js';
 import { snoozedToast } from '../snooze.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 import { CONFIGURATION_URL, NO_RELATION, prSourceBody, REFRESH_LABEL, REFRESH_OFF } from './PrList.js';
 import { COPY_LINK, OPEN_ON_GITHUB, OWNS_IT, PR_MISSING, PrView } from './PrView.js';
 import { LINKED_NOTE } from './SessionPrs.js';
@@ -91,8 +91,8 @@ interface Options {
   fetch?: FetchLike;
 }
 
-/** The Dashboard with `prs` as the latest 'prs' message's list, or none yet with null. */
-function renderDashboard(prs: PullRequestList | null = prList(PRS), options: Options = {}) {
+/** The AppShell with `prs` as the latest 'prs' message's list, or none yet with null. */
+function renderAppShell(prs: PullRequestList | null = prList(PRS), options: Options = {}) {
   const storage = options.storage ?? memory().source;
   const navigation = options.navigation ?? memoryNavigation(options.search ?? '?view=prs');
   const shortcuts = createShortcutsStore({ storage: memory().source, events: { addEventListener: () => {} } });
@@ -102,7 +102,7 @@ function renderDashboard(prs: PullRequestList | null = prList(PRS), options: Opt
     return (
       <ApiContext.Provider value={api}>
         <ShortcutsStoreContext.Provider value={shortcuts}>
-          <Dashboard view={view} navigation={navigation} storage={storage} />
+          <AppShell view={view} navigation={navigation} storage={storage} />
         </ShortcutsStoreContext.Provider>
       </ApiContext.Provider>
     );
@@ -137,12 +137,12 @@ function press(key: string, target: Element | null = document.activeElement) {
 
 describe('the repo list', () => {
   it("has no Pull requests item before a 'prs' message has come, as from a pitwall from before M4", () => {
-    renderDashboard(null, { search: '?view=all' });
+    renderAppShell(null, { search: '?view=all' });
     expect(prItem()).toBeUndefined();
   });
 
   it('counts the rows that need you through a PR in Needs you, the Pull requests item and the page title (W106)', () => {
-    const { again } = renderDashboard(null, { search: '?view=all' });
+    const { again } = renderAppShell(null, { search: '?view=all' });
     expect(repoItem('Needs you')?.querySelector('.badge')).toBeNull();
     again(prList(PRS));
     const labels = [...repoList().querySelectorAll('a[data-repo-item] .repo-item-label')].map((label) => label.textContent);
@@ -158,7 +158,7 @@ describe('the repo list', () => {
   });
 
   it('shows how many rows have a PR while none needs you, and nothing before the first fetch', () => {
-    const { again } = renderDashboard(prList([approved, draft]), { search: '?view=all' });
+    const { again } = renderAppShell(prList([approved, draft]), { search: '?view=all' });
     expect(prItem()?.querySelector('.repo-item-count')?.textContent).toBe('2 sessions');
     again(prList([], { fetchedAt: undefined, refreshing: true }));
     expect(prItem()).toBeDefined();
@@ -166,13 +166,13 @@ describe('the repo list', () => {
   });
 
   it('has no item while pull requests are off', () => {
-    renderDashboard(prList([], { fetchedAt: undefined, source: { ok: false, reason: 'off', error: 'Off.' } }), { search: '?view=all' });
+    renderAppShell(prList([], { fetchedAt: undefined, source: { ok: false, reason: 'off', error: 'Off.' } }), { search: '?view=all' });
     expect(prItem()).toBeUndefined();
   });
 
   it('lists a cloned repo with only PR rows, and one that is not cloned, with its own icon and "not cloned" (W106)', () => {
     const fresh = placed(pr({ number: 11, repoLabel: 'example/api-server' }, 20), cloned(`${ROOT}/api-server`, 'api-server'));
-    renderDashboard(prList([...PRS, fresh]), { search: '?view=all' });
+    renderAppShell(prList([...PRS, fresh]), { search: '?view=all' });
     expect(repoItem('api-server')?.querySelector('.repo-item-count')?.textContent).toBe('1 session');
     const notCloned = repoItem('example/Docs-Site')!;
     expect(notCloned.textContent).toBe('example/Docs-Site, not cloned1 session');
@@ -180,13 +180,13 @@ describe('the repo list', () => {
     expect(notCloned.querySelector('.repo-item-icon')?.getAttribute('data-icon') ?? notCloned.querySelector('svg')?.outerHTML).toBeTruthy();
     expect(new URL(notCloned.href).search).toBe('?repo=github.com/example/docs-site');
     // Its repo goes once it has no PR row.
-    renderDashboard(prList([conflicts]), { search: '?view=all' });
+    renderAppShell(prList([conflicts]), { search: '?view=all' });
     expect(screen.getAllByRole('navigation', { name: 'Repos' }).at(-1)?.textContent).not.toContain('Docs-Site');
   });
 
   it('opens a not-cloned repo with its PR rows, says so in its heading, offers no Hide, and keeps its name out of storage', async () => {
     const store = memory();
-    renderDashboard(prList(PRS), { search: '?view=all', storage: store.source });
+    renderAppShell(prList(PRS), { search: '?view=all', storage: store.source });
     fireEvent.click(repoItem('example/Docs-Site')!);
     await settle();
     const heading = within(main()).getByRole('heading', { level: 2 });
@@ -198,7 +198,7 @@ describe('the repo list', () => {
   });
 
   it('selects Pull requests in the session list column, with ?view=prs', async () => {
-    const { navigation } = renderDashboard(prList(PRS), { search: '?view=all' });
+    const { navigation } = renderAppShell(prList(PRS), { search: '?view=all' });
     fireEvent.click(prItem()!);
     await settle();
     expect(navigation.location.search).toBe('?view=prs');
@@ -209,7 +209,7 @@ describe('the repo list', () => {
 
 describe('rows', () => {
   it("gives a session's row a badge for the most urgent open PR it owns, its state short, with how many more", () => {
-    renderDashboard(prList(PRS), { search: '?view=all' });
+    renderAppShell(prList(PRS), { search: '?view=all' });
     const badgeOf = (name: string) => sessionRow(name).querySelector('.pr-badge');
     const alpha = badgeOf('alpha');
     expect(alpha?.textContent).toBe('Pull request #42, CI failing, needs attention+1, and 1 more');
@@ -224,7 +224,7 @@ describe('rows', () => {
   });
 
   it("says why on line 2 and has the bar while a PR it owns needs attention, and is neutral while it doesn't", () => {
-    const { again } = renderDashboard(prList(PRS), { search: '?view=all' });
+    const { again } = renderAppShell(prList(PRS), { search: '?view=all' });
     expect(sessionRow('alpha').classList.contains('attention')).toBe(true);
     expect(sessionRow('alpha').querySelector('.session-what')?.textContent).toBe('demo-app · Needs you for example/demo-app#42: CI failing');
     // Its Not needed now toggle is for what the session needs, not its PRs.
@@ -241,7 +241,7 @@ describe('rows', () => {
     const base = snap();
     const kappa = session({ sessionId: 'pr-kappa', name: 'kappa', status: 'waiting', waitingFor: 'permission prompt', prLinks: [prLink('pushed', failing, 1)], snoozed: { at: '2026-03-02T11:00:00.000Z' } });
     const s = { ...base, groups: [...base.groups, group({ key: `${ROOT}/more`, label: 'more', sessions: [kappa] })] };
-    render(<Dashboard view={{ state: 'live', snapshot: s, prs: prList(PRS) }} navigation={memoryNavigation('?view=needs-you')} storage={memory().source} />);
+    render(<AppShell view={{ state: 'live', snapshot: s, prs: prList(PRS) }} navigation={memoryNavigation('?view=needs-you')} storage={memory().source} />);
     await settle();
     expect(sessionRow('kappa').querySelector('.session-what-text')?.textContent).toBe("more · Snoozed until it's woken · Needs you for example/demo-app#42: CI failing");
     expect(snoozedToast('kappa', { at: '2026-03-02T11:00:00.000Z' }, new Date(NOW), 42)).toBe(
@@ -253,7 +253,7 @@ describe('rows', () => {
     const base = snap();
     const kappa = session({ sessionId: 'pr-kappa', name: 'kappa', status: 'waiting', waitingFor: 'permission prompt', prLinks: [prLink('pushed', failing, 1)] });
     const s = { ...base, groups: [...base.groups, group({ key: `${ROOT}/more`, label: 'more', sessions: [kappa] })] };
-    render(<Dashboard view={{ state: 'live', snapshot: s, prs: prList(PRS) }} navigation={memoryNavigation('?view=needs-you&session=pr-kappa')} storage={memory().source} />);
+    render(<AppShell view={{ state: 'live', snapshot: s, prs: prList(PRS) }} navigation={memoryNavigation('?view=needs-you&session=pr-kappa')} storage={memory().source} />);
     await settle();
     expect(sessionView()!.querySelector('.session-view-prs')).not.toBeNull();
     expect(sessionView()!.querySelector('.session-view-pr-need')).toBeNull();
@@ -267,7 +267,7 @@ describe('rows', () => {
     const withLambda = (each: ReturnType<typeof session>): IndexSnapshot => ({ ...base, groups: [...base.groups, group({ key: `${ROOT}/more`, label: 'more', sessions: [each] })] });
     const recap = { waitingOn: 'someone else' as const, title: 'Made-up review', forYou: 3, next: 'Say whether the made-up budget may go to 5', at: new Date(NOW).toISOString(), source: 'pitwall' as const };
     const ui = (each: ReturnType<typeof session>, search = '?view=needs-you') => (
-      <Dashboard view={{ state: 'live', snapshot: withLambda(each), prs: prList([...PRS, asked]) }} navigation={memoryNavigation(search)} storage={memory().source} />
+      <AppShell view={{ state: 'live', snapshot: withLambda(each), prs: prList([...PRS, asked]) }} navigation={memoryNavigation(search)} storage={memory().source} />
     );
     const { unmount } = render(ui(lambda({ recap })));
     await settle();
@@ -306,7 +306,7 @@ describe('rows', () => {
     const base = snap();
     const zeta = session({ sessionId: 'pr-zeta', name: 'zeta', prLinks: [prLink('pushed', approved, 1)] });
     const s = { ...base, groups: [...base.groups, group({ key: `${ROOT}/more`, label: 'more', sessions: [zeta] })] };
-    render(<Dashboard view={{ state: 'live', snapshot: s, prs: prList(PRS) }} navigation={memoryNavigation('?view=all')} storage={memory().source} />);
+    render(<AppShell view={{ state: 'live', snapshot: s, prs: prList(PRS) }} navigation={memoryNavigation('?view=all')} storage={memory().source} />);
     expect(sessionRow('alpha').querySelector('.pr-badge')?.textContent).toBe('Pull request #42, CI failing, needs attention');
     expect(sessionRow('zeta').querySelector('.pr-badge')?.textContent).toBe('Pull request #43');
   });
@@ -316,7 +316,7 @@ describe('rows', () => {
     const base = snap();
     const omega = session({ sessionId: 'pr-omega', name: 'omega', ended: true, finished: true, alive: false, pid: undefined, status: undefined, prLinks: [prLink('opened', open, 60)] });
     const s = { ...base, groups: [...base.groups, group({ key: `${ROOT}/notes`, label: 'notes', sessions: [omega] })] };
-    const ui = (list: PullRequestList) => <Dashboard view={{ state: 'live', snapshot: s, prs: list }} navigation={memoryNavigation('?view=all')} storage={memory().source} />;
+    const ui = (list: PullRequestList) => <AppShell view={{ state: 'live', snapshot: s, prs: list }} navigation={memoryNavigation('?view=all')} storage={memory().source} />;
     const { rerender } = render(ui(prList([...PRS, open])));
     const finishedRows = () => [...main().querySelectorAll('.finished-sessions [data-open-session]')].map((button) => button.textContent);
     expect(finishedRows()).toEqual(['delta']);
@@ -328,7 +328,7 @@ describe('rows', () => {
   });
 
   it('gives a PR with no session a row of two lines, under the repo the server placed it in', () => {
-    renderDashboard(prList(PRS), { search: '?view=all' });
+    renderAppShell(prList(PRS), { search: '?view=all' });
     const eight = row(8);
     expect(eight.querySelector('h3 button')?.textContent).toBe('#8 Document the made-up retry headers');
     expect([...eight.querySelectorAll('.badge')].map((badge) => badge.textContent)).toEqual(['Draft', 'Checks pending']);
@@ -339,14 +339,14 @@ describe('rows', () => {
     expect(eight.classList.contains('attention')).toBe(false);
     // In its group's own list, line 2 has no label; one that needs you says why, with the bar.
     const asked = placed(pr({ number: 77, repoLabel: 'example/event-relay', relation: 'review-requested' }, 20), cloned(RELAY, 'event-relay'));
-    renderDashboard(prList([asked]), { search: `?repo=${RELAY}` });
+    renderAppShell(prList([asked]), { search: `?repo=${RELAY}` });
     const seventySeven = screen.getAllByRole('main').at(-1)!.querySelector('li[data-pr$="/77"]')!;
     expect(seventySeven.querySelector('.pr-what')?.textContent).toBe('Your review is requested · No session listed');
     expect(seventySeven.classList.contains('attention')).toBe(true);
   });
 
   it('opens a PR row in the PR view, as ?pr=', async () => {
-    const { navigation } = renderDashboard(prList(PRS), { search: '?view=all' });
+    const { navigation } = renderAppShell(prList(PRS), { search: '?view=all' });
     fireEvent.click(within(main()).getByRole('button', { name: '#8 Document the made-up retry headers' }));
     await settle();
     expect(navigation.location.search).toBe('?view=all&pr=example/event-relay/8');
@@ -355,7 +355,7 @@ describe('rows', () => {
   });
 
   it('keeps only the rows with an open PR with Has PR, and no PR row with a kind chip (W106)', () => {
-    renderDashboard(prList(PRS), { search: '?view=all' });
+    renderAppShell(prList(PRS), { search: '?view=all' });
     fireEvent.click(within(main()).getByRole('button', { name: 'Has PR', pressed: false }));
     expect(rows()).toEqual(['alpha', 'beta', '#5', '#8']);
     fireEvent.click(within(main()).getByRole('button', { name: 'Interactive', pressed: false }));
@@ -369,7 +369,7 @@ describe('Has PR, with no list of pull requests (W106)', () => {
   const chipLabels = () => [...main().querySelectorAll('.filter-chips .chip')].map((chip) => chip.textContent);
 
   it('is no chip before a list comes, while the first fetch runs, with pull requests off or gh failing, and a filter it was on for drops it', () => {
-    const { again } = renderDashboard(null, { search: '?view=all' });
+    const { again } = renderAppShell(null, { search: '?view=all' });
     expect(chipLabels()).toEqual(['Interactive', 'Background']);
     again(prList(PRS));
     expect(chipLabels()).toEqual(['Interactive', 'Background', 'Has PR']);
@@ -388,7 +388,7 @@ describe('Has PR, with no list of pull requests (W106)', () => {
 
 describe('the Pull requests view', () => {
   it('lists every row with an open PR, the sessions that own one and the PR rows, those that need you first, with the summary', () => {
-    renderDashboard();
+    renderAppShell();
     expect(rows()).toEqual(['alpha', 'beta', '#5', '#8']);
     expect(summary()).toBe('4 sessions2 need you');
     // Line 2 names each row's group, as the other views do.
@@ -396,7 +396,7 @@ describe('the Pull requests view', () => {
   });
 
   it('says how many PRs are hidden because no root claims their owner, with a link to the README’s Configuration', () => {
-    renderDashboard();
+    renderAppShell();
     const line = main().querySelector('.pr-hidden')!;
     expect(line.textContent).toBe('1 pull request is hidden: no root claims other-org. How to show them');
     const link = within(line as HTMLElement).getByRole('link', { name: 'How to show them' });
@@ -405,7 +405,7 @@ describe('the Pull requests view', () => {
   });
 
   it('lists the PR rows older than 90 days behind Show older, which keeps focus as Hide older', async () => {
-    renderDashboard();
+    renderAppShell();
     expect(prRows()).not.toContain('example/blog/3');
     const show = within(main()).getByRole('button', { name: 'Show 1 older pull request' });
     expect(show.getAttribute('aria-describedby')).toBeTruthy();
@@ -424,13 +424,13 @@ describe('the Pull requests view', () => {
   });
 
   it('says when no row has an open PR, with the hidden line', () => {
-    renderDashboard(prList([unclaimed]));
+    renderAppShell(prList([unclaimed]));
     expect(screen.getByText('No open pull requests')).toBeDefined();
     expect(main().querySelector('.empty-state .pr-hidden')?.textContent).toContain('1 pull request is hidden');
   });
 
   it('filters by session, title, repo, number and branch, and says when nothing matches', () => {
-    renderDashboard();
+    renderAppShell();
     const field = within(main()).getByRole('searchbox', { name: 'Filter pull requests' });
     expect(field.getAttribute('placeholder')).toBe('Filter by session, title, repo or number');
     fireEvent.change(field, { target: { value: 'event-relay' } });
@@ -451,20 +451,20 @@ describe('the Pull requests view', () => {
   });
 
   it('says when GitHub found more than PRS_MAX', () => {
-    renderDashboard(prList(PRS, { truncated: true }));
+    renderAppShell(prList(PRS, { truncated: true }));
     expect(main().querySelector('.pr-truncated')?.textContent).toBe(`GitHub found more than ${PRS_MAX} pull requests for one of its searches, so the ${PRS_MAX} of them updated most recently are listed.`);
   });
 
   it('says when it was fetched', () => {
     vi.spyOn(Date, 'now').mockReturnValue(NOW);
-    renderDashboard();
+    renderAppShell();
     expect(main().querySelector('.pr-list-updated')?.textContent).toMatch(/^Updated (\d+m ago|just now)$/);
   });
 });
 
 describe('each source state', () => {
   it('waits for the first fetch', () => {
-    renderDashboard(prList([], { fetchedAt: undefined, refreshing: true }));
+    renderAppShell(prList([], { fetchedAt: undefined, refreshing: true }));
     expect(main().querySelector('.list-waiting')).not.toBeNull();
     expect(main().querySelector('.pr-list-updated')?.textContent).toBe('Fetching from GitHub…');
     expect(screen.getByRole('button', { name: REFRESH_LABEL }).getAttribute('aria-busy')).toBe('true');
@@ -473,7 +473,7 @@ describe('each source state', () => {
   it('falls back to All sessions with pull requests off, as for ?view=prs remembered from an earlier run, keeping a ?pr=', async () => {
     const off = prList([], { fetchedAt: undefined, source: { ok: false, reason: 'off', error: 'Off.' } });
     const store = memory({ 'pitwall.view.v1': 'view=prs' });
-    const { navigation } = renderDashboard(off, { search: '?view=prs&pr=example/demo-app/42', storage: store.source });
+    const { navigation } = renderAppShell(off, { search: '?view=prs&pr=example/demo-app/42', storage: store.source });
     await settle();
     expect(navigation.location.search).toBe('?view=all&pr=example/demo-app/42');
     expect(store.items.get('pitwall.view.v1')).toBe('view=all');
@@ -494,7 +494,7 @@ describe('each source state', () => {
   });
 
   it('says how to install gh, how to log it in, and what failed, each with Refresh', () => {
-    const { again } = renderDashboard(prList([], { fetchedAt: undefined, source: { ok: false, reason: 'gh-missing', error: 'No gh.' } }));
+    const { again } = renderAppShell(prList([], { fetchedAt: undefined, source: { ok: false, reason: 'gh-missing', error: 'No gh.' } }));
     expect(screen.getByText("gh isn't installed")).toBeDefined();
     expect(main().querySelector('.empty-state-sentence')?.textContent).toContain('Install it from cli.github.com, run gh auth login, then Refresh.');
     expect(within(main().querySelector('.empty-state')!).getByRole('button', { name: 'Refresh' })).toBeDefined();
@@ -508,7 +508,7 @@ describe('each source state', () => {
 
   it('keeps the last list after a failed fetch, under a notice that says when it is from', () => {
     vi.spyOn(Date, 'now').mockReturnValue(NOW);
-    renderDashboard(prList(PRS, { fetchedAt: minutesAgo(125), source: { ok: false, reason: 'error', error: 'No network.' } }));
+    renderAppShell(prList(PRS, { fetchedAt: minutesAgo(125), source: { ok: false, reason: 'error', error: 'No network.' } }));
     const notice = main().querySelector('.pr-stale .inline-alert');
     expect(notice?.querySelector('.inline-alert-title')?.textContent).toBe("Couldn't refresh your pull requests");
     expect(notice?.querySelector('.inline-alert-body')?.textContent).toMatch(/^No network\. This list is from 2h ago\.$/);
@@ -524,7 +524,7 @@ describe('Refresh', () => {
 
   it('POSTs with the apiKey, then is off for a minute, saying why', async () => {
     const fetch = server({ status: 200, body: { ok: true } });
-    renderDashboard(prList(PRS), { fetch });
+    renderAppShell(prList(PRS), { fetch });
     const button = screen.getByRole('button', { name: REFRESH_LABEL });
     fireEvent.click(button);
     await settle();
@@ -544,7 +544,7 @@ describe('Refresh', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     try {
       const fetch = server({ status: 200, body: { ok: true } });
-      renderDashboard(prList(PRS), { fetch });
+      renderAppShell(prList(PRS), { fetch });
       const button = screen.getByRole('button', { name: REFRESH_LABEL });
       fireEvent.click(button);
       await settle();
@@ -566,14 +566,14 @@ describe('Refresh', () => {
   });
 
   it('shows a spinner while a fetch runs', () => {
-    renderDashboard(prList(PRS, { refreshing: true }));
+    renderAppShell(prList(PRS, { refreshing: true }));
     const button = screen.getByRole('button', { name: REFRESH_LABEL });
     expect(button.getAttribute('aria-busy')).toBe('true');
     expect(button.querySelector('.spinner')).not.toBeNull();
   });
 
   it('takes a 429 calmly: an info toast with when, and off until then', async () => {
-    renderDashboard(prList(PRS), { fetch: server({ status: 429, body: { ok: false, error: 'Too soon.' }, headers: { 'Retry-After': '12' } }) });
+    renderAppShell(prList(PRS), { fetch: server({ status: 429, body: { ok: false, error: 'Too soon.' }, headers: { 'Retry-After': '12' } }) });
     fireEvent.click(screen.getByRole('button', { name: REFRESH_LABEL }));
     await settle();
     expect(toastMessages()).toEqual([refreshSoonText(12)]);
@@ -582,12 +582,12 @@ describe('Refresh', () => {
   });
 
   it('says pull requests are off after a 409, and what failed after anything else', async () => {
-    const first = renderDashboard(prList(PRS), { fetch: server({ status: 409, body: { ok: false, error: 'Off.' } }) });
+    const first = renderAppShell(prList(PRS), { fetch: server({ status: 409, body: { ok: false, error: 'Off.' } }) });
     fireEvent.click(screen.getByRole('button', { name: REFRESH_LABEL }));
     await settle();
     expect(toastMessages()).toEqual([PRS_OFF_TEXT]);
     first.unmount();
-    renderDashboard(prList(PRS), { fetch: server({ status: 500 }) });
+    renderAppShell(prList(PRS), { fetch: server({ status: 500 }) });
     fireEvent.click(screen.getByRole('button', { name: REFRESH_LABEL }));
     await settle();
     expect(toastMessages()).toEqual([refreshFailedText(500)]);
@@ -600,7 +600,7 @@ describe('Refresh', () => {
 describe('sessions and PRs', () => {
   it("opens a session from the list, the PR from its header, a session from the PR's view, with back and forward", async () => {
     const history = fakeHistory('?view=prs');
-    renderDashboard(prList(PRS), { navigation: history.navigation });
+    renderAppShell(prList(PRS), { navigation: history.navigation });
     fireEvent.click(within(main()).getByRole('button', { name: 'alpha' }));
     await settle();
     expect(history.location.search).toBe('?view=prs&session=pr-alpha');
@@ -645,7 +645,7 @@ describe('sessions and PRs', () => {
   });
 
   it('closes the PR view with Escape, with focus back on its row', async () => {
-    renderDashboard();
+    renderAppShell();
     const title = within(main()).getByRole('button', { name: '#8 Document the made-up retry headers' });
     fireEvent.click(title);
     await settle();
@@ -660,7 +660,7 @@ describe('sessions and PRs', () => {
   });
 
   it("steps through session and PR rows alike with j and k, and ↓ and ↑ on a row, showing each in the view while one's open", async () => {
-    const { navigation } = renderDashboard();
+    const { navigation } = renderAppShell();
     press('j', document.body);
     expect(document.activeElement?.getAttribute('data-open-session')).toBe('pr-alpha');
     press('ArrowDown');
@@ -682,7 +682,7 @@ describe('sessions and PRs', () => {
   });
 
   it('says a ?pr= that is not one of your open PRs is not listed, and waits for the first list', () => {
-    const { again } = renderDashboard(null, { search: '?view=prs&pr=example/demo-app/999' });
+    const { again } = renderAppShell(null, { search: '?view=prs&pr=example/demo-app/999' });
     expect(prView()?.querySelector('.empty-state')).toBeNull();
     again(prList(PRS));
     expect(screen.getByRole('heading', { name: "This pull request isn't listed" })).toBeDefined();
@@ -690,7 +690,7 @@ describe('sessions and PRs', () => {
   });
 
   it('keeps showing a PR that leaves the list while it is open, and says so', async () => {
-    const { again } = renderDashboard(prList(PRS), { search: '?view=prs&pr=example/demo-app/42' });
+    const { again } = renderAppShell(prList(PRS), { search: '?view=prs&pr=example/demo-app/42' });
     await settle();
     again(prList([approved]));
     expect(prView()?.querySelector('bdi')?.textContent).toBe('Fix the made-up export job');
@@ -698,7 +698,7 @@ describe('sessions and PRs', () => {
   });
 
   it("doesn't call it gone while a restart's first fetch runs, and says so once pull requests are off", async () => {
-    const { again } = renderDashboard(prList(PRS), { search: '?view=prs&pr=example/demo-app/42' });
+    const { again } = renderAppShell(prList(PRS), { search: '?view=prs&pr=example/demo-app/42' });
     await settle();
     // A restart: the poller's first message, before its first fetch, has no PRs and no fetchedAt.
     again(prList([], { fetchedAt: undefined, refreshing: true }));
@@ -728,7 +728,7 @@ describe('PRs that ask your review or mention you (W101)', () => {
   const badges = (number: number) => [...row(number).querySelectorAll('.badge')].map((badge) => badge.textContent);
 
   it('counts a review request among those that need you, and a mention not, in the repo list and the summary', () => {
-    renderDashboard(prList(ALL), { search: '?view=all' });
+    renderAppShell(prList(ALL), { search: '?view=all' });
     expect(prItem()?.querySelector('.badge')?.textContent).toBe('4 need you');
     expect(repoItem('Needs you')?.querySelector('.badge')?.textContent).toBe('4 need you');
     fireEvent.click(prItem()!);
@@ -736,7 +736,7 @@ describe('PRs that ask your review or mention you (W101)', () => {
   });
 
   it('marks a row Review requested or Mentioned, first among its badges, and sorts a review request with those that need attention', () => {
-    renderDashboard(prList(ALL));
+    renderAppShell(prList(ALL));
     expect(badges(77)).toEqual(['Review requested']);
     expect(badges(78)).toEqual(['Review requested', 'Checks failing']);
     expect(badges(79)).toEqual(['Mentioned', 'Checks failing', 'Conflicts']);
@@ -750,7 +750,7 @@ describe('PRs that ask your review or mention you (W101)', () => {
   });
 
   it('has the chips Yours, Review requested and Mentioned, which combine as OR, and Clear filters clears them and the text', () => {
-    renderDashboard(prList(ALL));
+    renderAppShell(prList(ALL));
     const group = within(main()).getByRole('group', { name: 'Filters' });
     expect([...group.querySelectorAll('.chip')].map((each) => each.textContent)).toEqual(['Yours', 'Review requested', 'Mentioned']);
     // Clear filters is on line 3, before Refresh, and only while a filter is on.
@@ -782,7 +782,7 @@ describe('PRs that ask your review or mention you (W101)', () => {
   });
 
   it('says when a chip finds none of its kind, with Clear filters', () => {
-    renderDashboard(prList([failing, approved]));
+    renderAppShell(prList([failing, approved]));
     fireEvent.click(chip('Review requested'));
     expect(screen.getByText(NO_RELATION['review-requested'].title)).toBeDefined();
     expect(NO_RELATION['review-requested']).toEqual({ title: 'No reviews requested', sentence: "Open pull requests that ask your review, or a team's you're on, show here. One asked of you leaves once you've reviewed it." });
@@ -794,7 +794,7 @@ describe('PRs that ask your review or mention you (W101)', () => {
   });
 
   it('says when nothing of yours is open, and when the chips and the text find nothing together', () => {
-    const { again } = renderDashboard(prList([review, mention]));
+    const { again } = renderAppShell(prList([review, mention]));
     fireEvent.click(chip('Yours'));
     expect(screen.getByText('No open pull requests of yours')).toBeDefined();
     again(prList(ALL));
@@ -815,7 +815,7 @@ describe('PRs that ask your review or mention you (W101)', () => {
         mentioned: { failed: { reason: 'error', error: "GitHub didn't answer within 30 seconds." } },
       },
     });
-    renderDashboard(list);
+    renderAppShell(list);
     const notice = main().querySelector('.pr-stale .inline-alert');
     expect(notice?.querySelector('.inline-alert-title')?.textContent).toBe("Couldn't refresh part of your pull requests");
     expect([...(notice?.querySelectorAll('.pr-stale-search') ?? [])].map((line) => line.textContent)).toEqual([
@@ -831,7 +831,7 @@ describe('PRs that ask your review or mention you (W101)', () => {
   });
 
   it('has no notice while every search worked', () => {
-    renderDashboard(prList(ALL, { searches: { authored: { fetchedAt: minutesAgo(2) }, 'review-requested': { fetchedAt: minutesAgo(2) }, mentioned: { fetchedAt: minutesAgo(2) } } }));
+    renderAppShell(prList(ALL, { searches: { authored: { fetchedAt: minutesAgo(2) }, 'review-requested': { fetchedAt: minutesAgo(2) }, mentioned: { fetchedAt: minutesAgo(2) } } }));
     expect(main().querySelector('.pr-stale')).toBeNull();
   });
 
@@ -854,7 +854,7 @@ describe("the session view's Pull requests tab (W106)", () => {
   const tab = () => within(sessionView()!).queryByRole('tab', { name: /^Pull requests/ });
 
   it('lists the PRs the session owns, with the PR view’s details and Open on GitHub, and opens one’s view', async () => {
-    const { navigation } = renderDashboard(prList(PRS), { search: '?view=all&session=pr-alpha' });
+    const { navigation } = renderAppShell(prList(PRS), { search: '?view=all&session=pr-alpha' });
     await settle();
     expect(tab()?.textContent).toBe('Pull requests (2)');
     fireEvent.click(tab()!);
@@ -877,7 +877,7 @@ describe("the session view's Pull requests tab (W106)", () => {
   });
 
   it('lists the PRs it worked on that another session owns, saying which, after its own', async () => {
-    renderDashboard(prList(PRS), { search: '?view=all&session=pr-delta' });
+    renderAppShell(prList(PRS), { search: '?view=all&session=pr-delta' });
     await settle();
     expect(tab()?.textContent).toBe('Pull requests (1)');
     fireEvent.click(tab()!);
@@ -888,11 +888,11 @@ describe("the session view's Pull requests tab (W106)", () => {
   });
 
   it('has no tab for a session that only mentioned one, or has none, and keeps it once shown, as Sub-agents does', async () => {
-    const first = renderDashboard(prList(PRS), { search: '?view=all&session=pr-gamma' });
+    const first = renderAppShell(prList(PRS), { search: '?view=all&session=pr-gamma' });
     await settle();
     expect(tab()).toBeNull();
     first.unmount();
-    const { again } = renderDashboard(prList(PRS), { search: '?view=all&session=pr-beta' });
+    const { again } = renderAppShell(prList(PRS), { search: '?view=all&session=pr-beta' });
     await settle();
     fireEvent.click(tab()!);
     again(prList([approved]));

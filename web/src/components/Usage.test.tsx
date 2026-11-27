@@ -8,7 +8,7 @@ import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import { group, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
 import { asUsageView, costText, parseUsage, tokenText, withUsage } from '../usage.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 import { UsageDialog } from './UsageDialog.js';
 
 const tokens = (cost: number, extra: Partial<UsageTokens> = {}): UsageTokens => ({ calls: 10, input: 1200, cacheWrite: 34_000, cacheRead: 2_500_000, output: 5600, cost, ...extra });
@@ -207,7 +207,7 @@ describe('in the app', () => {
     const snap = snapshot([group({ sessions: [session({ sessionId: NAMED, name: 'pitwall-test-named' })] })]);
     render(
       <ApiContext.Provider value={api}>
-        <Dashboard view={{ state: 'live', snapshot: snap }} navigation={history.navigation} />
+        <AppShell view={{ state: 'live', snapshot: snap }} navigation={history.navigation} />
       </ApiContext.Provider>,
     );
     expect(fetch.mock.calls.filter(([url]) => url.startsWith(USAGE_PATH))).toHaveLength(0);
@@ -232,7 +232,7 @@ describe('in the app', () => {
     const api = createApiClient({ apiKey: 'k'.repeat(43), fetch: fakeFetch() });
     render(
       <ApiContext.Provider value={api}>
-        <Dashboard view={{ state: 'live', snapshot: snapshot([group({ sessions: [session()] })]) }} navigation={history.navigation} />
+        <AppShell view={{ state: 'live', snapshot: snapshot([group({ sessions: [session()] })]) }} navigation={history.navigation} />
       </ApiContext.Provider>,
     );
     expect(await screen.findByText('42% used')).toBeTruthy();

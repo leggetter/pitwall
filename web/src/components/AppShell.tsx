@@ -58,7 +58,7 @@
 // session with `j`, `k`, ↑ or ↓ tells its view so, and a terminal it opens on waits a moment before
 // attaching, so passing through attaches nothing. A click or Enter on a row tells the view it opened
 // so too, and only then may its terminal take focus as it attaches (W57), unless Preferences says
-// never. The dialog is rendered here, as the other dialogs are, and changes the Dashboard's own
+// never. The dialog is rendered here, as the other dialogs are, and changes the AppShell's own
 // settings, so the views read what it sets.
 //
 // With two or more roots, the header has a tab per root (W38, rootTabs.ts), and the open tab narrows
@@ -104,7 +104,7 @@
 // and PRs' alike, and show each in the view while one is open.
 //
 // The supervisor (M5, W114, supervisor.ts): while pitwall runs one, the header's Supervisor button,
-// last on its right (W182), opens its panel (SupervisorView.tsx, W177), as ?supervisor, beside the
+// last on its right (W182), opens its panel (SupervisorPanel.tsx, W177), as ?supervisor, beside the
 // open session's or PR's view, which stays, in one pushed history entry. It stays open as the
 // selection, the open session or the root tab changes, until it's closed. From 1,200 px it's a column
 // of its own that pushes the other columns left, covering none of them, and below 1,520 px folds the
@@ -160,7 +160,7 @@ import { approvalsWaiting, askAboutPr, askAboutSession, asSupervisorState, type 
 import { usePrRefresh } from '../prRefresh.js';
 import { listNow, prKey, prListState, prName, prsOff, SEARCH_NAMES, sessionsFor, strongPrsOf } from '../prs.js';
 import { pendingLink, prPrefill, withPendingLinks, type PendingLinks } from '../prStart.js';
-import { createPanelWidthStore } from '../panelWidth.js';
+import { createSessionPaneWidthStore } from '../sessionPaneWidth.js';
 import { relayAlertText } from '../relay.js';
 import { tabAttention, tabGroups, writeStoredTab } from '../rootTabs.js';
 import { clearedText, noteContinued, openSpinOffs, spinOffCount, useDismissedSpinOffs } from '../spinOff.js';
@@ -225,7 +225,7 @@ import { useLeadsOpen } from './LeadRows.js';
 import { arrangeLeads, leadActions, leadChoices, leadDoneText, makeLead, reportedText, reportTo, startWorkerSubtitle, workerStarted, type LeadAction, type LeadScope } from '../leads.js';
 import { ReportToDialog } from './ReportToDialog.js';
 import { SessionView, UnlistedSessionView, WaitingSessionView } from './SessionView.js';
-import { SupervisorOffView, SupervisorView } from './SupervisorView.js';
+import { SupervisorOffPanel, SupervisorPanel } from './SupervisorPanel.js';
 import { ShortcutsDialog } from './ShortcutsDialog.js';
 import { SortMenu } from './SortMenu.js';
 import { ToastContext, ToastRegion, useToastStack } from './Toast.js';
@@ -336,7 +336,7 @@ const spinOffSubtitle = (from: string) => (
   </>
 );
 
-export interface DashboardProps {
+export interface AppShellProps {
   view: ConnectionView;
   /** Where the selection and the Finished sections are remembered. Tests pass their own; localStorage otherwise. */
   storage?: StorageSource;
@@ -344,7 +344,7 @@ export interface DashboardProps {
   navigation?: NavigationEnv;
 }
 
-export function Dashboard({ view, storage = browserStorage, navigation = browserNavigation }: DashboardProps) {
+export function AppShell({ view, storage = browserStorage, navigation = browserNavigation }: AppShellProps) {
   const { state, snapshot, serverError } = view;
   // A heartbeat brings a newer poll than the snapshot, with nothing else changed.
   const updatedAt = view.lastPoll?.generatedAt ?? snapshot?.generatedAt;
@@ -353,7 +353,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   const app = useRef<HTMLDivElement>(null);
   const { layout, compact, overlayCoversRepos, panelFoldsRepos } = useLayout(app);
   // The session view's width as the third column: the divider and the actions menu's width items change it.
-  const [panelWidth] = useState(() => createPanelWidthStore(storage));
+  const [paneWidth] = useState(() => createSessionPaneWidthStore(storage));
   // Group sessions by, from Preferences (W42, W59): the snapshot's groups, grouped again for the mode.
   const [groupBy, setGroupBy] = useGroupBy(storage);
   // Which tab a running background session's view opens on, from Preferences too (W54).
@@ -1949,7 +1949,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       compact={compact}
       headingRef={hiddenIn === undefined ? viewHeading : undefined}
       onStep={hiddenIn === undefined ? stepFromView : undefined}
-      panel={layout === 'three-columns' ? panelWidth : undefined}
+      paneWidth={layout === 'three-columns' ? paneWidth : undefined}
       animate={hiddenIn === undefined && animate}
       hidden={hiddenIn !== undefined}
       onDraftChange={(has) => {
@@ -2101,7 +2101,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   let supervisorPanel: ReactNode;
   if (supervisorOpen && supervisor) {
     supervisorPanel = (
-      <SupervisorView
+      <SupervisorPanel
         key="supervisor"
         state={supervisor}
         onClose={closeSupervisor}
@@ -2142,7 +2142,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
   } else if (supervisorOpen) {
     // With --no-supervisor: the panel says so.
     supervisorPanel = (
-      <SupervisorOffView key="supervisor-off" onClose={closeSupervisor} layout={viewLayout} compact={compact} backLabel={panelBack} headingRef={supervisorHeading} animate={panelAnimate} />
+      <SupervisorOffPanel key="supervisor-off" onClose={closeSupervisor} layout={viewLayout} compact={compact} backLabel={panelBack} headingRef={supervisorHeading} animate={panelAnimate} />
     );
   }
   // The other root tabs' open sessions, hidden, in their tabs' order, with the open tab's view in its
@@ -2260,7 +2260,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
         {/* The third column from 1,200 px; below that, display: contents, and the view overlays the list.
             The supervisor's panel is last, over the views, which are inert under it below 1,200 px (W177). */}
         <div className="session-pane" {...(supervisorPanel === undefined ? {} : { 'data-panel-open': '' })}>
-          {layout === 'three-columns' && <Divider store={panelWidth} beside={supervisorPanel !== undefined} />}
+          {layout === 'three-columns' && <Divider store={paneWidth} beside={supervisorPanel !== undefined} />}
           <div className="pane-views" inert={viewCovered || undefined}>
             {paneViews}
           </div>

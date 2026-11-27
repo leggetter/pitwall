@@ -1,4 +1,4 @@
-// The New session dialog and whole-page states (W19, W21): the real NewSessionDialog, Dashboard and
+// The New session dialog and whole-page states (W19, W21): the real NewSessionDialog, AppShell and
 // Notice, with fixture connection views instead of a live connection. Each page has storage and an
 // address bar of its own, in memory, so its selection never reaches the gallery's URL.
 
@@ -9,14 +9,14 @@ import type { ConnectionState, ConnectionView } from '../connection.js';
 import { Badge, StatusBadge } from '../components/Badge.js';
 import { ConnectionBadge } from '../components/ConnectionBadge.js';
 import { FINISHED_ASKED_HINT, STALE_HINT } from '../components/SessionRow.js';
-import { Dashboard } from '../components/Dashboard.js';
+import { AppShell } from '../components/AppShell.js';
 import { DIRECTORY_TEXT, NewSessionDialog } from '../components/NewSessionDialog.js';
 import { PreferencesDialog, RepoListPreferences, SessionViewPreferences, WorkPreferences, type PreferencesProps } from '../components/Preferences.js';
 import { ShortcutsDialog } from '../components/ShortcutsDialog.js';
 import { NoTokenNotice, TokenRejectedNotice } from '../components/Notice.js';
 import { shortenHome } from '../format.js';
 import type { GroupBy } from '../groupBy.js';
-import { PANEL_WIDTH_KEY } from '../panelWidth.js';
+import { SESSION_PANE_WIDTH_KEY } from '../sessionPaneWidth.js';
 import { memoryNavigation } from '../selection.js';
 import { statusBadge } from '../sessions.js';
 import { ShortcutsStoreContext } from '../shortcuts.js';
@@ -424,7 +424,7 @@ export function ShortcutsDialogs() {
   );
 }
 
-/** The settings the Dashboard keeps for the Preferences dialog, with state of their own, starting at `start`. */
+/** The settings the AppShell keeps for the Preferences dialog, with state of their own, starting at `start`. */
 function usePreferenceState(start: Partial<Pick<PreferencesProps, 'groupBy' | 'backgroundTab' | 'terminalFocus'>> = {}): PreferencesProps {
   const [groupBy, onGroupBy] = useState<GroupBy>(start.groupBy ?? 'main-repo');
   const [backgroundTab, onBackgroundTab] = useState<BackgroundTab>(start.backgroundTab ?? 'terminal');
@@ -781,10 +781,10 @@ const PAGES: PageCase[] = [
   },
 ];
 
-/** One page: the Dashboard with storage and an address bar of its own, so it never touches the gallery's. */
+/** One page: the AppShell with storage and an address bar of its own, so it never touches the gallery's. */
 function Page({ page }: { page: PageCase }) {
   const [own] = useState(() => ({ storage: memoryStorage(page.stored), navigation: memoryNavigation(page.search ?? '') }));
-  const dashboard = <Dashboard view={page.view} storage={own.storage} navigation={own.navigation} />;
+  const dashboard = <AppShell view={page.view} storage={own.storage} navigation={own.navigation} />;
   return <Stubbed>{page.run ? <Scenario run={page.run}>{dashboard}</Scenario> : dashboard}</Stubbed>;
 }
 
@@ -847,7 +847,7 @@ const LAYOUTS: PageCase[] = [
     note: 'In three columns the menu can resize the view without a drag (WCAG 2.5.7): Make view wider and Make view narrower move it 80 px, and Reset view width goes back to 760 px, or what the window allows. Here the view is 600 px in a 1,280 px window, so all three can act; at a limit, an item is off, and says why in its tooltip.',
     width: 1280,
     search: OPEN,
-    stored: { [PANEL_WIDTH_KEY]: '600' },
+    stored: { [SESSION_PANE_WIDTH_KEY]: '600' },
     view: { state: 'live', snapshot: LIST_SNAPSHOT },
     run: async (root) => {
       if (!laidOut(root)) return;
@@ -875,7 +875,7 @@ const LAYOUTS: PageCase[] = [
     note: 'Dragged, or Home on the divider: 560 px, about 80 terminal columns.',
     width: 1280,
     search: OPEN,
-    stored: { [PANEL_WIDTH_KEY]: '560' },
+    stored: { [SESSION_PANE_WIDTH_KEY]: '560' },
     view: { state: 'live', snapshot: LIST_SNAPSHOT },
   },
   {
@@ -883,7 +883,7 @@ const LAYOUTS: PageCase[] = [
     note: 'Dragged, or End on the divider: what the repo list and the session list’s 360 px leave, here 680 px.',
     width: 1280,
     search: OPEN,
-    stored: { [PANEL_WIDTH_KEY]: '4000' },
+    stored: { [SESSION_PANE_WIDTH_KEY]: '4000' },
     view: { state: 'live', snapshot: LIST_SNAPSHOT },
   },
   {

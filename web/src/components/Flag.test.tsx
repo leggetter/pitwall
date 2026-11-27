@@ -14,7 +14,7 @@ import { canFlag, isFlagged, needsAttention, statusBadge } from '../sessions.js'
 import { createShortcutsStore, ShortcutsStoreContext } from '../shortcuts.js';
 import { group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
 import { toastMessages, toastSaying } from '../test/toasts.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 import type { TerminalHandle } from './Terminal.js';
 
 class QuietTerminal implements TerminalHandle {
@@ -72,7 +72,7 @@ function memory(): StorageSource {
   return () => ({ getItem: (name) => items.get(name) ?? null, setItem: (name, value) => void items.set(name, value) });
 }
 
-function renderDashboard(first: IndexSnapshot, fetch = fakeServer(), search = '?view=needs-you') {
+function renderAppShell(first: IndexSnapshot, fetch = fakeServer(), search = '?view=needs-you') {
   const api = createApiClient({ apiKey: 'pitwall-test-key', fetch });
   const navigation = memoryNavigation(search);
   const shortcuts = createShortcutsStore({ storage: memory(), events: { addEventListener: () => {} } });
@@ -80,7 +80,7 @@ function renderDashboard(first: IndexSnapshot, fetch = fakeServer(), search = '?
   const ui = (s: IndexSnapshot) => (
     <ApiContext.Provider value={api}>
       <ShortcutsStoreContext.Provider value={shortcuts}>
-        <Dashboard view={{ state: 'live', snapshot: s }} navigation={navigation} storage={storage} />
+        <AppShell view={{ state: 'live', snapshot: s }} navigation={navigation} storage={storage} />
       </ShortcutsStoreContext.Provider>
     </ApiContext.Provider>
   );
@@ -139,7 +139,7 @@ describe('flags.ts', () => {
 
 describe('the flag toggle on a row', () => {
   it('is on each running row that needs you, named for its session, not pressed; never on one that needs nothing or isn’t running', () => {
-    renderDashboard(snap(), fakeServer(), '?view=all');
+    renderAppShell(snap(), fakeServer(), '?view=all');
     expect(flagToggle('review')?.getAttribute('aria-pressed')).toBe('false');
     expect(flagToggle('docs')).not.toBeNull();
     expect(flagToggle('idle')).toBeNull();
@@ -150,7 +150,7 @@ describe('the flag toggle on a row', () => {
   });
 
   it('flags it with the reason the page shows, and says the session was asked, with Undo', async () => {
-    const { fetch } = renderDashboard(snap());
+    const { fetch } = renderAppShell(snap());
     fireEvent.click(flagToggle('review')!);
     await settle();
     expect(posts(fetch)).toEqual([[flagPath(id(1)), { reason: 'claude-code', from: 'row' }]]);
@@ -162,14 +162,14 @@ describe('the flag toggle on a row', () => {
   });
 
   it('says why when pitwall refuses the flag', async () => {
-    renderDashboard(snap(), fakeServer({ status: 409, body: { ok: false, error: 'What it needs you for has just changed. Look again before you flag it.' } }));
+    renderAppShell(snap(), fakeServer({ status: 409, body: { ok: false, error: 'What it needs you for has just changed. Look again before you flag it.' } }));
     fireEvent.click(flagToggle('review')!);
     await settle();
     expect(toastMessages()).toContain('What it needs you for has just changed. Look again before you flag it.');
   });
 
   it('leaves Needs you once the snapshot says it is flagged', async () => {
-    const { again } = renderDashboard(snap());
+    const { again } = renderAppShell(snap());
     expect(rowNames()).toContain('review');
     again(snap(sessions(true)));
     await settle();
@@ -177,7 +177,7 @@ describe('the flag toggle on a row', () => {
   });
 
   it('stays in All sessions, quietly: the badge outlined, "You flagged this" on line 2, the toggle pressed', () => {
-    renderDashboard(snap(sessions(true)), fakeServer(), '?view=all');
+    renderAppShell(snap(sessions(true)), fakeServer(), '?view=all');
     const flagged = row('review');
     expect(flagged.className).toContain('set-aside');
     expect(flagged.querySelector('.session-set-aside')?.textContent).toBe(FLAGGED_TEXT);
@@ -188,7 +188,7 @@ describe('the flag toggle on a row', () => {
 
 describe('a flagged row’s toggle', () => {
   it('takes the flag away with no toast', async () => {
-    const { fetch } = renderDashboard(snap(sessions(true)), fakeServer({ status: 200, body: { ok: true } }), '?view=all');
+    const { fetch } = renderAppShell(snap(sessions(true)), fakeServer({ status: 200, body: { ok: true } }), '?view=all');
     fireEvent.click(flagToggle('review')!);
     await settle();
     expect(posts(fetch)).toEqual([[unflagPath(id(1)), {}]]);
@@ -198,7 +198,7 @@ describe('a flagged row’s toggle', () => {
 
 describe("the session view's actions menu", () => {
   it("has It doesn't need me while it can be flagged, and Undo flag, with a toast, once it is", async () => {
-    const { fetch, again } = renderDashboard(snap(), fakeServer(), '?view=all');
+    const { fetch, again } = renderAppShell(snap(), fakeServer(), '?view=all');
     fireEvent.click(within(main()).getByRole('button', { name: 'review' }));
     await settle();
     expect(menuLabels()).toContain(FLAG_ITEM);
@@ -218,7 +218,7 @@ describe("the session view's actions menu", () => {
   });
 
   it('has neither for a session that needs nothing', async () => {
-    renderDashboard(snap(), fakeServer(), '?view=all');
+    renderAppShell(snap(), fakeServer(), '?view=all');
     fireEvent.click(within(main()).getByRole('button', { name: 'idle' }));
     await settle();
     const labels = menuLabels();

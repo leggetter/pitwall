@@ -17,7 +17,7 @@ import { STARRED_KEY } from '../starred.js';
 import { fakeSockets, group, minutesAgo, NOW, session, snapshot, type FakeSocket } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
 import { toastMessages, toastSaying } from '../test/toasts.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 import {
   COPY_STARTED,
   ENDED_GONE_NOTE,
@@ -29,7 +29,7 @@ import {
   resumedText,
   resumeToast,
 } from './EndedSession.js';
-import { KEPT_NOT_RUNNING } from './RelayBox.js';
+import { KEPT_NOT_RUNNING } from './MessageBox.js';
 import { OLDER_NOTE, olderText } from './SessionList.js';
 import { ENDED_ASKED_HINT } from './SessionRow.js';
 import { BG_NOTE } from './SessionView.js';
@@ -175,7 +175,7 @@ interface Options {
   answers?: Answer[];
 }
 
-function renderDashboard(first: IndexSnapshot = snap(), options: Options = {}) {
+function renderAppShell(first: IndexSnapshot = snap(), options: Options = {}) {
   const history = fakeHistory(options.search ?? '?view=all');
   const fetch = fakeServer(...(options.answers ?? []));
   const api = createApiClient({ apiKey: API_KEY, fetch });
@@ -185,7 +185,7 @@ function renderDashboard(first: IndexSnapshot = snap(), options: Options = {}) {
   const ui = (s: IndexSnapshot) => (
     <ApiContext.Provider value={api}>
       <AttachContext.Provider value={env}>
-        <Dashboard view={{ state: 'live', snapshot: s }} navigation={history.navigation} storage={storage} />
+        <AppShell view={{ state: 'live', snapshot: s }} navigation={history.navigation} storage={storage} />
       </AttachContext.Provider>
     </ApiContext.Provider>
   );
@@ -318,7 +318,7 @@ describe('what the page derives from an ended session', () => {
 
 describe('ended sessions in the lists', () => {
   it('are in their group’s Finished section, muted, last, labelled Ended, with the time of their last activity', async () => {
-    renderDashboard();
+    renderAppShell();
     await settle();
     expect(rowNames()).toEqual(['demo-live']);
     expect(finishedToggle()?.textContent).toBe('Finished (4) · 1 asked you');
@@ -334,7 +334,7 @@ describe('ended sessions in the lists', () => {
   });
 
   it('are never in Needs you, or its count, whatever they asked', async () => {
-    renderDashboard(snap(), { search: '?view=needs-you' });
+    renderAppShell(snap(), { search: '?view=needs-you' });
     await settle();
     expect(within(list()).queryByRole('button', { name: 'demo-ended-asked' })).toBeNull();
     expect(screen.getByText('Nothing needs you right now')).toBeTruthy();
@@ -342,7 +342,7 @@ describe('ended sessions in the lists', () => {
   });
 
   it('match the filter as other sessions do, and the Interactive chip', async () => {
-    renderDashboard();
+    renderAppShell();
     await openFinished();
     fireEvent.change(screen.getByRole('searchbox', { name: 'Filter sessions' }), { target: { value: 'export' } });
     await settle();
@@ -354,7 +354,7 @@ describe('ended sessions in the lists', () => {
   });
 
   it('can be starred, and show in Starred’s own Finished section', async () => {
-    renderDashboard(snap(), { search: '?view=starred', storage: memory({ [STARRED_KEY]: JSON.stringify({ v: 1, ids: [ENDED] }) }) });
+    renderAppShell(snap(), { search: '?view=starred', storage: memory({ [STARRED_KEY]: JSON.stringify({ v: 1, ids: [ENDED] }) }) });
     await settle();
     expect(finishedToggle()?.textContent).toBe('Finished (1)');
     await openFinished();
@@ -365,7 +365,7 @@ describe('ended sessions in the lists', () => {
 
 describe(`ended sessions older than ${ENDED_SHOWN_DAYS} days`, () => {
   it('are left out of every list and count, and a group with nothing else is left out of the repo list', async () => {
-    renderDashboard();
+    renderAppShell();
     await openFinished();
     expect(rowNames()).not.toContain('demo-ended-old');
     expect(summaryCount()).toBe('5 sessions');
@@ -375,7 +375,7 @@ describe(`ended sessions older than ${ENDED_SHOWN_DAYS} days`, () => {
   });
 
   it('are behind Show older, after the Finished section’s rows, which says how many and is described by the line after it', async () => {
-    renderDashboard();
+    renderAppShell();
     await openFinished();
     const toggle = olderButton()!;
     // The selection's: demo-app's one and notes' one, in All sessions.
@@ -388,7 +388,7 @@ describe(`ended sessions older than ${ENDED_SHOWN_DAYS} days`, () => {
   });
 
   it('show once it’s pressed, which keeps focus as Hide older, adds them to the counts and the repo list, and is one switch for the page', async () => {
-    renderDashboard();
+    renderAppShell();
     await openFinished();
     const toggle = olderButton()!;
     toggle.focus();
@@ -413,21 +413,21 @@ describe(`ended sessions older than ${ENDED_SHOWN_DAYS} days`, () => {
 
   it('isn’t kept across a reload', async () => {
     const storage = memory();
-    const first = renderDashboard(snap(), { storage });
+    const first = renderAppShell(snap(), { storage });
     await openFinished();
     fireEvent.click(olderButton()!);
     await settle();
     expect(rowNames()).toContain('demo-ended-old');
     first.unmount();
     expect([...storage.values.keys()].some((key) => /older/i.test(key))).toBe(false);
-    renderDashboard(snap(), { storage });
+    renderAppShell(snap(), { storage });
     await openFinished();
     expect(rowNames()).not.toContain('demo-ended-old');
     expect(olderButton()?.textContent).toBe('Show 2 older sessions');
   });
 
   it('count only what the filter shows', async () => {
-    renderDashboard();
+    renderAppShell();
     await openFinished();
     fireEvent.change(screen.getByRole('searchbox', { name: 'Filter sessions' }), { target: { value: 'demo' } });
     await settle();
@@ -436,7 +436,7 @@ describe(`ended sessions older than ${ENDED_SHOWN_DAYS} days`, () => {
 
   it('are offered from an empty state when they’re all a selection has, which opens the Finished section and puts focus on Hide older', async () => {
     const onlyOld = snap([ended(4, 'demo-ended-old', { lastActivityAt: minutesAgo(10 * DAY) })]);
-    renderDashboard(onlyOld);
+    renderAppShell(onlyOld);
     await settle();
     expect(screen.getByText('No Claude Code sessions under ~/code')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Show 2 older sessions' }));
@@ -448,7 +448,7 @@ describe(`ended sessions older than ${ENDED_SHOWN_DAYS} days`, () => {
   });
 
   it('are offered from a group’s empty state, whose group has only those', async () => {
-    renderDashboard(snap(), { search: `?repo=${NOTES}` });
+    renderAppShell(snap(), { search: `?repo=${NOTES}` });
     await settle();
     expect(screen.getByText('No sessions in notes now')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Show 1 older session' }));
@@ -457,7 +457,7 @@ describe(`ended sessions older than ${ENDED_SHOWN_DAYS} days`, () => {
   });
 
   it('still show in a view that’s open when they’re hidden again, which doesn’t say it’s no longer listed', async () => {
-    renderDashboard();
+    renderAppShell();
     await openFinished();
     fireEvent.click(olderButton()!);
     await open('demo-ended-old');
@@ -469,7 +469,7 @@ describe(`ended sessions older than ${ENDED_SHOWN_DAYS} days`, () => {
   });
 
   it('open from a URL, though they’re hidden', async () => {
-    renderDashboard(snap(), { search: `?view=all&session=${ENDED_OLD}` });
+    renderAppShell(snap(), { search: `?view=all&session=${ENDED_OLD}` });
     await settle();
     expect(view().querySelector('.session-view-name')?.textContent).toBe('demo-ended-old');
   });
@@ -477,13 +477,13 @@ describe(`ended sessions older than ${ENDED_SHOWN_DAYS} days`, () => {
 
 describe('the session view of an ended session', () => {
   it('has the Conversation tab alone, Ended as its status, no /bg note, no message box, and the footer’s note and actions', async () => {
-    const { sockets } = renderDashboard();
+    const { sockets } = renderAppShell();
     await open('demo-ended');
     expect(within(view()).getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Conversation']);
     expect(within(view()).getByRole('tab', { name: 'Conversation' }).getAttribute('aria-selected')).toBe('true');
     expect(view().querySelector('.session-view-meta .badge.state-ended')?.textContent).toBe('Ended');
     expect(within(view()).queryByRole('button', { name: BG_NOTE })).toBeNull();
-    expect(view().querySelector('.relay-box')).toBeNull();
+    expect(view().querySelector('.message-box')).toBeNull();
     expect(footer()?.querySelector('.session-view-note')?.textContent).toBe(ENDED_NOTE);
     const actions = [...footer()!.querySelectorAll('.ended-actions button')].map((each) => each.textContent);
     expect(actions).toEqual(['Copy command', 'Resume in background']);
@@ -492,7 +492,7 @@ describe('the session view of an ended session', () => {
   });
 
   it('has Copy session ID, Copy resume command, then Resume in background in its actions menu, and no Stop or Remove', async () => {
-    renderDashboard();
+    renderAppShell();
     await open('demo-ended');
     // The width items too, in three columns.
     expect(openMenu()).toEqual(['Copy session ID', 'Copy resume command', '—', 'Make lead', '—', 'Make view wider', 'Make view narrower', 'Reset view width', '—', 'Resume in background']);
@@ -500,7 +500,7 @@ describe('the session view of an ended session', () => {
 
   it("says why there's no Copy command for one whose directory's path has a ' or \\, with Resume in background alone (W87)", async () => {
     const quoted = sessions().map((each) => (each.sessionId === ENDED ? { ...each, cwd: `${DEMO}/it's here` } : each));
-    renderDashboard(snap(quoted));
+    renderAppShell(snap(quoted));
     await open('demo-ended');
     const note = footer()?.querySelector('.session-view-note');
     expect(note?.textContent).toBe(ENDED_NO_COMMAND_NOTE);
@@ -511,7 +511,7 @@ describe('the session view of an ended session', () => {
   });
 
   it('says why one whose directory has gone can’t be resumed, with nothing to press', async () => {
-    const { fetch } = renderDashboard();
+    const { fetch } = renderAppShell();
     await open('demo-ended-gone');
     expect(footer()?.querySelector('.session-view-note')?.textContent).toBe(ENDED_GONE_NOTE);
     expect(footer()?.querySelector('.ended-actions')).toBeNull();
@@ -522,9 +522,9 @@ describe('the session view of an ended session', () => {
 
   it('keeps a draft the tab kept, in the message box above the note, which says it can’t be sent', async () => {
     window.sessionStorage.setItem(draftKey(ENDED), JSON.stringify({ v: 1, text: 'A made-up draft.' }));
-    renderDashboard();
+    renderAppShell();
     await open('demo-ended');
-    const box = footer()!.querySelector<HTMLElement>('.relay-box')!;
+    const box = footer()!.querySelector<HTMLElement>('.message-box')!;
     expect(within(box).getByRole('textbox').textContent).toBe('A made-up draft.');
     expect(box.textContent).toContain(KEPT_NOT_RUNNING);
     expect(box.nextElementSibling?.classList.contains('ended-foot')).toBe(true);
@@ -532,19 +532,19 @@ describe('the session view of an ended session', () => {
 
   it('becomes an ended session’s view when its process exits while it’s open, on Conversation, with the footer’s actions', async () => {
     const live = sessions().map((each) => (each.sessionId === ENDED ? session({ sessionId: ENDED, name: 'demo-ended', cwd: DEMO, lastActivityAt: minutesAgo(1) }) : each));
-    const { update } = renderDashboard(snap(live));
+    const { update } = renderAppShell(snap(live));
     await open('demo-ended');
-    expect(view().querySelector('.relay-box')).not.toBeNull();
+    expect(view().querySelector('.message-box')).not.toBeNull();
     update(snap());
     await settle();
     expect(view().querySelector('.session-view-name')?.textContent).toBe('demo-ended');
-    expect(view().querySelector('.relay-box')).toBeNull();
+    expect(view().querySelector('.message-box')).toBeNull();
     expect(footer()?.querySelector('.session-view-note')?.textContent).toBe(ENDED_NOTE);
     expect(within(view()).getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Conversation']);
   });
 
   it('opens on Conversation when stepped onto with j, and attaches nothing', async () => {
-    const { sockets } = renderDashboard();
+    const { sockets } = renderAppShell();
     await open('demo-ended-asked');
     fireEvent.keyDown(view().querySelector('h2')!, { key: 'j' });
     await settle();
@@ -561,7 +561,7 @@ describe('the session view of an ended session', () => {
     });
 
     it('copies the command that resumes it in a terminal, with the Copied toast', async () => {
-      renderDashboard();
+      renderAppShell();
       await open('demo-ended');
       fireEvent.click(button('Copy command'));
       await settle();
@@ -570,7 +570,7 @@ describe('the session view of an ended session', () => {
     });
 
     it('copies the same from the actions menu', async () => {
-      renderDashboard();
+      renderAppShell();
       await open('demo-ended');
       openMenu();
       fireEvent.click(within(view()).getByRole('menuitem', { name: 'Copy resume command' }));
@@ -580,7 +580,7 @@ describe('the session view of an ended session', () => {
 
     it('shows the command, selected, under line 2 when the clipboard refuses', async () => {
       writeText.mockRejectedValue(new Error('made up: refused'));
-      renderDashboard();
+      renderAppShell();
       await open('demo-ended');
       fireEvent.click(button('Copy command'));
       await settle();
@@ -592,7 +592,7 @@ describe('the session view of an ended session', () => {
 
 describe('Resume in background', () => {
   it('POSTs resumePath() with the API key and no prompt, busy and disabled while it runs, then a toast; busy until it’s listed as running', async () => {
-    const { fetch } = renderDashboard(snap(), { answers: ['held'] });
+    const { fetch } = renderAppShell(snap(), { answers: ['held'] });
     await open('demo-ended');
     fireEvent.click(button('Resume in background'));
     await settle();
@@ -618,7 +618,7 @@ describe('Resume in background', () => {
   it('is Resume in background again if the snapshot still lists it as ended after a while', async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     vi.setSystemTime(NOW);
-    renderDashboard();
+    renderAppShell();
     await open('demo-ended');
     fireEvent.click(button('Resume in background'));
     await act(() => vi.advanceTimersByTimeAsync(10));
@@ -630,7 +630,7 @@ describe('Resume in background', () => {
   it('doesn’t open the Terminal tab for a listing after it has given up on one', async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     vi.setSystemTime(NOW);
-    const { update, sockets } = renderDashboard();
+    const { update, sockets } = renderAppShell();
     await open('demo-ended');
     fireEvent.click(button('Resume in background'));
     await act(() => vi.advanceTimersByTimeAsync(10));
@@ -644,7 +644,7 @@ describe('Resume in background', () => {
 
   it('opens the Terminal tab once the snapshot lists it as a running background session, with focus on the tab and none in the terminal (W57), and keeps its star', async () => {
     const storage = memory({ [STARRED_KEY]: JSON.stringify({ v: 1, ids: [ENDED] }) });
-    const { update, sockets } = renderDashboard(snap(), { storage });
+    const { update, sockets } = renderAppShell(snap(), { storage });
     await open('demo-ended');
     const resume = button('Resume in background');
     resume.focus();
@@ -675,7 +675,7 @@ describe('Resume in background', () => {
   });
 
   it('opens the Terminal tab just the same when the snapshot lists it as running before the server answers, moving focus from Resume to the tab', async () => {
-    const { fetch, update, sockets } = renderDashboard(snap(), { answers: ['held'] });
+    const { fetch, update, sockets } = renderAppShell(snap(), { answers: ['held'] });
     await open('demo-ended');
     const resume = button('Resume in background');
     resume.focus();
@@ -697,7 +697,7 @@ describe('Resume in background', () => {
   });
 
   it('opens the Terminal tab once, so a root tab opened again later leaves the tab you chose, whichever came first', async () => {
-    const { fetch, update, sockets } = renderDashboard(twoRoots(), { answers: ['held'] });
+    const { fetch, update, sockets } = renderAppShell(twoRoots(), { answers: ['held'] });
     await open('demo-ended');
     fireEvent.click(button('Resume in background'));
     await settle();
@@ -720,7 +720,7 @@ describe('Resume in background', () => {
   });
 
   it('moves focus from the footer to the heading when the session leaves the list, which takes the footer away', async () => {
-    const { update } = renderDashboard();
+    const { update } = renderAppShell();
     await open('demo-ended');
     button('Copy command').focus();
     update(snap(sessions().filter((each) => each.sessionId !== ENDED)));
@@ -732,7 +732,7 @@ describe('Resume in background', () => {
 
   it('stays on Conversation once it’s running when Preferences says so', async () => {
     const storage = memory({ 'pitwall.background-tab.v1': 'conversation' });
-    const { update, sockets } = renderDashboard(snap(), { storage });
+    const { update, sockets } = renderAppShell(snap(), { storage });
     await open('demo-ended');
     fireEvent.click(button('Resume in background'));
     await settle();
@@ -744,7 +744,7 @@ describe('Resume in background', () => {
   });
 
   it('is in the actions menu too, off while it runs', async () => {
-    const { fetch } = renderDashboard(snap(), { answers: [{ status: 409, body: { ok: false, error: 'Made up: it is open in a terminal again.' } }] });
+    const { fetch } = renderAppShell(snap(), { answers: [{ status: 409, body: { ok: false, error: 'Made up: it is open in a terminal again.' } }] });
     await open('demo-ended');
     openMenu();
     fireEvent.click(within(view()).getByRole('menuitem', { name: 'Resume in background' }));
@@ -765,7 +765,7 @@ describe('Resume in background', () => {
     ['a 502 with no reason', { status: 502 }, "Couldn't resume the session (HTTP 502)."],
     ['no answer at all', 'network', "Couldn't resume the session."],
   ] as const)('says why, in a danger alert in the footer, after %s', async (_what, answer, text) => {
-    renderDashboard(snap(), { answers: [answer] });
+    renderAppShell(snap(), { answers: [answer] });
     await open('demo-ended');
     const resume = button('Resume in background');
     resume.focus();
@@ -782,7 +782,7 @@ describe('Resume in background', () => {
 
   it('gives the command to run, to copy, when the server has a hint', async () => {
     const untrusted = `Workspace not trusted. Run \`claude\` in ${DEMO} once and accept the trust prompt, then retry.`;
-    renderDashboard(snap(), { answers: [{ status: 422, body: { ok: false, error: untrusted, hint: `cd ${DEMO} && claude` } }] });
+    renderAppShell(snap(), { answers: [{ status: 422, body: { ok: false, error: untrusted, hint: `cd ${DEMO} && claude` } }] });
     await open('demo-ended');
     fireEvent.click(button('Resume in background'));
     await settle();
@@ -797,7 +797,7 @@ describe('Resume in background', () => {
 
   it("Trust this folder… opens the prompt for the session's folder; once trusted it resumes again, once, and Escape there doesn't close the view (W214)", async () => {
     const untrusted = `Workspace not trusted. Run \`claude\` in ${DEMO} once and accept the trust prompt, then retry.`;
-    const { fetch, sockets } = renderDashboard(snap(), {
+    const { fetch, sockets } = renderAppShell(snap(), {
       answers: [{ status: 422, body: { ok: false, error: untrusted, hint: `cd ${DEMO} && claude` } }, { status: 422, body: { ok: false, error: untrusted, hint: `cd ${DEMO} && claude` } }],
     });
     await open('demo-ended');
@@ -836,7 +836,7 @@ describe('Resume in background', () => {
     const quoted = `${DEMO}/it's here`;
     const untrusted = `Workspace not trusted. Run \`claude\` in ${quoted} once and accept the trust prompt, then retry.`;
     const demo = sessions().map((each) => (each.sessionId === ENDED ? { ...each, cwd: quoted } : each));
-    renderDashboard(snap(demo), { answers: [{ status: 422, body: { ok: false, error: untrusted } }] });
+    renderAppShell(snap(demo), { answers: [{ status: 422, body: { ok: false, error: untrusted } }] });
     await open('demo-ended');
     fireEvent.click(button('Resume in background'));
     await settle();
@@ -847,7 +847,7 @@ describe('Resume in background', () => {
   });
 
   it('warns when Claude Code started a copy instead, in the server’s words alone, which name the copy, and in a toast, which is what announces it', async () => {
-    renderDashboard(snap(), { answers: [{ status: 409, body: { ok: false, error: COPY_ERROR, copyShortId: 'ee8a7a26' } }] });
+    renderAppShell(snap(), { answers: [{ status: 409, body: { ok: false, error: COPY_ERROR, copyShortId: 'ee8a7a26' } }] });
     await open('demo-ended');
     fireEvent.click(button('Resume in background'));
     await settle();
@@ -864,7 +864,7 @@ describe('Resume in background', () => {
   });
 
   it('keeps the copy’s warning, in its toast, when the next snapshot lists the session as running in its terminal, which takes the footer away', async () => {
-    const { update } = renderDashboard(snap(), { answers: [{ status: 409, body: { ok: false, error: COPY_ERROR, copyShortId: 'ee8a7a26' } }] });
+    const { update } = renderAppShell(snap(), { answers: [{ status: 409, body: { ok: false, error: COPY_ERROR, copyShortId: 'ee8a7a26' } }] });
     await open('demo-ended');
     const resume = button('Resume in background');
     resume.focus();
@@ -874,7 +874,7 @@ describe('Resume in background', () => {
     update(snap(reopenedSessions()));
     await settle();
     expect(view().querySelector('.ended-foot')).toBeNull();
-    expect(view().querySelector('.relay-box')).not.toBeNull();
+    expect(view().querySelector('.message-box')).not.toBeNull();
     expect(toastMessages()).toEqual([`Couldn't resume demo-ended. ${COPY_ERROR}`]);
     // Resume in background went with the footer: focus goes to the Terminal tab, off for an interactive session, never the page.
     const terminalTab = within(view()).getByRole('tab', { name: /^Terminal/ });
@@ -883,7 +883,7 @@ describe('Resume in background', () => {
   });
 
   it('still says a copy started, in a toast, when the snapshot lists the session as running before the server answers', async () => {
-    const { fetch, update, sockets } = renderDashboard(snap(), { answers: ['held'] });
+    const { fetch, update, sockets } = renderAppShell(snap(), { answers: ['held'] });
     await open('demo-ended');
     fireEvent.click(button('Resume in background'));
     await settle();
@@ -898,7 +898,7 @@ describe('Resume in background', () => {
   });
 
   it('keeps j and k from moving the view while its request is out', async () => {
-    const { fetch } = renderDashboard(snap(), { answers: ['held'] });
+    const { fetch } = renderAppShell(snap(), { answers: ['held'] });
     await open('demo-ended');
     fireEvent.click(button('Resume in background'));
     await settle();
@@ -912,7 +912,7 @@ describe('Resume in background', () => {
   });
 
   it('still says how it went, in a toast naming the session, when the view has gone meanwhile', async () => {
-    const { fetch } = renderDashboard(snap(), { answers: ['held'] });
+    const { fetch } = renderAppShell(snap(), { answers: ['held'] });
     await open('demo-ended');
     fireEvent.click(button('Resume in background'));
     await settle();

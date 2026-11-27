@@ -2,7 +2,7 @@
    The result of a send is an inline alert, and the buttons and key caps are in styles.css. */
 
 /* The box fills the session view's footer (.session-view-foot), which draws the band around it. */
-.relay-box {
+.message-box {
   display: flex;
   flex-direction: column;
   gap: var(--pw-space-2);
@@ -64,7 +64,7 @@
   flex: none;
 }
 
-/* One line to eight (RelayBox sets its height from its content), then it scrolls. No resize handle. */
+/* One line to eight (MessageBox sets its height from its content), then it scrolls. No resize handle. */
 .relay-text {
   flex: 1 1 auto;
   min-width: 0;

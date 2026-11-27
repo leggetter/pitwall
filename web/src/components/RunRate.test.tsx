@@ -9,7 +9,7 @@ import { ApiContext, createApiClient, type ApiClient, type FetchLike } from '../
 import { asRunRate, cardPace, paceText, projectionText, useRunRate, type VisibilityEnv } from '../runRate.js';
 import { group, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 import { Header } from './Header.js';
 import { UsageDialog } from './UsageDialog.js';
 
@@ -185,7 +185,7 @@ describe('in the app', () => {
     const snap = { ...snapshot([group({ sessions: [session()] })]), ...(planUsage ? { planUsage: 'on' as const } : {}) };
     render(
       <ApiContext.Provider value={api}>
-        <Dashboard view={{ state: 'live', snapshot: snap }} navigation={fakeHistory('?view=all').navigation} />
+        <AppShell view={{ state: 'live', snapshot: snap }} navigation={fakeHistory('?view=all').navigation} />
       </ApiContext.Provider>,
     );
     return fetch;

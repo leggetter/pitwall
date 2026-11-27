@@ -8,7 +8,7 @@ import stylesCss from '../styles.css?raw';
 import { block, declarations, withoutComments } from '../test/css.js';
 import { toastMessages, toastSaying } from '../test/toasts.js';
 import { descriptionOf } from '../test/tooltips.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 
 // Made-up sessions only.
 
@@ -47,13 +47,13 @@ function fakeServer(...answers: Answer[]) {
 
 const postedUrls = (fetch: ReturnType<typeof fakeServer>) => fetch.mock.calls.filter(([, init]) => init.method === 'POST').map(([url]) => url);
 
-function renderDashboard(fetch: FetchLike | undefined, first: IndexSnapshot = snap()) {
+function renderAppShell(fetch: FetchLike | undefined, first: IndexSnapshot = snap()) {
   const api = fetch ? createApiClient({ apiKey: API_KEY, fetch }) : undefined;
   const ui = (s: IndexSnapshot) => {
     const view: ConnectionView = { state: 'live', snapshot: s };
     return (
       <ApiContext.Provider value={api}>
-        <Dashboard view={view} />
+        <AppShell view={view} />
       </ApiContext.Provider>
     );
   };
@@ -91,7 +91,7 @@ const item = (view: HTMLElement, label: string) => within(view).getByRole('menui
 
 describe('the actions menu', () => {
   it('has Copy session ID, Copy attach command, a separator, then Stop and Remove, for a background session', async () => {
-    renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
+    renderAppShell(fakeServer({ status: 200, body: { ok: true } }));
     const bg = await openView('pitwall-test-bg');
     expect(openMenu(bg)).toEqual(['Copy session ID', 'Copy attach command', '—', 'Make lead', '—', 'Stop session', 'Remove session']);
     expect(item(bg, 'Remove session').className).toContain('danger');
@@ -99,7 +99,7 @@ describe('the actions menu', () => {
   });
 
   it('has Copy session ID, then End session, for an interactive session, which keeps its /bg note', async () => {
-    renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
+    renderAppShell(fakeServer({ status: 200, body: { ok: true } }));
     const interactive = await openView('pitwall-test-interactive');
     expect(openMenu(interactive)).toEqual(['Copy session ID', '—', 'Make lead', '—', 'End session']);
     expect(within(interactive).queryByRole('menuitem', { name: 'Remove session' })).toBeNull();
@@ -107,7 +107,7 @@ describe('the actions menu', () => {
   });
 
   it('leaves out Copy attach command when the short id fails the shell-safety check', async () => {
-    renderDashboard(fakeServer({ status: 200, body: { ok: true } }), snap(background({ shortId: '$(touch pitwall-test)' })));
+    renderAppShell(fakeServer({ status: 200, body: { ok: true } }), snap(background({ shortId: '$(touch pitwall-test)' })));
     const bg = await openView('pitwall-test-bg');
     expect(openMenu(bg)).toEqual(['Copy session ID', '—', 'Make lead', '—', 'Stop session', 'Remove session']);
   });
@@ -120,7 +120,7 @@ describe('the actions menu', () => {
     });
 
     it('copies the session ID, says so in a toast, and puts focus back on the menu button', async () => {
-      renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
+      renderAppShell(fakeServer({ status: 200, body: { ok: true } }));
       const view = await openView('pitwall-test-bg');
       choose(view, 'Copy session ID');
       // Written inside the click, as Safari requires.
@@ -135,7 +135,7 @@ describe('the actions menu', () => {
     });
 
     it("copies the attach command from attachCommand(), never the raw short id", async () => {
-      renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
+      renderAppShell(fakeServer({ status: 200, body: { ok: true } }));
       const view = await openView('pitwall-test-bg');
       choose(view, 'Copy attach command');
       expect(writeText).toHaveBeenCalledWith('claude attach b3899da0');
@@ -143,7 +143,7 @@ describe('the actions menu', () => {
 
     it('shows the text, selected, when the clipboard refuses', async () => {
       writeText.mockRejectedValue(new Error('not allowed'));
-      renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
+      renderAppShell(fakeServer({ status: 200, body: { ok: true } }));
       const view = await openView('pitwall-test-bg');
       choose(view, 'Copy attach command');
       await settle();
@@ -158,7 +158,7 @@ describe('the actions menu', () => {
 
 describe('Stop and Remove', () => {
   it('are offered for a background session, and not for an interactive one, which has End session instead', async () => {
-    renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
+    renderAppShell(fakeServer({ status: 200, body: { ok: true } }));
     const bg = await openView('pitwall-test-bg');
     openMenu(bg);
     expect(item(bg, 'Stop session')).toBeTruthy();
@@ -174,7 +174,7 @@ describe('Stop and Remove', () => {
 
   it('asks before stopping, and Cancel or Escape leaves the session alone and the view open, with focus back on the menu button', async () => {
     const server = fakeServer({ status: 200, body: { ok: true } });
-    renderDashboard(server);
+    renderAppShell(server);
     const view = await openView('pitwall-test-bg');
     const menuButton = within(view).getByRole('button', { name: 'Session actions' });
 
@@ -203,7 +203,7 @@ describe('Stop and Remove', () => {
 
   it('stops the session once confirmed, and says so in a toast', async () => {
     const server = fakeServer({ status: 200, body: { ok: true } });
-    renderDashboard(server);
+    renderAppShell(server);
     const view = await openView('pitwall-test-bg');
     choose(view, 'Stop session');
     fireEvent.click(within(view).getByRole('button', { name: 'Stop session' }));
@@ -219,7 +219,7 @@ describe('Stop and Remove', () => {
 
   it("can't stop a session that isn't running, but can remove it", async () => {
     const server = fakeServer({ status: 200, body: { ok: true } });
-    renderDashboard(server, snap(background({ alive: false, state: 'stopped', pid: undefined, finished: true })));
+    renderAppShell(server, snap(background({ alive: false, state: 'stopped', pid: undefined, finished: true })));
     // Stopped with no process: finished, so it's in the collapsed Finished list, and keeps Remove.
     fireEvent.click(screen.getByRole('button', { name: 'Finished (1)', expanded: false }));
     const view = await openView('pitwall-test-bg');
@@ -237,7 +237,7 @@ describe('Stop and Remove', () => {
 
   it('asks before removing, then removes the session, closes its view and says so in a toast', async () => {
     const server = fakeServer({ status: 200, body: { ok: true } });
-    renderDashboard(server);
+    renderAppShell(server);
     const view = await openView('pitwall-test-bg');
     choose(view, 'Remove session');
     expect(within(view).getByRole('group', { name: REMOVE_TEXT })).toBeTruthy();
@@ -251,7 +251,7 @@ describe('Stop and Remove', () => {
 
   it("shows Claude Code's message when it refuses, and keeps the view open", async () => {
     const refusal = "Kept the worktree pitwall-test-wt: it has 2 unpushed commits.\nTo discard them, run 'claude rm b3899da0 --discard-unpushed 1a2b3c@pitwall-test-wt'.";
-    renderDashboard(fakeServer({ status: 409, body: { ok: false, error: refusal } }, { status: 502 }));
+    renderAppShell(fakeServer({ status: 409, body: { ok: false, error: refusal } }, { status: 502 }));
     const view = await openView('pitwall-test-bg');
     choose(view, 'Remove session');
     fireEvent.click(within(view).getByRole('button', { name: 'Remove session' }));
@@ -277,7 +277,7 @@ describe('Stop and Remove', () => {
         ? new Promise<Response>((resolve) => (answer = resolve))
         : new Response(JSON.stringify({ sessionId: BG, entries: [] }), { status: 200 }),
     );
-    renderDashboard(server);
+    renderAppShell(server);
     const view = await openView('pitwall-test-bg');
     choose(view, 'Stop session');
     fireEvent.click(within(view).getByRole('button', { name: 'Stop session' }));
@@ -307,7 +307,7 @@ describe('Stop and Remove', () => {
   });
 
   it('are not offered once the session is no longer listed', async () => {
-    const { update } = renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
+    const { update } = renderAppShell(fakeServer({ status: 200, body: { ok: true } }));
     const view = await openView('pitwall-test-bg');
     update(snapshot([group({ sessions: [session({ sessionId: INTERACTIVE, name: 'pitwall-test-interactive' })] })]));
     await settle();
@@ -328,7 +328,7 @@ const postedBodies = (fetch: ReturnType<typeof vi.fn<FetchLike>>) =>
 
 describe('End session, for a running interactive session (W90)', () => {
   it("is in Stop's icon and place, on, not in danger text, and reached by the arrows", async () => {
-    renderDashboard(fakeServer({ status: 200, body: { ok: true, ended: true } }));
+    renderAppShell(fakeServer({ status: 200, body: { ok: true, ended: true } }));
     const interactive = await openView('pitwall-test-interactive');
     openMenu(interactive);
     const end = item(interactive, 'End session');
@@ -345,7 +345,7 @@ describe('End session, for a running interactive session (W90)', () => {
 
   it('asks first, naming the session and what ending costs, and Cancel or Escape posts nothing, with focus back on the menu button', async () => {
     const server = fakeServer({ status: 200, body: { ok: true, ended: true } });
-    renderDashboard(server);
+    renderAppShell(server);
     const view = await openView('pitwall-test-interactive');
     const menuButton = within(view).getByRole('button', { name: 'Session actions' });
     choose(view, 'End session');
@@ -371,7 +371,7 @@ describe('End session, for a running interactive session (W90)', () => {
   });
 
   it('names its running sub-agents, from the snapshot, in the consequence', async () => {
-    renderDashboard(
+    renderAppShell(
       fakeServer({ status: 200, body: { ok: true, ended: true } }),
       snapshot([group({ sessions: [background(), session({ sessionId: INTERACTIVE, name: 'pitwall-test-interactive', subagentsRunning: 2 })] })]),
     );
@@ -384,7 +384,7 @@ describe('End session, for a running interactive session (W90)', () => {
 
   it('ends it once confirmed, with {} and the apiKey, busy while out, then a toast, and focus back on the menu button', async () => {
     const { fetch, release } = heldServer();
-    renderDashboard(fetch);
+    renderAppShell(fetch);
     const view = await openView('pitwall-test-interactive');
     choose(view, 'End session');
     fireEvent.click(within(view).getByRole('button', { name: 'End session' }));
@@ -411,7 +411,7 @@ describe('End session, for a running interactive session (W90)', () => {
   });
 
   it("says so, in an info toast, when its process hadn't exited by the answer", async () => {
-    renderDashboard(fakeServer({ status: 200, body: { ok: true, ended: false } }));
+    renderAppShell(fakeServer({ status: 200, body: { ok: true, ended: false } }));
     const view = await openView('pitwall-test-interactive');
     choose(view, 'End session');
     fireEvent.click(within(view).getByRole('button', { name: 'End session' }));
@@ -423,7 +423,7 @@ describe('End session, for a running interactive session (W90)', () => {
 
   it("turns into the stronger warning when the server says it's working, naming what runs, and ends it with whileWorking once confirmed", async () => {
     const server = fakeServer({ status: 409, body: WORKING }, { status: 200, body: { ok: true, ended: true } });
-    renderDashboard(server);
+    renderAppShell(server);
     const view = await openView('pitwall-test-interactive');
     choose(view, 'End session');
     fireEvent.click(within(view).getByRole('button', { name: 'End session' }));
@@ -446,7 +446,7 @@ describe('End session, for a running interactive session (W90)', () => {
   it('keeps the session’s name in its own bdi in the question, so a right-to-left name or its marks can’t reorder the sentence', async () => {
     // Hebrew, then a right-to-left mark, which plainText() keeps (W87).
     const name = 'pitwall-test-\u05e9\u05dc\u05d5\u05dd\u200f';
-    renderDashboard(
+    renderAppShell(
       fakeServer({ status: 200, body: { ok: true, ended: true } }),
       snapshot([group({ sessions: [background(), session({ sessionId: INTERACTIVE, name })] })]),
     );
@@ -461,7 +461,7 @@ describe('End session, for a running interactive session (W90)', () => {
 
   it("says it can't tell whether sub-agents are running when the server couldn't read them", async () => {
     const server = fakeServer({ status: 409, body: { ok: false, error: 'x', working: { subagents: 'unknown' } } }, { status: 200, body: { ok: true, ended: true } });
-    renderDashboard(server);
+    renderAppShell(server);
     const view = await openView('pitwall-test-interactive');
     choose(view, 'End session');
     fireEvent.click(within(view).getByRole('button', { name: 'End session' }));
@@ -477,7 +477,7 @@ describe('End session, for a running interactive session (W90)', () => {
 
   it("says it can't tell when the transcript can't, and Cancel on the warning ends nothing", async () => {
     const server = fakeServer({ status: 409, body: { ok: false, error: 'x', working: { turn: 'unknown' } } });
-    renderDashboard(server);
+    renderAppShell(server);
     const view = await openView('pitwall-test-interactive');
     choose(view, 'End session');
     fireEvent.click(within(view).getByRole('button', { name: 'End session' }));
@@ -503,7 +503,7 @@ describe('End session, for a running interactive session (W90)', () => {
         ? new Response(JSON.stringify({ ok: false, error: reason }), { status: 409 })
         : new Response('', { status: 429, headers: { 'Retry-After': '3' } });
     });
-    renderDashboard(fetch);
+    renderAppShell(fetch);
     const view = await openView('pitwall-test-interactive');
     choose(view, 'End session');
     fireEvent.click(within(view).getByRole('button', { name: 'End session' }));
@@ -520,7 +520,7 @@ describe('End session, for a running interactive session (W90)', () => {
 
   it('says how it went, naming the session, when its view was closed while it ran', async () => {
     const { fetch, release } = heldServer();
-    renderDashboard(fetch);
+    renderAppShell(fetch);
     const view = await openView('pitwall-test-interactive');
     choose(view, 'End session');
     fireEvent.click(within(view).getByRole('button', { name: 'End session' }));
@@ -533,7 +533,7 @@ describe('End session, for a running interactive session (W90)', () => {
   });
 
   it("is off while it isn't running, and goes once it's no longer listed", async () => {
-    const { update } = renderDashboard(
+    const { update } = renderAppShell(
       fakeServer({ status: 200, body: { ok: true, ended: true } }),
       snapshot([group({ sessions: [background(), session({ sessionId: INTERACTIVE, name: 'pitwall-test-interactive', alive: false, pid: undefined, status: undefined })] })]),
     );
@@ -553,7 +553,7 @@ describe('End session, for a running interactive session (W90)', () => {
 
   it('closes its question when the session ends some other way meanwhile, and then offers Resume in background (W67)', async () => {
     const server = fakeServer({ status: 200, body: { ok: true, ended: true } });
-    const { update } = renderDashboard(server);
+    const { update } = renderAppShell(server);
     const view = await openView('pitwall-test-interactive');
     choose(view, 'End session');
     expect(within(view).getByRole('group', { name: END_TEXT })).toBeTruthy();
@@ -603,7 +603,7 @@ describe('a result that arrives after the view has gone (W31)', () => {
 
   it('j, k, ↑ and ↓ do nothing while a Stop runs, so they never move the view away from it', async () => {
     const { fetch, release } = heldServer();
-    renderDashboard(fetch);
+    renderAppShell(fetch);
     const view = await openView('pitwall-test-bg');
     choose(view, 'Stop session');
     fireEvent.click(within(view).getByRole('button', { name: 'Stop session' }));
@@ -625,7 +625,7 @@ describe('a result that arrives after the view has gone (W31)', () => {
 
   it('says a Stop finished, naming the session, when its view was closed while it ran', async () => {
     const { fetch, release } = heldServer();
-    renderDashboard(fetch);
+    renderAppShell(fetch);
     const view = await openView('pitwall-test-bg');
     choose(view, 'Stop session');
     fireEvent.click(within(view).getByRole('button', { name: 'Stop session' }));
@@ -641,7 +641,7 @@ describe('a result that arrives after the view has gone (W31)', () => {
   it("turns a refusal into an error toast with Claude Code's message, as text, when the view has gone", async () => {
     const refusal = 'Kept the worktree pitwall-test-wt: it has 2 unpushed commits. <b>made up</b>';
     const { fetch, release } = heldServer();
-    renderDashboard(fetch);
+    renderAppShell(fetch);
     const view = await openView('pitwall-test-bg');
     choose(view, 'Remove session');
     fireEvent.click(within(view).getByRole('button', { name: 'Remove session' }));
@@ -659,7 +659,7 @@ describe('a result that arrives after the view has gone (W31)', () => {
 
   it('says a request with no answer it understands failed, with its status, naming the session', async () => {
     const { fetch, release } = heldServer();
-    renderDashboard(fetch);
+    renderAppShell(fetch);
     const view = await openView('pitwall-test-bg');
     choose(view, 'Stop session');
     fireEvent.click(within(view).getByRole('button', { name: 'Stop session' }));
@@ -673,7 +673,7 @@ describe('a result that arrives after the view has gone (W31)', () => {
 
   it('says a Remove finished when the view went while it ran, and keeps it closed', async () => {
     const { fetch, release } = heldServer();
-    renderDashboard(fetch);
+    renderAppShell(fetch);
     const view = await openView('pitwall-test-bg');
     choose(view, 'Remove session');
     fireEvent.click(within(view).getByRole('button', { name: 'Remove session' }));
@@ -698,7 +698,7 @@ describe('the confirmations’ left bar (W31)', () => {
 
 describe('the confirmations’ focus and results (W24)', () => {
   it('puts focus back on the menu button once Stop has finished, and announces the result', async () => {
-    renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
+    renderAppShell(fakeServer({ status: 200, body: { ok: true } }));
     const view = await openView('pitwall-test-bg');
     choose(view, 'Stop session');
     const confirmButton = within(view).getByRole('button', { name: 'Stop session' });
@@ -714,7 +714,7 @@ describe('the confirmations’ focus and results (W24)', () => {
   });
 
   it('puts focus back on the menu button after a refusal too, which is announced as an alert', async () => {
-    renderDashboard(fakeServer({ status: 409, body: { ok: false, error: 'claude stop failed: made up for the test.' } }));
+    renderAppShell(fakeServer({ status: 409, body: { ok: false, error: 'claude stop failed: made up for the test.' } }));
     const view = await openView('pitwall-test-bg');
     choose(view, 'Stop session');
     fireEvent.click(within(view).getByRole('button', { name: 'Stop session' }));
@@ -730,7 +730,7 @@ describe('the confirmations’ focus and results (W24)', () => {
         ? new Promise<Response>((resolve) => (answer = resolve))
         : new Response(JSON.stringify({ sessionId: BG, entries: [] }), { status: 200 }),
     );
-    renderDashboard(server);
+    renderAppShell(server);
     const view = await openView('pitwall-test-bg');
     // happy-dom has no layout, so give buttons the width a browser would, before the confirmation opens.
     vi.spyOn(HTMLButtonElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 117, 24));
@@ -743,7 +743,7 @@ describe('the confirmations’ focus and results (W24)', () => {
   });
 
   it('opens a new confirmation with focus on its own Cancel, when another was open', async () => {
-    renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
+    renderAppShell(fakeServer({ status: 200, body: { ok: true } }));
     const view = await openView('pitwall-test-bg');
     choose(view, 'Stop session');
     choose(view, 'Remove session');

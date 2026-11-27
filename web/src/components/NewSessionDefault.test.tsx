@@ -12,7 +12,7 @@ import { shortenHome as short } from '../format.js';
 import { newSessionDirectory } from '../spawn.js';
 import { group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 
 const API_KEY = 'k'.repeat(43);
 const CODE = '/Users/example/code';
@@ -52,7 +52,7 @@ function renderAt(search: string, first: IndexSnapshot = snap()) {
   const api = createApiClient({ apiKey: API_KEY, fetch });
   const ui = (s: IndexSnapshot) => (
     <ApiContext.Provider value={api}>
-      <Dashboard view={{ state: 'live', snapshot: s }} navigation={history.navigation} />
+      <AppShell view={{ state: 'live', snapshot: s }} navigation={history.navigation} />
     </ApiContext.Provider>
   );
   const result = render(ui(first));

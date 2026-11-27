@@ -11,7 +11,7 @@ import { AttachContext, type AttachEnv } from '../attach.js';
 import { BACKGROUND_TAB_KEY } from '../backgroundTab.js';
 import type { ConnectionView } from '../connection.js';
 import type { StorageSource } from '../groupState.js';
-import { PANEL_WIDTH_KEY, readPanelWidth } from '../panelWidth.js';
+import { SESSION_PANE_WIDTH_KEY, readSessionPaneWidth } from '../sessionPaneWidth.js';
 import type { NavigationEnv } from '../selection.js';
 import { fakeSockets, group, minutesAgo, NOW, session, snapshot, withoutSubagents } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
@@ -20,7 +20,7 @@ import { block, declarations, withoutComments } from '../test/css.js';
 import { descriptionOf } from '../test/tooltips.js';
 import { TOKEN_STORAGE_KEY } from '../token.js';
 import { WIDTH_HINTS } from './SessionView.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 import type { TerminalHandle } from './Terminal.js';
 
 // xterm.js, replaced by a terminal that does nothing, through the module the view loads it from.
@@ -87,7 +87,7 @@ interface Options {
   storage?: StorageSource;
 }
 
-function renderDashboard(first: IndexSnapshot = snap(), options: Options = {}) {
+function renderAppShell(first: IndexSnapshot = snap(), options: Options = {}) {
   const history = fakeHistory(options.search ?? '?view=all');
   const navigation = options.navigation ?? history.navigation;
   const fetch = fakeServer();
@@ -100,7 +100,7 @@ function renderDashboard(first: IndexSnapshot = snap(), options: Options = {}) {
     return (
       <ApiContext.Provider value={api}>
         <AttachContext.Provider value={attach}>
-          <Dashboard view={view} navigation={navigation} storage={storage} />
+          <AppShell view={view} navigation={navigation} storage={storage} />
         </AttachContext.Provider>
       </ApiContext.Provider>
     );
@@ -150,7 +150,7 @@ afterEach(() => {
 
 describe('the open session in the URL', () => {
   it('opening from a row pushes ?session=, after the selection; opening another pushes again', async () => {
-    const { history } = renderDashboard();
+    const { history } = renderAppShell();
     await open('demo-a');
     expect(history.entries).toEqual(['?view=all', `?view=all&session=${A}`]);
     await open('demo-c');
@@ -159,7 +159,7 @@ describe('the open session in the URL', () => {
   });
 
   it('moving with ↑ and ↓ replaces the entry, from a row and from the header', async () => {
-    const { history } = renderDashboard();
+    const { history } = renderAppShell();
     await open('demo-a');
     fireEvent.keyDown(rowButton('demo-a'), { key: 'ArrowDown' });
     await settle();
@@ -171,7 +171,7 @@ describe('the open session in the URL', () => {
   });
 
   it('closing pushes an entry without it, keeping the selection', async () => {
-    const { history } = renderDashboard();
+    const { history } = renderAppShell();
     await open('demo-a');
     fireEvent.click(within(view()!).getByRole('button', { name: 'Close' }));
     expect(history.entries).toEqual(['?view=all', `?view=all&session=${A}`, '?view=all']);
@@ -179,7 +179,7 @@ describe('the open session in the URL', () => {
   });
 
   it('follows the back and forward buttons', async () => {
-    const { history } = renderDashboard();
+    const { history } = renderAppShell();
     await open('demo-a');
     await open('demo-b');
     fireEvent.click(within(view()!).getByRole('button', { name: 'Close' }));
@@ -201,7 +201,7 @@ describe('the open session in the URL', () => {
   it('opens the view a loaded URL names, and nothing else: no attach, no message, no stop or remove, and no focus taken', async () => {
     // With Preferences on Conversation: by default, a running background session opens on its
     // Terminal tab, which attaches (W54, TerminalFirst.test.tsx).
-    const { fetch, sockets } = renderDashboard(snap(), { search: `?view=all&session=${B}`, storage: memory({ [BACKGROUND_TAB_KEY]: 'conversation' }) });
+    const { fetch, sockets } = renderAppShell(snap(), { search: `?view=all&session=${B}`, storage: memory({ [BACKGROUND_TAB_KEY]: 'conversation' }) });
     await settle();
     expect(viewName()).toBe('demo-b');
     expect(within(view()!).getByRole('tab', { name: 'Conversation' }).getAttribute('aria-selected')).toBe('true');
@@ -212,7 +212,7 @@ describe('the open session in the URL', () => {
   });
 
   it("shows 'This session isn't listed under these roots' for an id that isn't, with Close", async () => {
-    const { history, fetch } = renderDashboard(snap(), { search: '?view=all&session=pitwall-test-unknown' });
+    const { history, fetch } = renderAppShell(snap(), { search: '?view=all&session=pitwall-test-unknown' });
     await settle();
     const shown = screen.getByRole('dialog', { name: "This session isn't listed under these roots" });
     expect(shown.textContent).toContain('pitwall-test-unknown');
@@ -225,17 +225,17 @@ describe('the open session in the URL', () => {
 
   it('waits for the first snapshot before saying a session is not listed', async () => {
     const history = fakeHistory(`?view=all&session=${A}`);
-    const { rerender } = render(<Dashboard view={{ state: 'connecting' }} navigation={history.navigation} storage={memory()} />);
+    const { rerender } = render(<AppShell view={{ state: 'connecting' }} navigation={history.navigation} storage={memory()} />);
     // The waiting state, not the unlisted one (more in States.test.tsx).
     expect(screen.getByRole('dialog', { name: 'Session' })).toBe(view());
     expect(screen.queryByText("This session isn't listed under these roots")).toBeNull();
-    rerender(<Dashboard view={{ state: 'live', snapshot: snap() }} navigation={history.navigation} storage={memory()} />);
+    rerender(<AppShell view={{ state: 'live', snapshot: snap() }} navigation={history.navigation} storage={memory()} />);
     await settle();
     expect(viewName()).toBe('demo-a');
   });
 
   it('keeps showing a session that leaves the snapshot, and the back button returns to it as it showed last', async () => {
-    const { update, history } = renderDashboard();
+    const { update, history } = renderAppShell();
     await open('demo-a');
     await open('demo-c');
     update(snap(sessions().filter((each) => each.sessionId !== A)));
@@ -246,7 +246,7 @@ describe('the open session in the URL', () => {
   });
 
   it("selects a ?session='s group when the URL names no selection, and opens it", async () => {
-    const { history } = renderDashboard(snap(), { search: `?session=${C}` });
+    const { history } = renderAppShell(snap(), { search: `?session=${C}` });
     await settle();
     expect(history.location.search).toBe(`?repo=/Users/example/code/demo-app&session=${C}`);
     expect(viewName()).toBe('demo-c');
@@ -279,7 +279,7 @@ describe('the open session in the URL', () => {
 describe('focus', () => {
   it("opening from a row moves focus to the view's heading, which shows no ring; closing gives it back to the row", async () => {
     setWidth(1300);
-    renderDashboard();
+    renderAppShell();
     await open('demo-a');
     expect(document.activeElement).toBe(heading());
     expect(heading().tabIndex).toBe(-1);
@@ -290,7 +290,7 @@ describe('focus', () => {
 
   it("opening the open session's row again focuses its heading again", async () => {
     setWidth(1300);
-    renderDashboard();
+    renderAppShell();
     await open('demo-a');
     rowButton('demo-a').focus();
     await open('demo-a');
@@ -299,7 +299,7 @@ describe('focus', () => {
 
   it("gives focus to the session list's heading when the row isn't shown", async () => {
     setWidth(1300);
-    renderDashboard();
+    renderAppShell();
     await open('demo-a');
     fireEvent.change(screen.getByRole('searchbox', { name: 'Filter sessions' }), { target: { value: 'demo-c' } });
     fireEvent.click(within(view()!).getByRole('button', { name: 'Close' }));
@@ -309,7 +309,7 @@ describe('focus', () => {
   it('leaves focus alone when the back button closes the view while focus is elsewhere', async () => {
     // In three columns, where the filter field beside the view can have focus.
     setWidth(1280);
-    const { history } = renderDashboard();
+    const { history } = renderAppShell();
     await open('demo-a');
     const filter = screen.getByRole('searchbox', { name: 'Filter sessions' });
     filter.focus();
@@ -328,7 +328,7 @@ const headerButton = (name: string) => within(document.querySelector<HTMLElement
 describe('over the list, below 1,200 px', () => {
   it('covers the session list, which is inert while the view is open, and leaves the header usable', async () => {
     setWidth(1100);
-    renderDashboard();
+    renderAppShell();
     expect(inInert(rowButton('demo-b'))).toBe(false);
     await open('demo-a');
     expect(screen.getByRole('main').hasAttribute('inert')).toBe(true);
@@ -348,7 +348,7 @@ describe('over the list, below 1,200 px', () => {
 
   it('covers part of the repo list too below 1,000 px, which is inert as well', async () => {
     setWidth(950);
-    renderDashboard();
+    renderAppShell();
     await open('demo-a');
     expect(inInert(repoNav()!)).toBe(true);
     expect(inInert(rowButton('demo-b'))).toBe(true);
@@ -359,7 +359,7 @@ describe('over the list, below 1,200 px', () => {
 
   it('below 900 px, covers the list, and the header still opens the drawer, whose repo list is usable', async () => {
     setWidth(375);
-    renderDashboard();
+    renderAppShell();
     await open('demo-a');
     expect(inInert(rowButton('demo-b'))).toBe(true);
     fireEvent.click(headerButton('Repos'));
@@ -371,14 +371,14 @@ describe('over the list, below 1,200 px', () => {
 
   it('makes nothing inert in three columns, where the view is a column beside the list', async () => {
     setWidth(1280);
-    renderDashboard();
+    renderAppShell();
     await open('demo-a');
     expect(document.querySelector('[inert]')).toBeNull();
   });
 
   it("moves focus that was in what the view comes to cover to the view's heading, as when the window narrows past 1,200 px", async () => {
     setWidth(1280);
-    renderDashboard();
+    renderAppShell();
     await open('demo-a');
     rowButton('demo-b').focus();
     expect(document.activeElement).toBe(rowButton('demo-b'));
@@ -390,7 +390,7 @@ describe('over the list, below 1,200 px', () => {
 
   it('still changes the session with j and k, with focus on the heading', async () => {
     setWidth(1024);
-    renderDashboard();
+    renderAppShell();
     await open('demo-a');
     fireEvent.keyDown(heading(), { key: 'j' });
     await settle();
@@ -402,7 +402,7 @@ describe('over the list, below 1,200 px', () => {
 
 describe('↑ and ↓', () => {
   it('on a row, move focus to the next or previous row, stop at the ends, skip a collapsed Finished section, and open nothing with the view closed', async () => {
-    const { history } = renderDashboard();
+    const { history } = renderAppShell();
     rowButton('demo-a').focus();
     const press = (key: string) => fireEvent.keyDown(document.activeElement!, { key });
     expect(press('ArrowUp')).toBe(false);
@@ -427,7 +427,7 @@ describe('↑ and ↓', () => {
   it('on a row with the view open, also show that session, with focus left in the list', async () => {
     // In three columns: below 1,200 px the view covers the list, which is inert, so focus can't be there.
     setWidth(1280);
-    const { fetch } = renderDashboard();
+    const { fetch } = renderAppShell();
     await open('demo-a');
     rowButton('demo-a').focus();
     fireEvent.keyDown(rowButton('demo-a'), { key: 'ArrowDown' });
@@ -438,7 +438,7 @@ describe('↑ and ↓', () => {
   });
 
   it("in the view's header, show the next or previous session, with focus on its heading, stopping at the ends", async () => {
-    renderDashboard();
+    renderAppShell();
     await open('demo-b');
     fireEvent.keyDown(heading(), { key: 'ArrowUp' });
     await settle();
@@ -456,7 +456,7 @@ describe('↑ and ↓', () => {
 
   it("do nothing while the open session's message box has a draft, on a row or in the header, as j and k do", async () => {
     setWidth(1280);
-    const { history } = renderDashboard();
+    const { history } = renderAppShell();
     await open('demo-a');
     const box = within(view()!).getByRole('textbox', { name: 'Message to demo-a' });
     fireEvent.change(box, { target: { value: 'a draft' } });
@@ -485,7 +485,7 @@ describe('↑ and ↓', () => {
   });
 
   it('move inside an open menu instead of changing session', async () => {
-    renderDashboard();
+    renderAppShell();
     await open('demo-b');
     fireEvent.click(within(view()!).getByRole('button', { name: 'Session actions' }));
     const [first, second] = within(view()!).getAllByRole('menuitem');
@@ -497,7 +497,7 @@ describe('↑ and ↓', () => {
 
 describe('Escape, nearest first', () => {
   it('closes an open menu, then the view', async () => {
-    renderDashboard();
+    renderAppShell();
     await open('demo-b');
     fireEvent.click(within(view()!).getByRole('button', { name: 'Session actions' }));
     fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
@@ -508,7 +508,7 @@ describe('Escape, nearest first', () => {
   });
 
   it('clears the filter while it is focused and has text, and only then closes the view', async () => {
-    renderDashboard();
+    renderAppShell();
     await open('demo-a');
     const filter = screen.getByRole('searchbox', { name: 'Filter sessions' });
     fireEvent.change(filter, { target: { value: 'demo' } });
@@ -521,7 +521,7 @@ describe('Escape, nearest first', () => {
   });
 
   it('closes the New session dialog over the view, and not the view', async () => {
-    renderDashboard();
+    renderAppShell();
     await open('demo-a');
     fireEvent.click(screen.getByRole('button', { name: 'New session' }));
     fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
@@ -530,7 +530,7 @@ describe('Escape, nearest first', () => {
   });
 
   it('never discards a draft in the message box', async () => {
-    renderDashboard();
+    renderAppShell();
     await open('demo-a');
     const box = within(view()!).getByRole('textbox', { name: 'Message to demo-a' });
     fireEvent.change(box, { target: { value: 'a draft' } });
@@ -544,7 +544,7 @@ describe('Escape, nearest first', () => {
 
   it('closes the view from anywhere else, Back included at 600 px and narrower', async () => {
     setWidth(375);
-    renderDashboard();
+    renderAppShell();
     await open('demo-a');
     expect(within(view()!).queryByRole('button', { name: 'Close' })).toBeNull();
     fireEvent.click(within(view()!).getByRole('button', { name: 'Back to sessions' }));
@@ -556,7 +556,7 @@ describe('Escape, nearest first', () => {
 
 describe('the tabs', () => {
   it('are a tablist of Conversation and Terminal, with roving tabindex, each controlling its tab panel', async () => {
-    renderDashboard(snap(), { storage: memory({ [BACKGROUND_TAB_KEY]: 'conversation' }) });
+    renderAppShell(snap(), { storage: memory({ [BACKGROUND_TAB_KEY]: 'conversation' }) });
     await open('demo-b');
     const list = within(view()!).getByRole('tablist', { name: 'Session view' });
     const [conversation, terminal] = within(list).getAllByRole('tab');
@@ -575,7 +575,7 @@ describe('the tabs', () => {
   });
 
   it('move focus with ← → Home End, and open only on Enter or Space, as a click', async () => {
-    const { sockets } = renderDashboard(snap(), { storage: memory({ [BACKGROUND_TAB_KEY]: 'conversation' }) });
+    const { sockets } = renderAppShell(snap(), { storage: memory({ [BACKGROUND_TAB_KEY]: 'conversation' }) });
     await open('demo-b');
     const [conversation, terminal] = within(view()!).getAllByRole('tab');
     conversation!.focus();
@@ -625,7 +625,7 @@ describe('the divider', () => {
     it('widens and narrows the view 80 px at a time, within its limits, resets it, and stores each width', async () => {
       setWidth(1440);
       const storage = memory();
-      renderDashboard(snap(), { storage });
+      renderAppShell(snap(), { storage });
       await open('demo-a');
       openMenu();
       // An interactive session's End session (W90) comes after them.
@@ -639,7 +639,7 @@ describe('the divider', () => {
       choose('Make view wider');
       // 760 + 80, capped at what the repo list and the list's 360 px leave: 840.
       expect(divider().getAttribute('aria-valuenow')).toBe('840');
-      expect(storage.values.get(PANEL_WIDTH_KEY)).toBe('840');
+      expect(storage.values.get(SESSION_PANE_WIDTH_KEY)).toBe('840');
       openMenu();
       const wider = within(view()!).getByRole('menuitem', { name: 'Make view wider' });
       expect(wider.getAttribute('aria-disabled')).toBe('true');
@@ -650,21 +650,21 @@ describe('the divider', () => {
         choose('Make view narrower');
         expect(divider().getAttribute('aria-valuenow')).toBe(width);
       }
-      expect(storage.values.get(PANEL_WIDTH_KEY)).toBe('560');
+      expect(storage.values.get(SESSION_PANE_WIDTH_KEY)).toBe('560');
       openMenu();
       expect(within(view()!).getByRole('menuitem', { name: 'Make view narrower' }).getAttribute('aria-disabled')).toBe('true');
       fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
 
       choose('Reset view width');
       expect(divider().getAttribute('aria-valuenow')).toBe('760');
-      expect(storage.values.get(PANEL_WIDTH_KEY)).toBe('760');
+      expect(storage.values.get(SESSION_PANE_WIDTH_KEY)).toBe('760');
       // Focus is back on the menu's button, as after any item.
       expect(document.activeElement).toBe(within(view()!).getByRole('button', { name: 'Session actions' }));
     });
 
     it('follows the divider, which changes the same width', async () => {
       setWidth(1440);
-      renderDashboard();
+      renderAppShell();
       await open('demo-a');
       fireEvent.keyDown(divider(), { key: 'End' });
       openMenu();
@@ -674,7 +674,7 @@ describe('the divider', () => {
 
     it('are only in three columns: over the list, the view’s width is set', async () => {
       setWidth(1100);
-      renderDashboard();
+      renderAppShell();
       await open('demo-a');
       openMenu();
       expect(menuItems()).toEqual(['Copy session ID', 'Make lead', 'End session']);
@@ -683,7 +683,7 @@ describe('the divider', () => {
 
   it('is a focusable vertical separator whose value is the view’s width, in three columns only', () => {
     setWidth(1440);
-    renderDashboard();
+    renderAppShell();
     expect(divider().getAttribute('aria-orientation')).toBe('vertical');
     expect(divider().tabIndex).toBe(0);
     expect([divider().getAttribute('aria-valuenow'), divider().getAttribute('aria-valuemin'), divider().getAttribute('aria-valuemax')]).toEqual(['760', '560', '840']);
@@ -697,11 +697,11 @@ describe('the divider', () => {
   it('moves 16 px with ← and →, jumps to the limits with Home and End, and stores each width', () => {
     setWidth(1440);
     const storage = memory();
-    renderDashboard(snap(), { storage });
+    renderAppShell(snap(), { storage });
     const press = (key: string) => fireEvent.keyDown(divider(), { key });
     press('ArrowLeft');
     expect(divider().getAttribute('aria-valuenow')).toBe('776');
-    expect(storage.values.get(PANEL_WIDTH_KEY)).toBe('776');
+    expect(storage.values.get(SESSION_PANE_WIDTH_KEY)).toBe('776');
     press('ArrowRight');
     press('ArrowRight');
     expect(divider().getAttribute('aria-valuenow')).toBe('744');
@@ -713,62 +713,62 @@ describe('the divider', () => {
     expect(divider().getAttribute('aria-valuenow')).toBe('840');
     press('ArrowLeft');
     expect(divider().getAttribute('aria-valuenow')).toBe('840');
-    expect(storage.values.get(PANEL_WIDTH_KEY)).toBe('840');
+    expect(storage.values.get(SESSION_PANE_WIDTH_KEY)).toBe('840');
     expect(pane().style.getPropertyValue('--pw-view-w')).toBe('840px');
   });
 
   it('resets to 760 px on a double-click, or the maximum when that is less', () => {
     setWidth(1440);
-    const storage = memory({ [PANEL_WIDTH_KEY]: '600' });
-    renderDashboard(snap(), { storage });
+    const storage = memory({ [SESSION_PANE_WIDTH_KEY]: '600' });
+    renderAppShell(snap(), { storage });
     fireEvent.doubleClick(divider());
     expect(divider().getAttribute('aria-valuenow')).toBe('760');
 
     setWidth(1300);
     fireEvent.doubleClick(divider());
     expect(divider().getAttribute('aria-valuenow')).toBe('700');
-    expect(storage.values.get(PANEL_WIDTH_KEY)).toBe('700');
+    expect(storage.values.get(SESSION_PANE_WIDTH_KEY)).toBe('700');
   });
 
   it('resizes as it is dragged, within the limits, and stores the width when the drag ends', () => {
     setWidth(1440);
     const storage = memory();
-    renderDashboard(snap(), { storage });
+    renderAppShell(snap(), { storage });
     fireEvent.pointerDown(divider(), { button: 0, clientX: 600, pointerId: 1 });
     expect(document.activeElement).toBe(divider());
     fireEvent.pointerMove(divider(), { clientX: 500, pointerId: 1 });
     expect(divider().getAttribute('aria-valuenow')).toBe('840');
     fireEvent.pointerMove(divider(), { clientX: 640, pointerId: 1 });
     expect(divider().getAttribute('aria-valuenow')).toBe('720');
-    expect(storage.values.has(PANEL_WIDTH_KEY)).toBe(false);
+    expect(storage.values.has(SESSION_PANE_WIDTH_KEY)).toBe(false);
     fireEvent.pointerUp(divider(), { clientX: 640, pointerId: 1 });
-    expect(storage.values.get(PANEL_WIDTH_KEY)).toBe('720');
+    expect(storage.values.get(SESSION_PANE_WIDTH_KEY)).toBe('720');
     fireEvent.pointerMove(divider(), { clientX: 0, pointerId: 1 });
     expect(divider().getAttribute('aria-valuenow')).toBe('720');
   });
 
   it('shows a stored width clamped to the window, keeping the setting, and reads pitwall.panel-width.v1 safely', () => {
     setWidth(1300);
-    renderDashboard(snap(), { storage: memory({ [PANEL_WIDTH_KEY]: '900' }) });
+    renderAppShell(snap(), { storage: memory({ [SESSION_PANE_WIDTH_KEY]: '900' }) });
     expect(divider().getAttribute('aria-valuenow')).toBe('700');
     // The stylesheet clamps it: the pane asks for the stored width.
     expect(pane().style.getPropertyValue('--pw-view-w')).toBe('900px');
 
     for (const raw of ['abc', '100', '559', '99999999', '-700', '7e2', '']) {
-      expect(readPanelWidth(memory({ [PANEL_WIDTH_KEY]: raw })), raw).toBe(760);
+      expect(readSessionPaneWidth(memory({ [SESSION_PANE_WIDTH_KEY]: raw })), raw).toBe(760);
     }
-    expect(readPanelWidth(memory({ [PANEL_WIDTH_KEY]: '612' }))).toBe(612);
+    expect(readSessionPaneWidth(memory({ [SESSION_PANE_WIDTH_KEY]: '612' }))).toBe(612);
     const throwing: StorageSource = () => {
       throw new Error('blocked');
     };
-    expect(readPanelWidth(throwing)).toBe(760);
+    expect(readSessionPaneWidth(throwing)).toBe(760);
   });
 });
 
 describe('crossing 1,200 px with the view open', () => {
   it('keeps the same view, its conversation and its terminal: nothing remounts, reloads or detaches', async () => {
     setWidth(1300);
-    const { fetch, sockets } = renderDashboard();
+    const { fetch, sockets } = renderAppShell();
     await open('demo-b');
     const shown = view()!;
     expect(shown.getAttribute('role')).toBeNull();
@@ -797,7 +797,7 @@ describe('crossing 1,200 px with the view open', () => {
 
   it('slides in when it opens over the list, and not as ↑ and ↓ move it from one session to the next', async () => {
     setWidth(1100);
-    renderDashboard();
+    renderAppShell();
     await open('demo-a');
     expect(view()!.className).toContain('opening');
     fireEvent.animationEnd(view()!);

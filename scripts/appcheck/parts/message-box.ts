@@ -9,9 +9,9 @@ import type { Part } from '../runner.js';
 import { openFromRow, VIEW, viewName } from './_dom.js';
 
 const q = JSON.stringify;
-const BOX = `${VIEW}?.querySelector('.relay-box textarea')`;
-const SEND = `${VIEW}?.querySelector('.relay-box button[type="submit"]')`;
-const RESULT = `${VIEW}?.querySelector('.relay-box .relay-result')`;
+const BOX = `${VIEW}?.querySelector('.message-box textarea')`;
+const SEND = `${VIEW}?.querySelector('.message-box button[type="submit"]')`;
+const RESULT = `${VIEW}?.querySelector('.message-box .relay-result')`;
 const DELIVERED = "Delivered. It's in the session's inbox: it reads it at its next step, or starts a turn if it's idle.";
 const DRAFT = ['A made-up message for the app check.', 'On a second line.'];
 

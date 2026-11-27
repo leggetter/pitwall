@@ -15,7 +15,7 @@ import type { StorageSource } from '../groupState.js';
 import { group, NOW, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
 import { descriptionOf } from '../test/tooltips.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 
 const API_KEY = 'k'.repeat(43);
 const A = '00000000-0000-4000-8000-0000000000a1';
@@ -71,7 +71,7 @@ function renderPage(fetch: FetchLike, first: IndexSnapshot = snap(), search = '?
     const view: ConnectionView = { state: 'live', snapshot: s };
     return (
       <ApiContext.Provider value={api}>
-        <Dashboard view={view} navigation={history.navigation} storage={storage} />
+        <AppShell view={view} navigation={history.navigation} storage={storage} />
       </ApiContext.Provider>
     );
   };
@@ -395,7 +395,7 @@ describe('storage that fails (W44)', () => {
     expect(textarea().value).toBe(DRAFT);
     await sendDraft(DRAFT);
     expect(textarea().value).toBe('');
-    expect(view()!.querySelector('.relay-box')!.textContent).not.toMatch(/stor|reload/i);
+    expect(view()!.querySelector('.message-box')!.textContent).not.toMatch(/stor|reload/i);
     expect(errors).not.toHaveBeenCalled();
     // As before W44, a reload then brings nothing back.
     type(DRAFT);

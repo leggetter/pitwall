@@ -14,7 +14,7 @@ import { createShortcutsStore, SHORTCUTS_KEY, ShortcutsStoreContext, type Shortc
 import { fakeSockets, group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
 import { hover, pass, unhover } from '../test/tooltips.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 import type { TerminalHandle } from './Terminal.js';
 
 // xterm.js, replaced by a terminal that does nothing, through the module the view loads it from.
@@ -86,7 +86,7 @@ interface Options {
 }
 
 /** `null` renders the dashboard before its first snapshot. */
-function renderDashboard(first: IndexSnapshot | null = snap(), options: Options = {}) {
+function renderAppShell(first: IndexSnapshot | null = snap(), options: Options = {}) {
   const history = fakeHistory(options.search ?? '?view=all');
   const fetch = fakeServer();
   const api = createApiClient({ apiKey: API_KEY, fetch });
@@ -102,7 +102,7 @@ function renderDashboard(first: IndexSnapshot | null = snap(), options: Options 
       <ShortcutsStoreContext.Provider value={store}>
         <ApiContext.Provider value={api}>
           <AttachContext.Provider value={attach}>
-            <Dashboard view={view} navigation={history.navigation} storage={storage} />
+            <AppShell view={view} navigation={history.navigation} storage={storage} />
           </AttachContext.Provider>
         </ApiContext.Provider>
       </ShortcutsStoreContext.Provider>
@@ -168,7 +168,7 @@ afterEach(() => {
 describe('/', () => {
   it("focuses the filter field from the page, a row, the session view's header and its conversation, and isn't typed", async () => {
     setWidth(1300);
-    renderDashboard();
+    renderAppShell();
     expect(press('/', document.body)).toBe(false);
     expect(document.activeElement).toBe(filterField());
     expect(filterField().value).toBe('');
@@ -191,7 +191,7 @@ describe('/', () => {
 
   it('puts the caret after any text already there, so the filter can be refined', () => {
     setWidth(1300);
-    renderDashboard();
+    renderAppShell();
     fireEvent.change(filterField(), { target: { value: 'demo' } });
     blur();
     press('/', document.body);
@@ -200,7 +200,7 @@ describe('/', () => {
   });
 
   it('below 1,200 px, closes the session view over the list first, unless its message box has a draft', async () => {
-    const { history } = renderDashboard();
+    const { history } = renderAppShell();
     await open('demo-a');
     expect(press('/')).toBe(false);
     expect(view()).toBeUndefined();
@@ -221,7 +221,7 @@ describe('/', () => {
   });
 
   it('does nothing while there is no filter field, before the first snapshot', () => {
-    renderDashboard(null);
+    renderAppShell(null);
     expect(screen.queryByRole('searchbox')).toBeNull();
     expect(press('/', document.body)).toBe(true);
     expect(document.activeElement).toBe(document.body);
@@ -231,7 +231,7 @@ describe('/', () => {
 describe('n', () => {
   it('opens the New session dialog from a row and from the conversation, and Escape gives focus back', async () => {
     setWidth(1300);
-    renderDashboard();
+    renderAppShell();
     rowButton('demo-b').focus();
     expect(press('n')).toBe(false);
     const shown = dialog('New session')!;
@@ -250,10 +250,10 @@ describe('n', () => {
   });
 
   it('ignores n repeating as it is held, and does nothing before the first snapshot', () => {
-    const { rerender } = renderDashboard();
+    const { rerender } = renderAppShell();
     expect(press('n', document.body, { repeat: true })).toBe(true);
     expect(dialog('New session')).toBeNull();
-    rerender(<Dashboard view={{ state: 'connecting' }} navigation={fakeHistory('?view=all').navigation} storage={memory()} />);
+    rerender(<AppShell view={{ state: 'connecting' }} navigation={fakeHistory('?view=all').navigation} storage={memory()} />);
     expect(press('n', document.body)).toBe(true);
     expect(dialog('New session')).toBeNull();
   });
@@ -262,7 +262,7 @@ describe('n', () => {
 describe('?', () => {
   it('opens the keyboard shortcuts dialog, as the header button does, and Escape gives focus back, leaving the view open', async () => {
     setWidth(1300);
-    renderDashboard();
+    renderAppShell();
     await open('demo-a');
     expect(press('?', heading(), { shiftKey: true })).toBe(false);
     expect(dialog('Keyboard shortcuts')).not.toBeNull();
@@ -283,7 +283,7 @@ describe('?', () => {
   });
 
   it('ignores ? repeating as it is held, and works before the first snapshot', () => {
-    renderDashboard(null);
+    renderAppShell(null);
     expect(press('?', document.body, { repeat: true })).toBe(true);
     expect(dialog('Keyboard shortcuts')).toBeNull();
     press('?', document.body);
@@ -293,7 +293,7 @@ describe('?', () => {
 
 describe('j and k', () => {
   it('with no session open, move focus through the rows as shown, from the first, stopping at the ends and skipping a collapsed Finished section', () => {
-    const { history } = renderDashboard();
+    const { history } = renderAppShell();
     expect(press('j', document.body)).toBe(false);
     expect(document.activeElement).toBe(rowButton('demo-a'));
     press('j');
@@ -318,13 +318,13 @@ describe('j and k', () => {
   });
 
   it('k with nothing focused starts at the first row too', () => {
-    renderDashboard();
+    renderAppShell();
     press('k', document.body);
     expect(document.activeElement).toBe(rowButton('demo-a'));
   });
 
   it('skip the rows the filter hides', () => {
-    renderDashboard();
+    renderAppShell();
     fireEvent.click(screen.getByRole('button', { name: 'Interactive' }));
     rowButton('demo-a').focus();
     press('j');
@@ -334,7 +334,7 @@ describe('j and k', () => {
   });
 
   it('follow the order on screen while it is held, not the new one', () => {
-    const { update } = renderDashboard();
+    const { update } = renderAppShell();
     press('j', document.body);
     expect(document.activeElement).toBe(rowButton('demo-a'));
     // C now needs you, so Urgency puts it first, but focus is in the list, so the order holds.
@@ -351,7 +351,7 @@ describe('j and k', () => {
   it('with a session open, show the next or previous one; from the list, focus stays in the list', async () => {
     // In three columns: below 1,200 px the view covers the list, which is inert, so focus can't be there.
     setWidth(1300);
-    const { history, fetch } = renderDashboard();
+    const { history, fetch } = renderAppShell();
     await open('demo-a');
     const entries = history.entries.length;
     rowButton('demo-a').focus();
@@ -365,7 +365,7 @@ describe('j and k', () => {
   });
 
   it("from the view's header, show the next or previous session with focus on its heading, stopping at the ends", async () => {
-    renderDashboard();
+    renderAppShell();
     await open('demo-a');
     expect(document.activeElement).toBe(heading());
     expect(press('k')).toBe(true);
@@ -385,7 +385,7 @@ describe('j and k', () => {
 
   it("from the conversation, show the next session and keep focus in its conversation, where ↑ and ↓ scroll", async () => {
     // Without demo-b, a running background session, which opens on its Terminal tab (below).
-    renderDashboard(snap(sessions().filter((each) => each.sessionId !== B)));
+    renderAppShell(snap(sessions().filter((each) => each.sessionId !== B)));
     await open('demo-a');
     conversation().focus();
     press('j');
@@ -399,7 +399,7 @@ describe('j and k', () => {
   });
 
   it("from the conversation onto a view that opens on its Terminal tab, focus goes to its heading, since its conversation is hidden (W54)", async () => {
-    renderDashboard();
+    renderAppShell();
     await open('demo-a');
     conversation().focus();
     press('j');
@@ -411,7 +411,7 @@ describe('j and k', () => {
   });
 
   it('with nothing focused and a session open, show the next one, with focus on its heading', async () => {
-    renderDashboard();
+    renderAppShell();
     await open('demo-a');
     blur();
     press('j', document.body);
@@ -421,7 +421,7 @@ describe('j and k', () => {
   });
 
   it('do nothing while the message box has a draft, which would be lost', async () => {
-    renderDashboard();
+    renderAppShell();
     await open('demo-a');
     const box = within(view()!).getByRole('textbox', { name: 'Message to demo-a' });
     fireEvent.change(box, { target: { value: 'a draft' } });
@@ -434,7 +434,7 @@ describe('j and k', () => {
   });
 
   it("do nothing for an open session the list doesn't show", async () => {
-    renderDashboard();
+    renderAppShell();
     fireEvent.click(screen.getByRole('button', { name: /^Finished/ }));
     await open('demo-done');
     fireEvent.click(screen.getByRole('button', { name: /^Finished/ }));
@@ -460,7 +460,7 @@ describe('ignored', () => {
 
   it('while typing: in the filter field, the message box, something contenteditable and the terminal', async () => {
     setWidth(1300);
-    const { container } = renderDashboard();
+    const { container } = renderAppShell();
     await open('demo-a');
     filterField().focus();
     pressesNothing(filterField());
@@ -485,14 +485,14 @@ describe('ignored', () => {
 
   it('with ⌘, Ctrl or Alt held, so the browser and the system keep their shortcuts', async () => {
     setWidth(1300);
-    renderDashboard();
+    renderAppShell();
     await open('demo-a');
     for (const modifier of ['metaKey', 'ctrlKey', 'altKey']) pressesNothing(heading(), { [modifier]: true });
   });
 
   it('while a dialog is open: New session, the shortcuts dialog, and the repo drawer', async () => {
     setWidth(1300);
-    renderDashboard();
+    renderAppShell();
     await open('demo-a');
     fireEvent.click(screen.getByRole('button', { name: 'New session' }));
     const close = within(dialog('New session')!).getByRole('button', { name: 'Close' });
@@ -524,7 +524,7 @@ describe('ignored', () => {
 describe('an open menu', () => {
   it('closes first when a shortcut moves focus: j, /, n and ?', async () => {
     setWidth(1300);
-    renderDashboard();
+    renderAppShell();
     await open('demo-b');
     const menuButton = () => within(view()!).getByRole('button', { name: 'Session actions' });
     const menu = () => within(view()!).queryByRole('menu');
@@ -560,7 +560,7 @@ describe('an open menu', () => {
 
   it("stays open when the shortcut has nowhere to go, as j at the list's end", async () => {
     setWidth(1300);
-    renderDashboard();
+    renderAppShell();
     await open('demo-c');
     fireEvent.click(within(view()!).getByRole('button', { name: 'Session actions' }));
     expect(press('j')).toBe(true);
@@ -571,7 +571,7 @@ describe('an open menu', () => {
 describe('the off switch', () => {
   it('is on by default; turning it off stores it and turns off all six, and the header button still opens the dialog', async () => {
     setWidth(1300);
-    const { shortcutStorage } = renderDashboard();
+    const { shortcutStorage } = renderAppShell();
     await open('demo-a');
     press('?', heading());
     const box = () => within(dialog('Keyboard shortcuts')!).getByRole('checkbox', { name: 'Single-key shortcuts' }) as HTMLInputElement;
@@ -605,7 +605,7 @@ describe('the off switch', () => {
   });
 
   it('reads a stored off back when the page loads', () => {
-    renderDashboard(snap(), { stored: memory({ [SHORTCUTS_KEY]: 'off' }) });
+    renderAppShell(snap(), { stored: memory({ [SHORTCUTS_KEY]: 'off' }) });
     expect(press('j', document.body)).toBe(true);
     expect(document.activeElement).toBe(document.body);
     fireEvent.click(within(document.querySelector<HTMLElement>('.app-header')!).getByRole('button', { name: 'Keyboard shortcuts' }));
@@ -614,7 +614,7 @@ describe('the off switch', () => {
 
   it('follows a change made in another tab', () => {
     const stored = memory();
-    const { events } = renderDashboard(snap(), { stored });
+    const { events } = renderAppShell(snap(), { stored });
     expect(document.querySelector('.filter-key')).not.toBeNull();
     stored.values.set(SHORTCUTS_KEY, 'off');
     events.fire(SHORTCUTS_KEY);
@@ -635,7 +635,7 @@ describe('the off switch', () => {
         throw new Error('blocked');
       },
     });
-    renderDashboard(snap(), { stored: throwing });
+    renderAppShell(snap(), { stored: throwing });
     press('?', document.body);
     const box = within(dialog('Keyboard shortcuts')!).getByRole('checkbox') as HTMLInputElement;
     expect(box.checked).toBe(true);
@@ -647,7 +647,7 @@ describe('the off switch', () => {
 
   it("hides the filter field's / and the single-key caps in tooltips; Esc still shows", async () => {
     setWidth(1300);
-    const { store } = renderDashboard();
+    const { store } = renderAppShell();
     const banner = within(document.querySelector<HTMLElement>('.app-header')!);
     const caps = (tip: HTMLElement | null) => [...(tip?.querySelectorAll('kbd') ?? [])].map((kbd) => kbd.textContent);
 

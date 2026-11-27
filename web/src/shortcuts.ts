@@ -10,7 +10,7 @@
 // Which key is which shortcut is decided here, and when a key isn't one: never while typing in a
 // field, a select, something contenteditable or the terminal, never with ⌘, Ctrl or Alt held, so the
 // browser's and the system's own shortcuts are untouched, and never for a key someone else handled.
-// What each one does is the Dashboard's.
+// What each one does is the AppShell's.
 
 import { createContext, useContext, useSyncExternalStore } from 'react';
 import { browserStorage, type StorageSource } from './groupState.js';

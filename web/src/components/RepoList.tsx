@@ -117,7 +117,7 @@ export interface RepoListProps {
   autoFocus?: boolean;
   /** Before the first snapshot, once --pw-delay-spinner has passed: four skeleton items below the views. */
   skeletons?: boolean;
-  /** Covered, in part, by the session view over the list: nothing in it can take focus or a click (Dashboard.tsx). */
+  /** Covered, in part, by the session view over the list: nothing in it can take focus or a click (AppShell.tsx). */
   inert?: boolean;
   /** The groups hidden from the list, listed at its foot (W35). Nothing is hidden when it's undefined. */
   hidden?: HiddenListProps | undefined;

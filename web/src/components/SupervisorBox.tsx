@@ -1,6 +1,6 @@
 // The supervisor's message box (M5, W114; docs/design-system.md, 4: Supervisor, and 4: Message box): at
 // the foot of its view, sending what you type to the supervisor, as you, with POST
-// SUPERVISOR_MESSAGE_PATH. The session view's message box (RelayBox.tsx) in look and keys: the text box
+// SUPERVISOR_MESSAGE_PATH. The session view's message box (MessageBox.tsx) in look and keys: the text box
 // beside Send, the help line with ⌘ ↵, the note behind an info button, and the character count from 80 %
 // of the limit, SUPERVISOR_MESSAGE_MAX. While it works, Stop beside Send stops its turn, with POST
 // SUPERVISOR_INTERRUPT_PATH.
@@ -321,7 +321,7 @@ export function SupervisorBox({ status, suggestion, ask, onAskUsed, onDraftChang
   const describedBy = [unsure && ids.unsure, ids.keys, count?.over && ids.count].filter(Boolean).join(' ');
 
   return (
-    <section className="relay-box supervisor-box" aria-labelledby={ids.heading}>
+    <section className="message-box supervisor-box" aria-labelledby={ids.heading}>
       <h3 className="visually-hidden" id={ids.heading}>
         Message the supervisor
       </h3>

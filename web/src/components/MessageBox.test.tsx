@@ -5,7 +5,7 @@ import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import type { ConnectionView } from '../connection.js';
 import { group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
 import { descriptionOf, tooltipText } from '../test/tooltips.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 import { usesCommandKey } from './KeyCaps.js';
 import { REPLY_IN_CONVERSATION as REPLY_SAID } from '../relay.js';
 
@@ -49,13 +49,13 @@ function fakeServer(...answers: Answer[]) {
 const posts = (fetch: ReturnType<typeof fakeServer>) =>
   fetch.mock.calls.filter(([, init]) => init.method === 'POST').map(([url, init]) => ({ url, body: JSON.parse(String(init.body)) as unknown }));
 
-function renderDashboard(fetch: FetchLike, first: IndexSnapshot = snap()) {
+function renderAppShell(fetch: FetchLike, first: IndexSnapshot = snap()) {
   const api = createApiClient({ apiKey: API_KEY, fetch });
   const ui = (s: IndexSnapshot) => {
     const view: ConnectionView = { state: 'live', snapshot: s };
     return (
       <ApiContext.Provider value={api}>
-        <Dashboard view={view} />
+        <AppShell view={view} />
       </ApiContext.Provider>
     );
   };
@@ -92,7 +92,7 @@ beforeEach(() => {
 
 describe('a draft whose session can no longer be messaged (W31)', () => {
   it('stays, editable, when the session stops running, says why it can’t be sent, and goes to the note once cleared', async () => {
-    const { update } = renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
+    const { update } = renderAppShell(fakeServer({ status: 200, body: { status: 'delivered' } }));
     const view = await openView();
     fireEvent.change(textarea(view), { target: { value: 'a made-up draft' } });
     update(snap(interactive({ alive: false, pid: undefined, status: undefined })));
@@ -115,7 +115,7 @@ describe('a draft whose session can no longer be messaged (W31)', () => {
   });
 
   it('keeps the footer, with the draft, when the session leaves the list, and lets it go once cleared', async () => {
-    const { update } = renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
+    const { update } = renderAppShell(fakeServer({ status: 200, body: { status: 'delivered' } }));
     const view = await openView();
     fireEvent.change(textarea(view), { target: { value: 'a made-up draft' } });
     update(snapshot([group({ sessions: [session({ sessionId: BG, name: 'pitwall-test-bg', kind: 'background', shortId: 'b3899da0', state: 'working' })] })]));
@@ -131,7 +131,7 @@ describe('a draft whose session can no longer be messaged (W31)', () => {
   });
 
   it('has no footer when the session leaves the list with no draft, as before', async () => {
-    const { update } = renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
+    const { update } = renderAppShell(fakeServer({ status: 200, body: { status: 'delivered' } }));
     const view = await openView();
     update(snapshot([group({ sessions: [session({ sessionId: BG, name: 'pitwall-test-bg', kind: 'background', shortId: 'b3899da0', state: 'working' })] })]));
     await settle();
@@ -141,7 +141,7 @@ describe('a draft whose session can no longer be messaged (W31)', () => {
 
 describe('the message box', () => {
   it('is in an interactive session’s view, says what it costs and that it can’t approve prompts', async () => {
-    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
+    renderAppShell(fakeServer({ status: 200, body: { status: 'delivered' } }));
     const view = await openView();
     // Behind an info button, so Tab reaches it, whose name is its tooltip.
     const info = within(box(view)).getByRole('button', { name: LIMITS });
@@ -154,7 +154,7 @@ describe('the message box', () => {
   });
 
   it('says how to send, as key caps with words for screen readers, and links that to the text box', async () => {
-    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
+    renderAppShell(fakeServer({ status: 200, body: { status: 'delivered' } }));
     const view = await openView();
     const help = box(view).querySelector('.relay-help-keys')!;
     expect([...help.querySelectorAll('kbd')].map((key) => key.textContent)).toEqual(usesCommandKey() ? ['⌘', '↵'] : ['Ctrl', '↵']);
@@ -164,14 +164,14 @@ describe('the message box', () => {
   });
 
   it('isn’t in a background session’s view', async () => {
-    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
+    renderAppShell(fakeServer({ status: 200, body: { status: 'delivered' } }));
     const view = await openView('pitwall-test-bg');
     expect(within(view).queryByRole('region', { name: 'Message this session' })).toBeNull();
   });
 
   it('sends the text as typed, without blank lines before it or whitespace after it, and says it was delivered', async () => {
     const server = fakeServer({ status: 200, body: { status: 'delivered' } });
-    renderDashboard(server);
+    renderAppShell(server);
     const view = await openView();
     const text = '  Please run the tests.\n<b>not markup</b> &  "quotes"';
     await sendFrom(view, `\n \n${text} \n\n`);
@@ -186,7 +186,7 @@ describe('the message box', () => {
   });
 
   it('says a held message waits for approval in that session’s own terminal', async () => {
-    renderDashboard(fakeServer({ status: 200, body: { status: 'held', detail: 'Held by that session.' } }));
+    renderAppShell(fakeServer({ status: 200, body: { status: 'held', detail: 'Held by that session.' } }));
     const view = await openView();
     await sendFrom(view, 'hello');
     expect(within(view).getByRole('alert').textContent).toBe(
@@ -195,7 +195,7 @@ describe('the message box', () => {
   });
 
   it('says a refused message was refused', async () => {
-    renderDashboard(fakeServer({ status: 200, body: { status: 'refused', detail: 'Refused by its settings.' } }));
+    renderAppShell(fakeServer({ status: 200, body: { status: 'refused', detail: 'Refused by its settings.' } }));
     const view = await openView();
     await sendFrom(view, 'hello');
     expect(within(view).getByRole('alert').textContent).toBe(
@@ -204,7 +204,7 @@ describe('the message box', () => {
   });
 
   it('says why a message wasn’t sent, as text, and keeps the draft', async () => {
-    renderDashboard(fakeServer({ status: 200, body: { status: 'failed', detail: 'Ambiguous name: 2 running sessions are named <x>\u001b[31m.' } }));
+    renderAppShell(fakeServer({ status: 200, body: { status: 'failed', detail: 'Ambiguous name: 2 running sessions are named <x>\u001b[31m.' } }));
     const view = await openView();
     await sendFrom(view, 'hello');
     const alert = within(view).getByRole('alert');
@@ -214,7 +214,7 @@ describe('the message box', () => {
   });
 
   it('says a message that may have been sent may have reached the session, and keeps the draft', async () => {
-    renderDashboard(fakeServer({ status: 200, body: { status: 'uncertain', detail: 'The relay stopped (exit code 1). It may have reached the session.' } }));
+    renderAppShell(fakeServer({ status: 200, body: { status: 'uncertain', detail: 'The relay stopped (exit code 1). It may have reached the session.' } }));
     const view = await openView();
     await sendFrom(view, 'hello');
     const alert = within(view).getByRole('alert');
@@ -227,7 +227,7 @@ describe('the message box', () => {
 
   it('shows an uncertain exchange on the session as one to check', async () => {
     const relay = { sentAt: minutesAgo(3), status: 'uncertain' as const };
-    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }), snap(interactive({ relay })));
+    renderAppShell(fakeServer({ status: 200, body: { status: 'delivered' } }), snap(interactive({ relay })));
     const view = await openView();
     const line = box(view).querySelector('.relay-exchange-line') as HTMLElement;
     expect(line.textContent).toBe('Message from pitwall · 3m ago: may have reached it: check its conversation');
@@ -235,7 +235,7 @@ describe('the message box', () => {
   });
 
   it('shows the server’s detail for a refused request, such as 409 or 429', async () => {
-    renderDashboard(
+    renderAppShell(
       fakeServer(
         { status: 409, body: { status: 'failed', detail: "That session isn't running, so there's nothing to message." } },
         { status: 429, body: { status: 'failed', detail: 'The relay is busy with other messages. Try again in a moment.' } },
@@ -249,7 +249,7 @@ describe('the message box', () => {
   });
 
   it('says a message may have reached the session, as a warning, when pitwall didn’t answer or answered with a server error, and keeps the draft', async () => {
-    renderDashboard(fakeServer(new TypeError('network down'), { status: 502 }, { status: 200 }));
+    renderAppShell(fakeServer(new TypeError('network down'), { status: 502 }, { status: 200 }));
     const view = await openView();
     await sendFrom(view, 'hello');
     let alert = within(view).getByRole('alert');
@@ -271,7 +271,7 @@ describe('the message box', () => {
   });
 
   it('says a message wasn’t sent, as danger, when pitwall refused the request before the relay ran', async () => {
-    renderDashboard(fakeServer({ status: 403 }));
+    renderAppShell(fakeServer({ status: 403 }));
     const view = await openView();
     await sendFrom(view, 'hello');
     const alert = within(view).getByRole('alert');
@@ -282,7 +282,7 @@ describe('the message box', () => {
 
   it('can’t send nothing, only whitespace, or more than 8,192 characters', async () => {
     const server = fakeServer({ status: 200, body: { status: 'delivered' } });
-    renderDashboard(server);
+    renderAppShell(server);
     const view = await openView();
     const send = () => within(view).getByRole('button', { name: 'Send' }) as HTMLButtonElement;
     const off = () => send().getAttribute('aria-disabled') === 'true';
@@ -307,7 +307,7 @@ describe('the message box', () => {
 
   it('sends with Cmd or Ctrl+Enter', async () => {
     const server = fakeServer({ status: 200, body: { status: 'delivered' } });
-    renderDashboard(server);
+    renderAppShell(server);
     const view = await openView();
     fireEvent.change(textarea(view), { target: { value: 'one' } });
     fireEvent.keyDown(textarea(view), { key: 'Enter', metaKey: true });
@@ -328,7 +328,7 @@ describe('the message box', () => {
         ? new Promise<Response>((resolve) => (answer = resolve))
         : new Response(JSON.stringify({ sessionId: INTERACTIVE, entries: [] }), { status: 200 }),
     );
-    renderDashboard(server);
+    renderAppShell(server);
     const view = await openView();
     await sendFrom(view, 'hello');
     const busy = within(view).getByRole('button', { name: 'Sending…' });
@@ -347,7 +347,7 @@ describe('the message box', () => {
   });
 
   it('keeps the view open on Escape while there’s a draft', async () => {
-    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
+    renderAppShell(fakeServer({ status: 200, body: { status: 'delivered' } }));
     const view = await openView();
     fireEvent.change(textarea(view), { target: { value: 'draft' } });
     fireEvent.keyDown(textarea(view), { key: 'Escape' });
@@ -358,7 +358,7 @@ describe('the message box', () => {
   });
 
   it('says a session that isn’t running can’t be messaged', async () => {
-    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }), snap(interactive({ alive: false, pid: undefined, status: undefined })));
+    renderAppShell(fakeServer({ status: 200, body: { status: 'delivered' } }), snap(interactive({ alive: false, pid: undefined, status: undefined })));
     const view = await openView();
     expect(within(box(view)).getByText("It isn't running, so it can't be messaged.")).toBeTruthy();
     expect(within(view).queryByRole('textbox')).toBeNull();
@@ -369,7 +369,7 @@ describe('the message box', () => {
 
   it('shows the latest exchange and its reply, as text', async () => {
     const relay = { sentAt: minutesAgo(3), status: 'delivered' as const, reply: { at: minutesAgo(2), text: 'Done: <b>3 tests</b> pass\u001b[0m' } };
-    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }), snap(interactive({ relay })));
+    renderAppShell(fakeServer({ status: 200, body: { status: 'delivered' } }), snap(interactive({ relay })));
     const view = await openView();
     const exchange = box(view).querySelector('.relay-exchange') as HTMLElement;
     expect(exchange.textContent).toContain('Message from pitwall · 3m ago: delivered');
@@ -385,7 +385,7 @@ describe('the row', () => {
 
   it('has no Message button and no relay exchange: the session view has the box, with the exchange above it', async () => {
     const relay = { sentAt: minutesAgo(10), status: 'held' as const, reply: { at: minutesAgo(9), text: 'line one\nline two' } };
-    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }), snap(interactive({ relay })));
+    renderAppShell(fakeServer({ status: 200, body: { status: 'delivered' } }), snap(interactive({ relay })));
 
     expect(within(row()).queryByRole('button', { name: 'Message' })).toBeNull();
     expect(row().querySelector('.relay-exchange')).toBeNull();
@@ -401,7 +401,7 @@ describe('the row', () => {
 
 describe('the message box’s rules (W24)', () => {
   it('keeps focus in the text box after ⌘↵, and brings it back there from Send', async () => {
-    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
+    renderAppShell(fakeServer({ status: 200, body: { status: 'delivered' } }));
     const view = await openView();
     textarea(view).focus();
     fireEvent.change(textarea(view), { target: { value: 'one' } });
@@ -424,7 +424,7 @@ describe('the message box’s rules (W24)', () => {
         ? new Promise<Response>((resolve) => (answer = resolve))
         : new Response(JSON.stringify({ sessionId: INTERACTIVE, entries: [] }), { status: 200 }),
     );
-    renderDashboard(server);
+    renderAppShell(server);
     const view = await openView();
     await sendFrom(view, 'hello');
     const heading = within(view).getByRole('heading', { level: 2 });
@@ -435,7 +435,7 @@ describe('the message box’s rules (W24)', () => {
   });
 
   it('never loses a draft to Escape, wherever focus is in the view, and closes the view once the draft is gone', async () => {
-    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
+    renderAppShell(fakeServer({ status: 200, body: { status: 'delivered' } }));
     const view = await openView();
     fireEvent.change(textarea(view), { target: { value: 'draft' } });
     const heading = within(view).getByRole('heading', { level: 2 });
@@ -451,7 +451,7 @@ describe('the message box’s rules (W24)', () => {
   });
 
   it('counts a whitespace-only draft as a draft, so Escape keeps it too', async () => {
-    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
+    renderAppShell(fakeServer({ status: 200, body: { status: 'delivered' } }));
     const view = await openView();
     fireEvent.change(textarea(view), { target: { value: '  ' } });
     fireEvent.keyDown(document.body, { key: 'Escape' });
@@ -459,7 +459,7 @@ describe('the message box’s rules (W24)', () => {
   });
 
   it('shows the character count only from 80 % of the limit, then how far over it is', async () => {
-    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered' } }));
+    renderAppShell(fakeServer({ status: 200, body: { status: 'delivered' } }));
     const view = await openView();
     const count = () => box(view).querySelector('.relay-count');
     const type = (length: number) => fireEvent.change(textarea(view), { target: { value: 'x'.repeat(length) } });
@@ -488,7 +488,7 @@ describe('the message box’s rules (W24)', () => {
     ['refused', 'alert', 'danger'],
     ['failed', 'alert', 'danger'],
   ] as const)('shows %s as an inline alert with role="%s", in the %s tone', async (status, role, tone) => {
-    renderDashboard(fakeServer({ status: 200, body: { status, detail: 'A made-up detail.' } }));
+    renderAppShell(fakeServer({ status: 200, body: { status, detail: 'A made-up detail.' } }));
     const view = await openView();
     await sendFrom(view, 'hello');
     const result = box(view).querySelector('.relay-result')!;
@@ -501,7 +501,7 @@ describe('the message box’s rules (W24)', () => {
   it('says so after Delivered when pitwall’s gate stopped the relay’s first copy and the second went through (W52)', async () => {
     const detail =
       "pitwall's gate stopped the relay's first copy of your message, because it didn't match, so pitwall tried once more, on a new relay, and the second copy went through. The first time, the relay changed the text before sending it, first at line 1: the copy adds a line break (U+000A).";
-    renderDashboard(fakeServer({ status: 200, body: { status: 'delivered', detail } }));
+    renderAppShell(fakeServer({ status: 200, body: { status: 'delivered', detail } }));
     const view = await openView();
     await sendFrom(view, 'hello');
     const result = within(box(view)).getByRole('status');
@@ -513,7 +513,7 @@ describe('the message box’s rules (W24)', () => {
   });
 
   it('shows pitwall’s own failure, before the relay answered, as a warning alert when it may have gone, and danger when pitwall refused it', async () => {
-    renderDashboard(fakeServer(new TypeError('network down'), { status: 400 }));
+    renderAppShell(fakeServer(new TypeError('network down'), { status: 400 }));
     const view = await openView();
     await sendFrom(view, 'hello');
     let result = box(view).querySelector('.relay-result')!;
@@ -537,7 +537,7 @@ describe('the message box’s rules (W24)', () => {
         ? new Response(JSON.stringify({ status: 'delivered' }), { status: 200 })
         : new Response(JSON.stringify({ sessionId: INTERACTIVE, entries }), { status: 200 }),
     );
-    renderDashboard(server, snap(interactive({ relay })));
+    renderAppShell(server, snap(interactive({ relay })));
     const view = await openView();
     await settle();
     expect(box(view).querySelector('.relay-exchange-line')?.textContent).toBe(`Message from pitwall · 3m ago: delivered. ${REPLY_SAID}`);
@@ -565,7 +565,7 @@ describe('the message box’s rules (W24)', () => {
         { kind: 'cross-session', at: minutesAgo(3), from: 'pitwall-relay', text: 'Which flows did you change?', markdown: true },
         { kind: 'to-pitwall', at: minutesAgo(2), text: replyText, markdown: true },
       ];
-      renderDashboard(chatServer(entries).fetch, snap(interactive({ relay })));
+      renderAppShell(chatServer(entries).fetch, snap(interactive({ relay })));
       const view = await openView();
       await settle();
       const line = box(view).querySelector('.relay-exchange-line') as HTMLElement;
@@ -581,7 +581,7 @@ describe('the message box’s rules (W24)', () => {
       const long = `${replyText} ${'More of the made-up reply, past what a cut entry keeps. '.repeat(30)}`;
       const cutRelay = { ...relay, reply: { at: minutesAgo(2), text: `${long.slice(0, 1500)}…` } };
       const entries = [{ kind: 'to-pitwall', at: minutesAgo(2), text: long.slice(0, 512), markdown: true, truncated: true }];
-      renderDashboard(chatServer(entries).fetch, snap(interactive({ relay: cutRelay })));
+      renderAppShell(chatServer(entries).fetch, snap(interactive({ relay: cutRelay })));
       const view = await openView();
       await settle();
       expect(view.querySelector('.entry-to-pitwall .entry-cut')?.textContent).toBe('Cut short.');
@@ -592,7 +592,7 @@ describe('the message box’s rules (W24)', () => {
 
     it("keeps the relay's copy in the footer when the message to pitwall since the send isn't it, as from a session that took the relay's name", async () => {
       const entries = [{ kind: 'to-pitwall', at: minutesAgo(2), text: 'A different made-up message, to whoever took the name.', markdown: true }];
-      renderDashboard(chatServer(entries).fetch, snap(interactive({ relay })));
+      renderAppShell(chatServer(entries).fetch, snap(interactive({ relay })));
       const view = await openView();
       await settle();
       expect(view.querySelector('.entry-to-pitwall')).not.toBeNull();
@@ -602,7 +602,7 @@ describe('the message box’s rules (W24)', () => {
 
     it('shows the reply in the footer, as before, until the conversation has loaded, and when it has no message to pitwall since the send', async () => {
       const server = chatServer([{ kind: 'to-pitwall', at: minutesAgo(10), text: 'An older message, from before this send.', markdown: true }], true);
-      renderDashboard(server.fetch, snap(interactive({ relay })));
+      renderAppShell(server.fetch, snap(interactive({ relay })));
       const view = await openView();
       // Waiting for the conversation: no entries yet, so the reply is in the footer.
       expect(box(view).querySelector('.relay-reply')?.textContent).toBe(`Reply: ${replyText}`);

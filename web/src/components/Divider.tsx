@@ -2,20 +2,20 @@
 // (docs/design-system.md, 3: Session view): a 24 px hit area with a 1 px line in it, a focusable
 // role="separator" whose value is the view's width in px. Dragging it, ← and → (16 px), Home and End
 // (the minimum and maximum) resize the view, and a double-click resets it. The width is stored in
-// pitwall.panel-width.v1 (panelWidth.ts).
+// pitwall.panel-width.v1 (sessionPaneWidth.ts).
 //
-// The width lives in a store the Dashboard makes (createPanelWidthStore), which the session view's
+// The width lives in a store the AppShell makes (createSessionPaneWidthStore), which the session view's
 // actions menu also changes, with Make view wider, Make view narrower and Reset view width, so it can
 // be resized without dragging (WCAG 2.5.7). The divider sets the width on the third column's pane
 // itself, which the stylesheet clamps to what the app's width allows, so dragging re-renders only this.
 
 import { useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type PointerEvent } from 'react';
 import { widthOf } from '../layout.js';
-import { PANEL_STEP, panelMax, panelMin, panelReset, shownPanel, type PanelWidthStore } from '../panelWidth.js';
+import { SESSION_PANE_STEP, sessionPaneMax, sessionPaneMin, sessionPaneReset, shownSessionPane, type SessionPaneWidthStore } from '../sessionPaneWidth.js';
 
 export interface DividerProps {
   /** The view's width, which pitwall.panel-width.v1 keeps, shared with the actions menu. */
-  store: PanelWidthStore;
+  store: SessionPaneWidthStore;
   /**
    * The supervisor's panel open beside the view, as a column of its own (W187): the view's limits
    * are what its room leaves, and what the divider sets then is the width shown, kept once it closes.
@@ -64,7 +64,7 @@ export function Divider({ store, beside = false }: DividerProps) {
     };
   }, [requested]);
 
-  const shown = shownPanel(state);
+  const shown = shownSessionPane(state);
 
   /** Asks for `width`, against the app's width as it is now. */
   const set = (width: number, save: boolean) => {
@@ -74,15 +74,15 @@ export function Divider({ store, beside = false }: DividerProps) {
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
-    const max = panelMax(appWidth, beside);
+    const max = sessionPaneMax(appWidth, beside);
     // The divider is the view's left edge: moving it left widens the view.
     const next =
       event.key === 'ArrowLeft'
-        ? shown + PANEL_STEP
+        ? shown + SESSION_PANE_STEP
         : event.key === 'ArrowRight'
-          ? shown - PANEL_STEP
+          ? shown - SESSION_PANE_STEP
           : event.key === 'Home'
-            ? panelMin(appWidth, beside)
+            ? sessionPaneMin(appWidth, beside)
             : event.key === 'End'
               ? max
               : undefined;
@@ -131,8 +131,8 @@ export function Divider({ store, beside = false }: DividerProps) {
       aria-orientation="vertical"
       aria-label="Resize the session view"
       aria-valuenow={shown}
-      aria-valuemin={panelMin(appWidth, beside)}
-      aria-valuemax={panelMax(appWidth, beside)}
+      aria-valuemin={sessionPaneMin(appWidth, beside)}
+      aria-valuemax={sessionPaneMax(appWidth, beside)}
       tabIndex={0}
       data-dragging={dragging || undefined}
       onKeyDown={onKeyDown}
@@ -141,7 +141,7 @@ export function Divider({ store, beside = false }: DividerProps) {
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
       onLostPointerCapture={endDrag}
-      onDoubleClick={() => set(panelReset(appWidthOf(self.current), beside), true)}
+      onDoubleClick={() => set(sessionPaneReset(appWidthOf(self.current), beside), true)}
     />
   );
 }

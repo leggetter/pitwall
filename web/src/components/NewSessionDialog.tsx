@@ -38,7 +38,7 @@
 //   says how to trust the new folder. What was typed is measured against the prefill, so a click on
 //   the backdrop still closes it until you change something.
 // - From the repo list's selection (W147, D27): + New session opens with the selected repo or
-//   directory chosen (newSessionDirectory(), Dashboard), never the open session's, and with a view
+//   directory chosen (newSessionDirectory(), AppShell), never the open session's, and with a view
 //   selected, with no directory chosen (`noDirectory`): the field is empty, showing its placeholder,
 //   and its list offers every directory. The rest as usual.
 

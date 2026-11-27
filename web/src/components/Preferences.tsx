@@ -23,7 +23,7 @@
 // Preferences.css). Each section is a <section> named by
 // its <h3>, and each setting a RadioGroup.
 // Sort stays in the session list's header and the view's width on the divider: both are view
-// controls, used in place. Each setting keeps its own key and validation, the Dashboard's, passed in.
+// controls, used in place. Each setting keeps its own key and validation, the AppShell's, passed in.
 
 import { useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { WORK_KINDS, type IndexSnapshot, type WorkChoices, type WorkKind, type WorkSettings } from '../../../src/shared/protocol.js';
@@ -275,7 +275,7 @@ export function WorkPreferences({ recaps, supervisor, initial }: WorkPreferences
   );
 }
 
-/** The settings the Dashboard keeps, which the dialog shows and changes. */
+/** The settings the AppShell keeps, which the dialog shows and changes. */
 export type PreferencesProps = RepoListPreferencesProps & SessionViewPreferencesProps;
 
 export interface PreferencesDialogProps extends PreferencesProps, WorkPreferencesProps {

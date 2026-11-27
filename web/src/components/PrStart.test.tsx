@@ -17,7 +17,7 @@ import { memoryNavigation } from '../selection.js';
 import { fakeSockets, group, minutesAgo, NOW, pr, prLink, prList, session, snapshot } from '../test/fixtures.js';
 import { toastMessages } from '../test/toasts.js';
 import { CLONE_TITLE, CLONED_TRUST_TEXT, clonedText } from './CloneDialog.js';
-import { Dashboard, startedText } from './Dashboard.js';
+import { AppShell, startedText } from './AppShell.js';
 import { resumedText } from './EndedSession.js';
 import { RESUME_HINT_IN_VIEW, rowResumeLabel } from './RowResume.js';
 import { BACKGROUND_NOTES } from './SessionView.js';
@@ -112,7 +112,7 @@ function memory(): StorageSource {
   return () => storage;
 }
 
-function renderDashboard(server: Server = fakeServer(), search = '?view=all', list: PullRequestList = prList(PRS)) {
+function renderAppShell(server: Server = fakeServer(), search = '?view=all', list: PullRequestList = prList(PRS)) {
   const api = createApiClient({ apiKey: 'k'.repeat(43), fetch: server.fetch });
   const navigation = memoryNavigation(search);
   const storage = memory();
@@ -120,7 +120,7 @@ function renderDashboard(server: Server = fakeServer(), search = '?view=all', li
   const ui = (s: IndexSnapshot, l: PullRequestList) => (
     <ApiContext.Provider value={api}>
       <AttachContext.Provider value={attach}>
-        <Dashboard view={{ state: 'live', snapshot: s, prs: l }} navigation={navigation} storage={storage} />
+        <AppShell view={{ state: 'live', snapshot: s, prs: l }} navigation={navigation} storage={storage} />
       </AttachContext.Provider>
     </ApiContext.Provider>
   );
@@ -159,7 +159,7 @@ afterEach(() => {
 
 describe('New session for a PR row in a cloned repo', () => {
   it('is the row’s action, named for the PR, and opens New session prefilled in its clone', async () => {
-    renderDashboard();
+    renderAppShell();
     const button = startButton(review)!;
     expect(button.getAttribute('aria-haspopup')).toBe('dialog');
     expect(document.getElementById(button.getAttribute('aria-labelledby') ?? '')?.textContent ?? button.getAttribute('aria-label')).toBe('New session for #57');
@@ -173,7 +173,7 @@ describe('New session for a PR row in a cloned repo', () => {
 
   it('starts it there, and links the new session to the PR at once, so its row goes into the session’s', async () => {
     const server = fakeServer();
-    const { update } = renderDashboard(server);
+    const { update } = renderAppShell(server);
     fireEvent.click(startButton(review)!);
     fireEvent.click(within(dialog('New session')).getByRole('button', { name: 'Start session' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New session' })).toBeNull());
@@ -187,7 +187,7 @@ describe('New session for a PR row in a cloned repo', () => {
   });
 
   it('links nothing when the prompt sent no longer names the PR', async () => {
-    const { update } = renderDashboard();
+    const { update } = renderAppShell();
     fireEvent.click(startButton(review)!);
     fireEvent.change(field('First prompt'), { target: { value: 'Something else, with no link.' } });
     fireEvent.click(within(dialog('New session')).getByRole('button', { name: 'Start session' }));
@@ -197,7 +197,7 @@ describe('New session for a PR row in a cloned repo', () => {
   });
 
   it('closes on the backdrop until something is changed, since a prefill isn’t typing', () => {
-    renderDashboard();
+    renderAppShell();
     fireEvent.click(startButton(review)!);
     fireEvent.pointerDown(document.querySelector('.dialog-backdrop')!);
     fireEvent.click(document.querySelector('.dialog-backdrop')!);
@@ -214,7 +214,7 @@ describe('New session for a PR row in a cloned repo', () => {
 describe('Clone and start for a PR row in a repo that isn’t cloned', () => {
   it('shows exactly what it will do first, and sends only the repo', async () => {
     const server = fakeServer();
-    renderDashboard(server);
+    renderAppShell(server);
     const button = startButton(docs)!;
     fireEvent.click(button);
     const confirm = dialog(CLONE_TITLE);
@@ -234,7 +234,7 @@ describe('Clone and start for a PR row in a repo that isn’t cloned', () => {
     const theirs = placed(pr({ number: 3, repoLabel: 'A-Stranger/Thing', relation: 'mentioned' }, 30), { kind: 'not-cloned', root: ROOT });
     const team = placed(pr({ number: 4, repoLabel: 'example/Team-Thing', relation: 'review-requested', reviewRequest: { via: 'team', team: 'example/reviewers' } }, 35), { kind: 'not-cloned', root: ROOT });
     const server = fakeServer();
-    renderDashboard(server, '?view=all', prList([...PRS, theirs, team]));
+    renderAppShell(server, '?view=all', prList([...PRS, theirs, team]));
     fireEvent.click(startButton(theirs)!);
     let whose = dialog(CLONE_TITLE).querySelector('.clone-whose');
     expect(whose?.classList.contains('inline-alert')).toBe(true);
@@ -249,7 +249,7 @@ describe('Clone and start for a PR row in a repo that isn’t cloned', () => {
 
   it('then opens New session in the new clone, saying how to trust it, with the command to copy', async () => {
     const server = fakeServer();
-    renderDashboard(server);
+    renderAppShell(server);
     fireEvent.click(startButton(docs)!);
     fireEvent.click(within(dialog(CLONE_TITLE)).getByRole('button', { name: 'Clone' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New session' })).not.toBeNull());
@@ -268,7 +268,7 @@ describe('Clone and start for a PR row in a repo that isn’t cloned', () => {
   });
 
   it('from the repo’s own not-cloned group, follows the clone to its group, once the list places the PR under it', async () => {
-    const { update } = renderDashboard(fakeServer(), '?repo=github.com/example/docs-site');
+    const { update } = renderAppShell(fakeServer(), '?repo=github.com/example/docs-site');
     expect(screen.getByRole('heading', { level: 2 }).textContent).toContain('example/Docs-Site');
     fireEvent.click(startButton(docs)!);
     fireEvent.click(within(dialog(CLONE_TITLE)).getByRole('button', { name: 'Clone' }));
@@ -280,7 +280,7 @@ describe('Clone and start for a PR row in a repo that isn’t cloned', () => {
   });
 
   it('says what failed in pitwall’s words, and stays open, when the server refuses', async () => {
-    renderDashboard(fakeServer({ clone: [409, { ok: false, error: '/Users/example/code/Docs-Site already exists, so pitwall didn’t clone into it.' }] }));
+    renderAppShell(fakeServer({ clone: [409, { ok: false, error: '/Users/example/code/Docs-Site already exists, so pitwall didn’t clone into it.' }] }));
     fireEvent.click(startButton(docs)!);
     fireEvent.click(within(dialog(CLONE_TITLE)).getByRole('button', { name: 'Clone' }));
     const alert = await within(dialog(CLONE_TITLE)).findByRole('alert');
@@ -291,7 +291,7 @@ describe('Clone and start for a PR row in a repo that isn’t cloned', () => {
 
 describe('the PR view’s action', () => {
   it('offers New session, or Clone and start, while no session owns the PR, and nothing once one does', async () => {
-    const { update } = renderDashboard(fakeServer(), `?view=all&pr=${prKey(review)}`);
+    const { update } = renderAppShell(fakeServer(), `?view=all&pr=${prKey(review)}`);
     const view = () => document.getElementById('pr-view')!;
     expect(within(view()).getByRole('button', { name: 'New session' })).toBeTruthy();
     fireEvent.click(within(view()).getByRole('button', { name: 'New session' }));
@@ -305,7 +305,7 @@ describe('the PR view’s action', () => {
 
 describe('Resume on the row of a finished session that owns an open PR', () => {
   it('is offered on the ended one’s row and the stopped job’s, not on a running session’s', () => {
-    renderDashboard();
+    renderAppShell();
     const resumeOf = (name: string) => within(main()).getByRole('button', { name }).closest('li')!.querySelector('[data-resume-session]');
     expect(resumeOf('ended-owner')?.getAttribute('data-resume-session')).toBe(ENDED_ID);
     expect(resumeOf('stopped-owner')?.getAttribute('data-resume-session')).toBe(STOPPED_ID);
@@ -314,7 +314,7 @@ describe('Resume on the row of a finished session that owns an open PR', () => {
 
   it('resumes it through the resume route, says so in a toast, and is busy meanwhile', async () => {
     const server = fakeServer();
-    renderDashboard(server);
+    renderAppShell(server);
     const button = main().querySelector<HTMLButtonElement>(`[data-resume-session="${ENDED_ID}"]`)!;
     fireEvent.click(button);
     expect(button.getAttribute('aria-busy')).toBe('true');
@@ -323,7 +323,7 @@ describe('Resume on the row of a finished session that owns an open PR', () => {
   });
 
   it('says where the trust command is when Claude Code doesn’t trust the folder', async () => {
-    renderDashboard(fakeServer({ resume: [422, { ok: false, error: 'Workspace not trusted. Made up.', hint: `cd ${DEMO} && claude` }] }));
+    renderAppShell(fakeServer({ resume: [422, { ok: false, error: 'Workspace not trusted. Made up.', hint: `cd ${DEMO} && claude` }] }));
     fireEvent.click(main().querySelector<HTMLButtonElement>(`[data-resume-session="${STOPPED_ID}"]`)!);
     await waitFor(() => expect(toastMessages().some((message) => message.endsWith(RESUME_HINT_IN_VIEW))).toBe(true));
     expect(toastMessages().find((message) => message.endsWith(RESUME_HINT_IN_VIEW))).toBe(`Couldn't resume stopped-owner. Workspace not trusted. Made up. ${RESUME_HINT_IN_VIEW}`);
@@ -331,7 +331,7 @@ describe('Resume on the row of a finished session that owns an open PR', () => {
   });
 
   it('is in a stopped background session’s view too, beside how to message it', () => {
-    renderDashboard(fakeServer(), `?view=all&session=${STOPPED_ID}`);
+    renderAppShell(fakeServer(), `?view=all&session=${STOPPED_ID}`);
     const view = document.getElementById('session-view')!;
     expect(view.querySelector('.session-view-foot')?.textContent).toContain(BACKGROUND_NOTES.resumable);
     expect(within(view).getByRole('button', { name: 'Resume in background' })).toBeTruthy();

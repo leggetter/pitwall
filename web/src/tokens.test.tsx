@@ -75,7 +75,7 @@ describe('the stylesheets that use tokens.css', () => {
 
 describe('the components', () => {
   it('are found', () => {
-    expect(sources.map(([path]) => path)).toEqual(expect.arrayContaining(['./components/Dashboard.tsx', './uikit/foundations.tsx']));
+    expect(sources.map(([path]) => path)).toEqual(expect.arrayContaining(['./components/AppShell.tsx', './uikit/foundations.tsx']));
   });
 
   it.each(sources)('%s names only tokens that tokens.css defines', (_path, source) => {
@@ -110,7 +110,7 @@ describe('every token', () => {
     [/^--pw-code-/, "the code palette, for code blocks (2.4)"],
   ];
   /** Mirrored by a constant in code rather than read by name, and why. */
-  // --pw-panel-min-w, mirrored in panelWidth.ts's PANEL_MIN, is used since W187 by --pw-supervisor-col.
+  // --pw-session-pane-min-w, mirrored in sessionPaneWidth.ts's SESSION_PANE_MIN, is used since W187 by --pw-supervisor-col.
   const MIRRORED: Record<string, string> = {};
 
   it('is used, by a stylesheet, another token or the code that reads it, unless it belongs to a set or is mirrored in code (W31)', () => {

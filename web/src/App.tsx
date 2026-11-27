@@ -1,7 +1,7 @@
 import { lazy, useEffect, useMemo } from 'react';
 import { ApiContext, createApiClient, defaultFetch, type FetchLike } from './api.js';
 import { AttachContext, type AttachEnv } from './attach.js';
-import { Dashboard } from './components/Dashboard.js';
+import { AppShell } from './components/AppShell.js';
 import { AskingNotice, NoTokenNotice, TokenRejectedNotice } from './components/Notice.js';
 import { defaultSocketFactory, useConnection, type SocketFactory } from './connection.js';
 import { DefaultEditorContext, EditorsContext, useEditorList } from './editors.js';
@@ -49,7 +49,7 @@ function Connected({ token, createSocket, fetch, linkChannel }: { token: string;
       <AttachContext.Provider value={attach}>
         <EditorsContext.Provider value={editors}>
           <DefaultEditorContext.Provider value={defaultEditor}>
-            <Dashboard view={view} />
+            <AppShell view={view} />
           </DefaultEditorContext.Provider>
         </EditorsContext.Provider>
       </AttachContext.Provider>

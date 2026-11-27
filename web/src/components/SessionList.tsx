@@ -95,7 +95,7 @@ export interface SessionListProps {
   onSnooze?: ((session: SessionSummary, until: Date | undefined | false) => void) | undefined;
   /** Flags a session as not needing you from its row, or takes the flag away (W153). Rows have no flag toggle without it. */
   onFlag?: ((session: SessionSummary, on: boolean) => void) | undefined;
-  /** Covered by the session view over the list: nothing in it can take focus or a click (Dashboard.tsx). */
+  /** Covered by the session view over the list: nothing in it can take focus or a click (AppShell.tsx). */
   inert?: boolean;
   /**
    * Show older, at the foot of the Finished section, while the selection has ended sessions older than

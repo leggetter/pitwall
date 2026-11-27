@@ -59,7 +59,7 @@ export type ShowToast = (toast: ToastInput) => void;
 /** Takes away the toast with this key, if one is showing, as Dismiss would. */
 export type DismissToast = (key: string) => void;
 
-/** What useToast() returns. The Dashboard provides it, with the stack inside the app. */
+/** What useToast() returns. The AppShell provides it, with the stack inside the app. */
 export const ToastContext = createContext<ShowToast>(() => {});
 
 /** The function that shows a toast, from the nearest provider. */
@@ -76,7 +76,7 @@ let nextId = 0;
 
 /**
  * The toasts' state: `show` for ToastContext, and the props for the ToastRegion that renders them.
- * For a component that both shows toasts and places the stack, as the Dashboard does inside the app.
+ * For a component that both shows toasts and places the stack, as the AppShell does inside the app.
  */
 export function useToastStack(): { show: ShowToast; dismiss: DismissToast; region: Pick<ToastRegionProps, 'toasts' | 'onDismiss' | 'onGone'> } {
   const [toasts, setToasts] = useState<ToastData[]>([]);
