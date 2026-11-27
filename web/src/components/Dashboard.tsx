@@ -224,6 +224,7 @@ import { olderText, SessionList, type SessionListHeading } from './SessionList.j
 import { useLeadsOpen } from './LeadRows.js';
 import { arrangeLeads, leadActions, leadChoices, leadDoneText, makeLead, reportedText, reportTo, startWorkerSubtitle, workerStarted, type LeadAction, type LeadScope } from '../leads.js';
 import { ReportToDialog } from './ReportToDialog.js';
+import { StartWorkerDialog } from './StartWorkerDialog.js';
 import { SessionView, UnlistedSessionView, WaitingSessionView } from './SessionView.js';
 import { SupervisorOffView, SupervisorView } from './SupervisorView.js';
 import { ShortcutsDialog } from './ShortcutsDialog.js';
@@ -861,6 +862,20 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     },
     [openId, opened.open],
   );
+
+  // A worker's "reported 10:42" on its row (W218 piece 2): opens it, on its Conversation tab. Each click a new number.
+  const [conversationAsk, setConversationAsk] = useState<{ sessionId: string; n: number }>();
+  useEffect(() => {
+    if (conversationAsk !== undefined && openId !== conversationAsk.sessionId) setConversationAsk(undefined);
+  }, [openId, conversationAsk]);
+  const openConversation = useCallback(
+    (sessionId: string) => {
+      setConversationAsk((current) => ({ sessionId, n: (current?.n ?? 0) + 1 }));
+      openSession(sessionId);
+    },
+    [openSession],
+  );
+  const listLeads = useMemo(() => ({ ...leadsOpen, onReported: openConversation }), [leadsOpen, openConversation]);
 
   // ↑ and ↓ on a row's name or a PR row's title: focus moves to the next or previous row, and stays in
   // the list. With a view open, it shows that row too, replacing the history entry. Nothing while the
@@ -1981,6 +1996,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       }
       recaps={snapshot?.recaps}
       leads={leadsOf(session)}
+      conversationAsk={conversationAsk?.sessionId === session.sessionId ? conversationAsk.n : undefined}
       spinOffs={api ? { onStart: setSpinOffStart, onOpenSession: (sessionId) => openSession(sessionId) } : undefined}
       backLabel={hiddenIn === undefined ? backLabel : undefined}
       prs={{
@@ -2229,7 +2245,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             className={prsSelected ? 'pr-list' : undefined}
             current={arranged.current}
             finished={finished}
-            leads={leadsOpen}
+            leads={listLeads}
             empty={empty}
             finishedCollapsed={!(finishedId !== undefined && (finishedOpen.get(finishedId) ?? false))}
             onToggleFinished={toggleFinished}
@@ -2341,8 +2357,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
       )}
 
       {workerFor && snapshot && (
-        <NewSessionDialog
+        <StartWorkerDialog
           key={`worker:${workerFor.sessionId}`}
+          leadId={workerFor.sessionId}
           snapshot={dialogSnapshot ?? snapshot}
           tab={tab}
           prefill={{ cwd: workerFor.cwd }}

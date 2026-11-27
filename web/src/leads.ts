@@ -21,7 +21,7 @@
 // only closed leads' ids are kept, `{"v":1,"closed":["<session id>", …]}`, at most LEADS_CAP of them,
 // the oldest dropped first. Every read and write is in try/catch; without storage every lead is open.
 
-import { leadPath, workerPath, workerStartedPath, type LeadResult, type SessionGroup, type SessionSummary } from '../../src/shared/protocol.js';
+import { leadBriefPath, leadPath, workerBriefPath, workerPath, workerStartedPath, type LeadBriefResult, type LeadResult, type SessionGroup, type SessionSummary } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
 import { groupLabel, needsAttention, isBusy, type Listed } from './sessions.js';
 import { isPrRow, type ListRow } from './work.js';
@@ -275,3 +275,41 @@ export function leadDoneText(action: Exclude<LeadAction, 'start-worker' | 'repor
   return `${name} isn’t a worker.`;
 }
 export const reportedText = (name: string, leadName: string) => `${name} is a worker for ${leadName}.`;
+
+// The paragraph a worker is given about its lead (W218 piece 2, src/server/leadBrief.ts): shown before New
+// session's Start from Start a worker…, and offered after Report to…. The server writes it and, for Start a
+// worker…, adds its own copy to the first prompt; the page only shows it, or sends what the server gave.
+
+/** What a paragraph request answers: the paragraph, or why there's none, to show as it is. */
+export type BriefOutcome = { kind: 'ok'; leadName: string; text: string } | { kind: 'refused'; error: string };
+
+/** What a failed paragraph request shows when the server gave no `error` of its own. */
+export const BRIEF_FAILED = 'pitwall couldn’t get the paragraph about its lead.';
+
+/** GETs a paragraph. Never throws. */
+export async function getBrief(api: Pick<ApiClient, 'get'>, path: string, signal?: AbortSignal): Promise<BriefOutcome> {
+  try {
+    const result = await api.get(path, signal ? { signal } : {});
+    if (result.kind === 'unauthorized') return { kind: 'refused', error: "pitwall didn't accept the page's key. Reload the page." };
+    const answer = result.body as Partial<LeadBriefResult> | undefined;
+    if (typeof answer !== 'object' || answer === null) return { kind: 'refused', error: BRIEF_FAILED };
+    if (result.kind === 'ok' && answer.ok === true && typeof answer.text === 'string' && typeof answer.leadName === 'string') return { kind: 'ok', leadName: answer.leadName, text: answer.text };
+    if (answer.ok === false && typeof answer.error === 'string') return { kind: 'refused', error: answer.error };
+    return { kind: 'refused', error: BRIEF_FAILED };
+  } catch {
+    return { kind: 'refused', error: BRIEF_FAILED };
+  }
+}
+
+export const leadBriefOf = (api: Pick<ApiClient, 'get'>, leadId: string, signal?: AbortSignal) => getBrief(api, leadBriefPath(leadId), signal);
+export const workerBriefOf = (api: Pick<ApiClient, 'get'>, workerId: string, signal?: AbortSignal) => getBrief(api, workerBriefPath(workerId), signal);
+
+/** New session's label over the paragraph from Start a worker…. */
+export const BRIEF_LABEL = 'Added after your prompt';
+/** What New session says when there's no paragraph, after the server's reason. */
+export const BRIEF_WITHOUT = 'The worker starts without it.';
+
+/** A worker's row (W218 piece 2): "reported", before the time of its newest report to its lead. */
+export const REPORTED = 'reported';
+/** The row's link's name: what it opens. */
+export const reportedLinkLabel = (time: string) => `reported ${time}: open its conversation`;

@@ -177,6 +177,11 @@ export interface NewSessionDialogProps {
   subtitle?: ReactNode;
   /** At the top of the body: what happened before it opened, such as a clone, and what to do next. */
   notice?: ReactNode;
+  /**
+   * Start a worker… (W218 piece 2): the lead's session id, sent as the request's `lead`, so the server adds
+   * its own paragraph about the lead to the first prompt. Never the paragraph's text.
+   */
+  lead?: string | undefined;
 }
 
 /**
@@ -219,7 +224,7 @@ function directoryAnnouncement(listing: Listing, truncated: boolean, listed: num
   return truncated ? `${count} Not every directory is listed.` : count;
 }
 
-export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, noDirectory = false, subtitle, notice }: NewSessionDialogProps) {
+export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, noDirectory = false, subtitle, notice, lead }: NewSessionDialogProps) {
   const api = useContext(ApiContext);
   const ids = { dir: useId(), name: useId(), profile: useId(), model: useId(), customModel: useId(), effort: useId(), subagents: useId(), prompt: useId() };
   const alive = useRef(true);
@@ -500,6 +505,7 @@ export function NewSessionDialog({ snapshot, onClose, onStarted, tab, prefill, n
     if (subagents !== '') request.subagentModel = subagents;
     else if (request.profile !== undefined && pickedProfile?.subagentModel !== undefined) request.subagentModel = latestWork?.effective.subagents.model ?? WORK_DEFAULT;
     if (attachments.ids.length > 0) request.attachments = [...attachments.ids];
+    if (lead !== undefined) request.lead = lead;
     await send(request);
   };
 

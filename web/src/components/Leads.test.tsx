@@ -7,16 +7,16 @@
 
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { SPAWN_PATH, workerStartedPath, type IndexSnapshot, type PullRequestList } from '../../../src/shared/protocol.js';
+import { leadBriefPath, relayPath, SPAWN_PATH, workerBriefPath, workerStartedPath, type IndexSnapshot, type PullRequestList } from '../../../src/shared/protocol.js';
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import type { StorageSource } from '../groupState.js';
-import { LEADS_STORAGE_KEY, MAKE_LEAD, NOT_A_LEAD, NOT_A_WORKER, REPORT_TO, START_WORKER } from '../leads.js';
+import { BRIEF_LABEL, BRIEF_WITHOUT, LEADS_STORAGE_KEY, MAKE_LEAD, NOT_A_LEAD, NOT_A_WORKER, REPORT_TO, reportedLinkLabel, START_WORKER } from '../leads.js';
 import { memoryNavigation } from '../selection.js';
 import { createShortcutsStore, ShortcutsStoreContext } from '../shortcuts.js';
 import { group, minutesAgo, NOW, pr, prLink, prList, session, snapshot } from '../test/fixtures.js';
 import { toastMessages } from '../test/toasts.js';
 import { Dashboard } from './Dashboard.js';
-import { REPORT_TO_CONFIRM, REPORT_TO_TITLE } from './ReportToDialog.js';
+import { REPORT_TO_CONFIRM, REPORT_TO_TITLE, TELL_WORKER_COPY, TELL_WORKER_NOT_NOW, TELL_WORKER_SEND, TELL_WORKER_TITLE } from './ReportToDialog.js';
 import type { TerminalHandle } from './Terminal.js';
 
 class QuietTerminal implements TerminalHandle {
@@ -262,5 +262,156 @@ describe('the session view', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
     await waitFor(() => expect(posts(fetch).some(([url]) => url === workerStartedPath(id(1)))).toBe(true));
     expect(posts(fetch).find(([url]) => url === workerStartedPath(id(1)))).toEqual([workerStartedPath(id(1)), { shortId: 'a1b2c3d4' }]);
+  });
+});
+
+// W218 piece 2: the paragraph a worker is given about its lead, and its reports. Made-up text only.
+const BRIEF = 'A made-up paragraph: you work for the lead named design. Report to it with SendMessage.';
+type Answer = { status: number; body: unknown };
+const briefOk: Answer = { status: 200, body: { ok: true, leadId: id(1), leadName: 'design', text: BRIEF } };
+
+/** A server that answers the two paragraph GETs, the relay and the spawn, and { ok: true } to other POSTs. */
+function briefServer(answers: { brief?: Answer; relay?: Answer; post?: Answer } = {}) {
+  return vi.fn<FetchLike>(async (url, init) => {
+    const brief = answers.brief ?? briefOk;
+    if (init.method !== 'POST') return url.endsWith('/lead-brief') || url.endsWith('/worker-brief') ? json(brief.status, brief.body) : json(200, { entries: [] });
+    if (url === SPAWN_PATH) return json(201, { ok: true, shortId: 'a1b2c3d4', name: 'helper' });
+    if (url.endsWith('/relay')) return json(answers.relay?.status ?? 200, answers.relay?.body ?? { status: 'delivered' });
+    return json(answers.post?.status ?? 200, answers.post?.body ?? { ok: true });
+  });
+}
+
+const gets = (fetch: { mock: { calls: Parameters<FetchLike>[] } }) => fetch.mock.calls.filter(([, init]) => init.method !== 'POST').map(([url]) => url);
+
+/** Report to… on notes, to design, through to the second step. */
+async function reportNotes(options: { fetch: Mock<FetchLike>; snapshot?: IndexSnapshot }) {
+  renderDashboard(`?repo=${ROOT}/app&session=${id(4)}`, options);
+  await settle();
+  choose(REPORT_TO);
+  await settle();
+  const first = screen.getByRole('dialog', { name: REPORT_TO_TITLE });
+  fireEvent.click(within(first).getByRole('button', { name: REPORT_TO_CONFIRM }));
+  return screen.findByRole('dialog', { name: TELL_WORKER_TITLE });
+}
+
+/** The snapshot, with notes as a running background session. */
+function snapWithBackgroundNotes(): IndexSnapshot {
+  const base = snap();
+  return { ...base, groups: base.groups.map((g) => ({ ...g, sessions: g.sessions.map((s) => (s.sessionId === id(4) ? { ...s, kind: 'background' as const, shortId: 'bg218a' } : s)) })) };
+}
+
+describe("the worker's paragraph (W218 piece 2)", () => {
+  it('Start a worker… shows the paragraph above the fields and sends the lead with the prompt, never the text', async () => {
+    const fetch = briefServer();
+    renderDashboard(`?repo=${ROOT}/app&session=${id(1)}`, { fetch });
+    await settle();
+    choose(START_WORKER);
+    const dialog = await screen.findByRole('dialog', { name: 'New session' });
+    await waitFor(() => expect(dialog.querySelector('[data-worker-brief="ok"]')).not.toBeNull());
+    expect(gets(fetch)).toContain(leadBriefPath(id(1)));
+    const notice = dialog.querySelector('[data-worker-brief="ok"]')!;
+    expect(notice.textContent).toContain(BRIEF_LABEL);
+    expect(notice.querySelector('.worker-brief-text')?.textContent).toBe(BRIEF);
+    fireEvent.change(within(dialog).getByLabelText('First prompt'), { target: { value: 'A made-up task for the worker' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
+    await waitFor(() => expect(posts(fetch).some(([url]) => url === SPAWN_PATH)).toBe(true));
+    const [, body] = posts(fetch).find(([url]) => url === SPAWN_PATH)!;
+    expect(body.lead).toBe(id(1));
+    expect(JSON.stringify(body)).not.toContain('Report to it');
+  });
+
+  it("Start a worker… says why there's no paragraph after a refusal, and starts the worker without a lead", async () => {
+    const fetch = briefServer({ brief: { status: 409, body: { ok: false, error: 'Another running session is named design.' } } });
+    renderDashboard(`?repo=${ROOT}/app&session=${id(1)}`, { fetch });
+    await settle();
+    choose(START_WORKER);
+    const dialog = await screen.findByRole('dialog', { name: 'New session' });
+    await waitFor(() => expect(dialog.querySelector('[data-worker-brief="refused"]')).not.toBeNull());
+    expect(dialog.querySelector('[data-worker-brief="refused"]')?.textContent).toContain(`Another running session is named design. ${BRIEF_WITHOUT}`);
+    fireEvent.change(within(dialog).getByLabelText('First prompt'), { target: { value: 'A made-up task for the worker' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
+    await waitFor(() => expect(posts(fetch).some(([url]) => url === SPAWN_PATH)).toBe(true));
+    expect(posts(fetch).find(([url]) => url === SPAWN_PATH)![1]).not.toHaveProperty('lead');
+  });
+
+  it("Report to…'s second step sends the server's paragraph through the relay only on Send", async () => {
+    const fetch = briefServer();
+    const dialog = await reportNotes({ fetch });
+    await waitFor(() => expect(dialog.querySelector('.worker-brief-text')?.textContent).toBe(BRIEF));
+    expect(gets(fetch)).toContain(workerBriefPath(id(4)));
+    expect(posts(fetch).map(([url]) => url)).toEqual([`/api/sessions/${id(4)}/worker`]);
+    expect(within(dialog).queryByRole('button', { name: TELL_WORKER_COPY })).toBeNull();
+    fireEvent.click(within(dialog).getByRole('button', { name: TELL_WORKER_SEND }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: TELL_WORKER_TITLE })).toBeNull());
+    expect(posts(fetch)).toEqual([
+      [`/api/sessions/${id(4)}/worker`, { lead: id(1) }],
+      [relayPath(id(4)), { text: BRIEF }],
+    ]);
+    expect(toastMessages()).toContain('Sent to notes.');
+  });
+
+  it('Not now closes the second step and sends nothing', async () => {
+    const fetch = briefServer();
+    const dialog = await reportNotes({ fetch });
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: TELL_WORKER_SEND })).toBeTruthy());
+    fireEvent.click(within(dialog).getByRole('button', { name: TELL_WORKER_NOT_NOW }));
+    await settle();
+    expect(screen.queryByRole('dialog', { name: TELL_WORKER_TITLE })).toBeNull();
+    expect(posts(fetch).map(([url]) => url)).toEqual([`/api/sessions/${id(4)}/worker`]);
+  });
+
+  it('a background session gets the text and Copy message, with no Send', async () => {
+    const fetch = briefServer();
+    const dialog = await reportNotes({ fetch, snapshot: snapWithBackgroundNotes() });
+    await waitFor(() => expect(dialog.querySelector('.worker-brief-text')?.textContent).toBe(BRIEF));
+    expect(dialog.textContent).toContain('background session, which takes messages only in its terminal');
+    expect(within(dialog).getByRole('button', { name: TELL_WORKER_COPY })).toBeTruthy();
+    expect(within(dialog).queryByRole('button', { name: TELL_WORKER_SEND })).toBeNull();
+    expect(posts(fetch).some(([url]) => url === relayPath(id(4)))).toBe(false);
+  });
+
+  it("shows the server's refusal as it is, with nothing to send", async () => {
+    const fetch = briefServer({ brief: { status: 409, body: { ok: false, error: 'pitwall can’t name the lead it reports to.' } } });
+    const dialog = await reportNotes({ fetch });
+    await waitFor(() => expect(dialog.querySelector('.tell-worker-refused')).not.toBeNull());
+    expect(dialog.querySelector('.tell-worker-refused')?.textContent).toBe('pitwall can’t name the lead it reports to.');
+    expect(within(dialog).queryByRole('button', { name: TELL_WORKER_SEND })).toBeNull();
+    expect(within(dialog).getByRole('button', { name: 'Done' })).toBeTruthy();
+  });
+
+  it('a relay that fails says so in the dialog and keeps Send', async () => {
+    const fetch = briefServer({ relay: { status: 200, body: { status: 'failed', detail: 'The made-up socket closed.' } } });
+    const dialog = await reportNotes({ fetch });
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: TELL_WORKER_SEND })).toBeTruthy());
+    fireEvent.click(within(dialog).getByRole('button', { name: TELL_WORKER_SEND }));
+    await waitFor(() => expect(within(dialog).getByRole('alert').textContent).toBe('Not sent. The made-up socket closed.'));
+    expect(within(dialog).getByRole('button', { name: TELL_WORKER_SEND })).toBeTruthy();
+  });
+});
+
+describe("a worker's reports (W218 piece 2)", () => {
+  const reportedAt = minutesAgo(7);
+  function snapReported(): IndexSnapshot {
+    const base = snap();
+    return { ...base, groups: base.groups.map((g) => ({ ...g, sessions: g.sessions.map((s) => (s.sessionId === id(2) ? { ...s, workerOf: { lead: id(1), how: 'started' as const, reportedAt } } : s)) })) };
+  }
+
+  it("shows reported HH:MM on the worker's row, and none on a worker that hasn't reported", async () => {
+    renderDashboard(`?repo=${ROOT}/app`, { snapshot: snapReported() });
+    await settle();
+    const link = row('spike').querySelector<HTMLElement>(`[data-reported="${id(2)}"]`)!;
+    expect(link.textContent).toMatch(/^reported \d{1,2}:\d{2}/);
+    expect(link.querySelector('time')?.getAttribute('dateTime')).toBe(reportedAt);
+    expect(link.getAttribute('aria-label')).toBe(reportedLinkLabel(link.querySelector('time')!.textContent!));
+    expect(main().querySelector(`[data-reported="${id(3)}"]`)).toBeNull();
+  });
+
+  it('opens the worker on its Conversation tab', async () => {
+    renderDashboard(`?repo=${ROOT}/app`, { snapshot: snapReported() });
+    await settle();
+    fireEvent.click(row('spike').querySelector<HTMLElement>(`[data-reported="${id(2)}"]`)!);
+    await settle();
+    expect(view()?.querySelector('.session-view-name')?.textContent).toBe('spike');
+    expect(within(view()!).getByRole('tab', { name: /Conversation/ }).getAttribute('aria-selected')).toBe('true');
   });
 });

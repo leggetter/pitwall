@@ -1492,6 +1492,27 @@ export class World {
     }
   }
 
+  /** Report to… (W218): until the next reset, the session reports to `leadId`, or to none. */
+  reportTo(sessionId: string, leadId: string | null): void {
+    const session = this.#sessions.get(sessionId);
+    if (!session) return;
+    const { workerOf: _old, ...rest } = session;
+    this.#sessions.set(sessionId, leadId === null ? rest : { ...rest, workerOf: { lead: leadId, how: 'reported' } });
+    for (const [id, each] of this.#sessions) {
+      if (!each.lead) continue;
+      const workers = each.lead.workers.filter((worker) => worker !== sessionId);
+      if (id === leadId) workers.push(sessionId);
+      this.#sessions.set(id, { ...each, lead: { ...each.lead, workers } });
+    }
+  }
+
+  /** Until the next reset, a worker's newest report to its lead was at `at` (W218 piece 2). */
+  reported(sessionId: string, at: string): void {
+    const session = this.#sessions.get(sessionId);
+    if (!session?.workerOf) return;
+    this.#sessions.set(sessionId, { ...session, workerOf: { ...session.workerOf, reportedAt: at } });
+  }
+
   /** Until the next reset, the session proposes a new session (W163), or proposes nothing. */
   spinOff(sessionId: string, spinOff: SessionSummary['spinOff']): void {
     const session = this.#sessions.get(sessionId);

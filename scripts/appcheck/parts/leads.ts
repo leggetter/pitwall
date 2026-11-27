@@ -3,16 +3,21 @@
 // caret closing them, with the most urgent state on the lead's row, and opening them again after a
 // reload; the pointer a worker leaves in its own repo group; "under <lead>" in Needs you; the session
 // view's menu items and Report to…'s dialog; and a worker's "worker for <lead>" line. Nothing overflows.
+// W218 piece 2: the paragraph Start a worker… adds after the prompt, shown above New session's fields;
+// Report to…'s second step, Copy message for a background session and Send for an interactive one; and a
+// worker's "reported HH:MM" on its row, which opens it on its Conversation tab.
 
 import { NAMES } from '../fixtures.js';
 import type { Part } from '../runner.js';
-import { chooseInRepoList, DIALOG, dialogName, openFromRow, row, VIEW, viewClose, viewName } from './_dom.js';
+import { briefText } from '../server.js';
+import { chooseInRepoList, DIALOG, dialogButton, dialogName, openFromRow, row, VIEW, toasts, viewClose, viewName, viewTab } from './_dom.js';
 
 const q = JSON.stringify;
 const LEAD = NAMES.conversation;
 const CARET = `document.querySelector(${q(`.session-list button[aria-label="Workers of ${LEAD}"]`)})`;
 const LEAD_ROW = `${row(LEAD)}?.closest('li.session')`;
 const WORKERS = `document.querySelector('.session-list ul.lead-workers')`;
+const BRIEF_IN_DIALOG = `${DIALOG}?.querySelector('.worker-brief-text')`;
 const POINTER = `document.querySelector('.session-list [data-lead-pointer]')`;
 const MENU_BUTTON = `${VIEW}?.querySelector('button[aria-label="Session actions"]')`;
 const ITEMS = `[...(${VIEW}?.querySelectorAll('[role="menu"] [role="menuitem"]') ?? [])].map((item) => item.textContent.trim())`;
@@ -22,7 +27,7 @@ const OVERFLOW = `(() => { const list = document.querySelector('.session-list-bo
 
 const part: Part = {
   name: 'leads',
-  title: 'Leads and workers: a lead’s workers indented under it, the caret open and closed through a reload, the pointer in a worker’s own repo, under <lead> in Needs you, the menu items, Report to… and worker for <lead>',
+  title: 'Leads and workers: a lead’s workers indented under it, the caret open and closed through a reload, the pointer in a worker’s own repo, under <lead> in Needs you, the menu items, Report to… and worker for <lead>, the worker’s paragraph in Start a worker… and Report to…’s second step, and reported HH:MM',
   async run(t) {
     const { page, server } = t;
     const id = (name: string) => server.world.byName(name).sessionId;
@@ -124,8 +129,79 @@ const part: Part = {
       const radios = await page.evaluate<string[]>(`[...${DIALOG}.querySelectorAll('.radio-option label')].map((l) => l.textContent)`);
       t.expectEqual(radios, [LEAD], 'the one lead');
       await t.shot('report-to');
-      await page.click('Cancel', `[...${DIALOG}.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Cancel')`);
+      await page.click('Report to lead', dialogButton('Report to lead'));
+      await page.waitFor('the second step', `${dialogName} === 'Tell it where to report' && !!${BRIEF_IN_DIALOG}`);
+      const step = await page.evaluate<Record<string, unknown>>(`(() => ({
+        text: ${BRIEF_IN_DIALOG}.textContent,
+        copy: !!${dialogButton('Copy message')},
+        send: !!${dialogButton('Send')},
+        boxed: getComputedStyle(${BRIEF_IN_DIALOG}).backgroundColor !== getComputedStyle(${DIALOG}).backgroundColor,
+        wide: ${DIALOG}.scrollWidth > ${DIALOG}.clientWidth + 1,
+      }))()`);
+      t.expectEqual(step.text, briefText(LEAD), 'the server’s paragraph, as it is');
+      t.expectEqual([step.copy, step.send], [true, false], 'a background session gets Copy message, not Send');
+      t.expect(step.boxed === true, 'the paragraph sits in its quiet box');
+      t.expect(step.wide === false, 'nothing overflows the dialog');
+      await t.shot('tell-worker-copy');
+      await page.click('Done', dialogButton('Done'));
       await page.waitFor('the dialog to close', `!${DIALOG}`);
+      await closeView();
+    });
+
+    await t.step('Report to… on an interactive session offers Send, which sends the paragraph through the relay', async () => {
+      await openFromRow(t, NAMES.asked);
+      await page.click('Session actions', MENU_BUTTON);
+      await page.click('Report to…', menuItem('Report to…'));
+      await page.waitFor('the dialog', `${dialogName} === 'Report to a lead'`);
+      await page.click('Report to lead', dialogButton('Report to lead'));
+      await page.waitFor('the second step', `${dialogName} === 'Tell it where to report' && !!${dialogButton('Send')}`);
+      t.expectEqual(server.records.relays.length, 0, 'nothing sent before Send');
+      await t.shot('tell-worker-send');
+      await page.click('Send', dialogButton('Send'));
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+      t.expectEqual(server.records.relays, [{ name: NAMES.asked, length: briefText(LEAD).length }], 'the paragraph, sent once');
+      await page.waitFor('the toast', `${toasts}.includes(${q(`Sent to ${NAMES.asked}.`)})`);
+      // At 375 the toasts cover the dialogs' buttons that follow: Report to…'s and this one.
+      await page.evaluate(`document.querySelectorAll('.toasts .toast:not(.leaving) .toast-dismiss').forEach((b) => b.click())`);
+      await page.waitFor('the toasts to go', `${toasts}.length === 0`);
+      await closeView();
+    });
+
+    await t.step('Start a worker… shows the paragraph it adds after the prompt, above New session’s fields', async () => {
+      await openFromRow(t, LEAD);
+      await page.click('Session actions', MENU_BUTTON);
+      await page.click('Start a worker…', menuItem('Start a worker…'));
+      await page.waitFor('New session with the paragraph', `${dialogName} === 'New session' && !!${DIALOG}.querySelector('[data-worker-brief="ok"]')`);
+      const notice = await page.evaluate<Record<string, unknown>>(`(() => { const n = ${DIALOG}.querySelector('[data-worker-brief="ok"]'); return {
+        label: n.querySelector('.field-label')?.textContent,
+        text: n.querySelector('.worker-brief-text')?.textContent,
+        above: n.getBoundingClientRect().top < ${DIALOG}.querySelector('textarea').getBoundingClientRect().top,
+      }; })()`);
+      t.expectEqual([notice.label, notice.text], ['Added after your prompt', briefText(LEAD)], 'the label and the paragraph');
+      t.expect(notice.above === true, 'above the first prompt');
+      await t.shot('start-worker');
+      await page.click('Cancel', dialogButton('Cancel'));
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+      await closeView();
+    });
+
+    await t.step('a worker’s row says when it last reported, a link to its Conversation tab', async () => {
+      server.world.reported(id(NAMES.running2), new Date(Date.now() - 7 * 60_000).toISOString());
+      server.broadcast();
+      const link = `${row(NAMES.running2)}?.closest('li.session')?.querySelector('[data-reported]')`;
+      await page.waitFor('reported', `!!${link}`);
+      const shown = await page.evaluate<Record<string, unknown>>(`(() => { const l = ${link}; return {
+        text: l.textContent,
+        name: l.getAttribute('aria-label'),
+      }; })()`);
+      t.expect(/^reported \d{1,2}:\d{2}/.test(String(shown.text)), 'reported HH:MM', String(shown.text));
+      t.expect(String(shown.name).endsWith(': open its conversation'), 'its name says what it opens', String(shown.name));
+      t.expect(!(await page.evaluate<boolean>(OVERFLOW)), 'nothing overflows the list');
+      await t.shot('reported');
+      await page.click('reported', link);
+      await page.waitFor('the worker’s view', `${viewName} === ${q(NAMES.running2)}`);
+      t.expectEqual(await page.evaluate(viewTab), 'Conversation', 'on its Conversation tab');
+      await closeView();
     });
   },
 };
