@@ -103,6 +103,17 @@ import type { CheckedSpinOff } from './SpinOffCards.js';
 import { SessionLineage, type LineageTarget } from './SessionLineage.js';
 import { SessionPrsPanel, sessionPrsCount, type LinkedPr } from './SessionPrs.js';
 import { MenuButton, type MenuEntry } from './Menu.js';
+import { MAKE_LEAD, NOT_A_LEAD, NOT_A_WORKER, REPORT_TO, START_WORKER, WORKER_FOR, type LeadAction } from '../leads.js';
+import type { IconName } from './Icon.js';
+
+const LEAD_ACTION_LABELS: Readonly<Record<LeadAction, string>> = {
+  'make-lead': MAKE_LEAD,
+  'not-lead': NOT_A_LEAD,
+  'start-worker': START_WORKER,
+  'report-to': REPORT_TO,
+  'not-worker': NOT_A_WORKER,
+};
+const LEAD_ACTION_ICONS: Readonly<Record<LeadAction, IconName>> = { 'make-lead': 'subagents', 'not-lead': 'undo', 'start-worker': 'add', 'report-to': 'send', 'not-worker': 'undo' };
 import { MiddleEllipsis } from './MiddleEllipsis.js';
 import { RelayBox } from './RelayBox.js';
 import { SessionConfirm, useSessionActions } from './SessionActions.js';
@@ -458,6 +469,11 @@ export interface SessionViewProps {
    * checked to New session, and a started one links to its session. Without it, a block stays a code block.
    */
   spinOffs?: { onStart: (checked: CheckedSpinOff) => void; onOpenSession: (sessionId: string) => void } | undefined;
+  /**
+   * Leads and workers (W218, leads.ts): the actions menu's items for them, and, on a worker, "worker for
+   * <lead>" under the header's other lines, a link to the lead's view. None without it.
+   */
+  leads?: { actions: readonly LeadAction[]; onAction: (action: LeadAction) => void; workerFor?: { sessionId: string; name: string } | undefined; onOpen: (sessionId: string) => void } | undefined;
 }
 
 type Tab = 'conversation' | 'terminal' | 'subagents' | 'prs';
@@ -494,6 +510,7 @@ export function SessionView({
   backLabel,
   prs,
   recaps,
+  leads,
 }: SessionViewProps) {
   const api = useContext(ApiContext);
   const attachEnv = useContext(AttachContext);
@@ -938,6 +955,13 @@ export function SessionView({
     ...(resumeCopy ? [{ id: 'copy-resume', label: COPY_RESUME_COMMAND, icon: 'terminal' as const, onSelect: () => copy('Resume command', resumeCopy) }] : []),
     ...flagEntries,
     ...snoozeEntries,
+    // Leads and workers (W218): what this session can be, after the flag and snooze, before the editors.
+    ...(leads && listed && leads.actions.length > 0
+      ? [
+          { kind: 'separator' as const, id: 'lead-separator' },
+          ...leads.actions.map((action) => ({ id: `lead-${action}`, label: LEAD_ACTION_LABELS[action], icon: LEAD_ACTION_ICONS[action], onSelect: () => leads.onAction(action) })),
+        ]
+      : []),
     ...editorEntries,
     ...widthEntries,
     // An ended session can be resumed, never stopped or removed: it has no process (W67).
@@ -1162,6 +1186,16 @@ export function SessionView({
             </p>
           )}
           {lineage && <SessionLineage from={lineage.from} to={lineage.to} onOpen={lineage.onOpen} />}
+          {leads?.workerFor && (
+            <p className="session-view-lineage session-view-worker-for" data-worker-for={leads.workerFor.sessionId}>
+              <span className="session-view-lineage-item">
+                {WORKER_FOR}{' '}
+                <button type="button" className="link-button session-view-lineage-link" data-open-lead={leads.workerFor.sessionId} onClick={() => leads.onOpen(leads.workerFor?.sessionId ?? '')}>
+                  <bdi>{plainText(leads.workerFor.name)}</bdi>
+                </button>
+              </span>
+            </p>
+          )}
           {prs && prNeed !== undefined && <PrNeedNote pr={prNeed} onOpen={prs.onOpen} />}
           {prs && prs.owned.length > 0 && <SessionPrLinks linked={prs.owned} onOpen={prs.onOpen} />}
           {refused && (

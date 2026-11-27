@@ -26,7 +26,8 @@ import { Button } from './Button.js';
 import { Icon } from './Icon.js';
 import { PrRow, PrStartButton } from './PrRow.js';
 import { ScrollBox } from './ScrollBox.js';
-import { SessionRow } from './SessionRow.js';
+import type { ArrangedListed, ArrangedRow } from '../leads.js';
+import { ListedRow, type LeadsOpen, type RowShared } from './LeadRows.js';
 
 export interface SessionListHeading {
   /** The selection's name: a group's label, "Needs you" or "All sessions". */
@@ -64,9 +65,11 @@ export interface SessionListProps {
   foot?: ReactNode;
   /** More classes for the list's <main>: the Pull requests view's `pr-list`. */
   className?: string;
-  /** The rows: sessions', and PRs' that no session owns (W106). */
-  current: readonly ListRow[];
-  finished: readonly Listed[];
+  /** The rows: sessions', and PRs' that no session owns (W106), arranged for leads and their workers (W218, leads.ts). */
+  current: readonly (ListRow | ArrangedRow)[];
+  finished: readonly (Listed | ArrangedListed)[];
+  /** Which leads' workers are open (W218). Every lead's are without it. */
+  leads?: LeadsOpen | undefined;
   /** An empty, loading or no-match state, in place of the rows. */
   empty?: ReactNode;
   finishedCollapsed: boolean;
@@ -217,6 +220,8 @@ export interface FinishedSectionProps {
   onSnooze?: ((session: SessionSummary, until: Date | undefined | false) => void) | undefined;
   /** Show older, after the rows, while the selection has older ended sessions (W67). */
   older?: OlderEnded | undefined;
+  /** Which leads' workers are open (W218). */
+  leads?: LeadsOpen | undefined;
 }
 
 /**
@@ -224,7 +229,8 @@ export interface FinishedSectionProps {
  * selection has ended sessions older than ENDED_SHOWN_DAYS, Show older, which lists them, or Hide older
  * once they're listed. It's the same button with its other name, so focus stays on it.
  */
-export function FinishedSection({ finished, collapsed, onToggle, showGroup = false, onOpen, onStep, openSessionId, starred, onStar, onSnooze, older }: FinishedSectionProps) {
+export function FinishedSection({ finished, collapsed, onToggle, showGroup = false, onOpen, onStep, openSessionId, starred, onStar, onSnooze, older, leads }: FinishedSectionProps) {
+  const shared: RowShared = { showGroup, onOpen, onStep, openSessionId, starred, onStar, onSnooze, leads };
   const listId = useId();
   const olderNoteId = useId();
   // Counted here, so a question isn't hidden behind the collapse. Never as "need you".
@@ -237,19 +243,8 @@ export function FinishedSection({ finished, collapsed, onToggle, showGroup = fal
         {asked > 0 && <span className="finished-asked"> · {asked} asked you</span>}
       </button>
       <ul className="sessions finished-sessions" id={listId} hidden={collapsed}>
-        {finished.map(({ session, group }) => (
-          <SessionRow
-            key={session.sessionId}
-            session={session}
-            group={group}
-            showGroup={showGroup}
-            onOpen={onOpen}
-            onStep={onStep}
-            isOpen={session.sessionId === openSessionId}
-            starred={starred?.has(session.sessionId) ?? false}
-            onStar={onStar}
-            onSnooze={onSnooze}
-          />
+        {finished.map((row) => (
+          <ListedRow key={row.session.sessionId} row={row} shared={shared} />
         ))}
         {older && older.count > 0 && (
           <li className="finished-older">
@@ -344,7 +339,9 @@ export function SessionList({
   dismissedCollapsed = true,
   onToggleDismissed,
   onDismissPr,
+  leads,
 }: SessionListProps) {
+  const shared: RowShared = { showGroup, onOpen, onStep, openSessionId, starred, onStar, onSnooze, onFlag, owned, offerResume, leads };
   const headingId = useId();
   const main = useRef<HTMLElement>(null);
   const [pointerInside, setPointerInside] = useState(false);
@@ -447,21 +444,7 @@ export function SessionList({
                   onDismiss={onDismissPr}
                 />
               ) : (
-                <SessionRow
-                  key={row.session.sessionId}
-                  session={row.session}
-                  group={row.group}
-                  showGroup={showGroup}
-                  onOpen={onOpen}
-                  onStep={onStep}
-                  isOpen={row.session.sessionId === openSessionId}
-                  starred={starred?.has(row.session.sessionId) ?? false}
-                  onStar={onStar}
-                  onSnooze={onSnooze}
-                  onFlag={onFlag}
-                  owned={owned?.get(row.session.sessionId)}
-                  offerResume={offerResume}
-                />
+                <ListedRow key={row.session.sessionId} row={row} shared={shared} />
               ),
             )}
             {(shownFinished.length > 0 || (older !== undefined && older.count > 0)) && (
@@ -477,6 +460,7 @@ export function SessionList({
                 onStar={onStar}
                 onSnooze={onSnooze}
                 older={older}
+                leads={leads}
               />
             )}
             {dismissed.length > 0 && onToggleDismissed && (

@@ -2087,6 +2087,94 @@ mark.match {
   color: var(--pw-text-muted);
 }
 
+/*
+ * Leads and workers (W218, section 4): a lead's row has a caret before its name, which opens and
+ * closes its workers, and "Lead" first among its badges. Its workers' rows follow, indented, with a
+ * guide line from under the caret down the rows. A worker's pointer in its own repo group is one
+ * quiet line: its name, then "↳ under <lead> (<repo>)".
+ */
+.session-lead-toggle {
+  display: inline-flex;
+  flex: none;
+  align-self: center;
+  align-items: center;
+  justify-content: center;
+  width: var(--pw-space-5);
+  height: var(--pw-space-5);
+  margin-left: calc(-1 * var(--pw-space-1));
+  padding: 0;
+  border: 0;
+  border-radius: var(--pw-radius-sm);
+  background: transparent;
+  color: var(--pw-text-muted);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .session-lead-toggle:hover {
+    background: var(--pw-surface-hover);
+    color: var(--pw-text);
+  }
+}
+
+.session-lead-toggle:focus-visible {
+  outline-offset: -2px;
+  box-shadow: var(--pw-ring-focus-inset);
+}
+
+.session-lead-toggle .chevron {
+  transition: transform var(--pw-duration-fast) var(--pw-ease-standard);
+}
+
+.session-lead-toggle[aria-expanded='true'] .chevron {
+  transform: rotate(90deg);
+}
+
+.session-lead-workers {
+  color: var(--pw-text-subtle);
+  font-weight: var(--pw-weight-medium);
+}
+
+.lead-workers {
+  position: relative;
+}
+
+/* The guide line: under the lead's caret, from its row down to the middle of the last worker's line 1. */
+.lead-workers::before {
+  position: absolute;
+  top: 0;
+  bottom: var(--pw-space-5);
+  left: calc(var(--pw-space-4) + var(--pw-space-2) - var(--pw-space-1));
+  border-left: 1px solid var(--pw-border-strong);
+  content: '';
+  pointer-events: none;
+}
+
+.lead-workers > .session {
+  padding-left: calc(var(--pw-space-4) + var(--pw-space-6));
+}
+
+.lead-pointer {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--pw-space-2);
+}
+
+.lead-pointer .session-name {
+  font-weight: var(--pw-weight-regular);
+}
+
+.lead-pointer-text {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-s);
+  line-height: var(--pw-leading-s);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* The Finished section (section 4): a toggle row at the bottom of the session list, then its rows. */
 
 .finished-list {
