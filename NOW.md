@@ -3,7 +3,7 @@
 The file every session reads first and updates before it ends (the `handoff` skill, `.claude/skills/handoff/SKILL.md`, does this). It says where the work stands and which parts of the plan to read. It is a pointer, so it links to the detail instead of copying it. Keep it under 100 lines.
 
 
-Last updated: 2026-11-26, on `docs/w214-merged`, by the coordinating session (0aa858ca), after **W214 (trust a folder from pitwall)** merged into `main` in [#341](https://github.com/leggetter/pitwall/pull/341) at dbacfb9, after spike 020 ([#340](https://github.com/leggetter/pitwall/pull/340)), an xhigh security review (approve with fixes; F1 to F4 and F6 fixed by a fresh sub-agent) and an xhigh fix check (approve; two small hardenings by the coordinator). Next is W218's design, which stops for Phil's call. The next free W number is W219.
+Last updated: 2026-11-27, on `docs/w218-lead-design`, by the session that wrote W218's design (ba21807b): [spike 021](docs/spikes/021-lead-sessions.md) (a lead session and its delegated sessions, the design) checked agent teams (they don't give this shape), found Claude Code's undocumented `derived-from` transcript entry (which session launched which), and set out four options with mockups; the lean is B. It stops for Phil's call. Before it, W214 (trust a folder from pitwall) merged into `main` in [#341](https://github.com/leggetter/pitwall/pull/341) at dbacfb9. The next free W number is W219.
 
 **Servers:** 4518 runs `main` at dbacfb9 (W214, trust a folder from pitwall): restarted 2026-11-26 by 0aa858ca after W214's merge (pid 83729), and its new link opened in Phil's browser. A restart runs from the main checkout (`git pull`, `npm run build`, SIGTERM to the old pid, then `nohup node dist/cli.js ~/hookdeck/git ~/leggetter/git --port 4518 --no-open >> ~/.pitwall/pitwall-4518.log 2>&1 &` with Node 25.1.0 from asdf, `~/.asdf/installs/nodejs/25.1.0/bin`). **Every restart of 4518 ends by opening the new link in Phil's browser** (Phil, 2026-11-25): each run has a new token, printed only to the log, so his open tab is refused and pitwall looks stopped. Run `open "$(grep -o 'http://127.0.0.1:4518/#token=[A-Za-z0-9_-]*' ~/.pitwall/pitwall-4518.log | tail -1)"`, which keeps the token out of the conversation, and tell him so. On first poll W212 matched a stuck proposal to its running session (`~/.pitwall/spin-offs.json`), so that card left Needs you. The start logs "ignored 37 kept recaps pitwall couldn't use": those are version 2 files in `~/.pitwall/recap-store` from before W210 (Handed off) raised `RECAP_STORE_VERSION` to 3, for sessions not recapped since; harmless, and they go when their sessions leave the list or expire.
 
@@ -51,7 +51,7 @@ Still to do:
 | W213 (a dotfile such as `.env` is a file link: W211's links missed `.env`, `.gitignore` and the like) | Merged into `main` in [#334](https://github.com/leggetter/pitwall/pull/334) (2026-11-25); live on 4518 |
 | W214 (trust a folder from pitwall: a button opens Claude Code's own trust prompt in a terminal in the page; a spike first) | Merged into `main` in [#341](https://github.com/leggetter/pitwall/pull/341) (2026-11-26); live on 4518. What's left (F5, and the fix check's Info notes) is in W214's Status and Security in `PLAN.md` |
 | W217 (hand off and continue without copying a prompt: option A automatic, option B a yes in the Terminal tab; a spike for B) | Planned (Phil, 2026-11-26) |
-| W218 (a lead session and its delegated sessions, and the rule for a delegated session or a sub-agent; a design first) | Planned (Phil, 2026-11-26: a priority) |
+| W218 (a lead session and its delegated sessions, and the rule for a delegated session or a sub-agent; a design first) | Design done in spike 021 (2026-11-27); waiting on Phil's call (Open questions) |
 | W211 (open a file in your editor from a link in the Terminal and Conversation tabs: any file, asking first outside the roots; the last-used editor, else the config file's `editor`, else a small menu) | Merged into `main` in #323 (2026-11-24); live on 4518 |
 | W179 (the supervisor keeps its conversation short; its lower limit applies when W178's button asks about a different session) | Planned (Phil, 2026-11-09) |
 | W191 (the supervisor reads through the connectors your sessions already have, with pitwall's read-only limits) | Planned (Phil, 2026-11-12); a spike first; revises W184's route |
@@ -68,7 +68,7 @@ Still to do:
 1. **W212 (a spin-off you've started leaves Needs you, however you started it): merged into `main`** in [#328](https://github.com/leggetter/pitwall/pull/328) on 2026-11-25, after an xhigh security review (approve with fixes; F1 to F6 fixed) and a fix check (approve). What's left is in W212's Status in `PLAN.md`.
 2. **W209 (a spin-off block in the Conversation tab is a card with Start, and a link a terminal can open): merged into `main`** in [#332](https://github.com/leggetter/pitwall/pull/332) on 2026-11-25, after an xhigh security review (approve with fixes; F1 to F4 and F7 fixed) and a fix check (approve). What's left (F5, F6, F8) is in W209's Status in `PLAN.md`. Now check whether a proposal still fills the terminal (Phil, 2026-11-25): `PLAN.md`, spin-off proposals, "Considering: a proposal that doesn't fill the terminal"; raise it with Phil, don't build it.
 3. **W214 (trust a folder from pitwall): merged into `main`** in [#341](https://github.com/leggetter/pitwall/pull/341) on 2026-11-26, after spike 020, an xhigh security review (approve with fixes; F1 to F4 and F6 fixed) and an xhigh fix check (approve). What's left is in W214's Status in `PLAN.md`.
-4. **W218 (a lead session and its delegated sessions, and the rule for a delegated session or a sub-agent),** from `main` (`PLAN.md`, W218): the agent-teams check and a design with options first, then Phil's call (Phil, 2026-11-26: a priority).
+4. **W218 (a lead session and its delegated sessions, and the rule for a delegated session or a sub-agent),** from `main` (`PLAN.md`, W218): the design is [spike 021](docs/spikes/021-lead-sessions.md) (2026-11-27). Waiting on Phil's three answers below; then build piece 1 (links, Make lead and the tree in the list), with an xhigh security review, then pieces 2 and 3.
 5. **W217 (hand off and continue without copying a prompt),** from `main` (`PLAN.md`, W217): option A and option B, B's spike first, a security review at xhigh.
 6. **W179 (the supervisor keeps its conversation short),** from `main` (`PLAN.md`, W179): a new conversation when its context is over a limit, or over a lower one when Ask the supervisor (W178) names a different session.
 7. **W207 (a message box on a running background session's Conversation tab, sent as you), with W208 (which views you use: a local count),** from `main` (`PLAN.md`, W207 and W208): the spike first, then Phil's call, then the build and a security review.
@@ -78,7 +78,11 @@ Still to do:
 
 ## Open questions for Phil
 
-None.
+Asked 2026-11-27, W218's design (spike 021):
+
+1. **Option B** (pitwall records lead and delegated sessions from four sources, shows them as a tree, adds a Delegated tab and a "your lead" paragraph to a delegated session's first prompt, and teaches the rule), rather than A (labels only), C (agent teams) or D (the supervisor)? Lean: B.
+2. **Delegated sessions report to their lead with `SendMessage`,** revising Peers' show-only rule for a lead and its delegated sessions only (equal peers stay show only)? Lean: yes.
+3. **A spin-off block says whether the new session reports back** (delegated, shown under its proposer) or not (a separate spin-off, as today)? Lean: yes, one optional line in the block.
 
 Answered (Phil, 2026-11-26, "yes to all three"): start W214's spike; the 2026-11-25 loop applies to the new Next, stopping at W218's design; W216 waits for W218's design.
 
