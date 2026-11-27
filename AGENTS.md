@@ -31,6 +31,7 @@ M5, the supervisor, was built on `m5/integration` (W109 to W129) and merged into
 - **Commits and PRs:** conventional commits for commit messages and PR titles. Keep the PR summary short and put detail in a `<details>` block.
 - **Say what an ID is.** A work item (`W134`), decision (`D4`), spike (`spike 012`), issue or PR (`#143`) gets its title, or a few words of what it is, in parentheses: every time in a reply's Open questions and Next steps, and at its first mention anywhere else, in replies, `NOW.md`, PR descriptions and commit messages. For example: "W134 (work profiles)", "D4 (the supervisor: read-only tools, acts only after your click)", "#143 (Session view: expand the conversation or terminal to the full page)". Look the title up in `PLAN.md`, `docs/decisions.md`, `docs/plan-archive.md` or `gh`; don't guess. Phil (2026-11-04): "I've no idea what W134 is."
 - **Worktrees go in `.worktrees/<name>`** inside the main checkout, which `.gitignore` ignores (Phil, 2026-10-27), not in folders beside it. ripgrep, the editors' search, vitest and tsc leave them alone, and New session's directory list skips hidden folders. A plain `git clean -fdx` skips them as nested repositories; only `-ff` would delete them. After `git worktree add`, run `npm ci` in the worktree, since without its own `node_modules` its tests resolve modules from the main checkout and Vite's file allowlist fails 33 font tests (W140), and copy the main checkout's `.claude/settings.local.json`, if there is one, into the worktree's `.claude/`, so its sessions start as small (Efficiency).
+- **Name UI regions as `docs/ui-map.md` does,** in replies, the plan, code and tests (W222). A new region gets its name there in the PR that adds it.
 - **Write for a public repo.** It's public (Phil, 2026-10-28; confirmed 2026-11-09), so don't commit tokens, transcripts, session content or internal Hookdeck details, including in fixtures. In the docs, `~/work` and `~/oss` stand for Phil's two roots (Phil, 2026-10-23).
 
 ## Efficiency
@@ -104,6 +105,7 @@ plugin/                  the pitwall plugin (W176), for the sessions pitwall wat
 README.md                for newcomers: what pitwall is, how to run it, how it works, the roadmap
 docs/decisions.md        settled decisions, D1 to D28, with their reasoning
 docs/design-system.md    the web UI's design system: tokens, layout, components, content, accessibility
+docs/ui-map.md           the web UI's regions, one name each, and where each one's code is (W222)
 docs/images/             screenshots for README.md
 docs/spikes/             spike write-ups, one file per spike, with a script beside some
 src/shared/protocol.ts   the contract between the index, the server and the web UI
