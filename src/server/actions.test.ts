@@ -34,6 +34,7 @@ import {
   resumeArgs,
   shellQuote,
   spawnArgs,
+  spawnPrompt,
   RateWindow,
   SpawnLimiter,
   trustHint,
@@ -1870,5 +1871,37 @@ describe('model and effort for sessions and their sub-agents (W119)', () => {
     expect((await get(port, WORK_PATH, { authorization: `Bearer ${TOKEN}` })).status).toBe(200);
     expect((await get(port, WORK_PATH, { authorization: `Bearer ${TOKEN}`, origin: 'http://evil.example' })).status).toBe(403);
     expect((await get(port, WORK_PATH, { authorization: `Bearer ${TOKEN}`, host: `localhost:${port}` })).status).toBe(403);
+  });
+});
+
+describe('spawn: a worker’s paragraph about its lead (W218 piece 2)', () => {
+  const LEAD = '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a';
+  const brief = 'Your lead is the session named "pitwall-test-lead". (made-up paragraph)';
+
+  it('adds the server’s paragraph after the prompt and before attachment lines, never text from the page', () => {
+    expect(spawnPrompt({ prompt: 'Do the thing', brief, attachments: [{ id: 'att1', name: 'a.png', file: '/tmp/pitwall-test/a.png', dir: '/tmp/pitwall-test' }] })).toBe(`Do the thing\n\n${brief}\n\n@/tmp/pitwall-test/a.png`);
+    expect(spawnPrompt({ prompt: 'Do the thing' })).toBe('Do the thing');
+  });
+
+  it('puts the paragraph in claude’s arguments for a lead the server names', async () => {
+    const asked: string[] = [];
+    const started = await start(fakeRunner(backgrounded()), { workerBrief: (id) => (asked.push(id), { ok: true, leadId: id, leadName: 'pitwall-test-lead', text: brief }) });
+    const res = await spawnAsPage(started, { ...valid(), lead: LEAD, brief: 'text from the page' });
+    expect(res.status).toBe(201);
+    expect(asked).toEqual([LEAD]);
+    expect(started.run.calls[0]?.args.at(-1)).toBe(`Reply with: ready\n\n${brief}`);
+    expect(JSON.stringify(started.run.calls[0]?.args)).not.toContain('text from the page');
+  });
+
+  it('answers 400 for a lead that isn’t a session id, and 409 when the server can’t name it, starting nothing', async () => {
+    const started = await start(fakeRunner(backgrounded()), { workerBrief: () => ({ ok: false, error: 'pitwall can’t name that lead.' }) });
+    for (const lead of ['../etc', 42, null, LEAD.toUpperCase()]) expect((await spawnAsPage(started, { ...valid(), lead })).status, String(lead)).toBe(400);
+    const refused = await spawnAsPage(started, { ...valid(), lead: LEAD });
+    expect(refused.status).toBe(409);
+    expect(refused.json).toEqual({ ok: false, error: 'pitwall can’t name that lead.' });
+    const without = await start(fakeRunner(backgrounded()));
+    expect((await spawnAsPage(without, { ...valid(), lead: LEAD })).status).toBe(409);
+    expect(started.run.calls).toHaveLength(0);
+    expect(without.run.calls).toHaveLength(0);
   });
 });

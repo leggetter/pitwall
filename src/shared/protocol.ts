@@ -1127,6 +1127,15 @@ export type WorkerHow = 'started' | 'reported' | 'launched';
 export interface SessionWorkerOf {
   lead: string;
   how: WorkerHow;
+  /**
+   * When the worker last reported to its lead (W218 piece 2), ISO 8601: the time of its newest
+   * `SendMessage` call that Claude Code says went through, addressed to the name of the lead it reports
+   * to. That lead is the one Phil's links and marks and lineage give (LeadStore.reportTarget()), never
+   * a `derived-from` `clear`, so it can differ from `lead` when a session claimed the lead's place.
+   * Read from the worker's transcript, behind src/index/reportSources.ts; absent when there's none, or
+   * the transcript couldn't be read. A time only: never the message.
+   */
+  reportedAt?: string;
 }
 
 /** Make a session a lead, or with `on: false` not a lead (W218): POST { on } as JSON. Nothing is sent to the session. */
@@ -1153,6 +1162,32 @@ export function workerStartedPath(leadSessionId: string): string {
 
 /** The answer to a POST to leadPath(), workerPath() or workerStartedPath(). */
 export type LeadResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * The paragraph pitwall adds to the first prompt of a worker that Start a worker… starts for this lead
+ * (W218 piece 2), GET, answered with a LeadBriefResult. New session shows it before Start; the spawn
+ * request's `lead` makes the server add its own copy, never the page's. Only for a lead by Phil's
+ * marks, links and lineage (LeadStore.trustedLead()), listed, with a name no other running session has.
+ */
+export function leadBriefPath(leadSessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(leadSessionId)}/lead-brief`;
+}
+
+/**
+ * The same paragraph for a worker that exists, naming the lead it reports to (W218 piece 2), GET,
+ * answered with a LeadBriefResult: what Report to… offers to send the worker, as you, through the
+ * relay (relayPath()), only on your click. The lead is the server's (LeadStore.reportTarget()), never
+ * one the page names.
+ */
+export function workerBriefPath(workerSessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(workerSessionId)}/worker-brief`;
+}
+
+/**
+ * A worker's paragraph: `text` to show and send as it is, plain text with no markup; `leadId` and
+ * `leadName` the lead it names. A refusal's `error` is written to show as it is.
+ */
+export type LeadBriefResult = { ok: true; leadId: string; leadName: string; text: string } | { ok: false; error: string };
 
 /** A flag you put on a session in Needs you (W153): it doesn't need you. */
 export interface SessionFlag {
@@ -1304,6 +1339,13 @@ export interface SpawnRequest {
    * unknown, expired or already-used id gets 400, and nothing starts.
    */
   attachments?: string[];
+  /**
+   * Start a worker… (W218 piece 2): the lead's session id. The server adds the lead's paragraph
+   * (leadBriefPath()) to the first prompt, after a blank line and before any attachment lines, from
+   * its own reading of the lead, never text from the page; a lead it can't name gets 409, and
+   * nothing starts.
+   */
+  lead?: string;
 }
 
 export type SpawnResult =

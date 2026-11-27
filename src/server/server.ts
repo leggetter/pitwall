@@ -127,6 +127,7 @@ import { DIAGNOSTICS_INTERVAL_MS, DiagnosticsLog, NeedsYouRecorder } from './dia
 import { createFlagView, FlagStore, registerFlags } from './flags.js';
 import { createLeadsView, LeadStore, type LeadStoreOptions } from './leads.js';
 import { registerLeads } from './leadRoutes.js';
+import { leadBrief } from './leadBrief.js';
 import { createLineageView, LineageStore } from './lineage.js';
 import { createSnoozeView, registerSnoozes, SnoozeStore } from './snoozes.js';
 import { SessionLaunches } from './sessionLaunches.js';
@@ -262,6 +263,8 @@ export interface ServerInternals {
    * none reads the user's transcripts under ~/.claude/projects (W218 review, F6).
    */
   readDerived?: LeadStoreOptions['readDerived'];
+  /** W218 piece 2: the reads of workers' reports to their leads, for tests. */
+  readReport?: LeadStoreOptions['readReport'];
 }
 
 export async function startServerWithInternals(
@@ -335,7 +338,7 @@ export async function startServerWithInternals(
   const lineage = options.lineage ?? new LineageStore(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
   const lineaged = createLineageView(snoozed, lineage);
   // Leads and workers (W218): each lead's `lead` and each worker's `workerOf`, ids only, over lineage, since a lead keeps its workers through its chain.
-  const leads = new LeadStore({ lineage, ...(options.pitwallHome === undefined ? {} : { home: options.pitwallHome }), ...(internals.readDerived === undefined ? {} : { readDerived: internals.readDerived }) });
+  const leads = new LeadStore({ lineage, ...(options.pitwallHome === undefined ? {} : { home: options.pitwallHome }), ...(internals.readDerived === undefined ? {} : { readDerived: internals.readDerived }), ...(internals.readReport === undefined ? {} : { readReport: internals.readReport }) });
   const led = createLeadsView(lineaged, leads);
   // Started and dismissed spin-off proposals (W212): each one's `settled`, from a click on any page or a session found with its name and folder.
   const spinOffs = options.spinOffs ?? new SpinOffStore({ ...(options.pitwallHome === undefined ? {} : { home: options.pitwallHome }), predecessorOf: (id) => lineage.linksOf(id).from });
@@ -448,7 +451,7 @@ export async function startServerWithInternals(
     registerPrDismissals(app, { prs, store: prDismissals });
     clone.register(app);
     registerAttachments(app, attachments);
-    registerActions(app, indexer, { ...actionOptions, spawner, resumer });
+    registerActions(app, indexer, { ...actionOptions, spawner, resumer, workerBrief: actionOptions.workerBrief ?? ((leadId) => leadBrief(leads, snapshots.latest(), leadId)) });
     registerEditors(app, indexer, { token, ...(options.defaultEditor === undefined ? {} : { defaultEditor: options.defaultEditor }), ...internals.editors, slots: commandSlots });
     registerEndSession(app, indexer, {
       isRelay: (row) => relay.isRelay(row) || recaps?.isOwn(row) === true,

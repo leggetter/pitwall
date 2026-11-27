@@ -43,8 +43,15 @@
 // again, anything else skipped; at most LEADS_HELD_MAX marks and links each, the oldest dropped. Writing
 // fails soft: what changed holds in memory for this run.
 //
-// Not in this piece: the paragraph a worker's first prompt gets, and its report to the lead
-// (`SendMessage`), which are piece 2.
+// The report target (W218 piece 2, the review's F2): the lead a worker is told to report to, by the
+// paragraph pitwall adds to its first prompt or the message Report to… offers, and the lead whose name
+// its `SendMessage` reports are matched against for "reported HH:MM", is read from trustedTree(): your
+// marks and links, Claude Code's launches, and lineage where a session has exactly one successor
+// (LineageStore.soleSuccessorOf()), never a `derived-from` `clear`. A session can append that line to
+// its own transcript, and with it the display tree above moves a lead's workers to that session; it
+// can't move where they report. A launch counts in both trees for its own session only, under a lead
+// by your mark or link, so a line one session writes changes nothing about another's reports.
+// The paragraph's text is src/server/leadBrief.ts'; the report reads are src/server/leadReports.ts'.
 import { randomBytes } from 'node:crypto';
 import { closeSync, constants, fstatSync, openSync, readSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -56,6 +63,7 @@ import { ensureLaunchDir } from './launch.js';
 import { CHAIN_MAX, type LineageStore } from './lineage.js';
 import type { SnapshotView } from './snapshotLinks.js';
 import { createDecoratedView } from './snapshotRecaps.js';
+import { LeadReports, type ReadReport } from './leadReports.js';
 
 /** The file's name in pitwall's home. */
 export const LEADS_FILE_NAME = 'leads.json';
@@ -190,8 +198,8 @@ export interface LeadStoreOptions {
   /** pitwall's home. Without one, marks and links are held in memory only. */
   home?: string;
   now?: () => Date;
-  /** Lineage (W167), for each session's successor. */
-  lineage?: Pick<LineageStore, 'linksOf' | 'subscribe'>;
+  /** Lineage (W167), for each session's successor; the report target follows only a sole one. */
+  lineage?: Pick<LineageStore, 'linksOf' | 'soleSuccessorOf' | 'subscribe'>;
   /**
    * Reads a session's `derived-from` entry. Default: its transcript's first 64 KiB, found by its id
    * under Claude Code's projects folder (src/index/lineageSources.ts). For tests.
@@ -199,6 +207,11 @@ export interface LeadStoreOptions {
   readDerived?: (sessionId: string, cwd: string) => Promise<DerivedFrom | undefined>;
   /** Claude Code's config directory, for the default reader. */
   configDir?: string;
+  /**
+   * Reads a worker's newest report to its lead (W218 piece 2). Default: its transcript's tail, found by
+   * its id (src/index/reportSources.ts). For tests.
+   */
+  readReport?: ReadReport;
 }
 
 /** Why a change to the links was refused, in pitwall's words, for a 409. */
@@ -226,6 +239,8 @@ export class LeadStore {
   readonly #listeners = new Set<() => void>();
   #version = 0;
   #tree: { version: number; tree: LeadTree } | undefined;
+  #trusted: { version: number; tree: LeadTree } | undefined;
+  readonly #reports: LeadReports;
   #offLineage: (() => void) | undefined;
 
   constructor(options: LeadStoreOptions = {}) {
@@ -240,6 +255,7 @@ export class LeadStore {
         const file = await findTranscript(sessionId, [cwd], configDir === undefined ? {} : { configDir });
         return file === undefined ? undefined : readDerivedFrom(file, sessionId);
       });
+    this.#reports = new LeadReports({ ...(options.readReport === undefined ? {} : { read: options.readReport }), ...(configDir === undefined ? {} : { configDir }), onChange: () => this.#changed() });
     if (this.#file !== undefined) {
       const stored = readLeadsFile(this.#file, this.#now());
       for (const mark of stored.marks) this.#marks.set(mark.id, mark);
@@ -259,6 +275,34 @@ export class LeadStore {
       };
     }
     return this.#tree.tree;
+  }
+
+  /**
+   * The tree a report target is read from (the review's F2): the same marks, links and launches, with
+   * every id read as the newest in its chain along lineage only, and only where a session has one
+   * successor. Never a `derived-from` `clear`. See the top of this file.
+   */
+  trustedTree(): LeadTree {
+    if (this.#trusted === undefined || this.#trusted.version !== this.#version) {
+      const successorOf = (id: string) => this.#lineage?.soleSuccessorOf(id);
+      this.#trusted = {
+        version: this.#version,
+        tree: treeOf({ marks: [...this.#marks.values()], links: [...this.#links.values()], derived: { launchedBy: this.#launchedBy, clearedFrom: new Map() }, successorOf }),
+      };
+    }
+    return this.#trusted.tree;
+  }
+
+  /** `leadId`, read as the newest in its chain along lineage only, when that is a lead in trustedTree(); else undefined. */
+  trustedLead(leadId: string): string | undefined {
+    if (!isId(leadId)) return undefined;
+    const id = newestOf(leadId, (each) => this.#lineage?.soleSuccessorOf(each), new Map());
+    return this.trustedTree().leads.has(id) ? id : undefined;
+  }
+
+  /** The lead `workerId` reports to, by trustedTree(): its own id, as listed, is looked up, never a chain a transcript claims. */
+  reportTarget(workerId: string): string | undefined {
+    return isId(workerId) ? this.trustedTree().leadOf.get(workerId)?.lead : undefined;
   }
 
   /** Make lead, or with `on` false Not a lead, which also unlinks its workers. `sessionId` is read as the newest in its chain. */
@@ -370,6 +414,7 @@ export class LeadStore {
     this.#readNew(listed);
     const tree = this.tree();
     if (tree.leads.size === 0) return snapshot;
+    const trusted = this.trustedTree();
     let changed = false;
     const groups = snapshot.groups.map((group) => {
       let groupChanged = false;
@@ -381,7 +426,12 @@ export class LeadStore {
           if (workers.length > 0 || tree.marked.has(id)) lead = { workers, ...(tree.marked.has(id) ? { marked: true as const } : {}) };
         }
         const of = tree.leadOf.get(id);
-        const workerOf: SessionWorkerOf | undefined = of !== undefined && listed.has(of.lead) ? { lead: of.lead, how: of.how } : undefined;
+        let workerOf: SessionWorkerOf | undefined = of !== undefined && listed.has(of.lead) ? { lead: of.lead, how: of.how } : undefined;
+        // Its newest report, to the name of the lead it reports to by the trusted tree, while that lead is listed.
+        const target = workerOf === undefined ? undefined : trusted.leadOf.get(id)?.lead;
+        const targetName = target === undefined ? undefined : listed.get(target)?.name;
+        const reportedAt = targetName === undefined ? undefined : this.#reports.reportedAt(session, targetName);
+        if (workerOf !== undefined && reportedAt !== undefined) workerOf = { ...workerOf, reportedAt };
         if (lead === undefined && workerOf === undefined) return session;
         groupChanged = true;
         return { ...session, ...(lead === undefined ? {} : { lead }), ...(workerOf === undefined ? {} : { workerOf }) };
