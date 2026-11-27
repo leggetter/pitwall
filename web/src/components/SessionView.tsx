@@ -636,7 +636,9 @@ export function SessionView({
     return () => browserNavigation.removeEventListener('popstate', follow);
   }, [hidden, session.sessionId]);
   useLayoutEffect(() => {
-    if (!latestSpinOff.current || (conversationStatus !== 'ready' && conversationStatus !== 'missing')) return;
+    // Once loading ends, whatever it ends in: a conversation that fails or is unavailable takes the parameter out too,
+    // so it isn't followed again each time the view is shown (W220's review of the fix).
+    if (!latestSpinOff.current || conversationStatus === 'loading') return;
     latestSpinOff.current = false;
     const scroller = conversation.scroller.current;
     const cards = scroller?.querySelectorAll(`.${SPIN_OFF_BLOCK_CLASS}`);
