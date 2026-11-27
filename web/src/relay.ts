@@ -85,6 +85,11 @@ export function canMessage(session: Pick<SessionSummary, 'kind' | 'alive'>): boo
   return session.kind === 'interactive' && session.alive;
 }
 
+/** Whether Report to…'s paragraph can be sent to a session (W226): running, interactive or background. The server checks it again. */
+export function canTellWorker(session: Pick<SessionSummary, 'alive' | 'ended'>): boolean {
+  return session.alive && session.ended !== true;
+}
+
 /** What an outcome means, in a sentence. 'failed' means nothing was sent; 'uncertain' that pitwall can't tell. */
 export const STATUS_TEXT: Record<RelayStatus, string> = {
   delivered: "Delivered. It's in the session's inbox: it reads it at its next step, or starts a turn if it's idle.",

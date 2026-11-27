@@ -363,11 +363,25 @@ describe("the worker's paragraph (W218 piece 2)", () => {
     expect(posts(fetch).map(([url]) => url)).toEqual([`/api/sessions/${id(4)}/worker`]);
   });
 
-  it('a background session gets the text and Copy message, with no Send', async () => {
+  it('a running background session gets Send, which sends the server’s paragraph through the relay (W226)', async () => {
     const fetch = briefServer();
     const dialog = await reportNotes({ fetch, snapshot: snapWithBackgroundNotes() });
     await waitFor(() => expect(dialog.querySelector('.worker-brief-text')?.textContent).toBe(BRIEF));
-    expect(dialog.textContent).toContain('background session, which takes messages only in its terminal');
+    expect(within(dialog).queryByRole('button', { name: TELL_WORKER_COPY })).toBeNull();
+    expect(posts(fetch).some(([url]) => url === relayPath(id(4)))).toBe(false);
+    fireEvent.click(within(dialog).getByRole('button', { name: TELL_WORKER_SEND }));
+    await waitFor(() => expect(posts(fetch).some(([url]) => url === relayPath(id(4)))).toBe(true));
+    const [, body] = posts(fetch).find(([url]) => url === relayPath(id(4)))!;
+    expect(body).toEqual({ text: BRIEF });
+  });
+
+  it('a background session that isn’t running gets the text and Copy message, with no Send', async () => {
+    const fetch = briefServer();
+    const base = snapWithBackgroundNotes();
+    const stopped = { ...base, groups: base.groups.map((g) => ({ ...g, sessions: g.sessions.map((s) => (s.sessionId === id(4) ? { ...s, alive: false } : s)) })) };
+    const dialog = await reportNotes({ fetch, snapshot: stopped });
+    await waitFor(() => expect(dialog.querySelector('.worker-brief-text')?.textContent).toBe(BRIEF));
+    expect(dialog.textContent).toContain("isn't running, so pitwall can't send this to it");
     expect(within(dialog).getByRole('button', { name: TELL_WORKER_COPY })).toBeTruthy();
     expect(within(dialog).queryByRole('button', { name: TELL_WORKER_SEND })).toBeNull();
     expect(posts(fetch).some(([url]) => url === relayPath(id(4)))).toBe(false);

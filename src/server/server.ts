@@ -127,7 +127,7 @@ import { DIAGNOSTICS_INTERVAL_MS, DiagnosticsLog, NeedsYouRecorder } from './dia
 import { createFlagView, FlagStore, registerFlags } from './flags.js';
 import { createLeadsView, LeadStore, type LeadStoreOptions } from './leads.js';
 import { registerLeads } from './leadRoutes.js';
-import { leadBrief, type LiveNames } from './leadBrief.js';
+import { leadBrief, workerBrief, type LiveNames } from './leadBrief.js';
 import { createLineageView, LineageStore } from './lineage.js';
 import { createSnoozeView, registerSnoozes, SnoozeStore } from './snoozes.js';
 import { SessionLaunches } from './sessionLaunches.js';
@@ -229,6 +229,8 @@ export interface ServerInternals {
    * For the attach socket. Tests pass a fake PTY spawner and agents source,
    * so they never run `claude`.
    */
+  /** The only text the relay route sends a background session (W226). Tests pass their own; the server's is workerBrief()'s. */
+  relayWorkerText?: (sessionId: string) => string | undefined;
   /** Clear and continue's waits (W168): tests shorten them. */
   clearTimings?: Partial<ClearTimings>;
   attach?: Partial<Pick<AttachOptions, 'spawnPty' | 'env' | 'agents' | 'spawned' | 'resumed' | 'processAlive' | 'now'>>;
@@ -463,7 +465,15 @@ export async function startServerWithInternals(
       ...internals.end,
       slots: commandSlots,
     });
-    registerRelay(app, indexer, relay);
+    registerRelay(app, indexer, relay, {
+      workerText:
+        internals.relayWorkerText ??
+        ((id) => {
+          const brief = workerBrief(leads, snapshots.latest(), id, liveNames());
+          return brief.ok ? brief.text : undefined;
+        }),
+      leadOf: (id) => leads.reportTarget(id),
+    });
     registerRecaps(app, indexer, recaps);
     registerFlags(app, { snapshots: flagged, store: flags, relay, recaps });
     registerSnoozes(app, { snapshots: snoozed, store: snoozes });
