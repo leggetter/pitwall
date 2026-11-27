@@ -425,7 +425,7 @@ describe("a job's state is read for its latest session after /clear (W228)", () 
     expect(parseSavedPermission(fields({ resumeSessionId: NEW }), SID)).toEqual({ kind: 'unknown' });
   });
 
-  it.each([[''], [42], [null], ['x'], ['../../etc/passwd'], ['a'.repeat(200)]])('falls back to sessionId for a malformed resumeSessionId (%j)', (bad) => {
+  it.each([[''], [42], [null], ['x'], ['../../etc/passwd'], ['a'.repeat(200)], ['abcdefgh'], ['88888888-8888-4888-8888-88888888888']])('falls back to sessionId for a malformed resumeSessionId (%j)', (bad) => {
     expect(latestSessionIdOf({ sessionId: SID, resumeSessionId: bad })).toBe(SID);
     expect(parseJobState(fields({ resumeSessionId: bad }), SID)).toEqual(NEEDS);
   });

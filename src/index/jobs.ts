@@ -106,16 +106,14 @@ interface Cached {
   needs: JobNeeds;
 }
 
-const JOB_SESSION_ID = /^[0-9A-Za-z-]{8,64}$/;
-
 /**
  * The job's latest session (W228). After `/clear` Claude Code keeps the job's first session id in
  * `sessionId` and writes the current one to `resumeSessionId`, so the latest is `resumeSessionId` when
- * it is a plausible id, otherwise `sessionId`. The job's first session, once resumed, matches nothing.
+ * it is a canonical session UUID (isSessionUuid(), the rule parseJobSessionIds() uses too), otherwise `sessionId`. The job's first session, once resumed, matches nothing.
  */
 export function latestSessionIdOf(state: Record<string, unknown>): unknown {
   const resumed = state.resumeSessionId;
-  if (typeof resumed === 'string' && JOB_SESSION_ID.test(resumed)) return resumed;
+  if (typeof resumed === 'string' && isSessionUuid(resumed)) return resumed;
   return state.sessionId;
 }
 
