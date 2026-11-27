@@ -231,6 +231,8 @@ This is the content of `web/src/tokens.css`, apart from comments. The no-JavaScr
 
   --pw-repo-list-w: 240px;
   --pw-list-min-w: 360px;
+  /* A collapsed column's rail (W224). */
+  --pw-rail-w: 40px;
   --pw-session-pane-w: 760px;
   --pw-session-pane-min-w: 560px;
   --pw-view-w: var(--pw-session-pane-w);
@@ -621,6 +623,7 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 | `supervisor` | support_agent | The header's [Supervisor button](#the-headers-button) (W182; the repo list's item until then, W114) and its view's heading: a headset, the pit wall's race engineer on the radio to every car |
 | `attach` | attach_file | New session's Attach files, and its drop target (W82; see [Dialogs](#dialogs)); the supervisor's Attach file (W135, [Supervisor](#supervisor)) |
 | `image` / `pdf` / `file` | image / picture_as_pdf / description | The type of a file in New session's list (W82): an image that has no thumbnail yet, a PDF, and text |
+| `pane-fill` / `pane-restore` | left_panel_close / left_panel_open | The view header's Fill the window and Show the lists (W224) |
 | `theme-system` / `theme-light` / `theme-dark` | computer / light_mode / dark_mode | The theme switch |
 
 ### 2.15 Mapping from the CSS before M3
@@ -873,6 +876,15 @@ Phil runs pitwall over two folders of repos and wants both in one window (W38). 
   - Opening from the URL or the back button sends and changes nothing, and takes no focus. A running background session's view opens on its Terminal tab, which attaches, as a click on its row would have it, but its terminal takes no focus, after a reload too: nothing in the page asked for it, so the terminal's bar says how to type to it (W54, W57, see [Session view: header, tabs and footer](#session-view-header-tabs-and-footer)).
   - Never put the token in the query string. `web/src/token.ts` takes it out of the fragment before anything else reads the URL.
 - **Inside:** a sticky header, the [recap strip](#recap-strip) while the session has a recap or one is coming (M5, W111), the tabs, the scrolling body and a sticky footer (see [Session view](#session-view-header-tabs-and-footer)).
+
+### Session pane filling the window (W224)
+
+From 1,200 px, the session pane can take the whole window under the header, with the repo list and the session list folded away. Not the browser's Fullscreen API: the header and the browser's own chrome stay.
+
+- **The control:** an md ghost icon button in the [view header](#session-view-header-tabs-and-footer)'s first line, after the star and the actions menu and before Close: Fill the window (`pane-fill`), then Show the lists (`pane-restore`) while both columns are folded. Not at 600 px and narrower, and not below 1,200 px at all, where the session view already lies over the session list. It is in every view in the session pane (session, PR, waiting), not in the supervisor panel. `f` does the same, anywhere (see the keyboard map).
+- **Column rails:** a folded column leaves a 40 px rail (`--pw-rail-w`, `PaneRail`): one md ghost chevron button, Show the repo list or Show the session list, and the column's name set sideways in `--pw-text-muted`. Each rail opens its own column and moves focus into it (the repo list's first stop, the session list's heading). With one rail opened, the control folds both again. `/` with the session list folded opens it and focuses its filter field.
+- **Layout:** the session pane takes the rest of the row and the divider goes while the session list is folded; the width the divider set is kept for when the list is back. The session list stays mounted, hidden, so its scroll, filter and Finished sections are kept. The Terminal tab refits to the new width as it does for any resize. While W187 has the supervisor panel's column folding the repo list into its drawer, the repo list has no rail: the header's Repos button opens it.
+- **Remembered** in localStorage as `pitwall.pane-fill.v1`, `{"v":1,"repos":true,"list":true}`; booleans only. A missing, blocked or other-shaped value folds nothing.
 
 ### App strip and page alerts
 
@@ -2530,7 +2542,7 @@ Claude Code's own trust prompt for a folder it hasn't trusted (W214, spike 020),
 
 - **Component:** `ShortcutsDialog` (`web/src/components/ShortcutsDialog.tsx`), on `Dialog` with `size="sm"` (`--pw-dialog-sm`, 408 px), titled "Keyboard shortcuts". With nothing to submit, it has no footer; Close and Escape close it, and focus goes back to whatever opened it.
 - **Opened** by `?` or the header's `keyboard` icon button.
-- **The off switch** comes first, and takes focus as the dialog opens: a [checkbox](#inputs-textareas-and-selects), "Single-key shortcuts", that turns off `/`, `?`, `n`, `j`, `k` and `s` (WCAG 2.1.4, Character Key Shortcuts), with help text below it, indented to the label, linked with `aria-describedby`: "The keys under Anywhere, which are ignored while you type in a field. While they're off, the keyboard button in the header opens this dialog."
+- **The off switch** comes first, and takes focus as the dialog opens: a [checkbox](#inputs-textareas-and-selects), "Single-key shortcuts", that turns off `/`, `?`, `n`, `j`, `k`, `s` and `f` (WCAG 2.1.4, Character Key Shortcuts), with help text below it, indented to the label, linked with `aria-describedby`: "The keys under Anywhere, which are ignored while you type in a field. While they're off, the keyboard button in the header opens this dialog."
   - On by default. Stored in `localStorage` as `pitwall.shortcuts.v1`, `on` or `off`; anything else, nothing stored, or storage that's missing or throws reads as on, and a choice that can't be stored lasts until the page reloads.
   - One store holds it (`web/src/shortcuts.ts`), as the theme's does, so the checkbox, the filter field's key cap and every tooltip agree, and a change made in another tab arrives with the window's `storage` event.
   - While it's off, the Anywhere heading adds "Off" (meta, `--pw-text-muted`), and the rest of the map still works.
@@ -2655,14 +2667,14 @@ See the [table](#empty-states). Calm wording when there's nothing to do: "Nothin
 
 ### 6.2 Keyboard map
 
-Single-key shortcuts (`/`, `?`, `n`, `j`, `k`, `s`) work only while they're switched on, in the [shortcuts dialog](#keyboard-shortcuts-dialog), and never:
+Single-key shortcuts (`/`, `?`, `n`, `j`, `k`, `s`, `f`) work only while they're switched on, in the [shortcuts dialog](#keyboard-shortcuts-dialog), and never:
 
 - while focus is in a text field, a textarea, a select, something contenteditable or the terminal (`.xterm`), so typing is typing;
 - with ⌘, Ctrl or Alt held, so the browser's and the system's shortcuts are untouched (Shift is allowed, since `?` needs it on most layouts; `N`, `J`, `K` and `S` aren't shortcuts);
 - while a dialog or the repo drawer is open, since both are modal (the session view over the list isn't);
 - for a key that something nearer already handled, or while an input method is composing.
 
-Holding `n`, `?` or `s` down doesn't repeat them; holding `j` or `k` does. They're handled in `AppShell.tsx`, on the document, after every handler inside the app; `web/src/shortcuts.ts` decides which key is which.
+Holding `n`, `?`, `s` or `f` down doesn't repeat them; holding `j` or `k` does. They're handled in `AppShell.tsx`, on the document, after every handler inside the app; `web/src/shortcuts.ts` decides which key is which.
 
 | Key | Where | What it does |
 |---|---|---|
@@ -2671,6 +2683,7 @@ Holding `n`, `?` or `s` down doesn't repeat them; holding `j` or `k` does. They'
 | `?` | Anywhere | Open the keyboard shortcuts dialog |
 | `j` / `k` | Anywhere, including the conversation | Next / previous row in the session list, a session's or a PR's alike (W106), as the rows are shown (shows it if a view is open: a session's view, or a PR's). Onto a running background session, its view opens on Terminal, which attaches only once it has stayed open for `--pw-delay-attach` (W54). Nothing while the message box has a draft or a Stop, Remove or resume runs |
 | `s` | Anywhere, with a session open | Star or unstar the open session, as its view's [star toggle](#starred-sessions) does, with a toast that says which, since focus isn't on the toggle (W53). Nothing with no session open |
+| `f` | Anywhere, from 1,200 px wide | Fill the window with the session pane, or show the repo list and session list again, as the view header's [Fill the window](#session-pane-filling-the-window-w224) button does (W224) |
 | ↓ / ↑ | On a session row or a PR row | Move focus to the next / previous row; with a view open, also show that session, or PR (W95, W106). Nothing while the message box has a draft or a Stop, Remove or resume runs |
 | ↓ / ↑ | In the session view's header, except in an open menu, which uses them itself, or the PR view's | Show the next / previous row, a session or a PR (W95, W106), with focus on its view's heading. Nothing while the message box has a draft or a Stop, Remove or resume runs |
 | Enter | On a session row or a PR row | Open the session, or the PR (W95) |

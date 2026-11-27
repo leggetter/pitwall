@@ -210,6 +210,68 @@ textarea {
 }
 
 /*
+ * The session pane filling the window (W224, from 1,200 px). Each column collapsed is a rail, --pw-rail-w
+ * wide, in its place (data-repos-collapsed, data-list-collapsed on the app, from AppShell.tsx). With the
+ * session list collapsed the pane takes the rest of the row, whatever width the divider set, which is
+ * kept for when the list is back; the list stays mounted, hidden, so its scroll and filter are kept.
+ * These come after the rules they override, at the same specificity.
+ */
+.app[data-layout='three-columns'][data-repos-collapsed] .columns {
+  grid-template-columns: var(--pw-rail-w) minmax(var(--pw-list-min-w), 1fr) auto;
+}
+
+.app[data-layout='three-columns'][data-list-collapsed] .columns {
+  grid-template-columns: var(--pw-repo-list-w) var(--pw-rail-w) minmax(0, 1fr);
+}
+
+.app[data-layout='three-columns'][data-repos-collapsed][data-list-collapsed] .columns {
+  grid-template-columns: var(--pw-rail-w) var(--pw-rail-w) minmax(0, 1fr);
+}
+
+.app[data-layout='three-columns'][data-repos='folded'][data-list-collapsed] .columns {
+  grid-template-columns: var(--pw-rail-w) minmax(0, 1fr);
+}
+
+.app[data-layout='three-columns'][data-list-collapsed] .columns > .session-pane,
+.app[data-layout='three-columns'][data-repos='folded'][data-list-collapsed] .columns > .session-pane {
+  width: auto;
+  max-width: none;
+}
+
+.columns > .session-list.pane-collapsed {
+  display: none;
+}
+
+.columns > .pane-rail[data-rail='repos'] {
+  grid-area: repos;
+}
+
+.columns > .pane-rail[data-rail='list'] {
+  grid-area: list;
+}
+
+.pane-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--pw-space-3);
+  min-width: 0;
+  min-height: 0;
+  padding: var(--pw-space-2) 0;
+  background: var(--pw-bg);
+  border-right: 1px solid var(--pw-border);
+}
+
+.pane-rail-name {
+  writing-mode: vertical-rl;
+  color: var(--pw-text-muted);
+  font-size: var(--pw-text-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  user-select: none;
+}
+
+/*
  * A window too short for the header and useful columns, such as a phone held sideways or 200 % zoom
  * on a laptop: the page scrolls as a whole, so the lists keep their room.
  */

@@ -80,7 +80,8 @@ import { prNeedOf } from '../work.js';
 import { attachCommand, canFlag, canSnooze, isFlagged, isSnoozed, needsAttention, resumeCommand, statusBadge } from '../sessions.js';
 import { SNOOZE_CHOICES, WAKE_ITEM } from '../snooze.js';
 import { FLAG_ITEM, UNFLAG_ITEM } from '../flags.js';
-import { SHORTCUT_KEYS } from '../shortcuts.js';
+import { PaneFillContext } from '../paneFill.js';
+import { SHORTCUT_KEYS, useShortcuts } from '../shortcuts.js';
 import { moveTabFocus } from '../tabs.js';
 import { turnMode, WORKING_POLL_MS, workingLineState } from '../working.js';
 import { Alert } from './Alert.js';
@@ -348,6 +349,9 @@ export interface TopProps {
 
 /** Line 1: Back at compact widths, the heading, then whatever goes at the end and Close. */
 export function Top({ compact, onClose, backLabel = 'Back to sessions', children, end }: TopProps) {
+  // Fill the window, from 1,200 px, for the views in the session pane (W224); not the supervisor's panel.
+  const fill = useContext(PaneFillContext);
+  const shortcuts = useShortcuts();
   return (
     <div className="session-view-top">
       {compact && (
@@ -357,6 +361,13 @@ export function Top({ compact, onClose, backLabel = 'Back to sessions', children
       )}
       {children}
       {end}
+      {!compact && fill && (
+        <Tooltip content={fill.filled ? 'Show the lists' : 'Fill the window'} keys={SHORTCUT_KEYS.fill} relation="label">
+          <button type="button" className="icon-button ghost md pane-fill-button" aria-keyshortcuts={shortcuts.on ? 'f' : undefined} data-pane-fill={fill.filled ? 'filled' : 'open'} onClick={fill.onToggle}>
+            <Icon name={fill.filled ? 'pane-restore' : 'pane-fill'} />
+          </button>
+        </Tooltip>
+      )}
       {!compact && (
         <Tooltip content="Close" keys={{ keys: ['Esc'], label: 'Escape' }} relation="label">
           <button type="button" className="icon-button ghost md" aria-keyshortcuts="Escape" onClick={onClose}>
