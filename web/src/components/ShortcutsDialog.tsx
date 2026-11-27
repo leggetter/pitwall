@@ -62,6 +62,7 @@ export function keyboardMap(command: boolean = usesCommandKey()): MapGroup[] {
           keys: [[key('j', 'J'), key('k', 'K')]],
         },
         { doc: { key: '`s`', where: 'Anywhere, with a session open' }, what: 'Star or unstar the open session', keys: [[key('s', 'S')]] },
+        { doc: { key: '`f`', where: 'Anywhere, from 1,200 px wide' }, what: 'Fill the window with the session pane, or show the repo list and session list again', keys: [[key('f', 'F')]] },
       ],
     },
     {

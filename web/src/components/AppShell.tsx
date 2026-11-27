@@ -160,6 +160,7 @@ import { approvalsWaiting, askAboutPr, askAboutSession, asSupervisorState, type 
 import { usePrRefresh } from '../prRefresh.js';
 import { listNow, prKey, prListState, prName, prsOff, SEARCH_NAMES, sessionsFor, strongPrsOf } from '../prs.js';
 import { pendingLink, prPrefill, withPendingLinks, type PendingLinks } from '../prStart.js';
+import { PaneFillContext, usePaneFill } from '../paneFill.js';
 import { createSessionPaneWidthStore } from '../sessionPaneWidth.js';
 import { relayAlertText } from '../relay.js';
 import { tabAttention, tabGroups, writeStoredTab } from '../rootTabs.js';
@@ -218,6 +219,7 @@ import { NO_RELATION, PrListFilters, PrListFoot, PrNotices, prSourceBody, Refres
 import { PrView, UnlistedPrView, WaitingPrView, type PrMissing } from './PrView.js';
 import { PreferencesDialog } from './Preferences.js';
 import { UsageDialog } from './UsageDialog.js';
+import { PaneRail } from './PaneRail.js';
 import { RepoDrawer } from './RepoDrawer.js';
 import { RepoList } from './RepoList.js';
 import { olderText, SessionList, type SessionListHeading } from './SessionList.js';
@@ -354,6 +356,7 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
   const { layout, compact, overlayCoversRepos, panelFoldsRepos } = useLayout(app);
   // The session view's width as the third column: the divider and the actions menu's width items change it.
   const [paneWidth] = useState(() => createSessionPaneWidthStore(storage));
+  const paneFill = usePaneFill(storage);
   // Group sessions by, from Preferences (W42, W59): the snapshot's groups, grouped again for the mode.
   const [groupBy, setGroupBy] = useGroupBy(storage);
   // Which tab a running background session's view opens on, from Preferences too (W54).
@@ -662,6 +665,12 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
   const panelColumn = layout === 'three-columns' && supervisorOpen;
   const reposFolded = panelColumn && panelFoldsRepos;
   const reposInDrawer = layout === 'drawer' || reposFolded;
+  // The session pane filling the window (W224), in three columns only: the repo list and the session list
+  // each collapse to a rail, one that opens that column again on its own. The repo list has no rail while
+  // W187 has folded it into the drawer; its drawer button is how it opens then.
+  const listRail = layout === 'three-columns' && paneFill.collapsed.list;
+  const reposRail = layout === 'three-columns' && !reposInDrawer && paneFill.collapsed.repos;
+  const paneFillControl = layout === 'three-columns' ? { filled: paneFill.filled, onToggle: paneFill.toggle } : undefined;
   /** Whether closing what lies over the list would lose a draft: the open session's, or the supervisor panel's. */
   const overlayHolds = () => overlaid && (hasDraft() || (supervisorOpen && hasDraft(SUPERVISOR_DRAFT_ID)));
   // The New session dialog, and the session it started, selected once it's listed (W63). Opened in
@@ -806,6 +815,10 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
    * The list's row buttons, a session's name or a PR row's title (W106), in the order shown, without
    * those in a collapsed Finished section.
    */
+  /** Where focus goes in the session list: its heading, or its rail's button while it's collapsed (W224). */
+  const listFocusTarget = (): HTMLElement | null | undefined =>
+    listRail ? app.current?.querySelector<HTMLElement>('.pane-rail [data-open-rail="list"]') : listHeading.current;
+
   const rowButtons = useCallback(
     () => [...(app.current?.querySelectorAll<HTMLElement>('.session-list [data-open-session], .session-list [data-open-pr]') ?? [])].filter((button) => !button.closest('[hidden]')),
     [],
@@ -910,6 +923,8 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
     const id = rowIdOf(next);
     if (!next || id === undefined) return false;
     if (openRow === undefined) {
+      // A collapsed session list's rows can't take focus (W224): the key isn't one, so it isn't swallowed.
+      if (listRail) return false;
       closeMenus(root);
       next.focus();
       return true;
@@ -961,7 +976,8 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
     // The back button closed it: focus goes to the row only if it was inside the view, and so is lost now.
     const active = document.activeElement;
     if (!asked && active !== null && active !== document.body) return;
-    const restore = () => (rowButton(was) ?? listHeading.current)?.focus();
+    // With the session list collapsed (W224) its rows can't take focus, so its rail's button does.
+    const restore = () => (listRail ? listFocusTarget() : (rowButton(was) ?? listHeading.current))?.focus();
     if (layout === 'three-columns') {
       restore();
       return;
@@ -1030,7 +1046,7 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
     }
     const active = document.activeElement;
     if (!asked && active !== null && active !== document.body) return;
-    const restore = () => (prRowButton(was) ?? listHeading.current)?.focus();
+    const restore = () => (listRail ? listFocusTarget() : (prRowButton(was) ?? listHeading.current))?.focus();
     if (layout === 'three-columns') {
       restore();
       return;
@@ -1111,7 +1127,7 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
       (
         usable(opener) ??
         usable(supervisorButton.current) ??
-        (overlaid ? viewHeading.current : listHeading.current)
+        (overlaid ? viewHeading.current : listFocusTarget())
       )?.focus();
     if (layout === 'three-columns') {
       restore();
@@ -1241,6 +1257,28 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
     if (active === null || active === document.body || !active.isConnected) supervisorHeading.current?.focus();
   }, [reposFolded]);
 
+  // Opening a collapsed column from its rail, or by `/` for the session list (W224): the rail's button goes
+  // with it, so focus moves into the column once it's back, to its filter field after `/`, else its first stop.
+  const focusAfterOpen = useRef<'repos' | 'list' | undefined>(undefined);
+  const filterAfterOpen = useRef(false);
+  const openColumn = (column: 'repos' | 'list') => {
+    focusAfterOpen.current = column;
+    paneFill.open(column);
+  };
+  useEffect(() => {
+    const column = focusAfterOpen.current;
+    if (column === undefined || (column === 'list' ? listRail : reposRail)) return;
+    focusAfterOpen.current = undefined;
+    if (column === 'list') {
+      const field = filterField.current;
+      if (filterAfterOpen.current && field) field.focus();
+      else listHeading.current?.focus();
+      filterAfterOpen.current = false;
+    } else {
+      app.current?.querySelector<HTMLElement>('.repo-list a[tabindex="0"]')?.focus();
+    }
+  });
+
   const closeDrawer = () => {
     setDrawerOpen(false);
     focusQuietly(reposButton.current);
@@ -1258,6 +1296,12 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
   // as Close would, unless the message box has a draft; focus goes to the field, not the row, once the
   // close has made the list usable again.
   const focusFilter = (root: HTMLElement): boolean => {
+    // The session list collapsed (W224): it opens first, and focus goes to its field once it's back.
+    if (listRail) {
+      filterAfterOpen.current = true;
+      openColumn('list');
+      return true;
+    }
     const field = filterField.current;
     if (!field) return false;
     if (overlayHolds()) return false;
@@ -1276,6 +1320,28 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
     } else {
       place();
     }
+    return true;
+  };
+
+  // The session pane filling the window (W224): `f` collapses the two columns, or opens them again.
+  const fillPane = (root: HTMLElement): boolean => {
+    if (layout !== 'three-columns') return false;
+    closeMenus(root);
+    paneFill.toggle();
+    // A column that collapses hides what had focus in it, and a rail that goes takes its button with it:
+    // once the change has painted, focus goes to the control, else the view's heading, else the session
+    // list's rail or heading, so it's never lost to the page (W224's review).
+    requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active !== document.body && active.isConnected && active.getClientRects().length > 0) return;
+      const root = app.current;
+      (
+        root?.querySelector<HTMLElement>('.pane-fill-button') ??
+        viewHeading.current ??
+        root?.querySelector<HTMLElement>('.pane-rail [data-open-rail="list"]') ??
+        listHeading.current
+      )?.focus();
+    });
     return true;
   };
 
@@ -1433,6 +1499,7 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
     next: (root) => stepByKey(root, 1),
     previous: (root) => stepByKey(root, -1),
     star: starOpen,
+    fill: fillPane,
   };
 
   // On the document, after every handler inside the app, so a key one of them handled isn't a shortcut.
@@ -2169,7 +2236,7 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
     <ToastContext.Provider value={toasts.show}>
     {/* The run rate for the supervisor's cards too (W160), so they show the header's figures and ask for none. */}
     <RunRateContext.Provider value={runRate}>
-    <div className="app" ref={app} data-layout={layout} data-repos={reposFolded ? 'folded' : undefined}>
+    <div className="app" ref={app} data-layout={layout} data-repos={reposFolded ? 'folded' : undefined} data-repos-collapsed={reposRail ? '' : undefined} data-list-collapsed={listRail ? '' : undefined}>
       <AppStrips relayOff={relayOff} onRelayDetails={relayAlert ? showRelayAlert : undefined} recaps={snapshot?.recaps} supervisor={supervisor} onSupervisor={openSupervisor} />
       <Header
         state={state}
@@ -2194,7 +2261,9 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
 
       {/* With root tabs, the columns are the open tab's panel, named by it. */}
       <div className="columns" {...(tab === undefined ? {} : { role: 'tabpanel', id: panelId, 'aria-labelledby': tabId(tab) })}>
-        {!reposInDrawer && repoList('list')}
+        {reposRail && <PaneRail column="repos" onOpen={() => openColumn('repos')} />}
+        {!reposInDrawer && !reposRail && repoList('list')}
+        {listRail && <PaneRail column="list" onOpen={() => openColumn('list')} />}
         {/* The Pull requests view is the session list too, with its own filters, notices and foot (W106). */}
         <HighlightContext.Provider value={filterNeedle(prsSelected ? prFilter : filters.text)}>
           <SessionList
@@ -2226,7 +2295,7 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
             }
             notices={prsSelected ? <PrNotices list={prList} /> : scope?.kind === 'needs-you' ? needsYouNotices : undefined}
             foot={prsSelected ? prsFoot : undefined}
-            className={prsSelected ? 'pr-list' : undefined}
+            className={[prsSelected && 'pr-list', listRail && 'pane-collapsed'].filter(Boolean).join(' ') || undefined}
             current={arranged.current}
             finished={finished}
             leads={leadsOpen}
@@ -2260,9 +2329,9 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
         {/* The third column from 1,200 px; below that, display: contents, and the view overlays the list.
             The supervisor's panel is last, over the views, which are inert under it below 1,200 px (W177). */}
         <div className="session-pane" {...(supervisorPanel === undefined ? {} : { 'data-panel-open': '' })}>
-          {layout === 'three-columns' && <Divider store={paneWidth} beside={supervisorPanel !== undefined} />}
+          {layout === 'three-columns' && !listRail && <Divider store={paneWidth} beside={supervisorPanel !== undefined} />}
           <div className="pane-views" inert={viewCovered || undefined}>
-            {paneViews}
+            <PaneFillContext.Provider value={paneFillControl}>{paneViews}</PaneFillContext.Provider>
           </div>
           {supervisorPanel}
         </div>

@@ -35,6 +35,7 @@ Three columns from 1,200 px wide:
 | **Rows** | One per session, or per pull request in the PR list. | `SessionRow`, `PrRow` |
 | **Finished section** | The finished sessions, collapsed, at the session list's foot. | `.finished-list` |
 | **Session pane** | The third column. It holds one thing: a session view, a PR view, or the "Select a session" empty state. Below 1,200 px it has no box of its own, and the session view lies over the session list. | `.session-pane`, `.pane-views`, `--pw-session-pane-w`, `sessionPaneWidth` |
+| **Column rail** | The 40 px strip a collapsed repo list or session list leaves, with a button that opens it again (W224). The view header's Fill the window control collapses both. | `PaneRail`, `.pane-rail`, `--pw-rail-w`, `usePaneFill` |
 | **Divider** | The line between the session list and the session pane, dragged to set the session pane's width. | `Divider` |
 | **Supervisor panel** | The supervisor's conversation: a column beside the session view from 1,200 px, and over it below that. | `SupervisorPanel`, `--pw-supervisor-col` |
 
