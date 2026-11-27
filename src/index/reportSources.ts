@@ -40,19 +40,21 @@ export function addressedName(to: string): string {
     .toLowerCase();
 }
 
-/** An ISO 8601 time, normalized, or undefined. */
-function timeOf(value: unknown): string | undefined {
+/** An ISO 8601 time, normalized, a future one read as `nowMs` (the review's F7, as leads.json does), or undefined. */
+function timeOf(value: unknown, nowMs: number): string | undefined {
   if (typeof value !== 'string' || value.length > 40) return undefined;
   const ms = Date.parse(value);
-  return Number.isNaN(ms) ? undefined : new Date(ms).toISOString();
+  return Number.isNaN(ms) ? undefined : new Date(Math.min(ms, nowMs)).toISOString();
 }
 
 /**
  * The time of the newest report to `leadName` in `text`, JSONL as Claude Code writes it, or undefined
- * when there's none. The first line is skipped when `cut` says the text starts mid-line. Pure.
+ * when there's none. The first line is skipped when `cut` says the text starts mid-line. A time later
+ * than `now` is read as `now`, so a transcript can't claim a report from the future. Pure.
  */
-export function parseNewestReport(text: string, leadName: string, cut = false): string | undefined {
+export function parseNewestReport(text: string, leadName: string, cut = false, now: () => Date = () => new Date()): string | undefined {
   const want = addressedName(leadName);
+  const nowMs = now().getTime();
   if (want === '') return undefined;
   const pending = new Map<string, string>();
   let newest: string | undefined;
@@ -71,7 +73,7 @@ export function parseNewestReport(text: string, leadName: string, cut = false): 
     }
     if (!isRecord(entry) || !isRecord(entry.message) || !Array.isArray(entry.message.content)) continue;
     if (entry.type === 'assistant') {
-      const at = timeOf(entry.timestamp);
+      const at = timeOf(entry.timestamp, nowMs);
       if (at === undefined) continue;
       for (const block of entry.message.content) {
         if (!isRecord(block) || block.type !== 'tool_use' || block.name !== SEND_MESSAGE || typeof block.id !== 'string' || !isRecord(block.input)) continue;
@@ -98,7 +100,7 @@ export function parseNewestReport(text: string, leadName: string, cut = false): 
  * The newest report to `leadName` in the transcript at `file`: `{ at }`, `{}` when there's none, or
  * undefined when the file couldn't be read as a regular file. Never rejects.
  */
-export async function readNewestReport(file: string, leadName: string): Promise<{ at?: string } | undefined> {
+export async function readNewestReport(file: string, leadName: string, now: () => Date = () => new Date()): Promise<{ at?: string } | undefined> {
   let handle;
   try {
     handle = await open(file, OPEN_FLAGS);
@@ -113,7 +115,7 @@ export async function readNewestReport(file: string, leadName: string): Promise<
       if (bytesRead === 0) break;
       read += bytesRead;
     }
-    const at = parseNewestReport(buffer.subarray(0, read).toString('utf8'), leadName, start > 0);
+    const at = parseNewestReport(buffer.subarray(0, read).toString('utf8'), leadName, start > 0, now);
     return at === undefined ? {} : { at };
   } catch {
     return undefined;

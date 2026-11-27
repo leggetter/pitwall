@@ -128,6 +128,21 @@ describe('the chain', () => {
   });
 });
 
+describe('soleSuccessorOf', () => {
+  it('answers the one successor, none for two, and with inferred: false skips an inferred line (W218 piece 2, the review’s F1)', () => {
+    const store = new LineageStore({ now: NOW });
+    expect(store.record({ from: A, to: B, how: 'clear' })).toBe(true);
+    expect(store.record({ from: C, to: D, how: 'clear', inferred: true })).toBe(true);
+    expect(store.soleSuccessorOf(A)).toBe(B);
+    expect(store.soleSuccessorOf(A, { inferred: false })).toBe(B);
+    expect(store.soleSuccessorOf(C)).toBe(D);
+    // An inferred line, built from a job's state.json and a transcript's opening, makes no successor for the trusted tree.
+    expect(store.soleSuccessorOf(C, { inferred: false })).toBeUndefined();
+    expect(store.record({ from: A, to: C, how: 'continue' })).toBe(true);
+    expect(store.soleSuccessorOf(A, { inferred: false })).toBeUndefined();
+  });
+});
+
 describe('observe: a live /clear', () => {
   it('records the same job listing a new session id once the old one is not listed', () => {
     const store = new LineageStore({ home, now: NOW });

@@ -1114,6 +1114,12 @@ export interface SessionLead {
   workers: string[];
   /** You marked it with Make lead, so it's a lead whether or not it has workers yet. */
   marked?: true;
+  /**
+   * A lead by your marks and links, Claude Code's launches and the lineage pitwall saw
+   * (LeadStore.trustedTree(), W218 piece 2, the review's F2), not only by a `derived-from` `clear` in
+   * its own transcript. Only such a lead can be chosen in Report to… or named in a worker's paragraph.
+   */
+  trusted?: true;
 }
 
 /**
@@ -1346,6 +1352,13 @@ export interface SpawnRequest {
    * nothing starts.
    */
   lead?: string;
+  /**
+   * With `lead` (W218 piece 2, the review's F3): the lead's name as the dialog's paragraph showed it
+   * (LeadBriefResult's `leadName`). The server writes its paragraph again at spawn time and answers 409,
+   * starting nothing, when its lead's name differs, or when `lead` comes without this. Optional in the
+   * type only; the server requires it with `lead`.
+   */
+  leadName?: string;
 }
 
 export type SpawnResult =

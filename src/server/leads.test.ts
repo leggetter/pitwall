@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { IndexSnapshot, SessionLineageLinks, SessionSummary } from '../shared/protocol.js';
 import type { DerivedFrom } from '../index/lineageSources.js';
+import { LineageStore } from './lineage.js';
 import { LEADS_FILE_MAX_BYTES, LEADS_FILE_NAME, LEADS_HELD_MAX, LeadStore, readLeadsFile, treeOf, WORKER_EXPECTED_MAX, WORKER_WAIT_MS, type LeadLink, type LeadMark, type TreeInput } from './leads.js';
 
 /** A canonical UUID made of one hex digit. */
@@ -358,15 +359,15 @@ describe('LeadStore', () => {
       store.link(B, A, 'reported');
       store.mark(D, true);
       const s = byId(store.decorate(snapshotOf(session(A), session(B), session(C), session(D))));
-      expect(s.get(A)?.lead).toEqual({ workers: [B], marked: true });
+      expect(s.get(A)?.lead).toEqual({ workers: [B], marked: true, trusted: true });
       expect(s.get(B)?.workerOf).toEqual({ lead: A, how: 'reported' });
       expect(s.get(B)?.lead).toBeUndefined();
       expect(s.get(C)?.lead).toBeUndefined();
       expect(s.get(C)?.workerOf).toBeUndefined();
-      expect(s.get(D)?.lead).toEqual({ workers: [], marked: true });
+      expect(s.get(D)?.lead).toEqual({ workers: [], marked: true, trusted: true });
       // The lead not listed: no workerOf; the worker not listed: not in workers.
       expect(byId(store.decorate(snapshotOf(session(B)))).get(B)?.workerOf).toBeUndefined();
-      expect(byId(store.decorate(snapshotOf(session(A)))).get(A)?.lead).toEqual({ workers: [], marked: true });
+      expect(byId(store.decorate(snapshotOf(session(A)))).get(A)?.lead).toEqual({ workers: [], marked: true, trusted: true });
       // Unchanged when nothing is a lead.
       const empty = new LeadStore({ readReport: noReport, now, readDerived: none });
       const snapshot = snapshotOf(session(A));
@@ -388,7 +389,7 @@ describe('LeadStore', () => {
       expect(byId(store.decorate(snapshot)).get(B)?.workerOf).toBeUndefined();
       store.mark(A, true);
       const s = byId(store.decorate(snapshot));
-      expect(s.get(A)?.lead).toEqual({ workers: [B], marked: true });
+      expect(s.get(A)?.lead).toEqual({ workers: [B], marked: true, trusted: true });
       expect(s.get(B)?.workerOf).toEqual({ lead: A, how: 'launched' });
       // Read once each this run.
       expect(reads).toHaveLength(2);
@@ -418,7 +419,7 @@ describe('LeadStore', () => {
     it('fails soft when a read throws', async () => {
       const store = new LeadStore({ readReport: noReport, now, readDerived: async () => Promise.reject(new Error('boom')) });
       store.mark(A, true);
-      expect(byId(store.decorate(snapshotOf(session(A)))).get(A)?.lead).toEqual({ workers: [], marked: true });
+      expect(byId(store.decorate(snapshotOf(session(A)))).get(A)?.lead).toEqual({ workers: [], marked: true, trusted: true });
       await settle();
     });
 
@@ -430,7 +431,7 @@ describe('LeadStore', () => {
       // Not listed yet.
       expect(byId(store.decorate(snapshotOf(session(A)))).get(A)?.lead).toBeUndefined();
       const s = byId(store.decorate(snapshotOf(session(A), session(B, { shortId: '0f0f0f0f' }))));
-      expect(s.get(A)?.lead).toEqual({ workers: [B] });
+      expect(s.get(A)?.lead).toEqual({ workers: [B], trusted: true });
       expect(s.get(B)?.workerOf).toEqual({ lead: A, how: 'started' });
       // Too late.
       store.expectWorker('1e1e1e1e', A);
@@ -474,8 +475,62 @@ describe('LeadStore', () => {
         let s = byId(store.decorate(snapshot));
         await settle();
         s = byId(store.decorate(snapshot));
-        expect(s.get(B)?.workerOf).toEqual({ lead: C, how: 'reported', reportedAt: T1 });
-        expect(new Set(asked)).toEqual(new Set(['pitwall-test-lead']));
+        // B shows C as its lead, so no report time sits beside C's name (the review's F6), and none is read for C's.
+        expect(s.get(B)?.workerOf).toEqual({ lead: C, how: 'reported' });
+        expect(asked).not.toContain('pitwall-test-claimant');
+        // C shows as a lead, but not a trusted one.
+        expect(s.get(C)?.lead).toEqual({ workers: [B], marked: true });
+      });
+
+      it('shows reportedAt when the lead it shows is the one it reports to (the review’s F6)', async () => {
+        const store = new LeadStore({ now, readDerived: none, readReport: async (_id, _cwd, name) => (name === 'pitwall-test-lead' ? { at: T1 } : {}) });
+        store.mark(A, true);
+        store.link(B, A, 'reported');
+        const snapshot = snapshotOf(session(A, { name: 'pitwall-test-lead' }), session(B));
+        store.decorate(snapshot);
+        await settle();
+        expect(byId(store.decorate(snapshot)).get(B)?.workerOf).toEqual({ lead: A, how: 'reported', reportedAt: T1 });
+      });
+
+      it('Report to… refuses a lead only by a derived-from clear, and Make lead on it makes it a trusted lead (the review’s F2)', async () => {
+        const store = new LeadStore({ home, now, readDerived: async (id) => (id === C ? { clearedFrom: A } : {}), readReport: noReport });
+        store.mark(A, true);
+        store.decorate(snapshotOf(session(A), session(B), session(C)));
+        await settle();
+        expect(store.tree().leads.has(C)).toBe(true);
+        expect(store.tree().marked.has(C)).toBe(true);
+        expect(store.trustedLead(C)).toBeUndefined();
+        const refused = store.link(B, C, 'reported');
+        expect(refused).toEqual({ ok: false, error: 'That session is a lead only by its own transcript’s word. Choose Make lead on it first.' });
+        expect(store.tree().leadOf.has(B)).toBe(false);
+        // Make lead on C doesn't stop at the display tree's mark: it writes C's own, so C is trusted.
+        expect(store.mark(C, true)).toEqual({ ok: true });
+        expect(store.trustedLead(C)).toBe(C);
+        expect(byId(store.decorate(snapshotOf(session(A), session(B), session(C)))).get(C)?.lead).toEqual({ workers: [], marked: true, trusted: true });
+        expect(store.link(B, C, 'reported')).toEqual({ ok: true });
+        expect(store.reportTarget(B)).toBe(C);
+        // A second Make lead is a no-op now.
+        const before = readFileSync(file(), 'utf8');
+        clock += 1000;
+        expect(store.mark(C, true)).toEqual({ ok: true });
+        expect(readFileSync(file(), 'utf8')).toBe(before);
+      });
+
+      it('follows only lineage lines pitwall saw happen, never an inferred one (the review’s F1)', () => {
+        const lineage = new LineageStore({ now });
+        lineage.record({ from: A, to: D, how: 'clear', inferred: true });
+        const store = new LeadStore({ now, lineage, readDerived: none, readReport: noReport });
+        store.mark(A, true);
+        store.link(B, A, 'reported');
+        // The display tree follows the inferred line; the trusted tree doesn't.
+        expect(store.tree().leadOf.get(B)?.lead).toBe(D);
+        expect(store.reportTarget(B)).toBe(A);
+        expect(store.trustedLead(A)).toBe(A);
+        expect(store.trustedLead(D)).toBeUndefined();
+        // An observed line still makes a successor for it.
+        lineage.record({ from: A, to: C, how: 'continue' });
+        expect(store.reportTarget(B)).toBe(C);
+        expect(store.trustedLead(A)).toBe(C);
       });
 
       it('follows lineage where a session has one successor, and neither of two', () => {

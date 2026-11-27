@@ -1886,7 +1886,7 @@ describe('spawn: a worker’s paragraph about its lead (W218 piece 2)', () => {
   it('puts the paragraph in claude’s arguments for a lead the server names', async () => {
     const asked: string[] = [];
     const started = await start(fakeRunner(backgrounded()), { workerBrief: (id) => (asked.push(id), { ok: true, leadId: id, leadName: 'pitwall-test-lead', text: brief }) });
-    const res = await spawnAsPage(started, { ...valid(), lead: LEAD, brief: 'text from the page' });
+    const res = await spawnAsPage(started, { ...valid(), lead: LEAD, leadName: 'pitwall-test-lead', brief: 'text from the page' });
     expect(res.status).toBe(201);
     expect(asked).toEqual([LEAD]);
     expect(started.run.calls[0]?.args.at(-1)).toBe(`Reply with: ready\n\n${brief}`);
@@ -1903,5 +1903,18 @@ describe('spawn: a worker’s paragraph about its lead (W218 piece 2)', () => {
     expect((await spawnAsPage(without, { ...valid(), lead: LEAD })).status).toBe(409);
     expect(started.run.calls).toHaveLength(0);
     expect(without.run.calls).toHaveLength(0);
+  });
+
+  it('answers 409 and starts nothing when the lead’s name isn’t the one the dialog showed, or comes without it (the review’s F3)', async () => {
+    const started = await start(fakeRunner(backgrounded()), { workerBrief: (id) => ({ ok: true, leadId: id, leadName: 'pitwall-test-lead', text: brief }) });
+    const renamed = await spawnAsPage(started, { ...valid(), lead: LEAD, leadName: 'pitwall-test-old-name' });
+    expect(renamed.status).toBe(409);
+    expect(renamed.json).toMatchObject({ ok: false, error: expect.stringContaining('not the name the dialog showed') });
+    for (const leadName of [undefined, 42, null]) expect((await spawnAsPage(started, { ...valid(), lead: LEAD, leadName })).status, String(leadName)).toBe(409);
+    // Case counts: the name is the paragraph's address as written.
+    expect((await spawnAsPage(started, { ...valid(), lead: LEAD, leadName: 'PITWALL-TEST-LEAD' })).status).toBe(409);
+    expect(started.run.calls).toHaveLength(0);
+    expect((await spawnAsPage(started, { ...valid(), lead: LEAD, leadName: 'pitwall-test-lead' })).status).toBe(201);
+    expect(started.run.calls).toHaveLength(1);
   });
 });

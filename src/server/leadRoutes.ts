@@ -29,7 +29,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { isRecord } from '../index/guards.js';
 import { isSessionUuid } from '../index/transcripts.js';
 import { leadBriefPath, leadPath, workerBriefPath, workerPath, workerStartedPath, type LeadBriefResult, type LeadResult } from '../shared/protocol.js';
-import { leadBrief, workerBrief } from './leadBrief.js';
+import { leadBrief, workerBrief, type LiveNames } from './leadBrief.js';
 import type { LeadStore } from './leads.js';
 import type { RecentSpawns } from './recentSpawns.js';
 import { findSession, resolveSession } from './sessions.js';
@@ -57,6 +57,8 @@ export interface LeadRouteSources {
   store: Pick<LeadStore, 'mark' | 'link' | 'unlink' | 'expectWorker' | 'isWorker' | 'trustedLead' | 'reportTarget'>;
   /** The short ids this pitwall's New session started a moment ago (W168's check). Without it, worker-started refuses every one. */
   spawned?: Pick<RecentSpawns, 'has'>;
+  /** The live rows a lead's name must not share (leadBrief.ts' LiveNames, the review's F4). Without it, only the listing's sessions are checked. */
+  live?: () => LiveNames;
 }
 
 type Status = 200 | 400 | 404 | 409 | 413 | 415 | 503;
@@ -128,6 +130,6 @@ export function registerLeads(app: Hono, sources: LeadRouteSources): void {
     const result = of(lookup.session.sessionId);
     return c.json(result, result.ok ? 200 : 409, { 'Cache-Control': 'no-store' });
   };
-  app.get(LEAD_BRIEF_ROUTE, (c) => brief(c, (id) => leadBrief(sources.store, sources.snapshots.latest(), id)));
-  app.get(WORKER_BRIEF_ROUTE, (c) => brief(c, (id) => workerBrief(sources.store, sources.snapshots.latest(), id)));
+  app.get(LEAD_BRIEF_ROUTE, (c) => brief(c, (id) => leadBrief(sources.store, sources.snapshots.latest(), id, sources.live?.())));
+  app.get(WORKER_BRIEF_ROUTE, (c) => brief(c, (id) => workerBrief(sources.store, sources.snapshots.latest(), id, sources.live?.())));
 }

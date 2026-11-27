@@ -23,8 +23,9 @@ function report(to: string, timestamp: string, result: { success?: boolean; isEr
   return `${JSON.stringify(call)}\n${JSON.stringify(answer)}\n`;
 }
 
-const T1 = '2026-11-27T10:00:00.000Z';
-const T2 = '2026-11-27T10:42:00.000Z';
+// Days past, so the real clock never reads them as the future.
+const T1 = '2026-11-20T10:00:00.000Z';
+const T2 = '2026-11-20T10:42:00.000Z';
 
 describe('addressedName()', () => {
   it('trims, takes off a trailing [ref] and ignores case', () => {
@@ -71,6 +72,13 @@ describe('parseNewestReport()', () => {
   it('answers nothing for an empty name or a call without a time', () => {
     expect(parseNewestReport(report('', T1), '')).toBeUndefined();
     expect(parseNewestReport(report(LEAD, 'not a time'), LEAD)).toBeUndefined();
+  });
+
+  it('reads a time later than now as now, so a transcript can’t claim a report from the future (the review’s F7)', () => {
+    const now = () => new Date(T1);
+    expect(parseNewestReport(report(LEAD, '2099-01-01T00:00:00.000Z'), LEAD, false, now)).toBe(T1);
+    expect(parseNewestReport(report(LEAD, T2), LEAD, false, now)).toBe(T1);
+    expect(parseNewestReport(report(LEAD, T1), LEAD, false, () => new Date(T2))).toBe(T1);
   });
 });
 

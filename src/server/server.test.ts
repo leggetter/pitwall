@@ -1723,7 +1723,7 @@ describe('leads and workers (W218)', () => {
     const res = await post(server.port, leadPath(SID), { authorization: `Bearer ${apiKey}`, origin: origin(server.port) }, '{"on":true}');
     expect(res.status).toBe(200);
     expect(JSON.parse(res.body)).toEqual({ ok: true });
-    expect((await snapshotOf()).groups.flatMap((group) => group.sessions)[0]?.lead).toEqual({ workers: [], marked: true });
+    expect((await snapshotOf()).groups.flatMap((group) => group.sessions)[0]?.lead).toEqual({ workers: [], marked: true, trusted: true });
   });
 });
 

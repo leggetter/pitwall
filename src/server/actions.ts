@@ -1053,6 +1053,12 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
         if (typeof lead !== 'string' || !isSessionUuid(lead)) return spawnResult(c, { ok: false, error: 'The lead must be a session id.' }, 400);
         const brief = options.workerBrief?.(lead) ?? { ok: false as const, error: 'pitwall can’t name a lead here.' };
         if (!brief.ok) return spawnResult(c, { ok: false, error: brief.error }, 409);
+        // The paragraph the dialog showed, or none (the review's F3): the lead's name must be the one it named.
+        const leadName = (body as Record<string, unknown>).leadName;
+        if (typeof leadName !== 'string') return spawnResult(c, { ok: false, error: 'pitwall didn’t get the lead’s name the dialog showed, so nothing started. Reload and try again.' }, 409);
+        if (leadName !== brief.leadName) {
+          return spawnResult(c, { ok: false, error: `The lead’s name is ${brief.leadName} now, not the name the dialog showed, so nothing started. Open Start a worker… again to see the paragraph pitwall would add.` }, 409);
+        }
         spawn = { ...spawn, brief: brief.text };
       }
       const started = await spawner.start(spawn);

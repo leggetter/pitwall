@@ -47,10 +47,18 @@
 // paragraph pitwall adds to its first prompt or the message Report to… offers, and the lead whose name
 // its `SendMessage` reports are matched against for "reported HH:MM", is read from trustedTree(): your
 // marks and links, Claude Code's launches, and lineage where a session has exactly one successor
-// (LineageStore.soleSuccessorOf()), never a `derived-from` `clear`. A session can append that line to
-// its own transcript, and with it the display tree above moves a lead's workers to that session; it
-// can't move where they report. A launch counts in both trees for its own session only, under a lead
-// by your mark or link, so a line one session writes changes nothing about another's reports.
+// by the lines pitwall saw happen (LineageStore.soleSuccessorOf() with `inferred: false`, the review's
+// F1), never a `derived-from` `clear` and never lineage's backfilled `inferred` lines, which come from a
+// job's state.json and a transcript's opening. A session can append that line to its own transcript,
+// and with it the display tree above moves a lead's workers to that session; it can't move where they
+// report. A launch counts in both trees for its own session only, under a lead by your mark or link,
+// so a line one session writes changes nothing about another's reports.
+//
+// So a lead the display tree shows only by such a line isn't trusted (the review's F2, server part):
+// the snapshot's `lead` carries `trusted: true` only for a lead in trustedTree(), Report to… (link())
+// refuses a lead that isn't one there, and Make lead (mark()) writes a mark of the session's own when
+// the display tree has it marked but the trusted tree doesn't, so Make lead is how such a session
+// becomes a trusted lead.
 // The paragraph's text is src/server/leadBrief.ts'; the report reads are src/server/leadReports.ts'.
 import { randomBytes } from 'node:crypto';
 import { closeSync, constants, fstatSync, openSync, readSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -81,6 +89,8 @@ export const DERIVED_HELD_MAX = 2000;
 export const DERIVED_RETRY_MS = 2 * 60 * 1000;
 export const DERIVED_TRIES_MAX = 5;
 
+/** The trusted tree follows only the lineage lines pitwall saw happen, never backfill()'s inferred ones (the review's F1). */
+const OBSERVED = { inferred: false } as const;
 const SHORT_ID = /^[0-9a-f]{8}$/;
 /** A time as toISOString() writes it, so no free text rides in `at`. */
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
@@ -284,7 +294,7 @@ export class LeadStore {
    */
   trustedTree(): LeadTree {
     if (this.#trusted === undefined || this.#trusted.version !== this.#version) {
-      const successorOf = (id: string) => this.#lineage?.soleSuccessorOf(id);
+      const successorOf = (id: string) => this.#lineage?.soleSuccessorOf(id, OBSERVED);
       this.#trusted = {
         version: this.#version,
         tree: treeOf({ marks: [...this.#marks.values()], links: [...this.#links.values()], derived: { launchedBy: this.#launchedBy, clearedFrom: new Map() }, successorOf }),
@@ -296,7 +306,7 @@ export class LeadStore {
   /** `leadId`, read as the newest in its chain along lineage only, when that is a lead in trustedTree(); else undefined. */
   trustedLead(leadId: string): string | undefined {
     if (!isId(leadId)) return undefined;
-    const id = newestOf(leadId, (each) => this.#lineage?.soleSuccessorOf(each), new Map());
+    const id = this.#trustedNewest(leadId);
     return this.trustedTree().leads.has(id) ? id : undefined;
   }
 
@@ -310,9 +320,12 @@ export class LeadStore {
     if (!isId(sessionId)) return { ok: false, error: 'That is not a valid session id.' };
     const id = this.#newest(sessionId);
     const tree = this.tree();
+    // Marked in the trusted tree, not only the display tree (the review's F2): a session that holds a
+    // mark only by a `derived-from` `clear` it wrote gets one of its own, so Make lead makes it trusted.
+    const trustedId = this.#trustedNewest(sessionId);
     if (on) {
       if (tree.leadOf.has(id)) return { ok: false, error: 'It’s a worker. Choose Not a worker first, then Make lead.' };
-      if (tree.marked.has(id)) return { ok: true };
+      if (tree.marked.has(id) && this.trustedTree().marked.has(trustedId)) return { ok: true };
     } else {
       // A Start a worker… still waited for would make it a lead again (W218 review, F3).
       for (const [shortId, entry] of this.#expected) if (this.#newest(entry.lead) === id) this.#expected.delete(shortId);
@@ -326,7 +339,7 @@ export class LeadStore {
       changes.links.push(...this.#unlinks(at, (lead) => lead === id));
     }
     this.#apply(changes, at);
-    return this.#took(on ? (tree) => tree.marked.has(id) : (tree) => !tree.leads.has(id));
+    return this.#took(on ? (tree) => tree.marked.has(id) && this.trustedTree().marked.has(trustedId) : (tree) => !tree.leads.has(id));
   }
 
   /** Report to…: `worker` works for `lead`, which must be a lead now. Replaces any lead it had. Both read as the newest in their chains. */
@@ -337,6 +350,8 @@ export class LeadStore {
     if (newestWorker === newestLead) return { ok: false, error: 'A session can’t report to itself.' };
     const tree = this.tree();
     if (!tree.leads.has(newestLead)) return { ok: false, error: 'That session isn’t a lead. Choose Make lead on it first.' };
+    // A lead only by a `derived-from` `clear` in its own transcript isn't one to report to (the review's F2).
+    if (this.trustedLead(lead) === undefined) return { ok: false, error: 'That session is a lead only by its own transcript’s word. Choose Make lead on it first.' };
     if (tree.leads.has(newestWorker)) return { ok: false, error: 'It’s a lead itself. Choose Not a lead on it first.' };
     if (tree.leadOf.get(newestWorker)?.lead === newestLead) return { ok: true };
     const at = this.#now().toISOString();
@@ -383,6 +398,11 @@ export class LeadStore {
     return offs;
   }
 
+  /** `id` read as the newest in its chain along lineage only, by the lines pitwall saw happen: the trusted tree's reading. */
+  #trustedNewest(id: string): string {
+    return newestOf(id, (each) => this.#lineage?.soleSuccessorOf(each, OBSERVED), new Map());
+  }
+
   #newest(id: string): string {
     const clearedTo = new Map<string, string>();
     for (const [to, from] of this.#clearedFrom) if (!clearedTo.has(from)) clearedTo.set(from, to);
@@ -423,12 +443,14 @@ export class LeadStore {
         let lead: SessionLead | undefined;
         if (tree.leads.has(id)) {
           const workers = (tree.workersOf.get(id) ?? []).filter((worker) => listed.has(worker));
-          if (workers.length > 0 || tree.marked.has(id)) lead = { workers, ...(tree.marked.has(id) ? { marked: true as const } : {}) };
+          if (workers.length > 0 || tree.marked.has(id)) lead = { workers, ...(tree.marked.has(id) ? { marked: true as const } : {}), ...(trusted.leads.has(id) ? { trusted: true as const } : {}) };
         }
         const of = tree.leadOf.get(id);
         let workerOf: SessionWorkerOf | undefined = of !== undefined && listed.has(of.lead) ? { lead: of.lead, how: of.how } : undefined;
-        // Its newest report, to the name of the lead it reports to by the trusted tree, while that lead is listed.
-        const target = workerOf === undefined ? undefined : trusted.leadOf.get(id)?.lead;
+        // Its newest report, to the name of the lead it reports to by the trusted tree, while that lead is
+        // listed, and only when that is the lead it shows (the review's F6), so a time never sits beside another lead's name.
+        const trustedLead = workerOf === undefined ? undefined : trusted.leadOf.get(id)?.lead;
+        const target = trustedLead === workerOf?.lead ? trustedLead : undefined;
         const targetName = target === undefined ? undefined : listed.get(target)?.name;
         const reportedAt = targetName === undefined ? undefined : this.#reports.reportedAt(session, targetName);
         if (workerOf !== undefined && reportedAt !== undefined) workerOf = { ...workerOf, reportedAt };

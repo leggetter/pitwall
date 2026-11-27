@@ -2,7 +2,7 @@
 import { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
 import { leadBriefPath, leadPath, workerBriefPath, workerPath, workerStartedPath, type IndexSnapshot, type LeadBriefResult, type LeadResult, type SessionSummary } from '../shared/protocol.js';
-import { workerBriefText } from './leadBrief.js';
+import { workerBriefText, type LiveNames } from './leadBrief.js';
 import { LEAD_BODY_MAX_BYTES, registerLeads } from './leadRoutes.js';
 import { LeadStore } from './leads.js';
 
@@ -28,7 +28,7 @@ function session(sessionId: string, overrides: Partial<SessionSummary> = {}): Se
   };
 }
 
-function setup(options: { listed?: boolean; spawned?: string[] | null } = {}) {
+function setup(options: { listed?: boolean; spawned?: string[] | null; live?: () => LiveNames } = {}) {
   const store = new LeadStore({ now: () => new Date('2026-11-27T10:00:00.000Z'), readDerived: async () => ({}), readReport: async () => ({}) });
   const snapshot: IndexSnapshot = {
     generatedAt: '2026-11-27T10:00:00.000Z',
@@ -41,6 +41,7 @@ function setup(options: { listed?: boolean; spawned?: string[] | null } = {}) {
     snapshots: { latest: () => (options.listed === false ? undefined : snapshot) },
     store,
     ...(options.spawned === null ? {} : { spawned: new Set(options.spawned ?? []) }),
+    ...(options.live === undefined ? {} : { live: options.live }),
   });
   const post = async (path: string, body: unknown, type = 'application/json') => {
     const res = await app.request(path, { method: 'POST', headers: { 'content-type': type }, body: typeof body === 'string' ? body : JSON.stringify(body) });
@@ -159,5 +160,18 @@ describe('the lead routes', () => {
     expect((await get(leadBriefPath('deploy'))).status).toBe(400);
     expect((await get(workerBriefPath(UNLISTED))).status).toBe(404);
     expect((await setup({ listed: false }).get(leadBriefPath(A))).status).toBe(503);
+  });
+
+  it('refuses the paragraph when another live row, outside the listing, has the lead’s name (the review’s F4)', async () => {
+    const name = `pitwall-test-${A.slice(0, 4)}`;
+    const elsewhere = { sessionId: UNLISTED, name, kind: 'background' as const, cwd: '/tmp/pitwall-test-elsewhere', pid: 5000, startedAt: '2026-11-27T09:00:00.000Z' };
+    const { post, get } = setup({ live: () => ({ rows: [elsewhere] }) });
+    await post(leadPath(A), { on: true });
+    await post(workerPath(B), { lead: A });
+    for (const path of [leadBriefPath(A), workerBriefPath(B)]) {
+      const refused = await get(path);
+      expect(refused.status, path).toBe(409);
+      expect(refused.json).toMatchObject({ ok: false, error: expect.stringMatching(/Another running session/) });
+    }
   });
 });
