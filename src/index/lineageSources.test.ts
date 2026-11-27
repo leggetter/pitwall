@@ -1,9 +1,9 @@
 // The transcript side of session lineage (W167), from made-up transcripts in a temporary config directory.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { cleanBranch, cleanCwd, findTranscript, OPENING_BYTES, parseOpening, readOpening } from './lineageSources.js';
+import { cleanBranch, cleanCwd, findTranscript, OPENING_BYTES, parseDerivedFrom, parseOpening, readDerivedFrom, readOpening } from './lineageSources.js';
 
 const ID = '11111111-1111-4111-8111-111111111111';
 const CLEAR = '<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>';
@@ -79,5 +79,94 @@ describe('findTranscript and readOpening', () => {
     expect((await readOpening(put('-b', '33333333-3333-4333-8333-333333333333', entry({ type: 'user', message: { content: CLEAR } }))))?.clear).toBe(true);
     expect(await readOpening(path.join(configDir, 'nope.jsonl'))).toBeUndefined();
     expect(await readOpening(configDir)).toBeUndefined();
+  });
+});
+
+describe('parseDerivedFrom and readDerivedFrom (W218)', () => {
+  const LAUNCHER = '22222222-2222-4222-8222-222222222222';
+  const BEFORE = '33333333-3333-4333-8333-333333333333';
+  const derived = (sessions: unknown[], overrides: Record<string, unknown> = {}) =>
+    entry({ type: 'derived-from', v: 1, sessionId: ID, sessions, ...overrides });
+  const launch = (id: string) => ({ type: 'claude_code_session', id, via: 'launch', started: ID });
+  const clear = (id: string) => ({ type: 'claude_code_session', id, via: 'clear', started: ID });
+
+  it('reads the launcher and the session before /clear, ids only', () => {
+    expect(parseDerivedFrom(derived([launch(LAUNCHER)]), ID)).toEqual({ launchedBy: LAUNCHER });
+    expect(parseDerivedFrom(derived([clear(BEFORE)]), ID)).toEqual({ clearedFrom: BEFORE });
+    expect(parseDerivedFrom(entry({ type: 'user', message: { content: 'hi' } }) + derived([clear(BEFORE), launch(LAUNCHER)]), ID)).toEqual({ launchedBy: LAUNCHER, clearedFrom: BEFORE });
+    // The first of each kind wins.
+    expect(parseDerivedFrom(derived([launch(LAUNCHER), launch(BEFORE)]), ID)).toEqual({ launchedBy: LAUNCHER });
+  });
+
+  it('skips an entry for another session, another version, or with no sessions', () => {
+    expect(parseDerivedFrom(derived([launch(LAUNCHER)], { sessionId: BEFORE }), ID)).toBeUndefined();
+    expect(parseDerivedFrom(derived([launch(LAUNCHER)], { v: 2 }), ID)).toBeUndefined();
+    expect(parseDerivedFrom(derived([launch(LAUNCHER)], { v: '1' }), ID)).toBeUndefined();
+    expect(parseDerivedFrom(derived([launch(LAUNCHER)], { type: 'derived' }), ID)).toBeUndefined();
+    expect(parseDerivedFrom(entry({ type: 'derived-from', v: 1, sessionId: ID, sessions: { 0: launch(LAUNCHER) } }), ID)).toBeUndefined();
+    // A wrong entry first doesn't hide the right one after it.
+    expect(parseDerivedFrom(derived([launch(BEFORE)], { sessionId: BEFORE }) + derived([launch(LAUNCHER)]), ID)).toEqual({ launchedBy: LAUNCHER });
+  });
+
+  it('takes only canonical UUIDs other than its own, of the session type and a known via', () => {
+    const odd = [
+      { ...launch(LAUNCHER), id: '../../etc/passwd' },
+      { ...launch(LAUNCHER), id: 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA' },
+      { ...launch(LAUNCHER), id: `${LAUNCHER} ` },
+      { ...launch(LAUNCHER), id: 42 },
+      { ...launch(LAUNCHER), id: ID },
+      { ...launch(LAUNCHER), type: 'other' },
+      { ...launch(LAUNCHER), via: 'fork' },
+      null,
+      'x',
+    ];
+    for (const each of odd) expect(parseDerivedFrom(derived([each]), ID), JSON.stringify(each)).toEqual({});
+    expect(parseDerivedFrom(derived([launch(LAUNCHER)]), 'not-a-uuid')).toBeUndefined();
+  });
+
+  it('looks at the first four sessions only', () => {
+    const filler = { type: 'claude_code_session', id: BEFORE, via: 'fork' };
+    expect(parseDerivedFrom(derived([filler, filler, filler, launch(LAUNCHER)]), ID)).toEqual({ launchedBy: LAUNCHER });
+    expect(parseDerivedFrom(derived([filler, filler, filler, filler, launch(LAUNCHER)]), ID)).toEqual({});
+  });
+
+  it('skips malformed JSON and a cut last line', () => {
+    expect(parseDerivedFrom('{"type":"derived-from",\n' + derived([launch(LAUNCHER)]), ID)).toEqual({ launchedBy: LAUNCHER });
+    expect(parseDerivedFrom(derived([launch(LAUNCHER)]).trimEnd(), ID)).toBeUndefined();
+    expect(parseDerivedFrom('', ID)).toBeUndefined();
+  });
+
+  describe('from a file', () => {
+    let configDir: string;
+    beforeEach(() => {
+      configDir = mkdtempSync(path.join(tmpdir(), 'pitwall-test-derived-from-'));
+    });
+    afterEach(() => rmSync(configDir, { recursive: true, force: true }));
+    const put = (name: string, text: string) => {
+      const file = path.join(configDir, name);
+      writeFileSync(file, text);
+      return file;
+    };
+
+    it('reads the entry in the first OPENING_BYTES, {} without one, and undefined for no file', async () => {
+      expect(await readDerivedFrom(put('a.jsonl', derived([launch(LAUNCHER)])), ID)).toEqual({ launchedBy: LAUNCHER });
+      expect(await readDerivedFrom(put('b.jsonl', entry({ type: 'user', message: { content: 'hi' } })), ID)).toEqual({});
+      expect(await readDerivedFrom(path.join(configDir, 'nope.jsonl'), ID)).toBeUndefined();
+      expect(await readDerivedFrom(configDir, ID)).toBeUndefined();
+    });
+
+    it('never reads past OPENING_BYTES: a huge first line hides an entry after it', async () => {
+      const huge = entry({ type: 'file-history-snapshot', snapshot: 'x'.repeat(OPENING_BYTES) });
+      expect(await readDerivedFrom(put('huge.jsonl', huge + derived([launch(LAUNCHER)])), ID)).toEqual({});
+      const nearly = entry({ type: 'file-history-snapshot', snapshot: 'x'.repeat(OPENING_BYTES - 200) });
+      expect(await readDerivedFrom(put('near.jsonl', nearly + derived([launch(LAUNCHER)])), ID)).toEqual({});
+    });
+
+    it('does not follow a symlink', async () => {
+      const real = put('real.jsonl', derived([launch(LAUNCHER)]));
+      const link = path.join(configDir, 'link.jsonl');
+      symlinkSync(real, link);
+      expect(await readDerivedFrom(link, ID)).toBeUndefined();
+    });
   });
 });

@@ -13,6 +13,7 @@ import {
   conversationPath,
   PROTOCOL_VERSION,
   SNAPSHOT_PATH,
+  leadPath,
   subagentConversationPath,
   subagentsPath,
   WS_CLOSE_UNAUTHORIZED,
@@ -1675,6 +1676,40 @@ describe('startServer', () => {
       await Promise.all([server.close(), server.close()]);
       await server.close();
     });
+  });
+});
+
+describe('leads and workers (W218)', () => {
+  const SID = '99999999-9999-4999-8999-999999999999';
+  const post = (port: number, path: string, headers: Record<string, string>, body: string) =>
+    new Promise<HttpResult>((resolve, reject) => {
+      const req = httpRequest({ host: '127.0.0.1', port, path, method: 'POST', headers: { 'content-type': 'application/json', ...headers }, agent: false }, (res) => {
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => (text += chunk));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: text }));
+      });
+      req.on('error', reject);
+      req.end(body);
+    });
+
+  it('needs the apiKey, this Origin and this Host; with them, Make lead shows on the snapshot', async () => {
+    const server = await start(fakeIndexer(withSession('2026-10-16T00:00:00.000Z', 'pitwall-test-lead', SID)));
+    const apiKey = await apiKeyOf(server.port);
+    const body = '{"on":true}';
+    for (const headers of [{}, { authorization: 'Bearer wrong' }] as Record<string, string>[]) {
+      expect((await post(server.port, leadPath(SID), { ...headers, origin: origin(server.port) }, body)).status).toBe(401);
+    }
+    expect((await post(server.port, leadPath(SID), { ...bearer, origin: origin(server.port) }, body)).status).toBe(403);
+    expect((await post(server.port, leadPath(SID), { authorization: `Bearer ${apiKey}` }, body)).status).toBe(403);
+    expect((await post(server.port, leadPath(SID), { authorization: `Bearer ${apiKey}`, origin: 'http://evil.example' }, body)).status).toBe(403);
+    expect((await post(server.port, leadPath(SID), { authorization: `Bearer ${apiKey}`, origin: origin(server.port), host: 'evil.example' }, body)).status).toBe(403);
+    const snapshotOf = async () => JSON.parse((await get(server.port, SNAPSHOT_PATH, bearer)).body) as IndexSnapshot;
+    expect((await snapshotOf()).groups.flatMap((group) => group.sessions)[0]?.lead).toBeUndefined();
+    const res = await post(server.port, leadPath(SID), { authorization: `Bearer ${apiKey}`, origin: origin(server.port) }, body);
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ ok: true });
+    expect((await snapshotOf()).groups.flatMap((group) => group.sessions)[0]?.lead).toEqual({ workers: [], marked: true });
   });
 });
 

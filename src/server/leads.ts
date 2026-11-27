@@ -261,49 +261,57 @@ export class LeadStore {
     return this.#tree.tree;
   }
 
-  /** Make lead, or with `on` false Not a lead, which also unlinks its workers. */
+  /** Make lead, or with `on` false Not a lead, which also unlinks its workers. `sessionId` is read as the newest in its chain. */
   mark(sessionId: string, on: boolean): LeadChange {
     if (!isId(sessionId)) return { ok: false, error: 'That is not a valid session id.' };
+    const id = this.#newest(sessionId);
     const tree = this.tree();
     if (on) {
-      const lead = tree.leadOf.get(sessionId);
-      if (lead !== undefined) return { ok: false, error: 'It’s a worker. Choose Not a worker first, then Make lead.' };
-      if (tree.marked.has(sessionId)) return { ok: true };
-    } else if (!tree.leads.has(sessionId)) {
+      if (tree.leadOf.has(id)) return { ok: false, error: 'It’s a worker. Choose Not a worker first, then Make lead.' };
+      if (tree.marked.has(id)) return { ok: true };
+    } else if (!tree.leads.has(id)) {
       return { ok: true };
     }
     const at = this.#now().toISOString();
     const changes: { marks: LeadMark[]; links: LeadLink[] } = { marks: [{ id: sessionId, at, on }], links: [] };
     if (!on) {
-      // An older session in its chain may hold the mark.
-      for (const mark of this.#marks.values()) if (mark.on && mark.id !== sessionId && this.#newest(mark.id) === sessionId) changes.marks.push({ id: mark.id, at, on: false });
-      changes.links.push(...this.#unlinks(at, (lead) => lead === sessionId));
+      // An older or newer session in its chain may hold the mark.
+      for (const mark of this.#marks.values()) if (mark.on && mark.id !== sessionId && this.#newest(mark.id) === id) changes.marks.push({ id: mark.id, at, on: false });
+      changes.links.push(...this.#unlinks(at, (lead) => lead === id));
     }
     this.#apply(changes);
     return { ok: true };
   }
 
-  /** Report to…: `worker` works for `lead`, which must be a lead now. Replaces any lead it had. */
+  /** Report to…: `worker` works for `lead`, which must be a lead now. Replaces any lead it had. Both read as the newest in their chains. */
   link(worker: string, lead: string, how: 'started' | 'reported'): LeadChange {
     if (!isId(worker) || !isId(lead)) return { ok: false, error: 'That is not a valid session id.' };
-    if (worker === lead) return { ok: false, error: 'A session can’t report to itself.' };
+    const newestWorker = this.#newest(worker);
+    const newestLead = this.#newest(lead);
+    if (newestWorker === newestLead) return { ok: false, error: 'A session can’t report to itself.' };
     const tree = this.tree();
-    if (!tree.leads.has(lead)) return { ok: false, error: 'That session isn’t a lead. Choose Make lead on it first.' };
-    if (tree.leads.has(worker)) return { ok: false, error: 'It’s a lead itself. Choose Not a lead on it first.' };
-    if (tree.leadOf.get(worker)?.lead === lead) return { ok: true };
+    if (!tree.leads.has(newestLead)) return { ok: false, error: 'That session isn’t a lead. Choose Make lead on it first.' };
+    if (tree.leads.has(newestWorker)) return { ok: false, error: 'It’s a lead itself. Choose Not a lead on it first.' };
+    if (tree.leadOf.get(newestWorker)?.lead === newestLead) return { ok: true };
     const at = this.#now().toISOString();
-    const links = this.#unlinks(at, (_, each) => each === worker);
+    const links = this.#unlinks(at, (_, each) => each === newestWorker);
     links.push({ lead, worker, at, on: true, how });
     this.#apply({ marks: [], links });
     return { ok: true };
   }
 
-  /** Not a worker: `worker` no longer works for its lead. */
+  /** Not a worker: `worker`, read as the newest in its chain, no longer works for its lead. */
   unlink(worker: string): LeadChange {
     if (!isId(worker)) return { ok: false, error: 'That is not a valid session id.' };
-    if (!this.tree().leadOf.has(worker)) return { ok: true };
-    this.#apply({ marks: [], links: this.#unlinks(this.#now().toISOString(), (_, each) => each === worker) });
+    const id = this.#newest(worker);
+    if (!this.tree().leadOf.has(id)) return { ok: true };
+    this.#apply({ marks: [], links: this.#unlinks(this.#now().toISOString(), (_, each) => each === id) });
     return { ok: true };
+  }
+
+  /** Whether `sessionId`, read as the newest in its chain, is a worker now: one can't have workers. */
+  isWorker(sessionId: string): boolean {
+    return isId(sessionId) && this.tree().leadOf.has(this.#newest(sessionId));
   }
 
   /**
