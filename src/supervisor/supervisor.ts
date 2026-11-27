@@ -74,7 +74,8 @@ import { contextTokensOf, defaultConfigDir, encodeProjectDir, isSessionUuid } fr
 import { MCP_SERVER_NAME, type ConversationPage, type SupervisorState, type WorkChoice } from '../shared/protocol.js';
 import { createApprovalQueue, type ApprovalQueue } from './approvals.js';
 import { createSupervisorGate, SUPERVISOR_GATE_DIR_NAME, type SupervisorGate } from './gate.js';
-import { connectorLaunch, connectorOf, type SupervisorConnector } from './connectors.js';
+import { claudeAiServerName, connectorLaunch, connectorOf, type ClaudeAiConnector, type SupervisorConnector } from './connectors.js';
+import { type ClaudeAiPlan, type ClaudeAiProbe, type ClaudeAiSnapshot, mcpStatusLine, planClaudeAi, probeClaudeAi, readMcpStatus } from './claudeAi.js';
 import { type ConnectorLauncher, defaultConnectorLauncher } from './connectorServer.js';
 import { savedToolResult } from './claudeOutput.js';
 import { isModelRejection, modelRejectedMessage } from '../server/work.js';
@@ -268,6 +269,14 @@ export interface SupervisorOptions {
   connectors?: readonly SupervisorConnector[];
   /** How a stdio connector is run. Default node and connectorLauncher.mjs beside connectorServer.ts. */
   connectorLauncher?: ConnectorLauncher;
+  /** The claude.ai connectors you chose (W191, claudeAi.ts), none with `--no-connectors`. Default none. */
+  claudeAiConnectors?: readonly ClaudeAiConnector[];
+  /** What a start asks Claude Code for the account's connectors and their tools. Default: claudeAi.ts' probe, which runs `claude` with no turn. Tests pass a fake. */
+  claudeAiProbe?: ClaudeAiProbe;
+  /** How long the supervisor waits, before its first message, for its chosen claude.ai connectors to connect. Default 15 seconds. */
+  claudeAiWaitMs?: number;
+  /** The gap between its mcp_status requests in that wait. Default 1 second. */
+  claudeAiPollMs?: number;
 }
 
 /** The longest stderr kept from a process, for the held check. */
@@ -298,6 +307,13 @@ interface Proc {
   connectors: string[];
   /** The connectors' statuses already logged, `<name>:<status>`. */
   reported: Set<string>;
+  /** This start's claude.ai connectors (W191): their server names, tool prefixes, and every claude.ai server pitwall chose or denied. */
+  claudeAi?: { servers: string[]; prefixes: string[]; known: Set<string> };
+  /** It waits, before its first message, for its claude.ai connectors to connect. */
+  awaiting?: boolean;
+  statusId?: string;
+  statusPoll?: NodeJS.Timeout;
+  statusTimer?: NodeJS.Timeout;
   readyTimer?: NodeJS.Timeout;
   /** Called once: with the start's outcome, when it's ready or exits first. */
   onSettled: ((outcome: SupervisorOutcome) => void)[];
@@ -320,6 +336,10 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
   const sessionDir = path.join(dir, SUPERVISOR_SESSION_DIR_NAME);
   const configFile = path.join(dir, supervisorMcpConfigFile());
   const claudeBin = options.claudeBin ?? 'claude';
+  const claudeAiWaitMs = options.claudeAiWaitMs ?? 15_000;
+  const claudeAiPollMs = options.claudeAiPollMs ?? 1000;
+  /** The start's probe, aborted by close and by a new conversation so its `claude` never outlives them. */
+  let probeAbort: AbortController | undefined;
   const spawn = options.spawn ?? spawnRelayChild;
   const agents = options.agents ?? createAgentsSource(options.claudeBin === undefined ? {} : { claudeBin: options.claudeBin });
   const claudeVersion =
@@ -510,6 +530,33 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
       log(`its connector ${skipped.name} is off for this start: ${skipped.why}.`);
     }
 
+    // The claude.ai connectors (W191): what the account lists now, so every one that isn't chosen is denied
+    // before it connects, and a chosen one's other tools are kept out. Fails soft: without it the supervisor
+    // starts as it did before, with --strict-mcp-config.
+    let claudeAi: ClaudeAiPlan | undefined;
+    const chosenAi = options.claudeAiConnectors ?? [];
+    if (chosenAi.length > 0) {
+      let snapshot: ClaudeAiSnapshot;
+      try {
+        const names = chosenAi.map((connector) => connector.claudeAi);
+        const abort = new AbortController();
+        probeAbort = abort;
+        snapshot = await (options.claudeAiProbe ?? ((chosen, signal) => probeClaudeAi(chosen, { spawn, claudeBin, cwd, env: supervisorEnvironment(env), ...(signal === undefined ? {} : { signal }) })))(names, abort.signal);
+      } catch {
+        snapshot = { ok: false, error: 'the probe failed.' };
+      } finally {
+        probeAbort = undefined;
+      }
+      if (closed) return { kind: 'closed' };
+      const planned = planClaudeAi(chosenAi, snapshot);
+      if (planned.plan === undefined) {
+        log(`its claude.ai connectors are off for this start: ${oneLine(planned.why, 300)}`);
+      } else {
+        claudeAi = planned.plan;
+        for (const note of claudeAi.notes) log(oneLine(note, 300));
+      }
+    }
+
     const token = randomSecret();
     try {
       writeConfig(mcpConfigText(mcpUrl, token, connectors.servers));
@@ -530,8 +577,17 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
       stderr: '',
       initRequestId: `pitwall-init-${randomId()}`,
       gateId,
-      initTools: supervisorInitTools(connectors.allowed),
+      initTools: supervisorInitTools([...connectors.allowed, ...(claudeAi?.allowed ?? [])]),
       connectors: connectors.names,
+      ...(claudeAi === undefined
+        ? {}
+        : {
+            claudeAi: {
+              servers: chosenAi.filter((connector) => claudeAi.names.includes(connector.name)).map((connector) => claudeAiServerName(connector.claudeAi)),
+              prefixes: claudeAi.prefixes,
+              known: new Set([...chosenAi.map((connector) => claudeAiServerName(connector.claudeAi)), ...claudeAi.denyServers]),
+            },
+          }),
       reported: new Set(),
       onSettled: [],
       onExit: [],
@@ -549,14 +605,17 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     // Before the spawn, so a process that exits at once still removes the file it was given.
     configOwner = p;
     try {
-      const settings = supervisorSettings(gate.hooks(gateId));
+      const settings = supervisorSettings(gate.hooks(gateId), claudeAi?.denyServers);
+      const allowedAll = [...connectors.allowed, ...(claudeAi?.allowed ?? [])];
+      const disallowedAll = [...connectors.disallowed, ...(claudeAi?.disallowed ?? [])];
       p.child = spawn(
         claudeBin,
         supervisorArgs({
           mcpConfig: configFile,
           settings,
           ...(resume === undefined ? {} : { resume }),
-          ...(connectors.names.length === 0 ? {} : { connectors: { allowed: connectors.allowed, disallowed: connectors.disallowed } }),
+          ...(allowedAll.length === 0 ? {} : { connectors: { allowed: allowedAll, disallowed: disallowedAll } }),
+          ...(claudeAi === undefined ? {} : { claudeAi: true }),
           ...(options.work?.() ?? (options.model === undefined ? {} : { model: options.model })),
         }),
         {
@@ -670,6 +729,9 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     if (p.exited) return;
     p.exited = true;
     clearTimeout(p.readyTimer);
+    clearInterval(p.statusPoll);
+    clearTimeout(p.statusTimer);
+    p.awaiting = false;
     if (p.pid !== undefined) pids.delete(p.pid);
     removeConfig(p);
     gate.forget(p.gateId);
@@ -732,13 +794,70 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     clearTimeout(p.readyTimer);
     settle(p, { kind: 'ok' });
     changed();
+    if (p.claudeAi !== undefined) awaitClaudeAi(p);
+    else pump();
+  }
+
+  /**
+   * Before its first message, waits (bounded) until its chosen claude.ai connectors show as connected in
+   * mcp_status (W191, spike 022, finding 8: they connect asynchronously, so a first turn at once can see none).
+   * A connector that is needs-auth or failed ends the wait: the supervisor goes on without it. Any other
+   * claude.ai server connected that pitwall neither chose nor denied is logged, held out by approve and the
+   * turn-start check.
+   */
+  function awaitClaudeAi(p: Proc): void {
+    const state = p.claudeAi;
+    if (state === undefined || p.exited) return;
+    p.awaiting = true;
+    let n = 0;
+    const ask = () => {
+      p.statusId = `pitwall-mcp-${randomId()}-${++n}`;
+      p.child.write(mcpStatusLine(p.statusId));
+    };
+    p.statusPoll = setInterval(() => {
+      if (p.statusId === undefined && p.awaiting) ask();
+    }, claudeAiPollMs);
+    p.statusTimer = setTimeout(() => endClaudeAiWait(p, `its claude.ai connectors hadn't all connected within ${Math.round(claudeAiWaitMs / 1000)}s, so it starts without waiting.`), claudeAiWaitMs);
+    ask();
+  }
+
+  function endClaudeAiWait(p: Proc, why?: string): void {
+    if (!p.awaiting) return;
+    p.awaiting = false;
+    p.statusId = undefined;
+    clearInterval(p.statusPoll);
+    clearTimeout(p.statusTimer);
+    if (why !== undefined) log(why);
     pump();
+  }
+
+  function onMcpStatus(p: Proc, event: Record<string, unknown>, id: string): void {
+    p.statusId = undefined;
+    const state = p.claudeAi;
+    if (state === undefined) return;
+    const snapshot = readMcpStatus(event, id);
+    if (snapshot === undefined) return;
+    // Fail closed: an answer pitwall can't read can't show that no connector it hasn't seen is there.
+    if (!snapshot.ok) return trip(p, `The supervisor's connectors' status couldn't be read (${oneLine(snapshot.error, 100)}), so pitwall stopped it before its first message. Press Start to try again.`);
+    const unknown = snapshot.servers.find((server) => !state.known.has(server.name));
+    // Allow rules are by tool name, not by server, so a claude.ai connector pitwall didn't probe, one added
+    // since or one whose name maps to a chosen prefix, could answer a chosen tool's call (review of W191).
+    if (unknown !== undefined) return trip(p, unknownClaudeAiMessage(unknown.name));
+    const mine = state.servers.map((name) => snapshot.servers.find((server) => server.name === name));
+    if (mine.every((server) => server?.status === 'connected')) return endClaudeAiWait(p);
+    // Not listed yet is still connecting (Claude Code fetches the list after it starts, spike 022, finding 8).
+    const bad = mine.find((server) => server !== undefined && server.status !== 'connected' && server.status !== 'pending');
+    if (bad !== undefined) return endClaudeAiWait(p, `a claude.ai connector is ${oneLine(bad.status, 40)}, so its tools aren't there.`);
+  }
+
+  function unknownClaudeAiMessage(name: string): string {
+    return `The supervisor has a claude.ai connector pitwall hadn't listed (${oneLine(name, 60)}), so pitwall stopped it before its first message. Run pitwall --claude-ai-connectors to review, and press Start to try again.`;
   }
 
   /** Writes the next queued message, if it's idle. */
   function pump(): void {
     const p = proc;
-    if (p === undefined || !p.ready || p.busy || p.stopping || p.exited) return;
+    if (p === undefined || !p.ready || p.busy || p.stopping || p.exited || p.awaiting) return;
     const next = queue.shift();
     if (next === undefined) return;
     p.busy = true;
@@ -842,6 +961,7 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
 
   function onControlResponse(p: Proc, event: Record<string, unknown>): void {
     const response = isRecord(event.response) ? event.response : undefined;
+    if (response !== undefined && p.statusId !== undefined && response.request_id === p.statusId) return onMcpStatus(p, event, p.statusId);
     if (response === undefined || response.request_id !== p.initRequestId) return;
     const answer = isRecord(response.response) ? response.response : undefined;
     const mode = answer?.current_permission_mode;
@@ -883,6 +1003,12 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
           `The supervisor's connector ${connector} offers a tool you haven't chosen (${oneLine(extra, 80)}), so pitwall stopped it. Run pitwall --connector-tools ${connector}, update its "tools" and "otherTools" in the config file, and restart pitwall.`,
         );
       }
+      if (p.claudeAi !== undefined && extra.startsWith('mcp__claude_ai_')) {
+        return trip(
+          p,
+          `The supervisor was offered a claude.ai connector tool you haven't chosen (${oneLine(extra, 80)}), so pitwall stopped it. Run pitwall --connector-tools <name> and --claude-ai-connectors to review, and press Start to try again.`,
+        );
+      }
       return trip(p, `The supervisor started with a tool pitwall didn't give it (${oneLine(extra, 80)}), so pitwall stopped it.`);
     }
     if (event.permissionMode !== undefined && event.permissionMode !== SUPERVISOR_PERMISSION_MODE) {
@@ -896,6 +1022,12 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     // pitwall's MCP server, its only way to read anything (W113's review): missing or failed, it would
     // answer from nothing. Another status, such as pending, is only logged.
     if (Array.isArray(event.mcp_servers)) {
+      // A claude.ai server pitwall neither chose nor denied (the init check, W191's review): its tools could answer a chosen tool's call.
+      if (p.claudeAi !== undefined) {
+        const claudeAi = p.claudeAi;
+        const unknown = event.mcp_servers.find((server) => isRecord(server) && typeof server.name === 'string' && server.name.startsWith('claude.ai ') && !claudeAi.known.has(server.name));
+        if (isRecord(unknown)) return trip(p, unknownClaudeAiMessage(String(unknown.name)));
+      }
       const own = event.mcp_servers.find((server) => isRecord(server) && server.name === MCP_SERVER_NAME);
       const status = isRecord(own) ? own.status : undefined;
       if (own === undefined || status === 'failed') {
@@ -1065,6 +1197,7 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
       if (queue.length > 0) log(`${queue.length} queued ${queue.length === 1 ? 'message was' : 'messages were'} dropped with the conversation.`);
       queue.length = 0;
       changed();
+      probeAbort?.abort();
       const p = proc;
       if (p !== undefined && !p.exited) {
         stopProcess(p);
@@ -1139,6 +1272,7 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     async close() {
       if (closed) return;
       closed = true;
+      probeAbort?.abort();
       // Answered first, while the process can still read the denials.
       approvals.cancelAll("pitwall is closing, so this wasn't sent.");
       queue.length = 0;

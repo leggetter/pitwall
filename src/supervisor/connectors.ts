@@ -35,10 +35,30 @@ export interface SupervisorConnector {
   otherTools: string[];
 }
 
+/**
+ * One claude.ai connector your Claude sessions already have (W191, D28), chosen by its display name:
+ * `{ "name": "slack", "claudeAi": "Slack", "tools": [...] }`. It holds no credential: the sign-in is Claude
+ * Code's, from claude.ai. pitwall works out the tools to keep out from what the connector lists at each
+ * start (claudeAi.ts), so there is no `otherTools`.
+ */
+export interface ClaudeAiConnector {
+  /** The name you give it here, as for the other kind: `pitwall --connector-tools <name>`. */
+  name: string;
+  /** The display name after `claude.ai `, such as `Slack`. */
+  claudeAi: string;
+  /** The tools you chose as read-only, as the connector lists them, without the `mcp__claude_ai_<Name>__` prefix. At least one. */
+  tools: string[];
+}
+
 /** The config file's `supervisor` block. */
 export interface SupervisorConfig {
   connectors: SupervisorConnector[];
+  /** The claude.ai connectors (W191). Absent when the file has none. */
+  claudeAi?: ClaudeAiConnector[];
 }
+
+/** A claude.ai connector's display name as pitwall accepts one: letters, digits, spaces and a few marks, such as `Customer.io`. */
+export const CLAUDE_AI_NAME_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9 ._&()-]{0,62}[A-Za-z0-9)])?$/;
 
 /** A connector's name: lowercase letters, digits and `-`, starting with a letter. No `_`, so `mcp__<name>__<tool>` reads one way. */
 export const CONNECTOR_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
@@ -58,21 +78,33 @@ export function parseSupervisorConfig(value: unknown, key: string, fail: Fail, u
   if (!Object.hasOwn(value, 'connectors')) return { connectors: [] };
   const list = value.connectors;
   const listKey = `${key}.connectors`;
-  if (!Array.isArray(list)) return fail(listKey, 'must be a list of connectors, each { "name", "server", "tools", "otherTools" }');
+  if (!Array.isArray(list)) return fail(listKey, 'must be a list of connectors, each { "name", "server", "tools", "otherTools" } or { "name", "claudeAi", "tools" }');
   if (list.length > MAX_CONNECTORS) return fail(listKey, `has more than ${MAX_CONNECTORS} connectors`);
   const names = new Set<string>();
-  return {
-    connectors: list.map((entry: unknown, i) => {
+  const claudeAi: ClaudeAiConnector[] = [];
+  const claudeAiKeys = new Set<string>();
+  const connectors: SupervisorConnector[] = [];
+  list.forEach((entry: unknown, i) => {
       const at = `${listKey}[${i}]`;
-      if (!isPlainObject(entry)) return fail(at, 'must be an object: { "name", "server", "tools", "otherTools" }');
-      for (const name of Object.keys(entry)) if (!['name', 'server', 'tools', 'otherTools'].includes(name)) unknown(`${at}.${name}`);
-      const name = entry.name;
-      if (typeof name !== 'string' || !CONNECTOR_NAME_PATTERN.test(name)) {
-        return fail(`${at}.name`, 'must be a name of lowercase letters, digits and -, starting with a letter, at most 32 characters, such as "slack"');
+      if (!isPlainObject(entry)) return fail(at, 'must be an object: { "name", "server", "tools", "otherTools" } or { "name", "claudeAi", "tools" }');
+      if (Object.hasOwn(entry, 'claudeAi')) {
+        for (const key of Object.keys(entry)) if (!['name', 'claudeAi', 'tools'].includes(key)) fail(`${at}.${key}`, 'is not allowed on a claudeAi connector: the sign-in is Claude Code\'s, and pitwall works out which tools to keep out');
+        const name = parseConnectorName(entry.name, at, names, fail);
+        const display = entry.claudeAi;
+        if (typeof display !== 'string' || !CLAUDE_AI_NAME_PATTERN.test(display)) {
+          return fail(`${at}.claudeAi`, 'must be the connector\'s display name on claude.ai, such as "Slack": letters, digits, spaces and . _ & ( ) -, at most 64 characters. Run pitwall --claude-ai-connectors to list yours');
+        }
+        const key = claudeAiToolPrefix(display);
+        if (claudeAiKeys.has(key)) return fail(`${at}.claudeAi`, 'names the same connector as another entry');
+        claudeAiKeys.add(key);
+        if (!Object.hasOwn(entry, 'tools')) return fail(`${at}.tools`, `is missing. Run pitwall --connector-tools ${name} to list the connector's tools and choose the read-only ones`);
+        const tools = parseToolList(entry.tools, `${at}.tools`, fail);
+        if (tools.length === 0) return fail(`${at}.tools`, 'is empty: choose at least one read-only tool, or remove the connector');
+        claudeAi.push({ name, claudeAi: display, tools });
+        return;
       }
-      if (name === MCP_SERVER_NAME) return fail(`${at}.name`, "is pitwall's own MCP server's name. Choose another");
-      if (names.has(name)) return fail(`${at}.name`, 'is the name of another connector. Each needs its own');
-      names.add(name);
+      for (const name of Object.keys(entry)) if (!['name', 'server', 'tools', 'otherTools'].includes(name)) unknown(`${at}.${name}`);
+      const name = parseConnectorName(entry.name, at, names, fail);
       if (!Object.hasOwn(entry, 'server')) return fail(`${at}.server`, 'is missing: each connector needs its MCP server');
       const server = parseConnectorServer(entry.server, `${at}.server`, fail, unknown, home);
       if (!Object.hasOwn(entry, 'tools')) return fail(`${at}.tools`, `is missing. Run pitwall --connector-tools ${name} to list the server's tools and choose the read-only ones`);
@@ -83,9 +115,29 @@ export function parseSupervisorConfig(value: unknown, key: string, fail: Fail, u
       otherTools.forEach((tool, j) => {
         if (chosen.has(tool)) fail(`${at}.otherTools[${j}]`, 'is also in "tools". A tool is either one you chose as read-only or one kept out');
       });
-      return { name, server, tools, otherTools };
-    }),
-  };
+      connectors.push({ name, server, tools, otherTools });
+  });
+  return { connectors, ...(claudeAi.length === 0 ? {} : { claudeAi }) };
+}
+
+function parseConnectorName(name: unknown, at: string, names: Set<string>, fail: Fail): string {
+  if (typeof name !== 'string' || !CONNECTOR_NAME_PATTERN.test(name)) {
+    return fail(`${at}.name`, 'must be a name of lowercase letters, digits and -, starting with a letter, at most 32 characters, such as "slack"');
+  }
+  if (name === MCP_SERVER_NAME) return fail(`${at}.name`, "is pitwall's own MCP server's name. Choose another");
+  if (names.has(name)) return fail(`${at}.name`, 'is the name of another connector. Each needs its own');
+  names.add(name);
+  return name;
+}
+
+/** `mcp__claude_ai_<Name>__`: Claude Code's prefix for a claude.ai connector's tools, each character outside A-Za-z0-9_- as `_`, runs of `_` collapsed, leading and trailing `_` trimmed (spike 022, finding 7). */
+export function claudeAiToolPrefix(display: string): string {
+  return `mcp__claude_ai_${display.replace(/[^A-Za-z0-9_-]/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '')}__`;
+}
+
+/** A claude.ai connector's server name in Claude Code: `claude.ai <Name>`. */
+export function claudeAiServerName(display: string): string {
+  return `claude.ai ${display}`;
 }
 
 function parseToolList(value: unknown, key: string, fail: Fail): string[] {

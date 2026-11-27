@@ -2,7 +2,7 @@
 // a start adds to the MCP config and the command line. Pure functions; nothing runs.
 import { describe, expect, it } from 'vitest';
 import { ConfigError, parseConfig } from '../config.js';
-import { connectorLaunch, connectorOf, connectorToolName, type SupervisorConnector } from './connectors.js';
+import { claudeAiServerName, claudeAiToolPrefix, connectorLaunch, connectorOf, connectorToolName, type SupervisorConnector } from './connectors.js';
 import { CONNECTOR_TIMEOUT_MS, headerReferences, refusedEnvName, resolveConnectorServer } from './connectorServer.js';
 
 const FILE = '/made-up/config.json';
@@ -220,5 +220,41 @@ describe('connectorLaunch()', () => {
     expect(refusedEnvName('slack_bot_token')).toBe(false);
     expect(refusedEnvName('pitwall_token')).toBe(true);
     expect(resolveConnectorServer({ kind: 'stdio', command: 'x', args: [], env: ['A', 'B'] }, { A: '1' }, launcher)).toEqual({ ok: false, missing: ['B'] });
+  });
+});
+
+describe('a claude.ai connector in supervisor.connectors (W191)', () => {
+  const ai = { name: 'slack-ai', claudeAi: 'Slack', tools: ['slack_read_channel', 'slack_search_public'] };
+
+  it('reads one beside the other kind, without touching the other kind’s result', () => {
+    const both = parse({ connectors: [slack, ai] });
+    expect(both.supervisor).toMatchObject({ connectors: [{ name: 'slack' }], claudeAi: [ai] });
+    expect(parse({ connectors: [slack] }).supervisor).toEqual({ connectors: [expect.objectContaining({ name: 'slack' })] });
+  });
+
+  it('is as strict as the other kinds, and quotes no value', () => {
+    expect(error({ connectors: [{ ...ai, claudeAi: 'bad/name' }] })).toContain('connectors[0].claudeAi');
+    expect(error({ connectors: [{ ...ai, claudeAi: '' }] })).toContain('connectors[0].claudeAi');
+    expect(error({ connectors: [{ ...ai, claudeAi: 7 }] })).toContain('claudeAi');
+    expect(error({ connectors: [{ name: 'x', claudeAi: 'Slack' }] })).toContain('tools');
+    expect(error({ connectors: [{ ...ai, tools: [] }] })).toContain('empty');
+    expect(error({ connectors: [{ ...ai, tools: ['a,b'] }] })).toContain('tools[0]');
+    expect(error({ connectors: [{ ...ai, tools: ['a', 'a'] }] })).toContain('twice');
+    expect(error({ connectors: [{ ...ai, server: stdio }] })).toContain('connectors[0].server');
+    expect(error({ connectors: [{ ...ai, otherTools: ['x'] }] })).toContain('connectors[0].otherTools');
+    expect(error({ connectors: [{ ...ai, env: ['TOKEN'] }] })).toContain('connectors[0].env');
+    expect(error({ connectors: [{ ...ai, name: 'pitwall' }] })).toContain('pitwall');
+    expect(error({ connectors: [slack, { ...ai, name: 'slack' }] })).toContain('another connector');
+    expect(error({ connectors: [ai, { ...ai, name: 'other' }] })).toContain('same connector');
+    expect(error({ connectors: [{ ...ai, claudeAi: 'Bad"Name' }] })).not.toContain('Bad"Name');
+  });
+
+  it('names the tool prefix and server as Claude Code does', () => {
+    expect(claudeAiToolPrefix('Customer.io')).toBe('mcp__claude_ai_Customer_io__');
+    expect(claudeAiToolPrefix('Foo & Bar (x)')).toBe('mcp__claude_ai_Foo_Bar_x__');
+    expect(claudeAiToolPrefix('Zed.io')).toBe('mcp__claude_ai_Zed_io__');
+    expect(claudeAiToolPrefix('Trailing.')).toBe('mcp__claude_ai_Trailing__');
+    expect(claudeAiToolPrefix('Typefully - Social Media Scheduler')).toBe('mcp__claude_ai_Typefully_-_Social_Media_Scheduler__');
+    expect(claudeAiServerName('Slack')).toBe('claude.ai Slack');
   });
 });

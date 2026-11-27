@@ -19,8 +19,9 @@
 // own .env, found from its own location (scripts/dev.ts).
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { closeSync, existsSync, openSync, readFileSync, realpathSync, statSync, type Stats } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, statSync, type Stats } from 'node:fs';
+import os from 'node:os';
+import path, { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { ConfigError, loadConfig, ownersByRoot, type LoadedConfig } from './config.js';
@@ -31,6 +32,10 @@ import { LineageStore } from './server/lineage.js';
 import { SpinOffStore } from './server/spinOffs.js';
 import { createRecapEngine } from './recaps/engine.js';
 import { createSupervisor } from './supervisor/supervisor.js';
+import { type ClaudeAiSnapshot, formatClaudeAiListing, formatClaudeAiNames, probeClaudeAi } from './supervisor/claudeAi.js';
+import { type ClaudeAiConnector, claudeAiServerName } from './supervisor/connectors.js';
+import { spawnRelayChild } from './server/relay.js';
+import { supervisorEnvironment } from './supervisor/prompt.js';
 import { formatToolListing, listConnectorTools, listingNotice, listsThroughClaude, listToolsThroughClaude, signInInstructions } from './supervisor/connectorTools.js';
 import { childEnvironment } from './server/command.js';
 import { createRelayManager, DEFAULT_PORT, PortInUseError, startServer } from './server/index.js';
@@ -59,6 +64,7 @@ export const TOKEN_MIN_DIFFERENT = 8;
 export const USAGE = `Usage: pitwall [root...] [--config <path>] [--port <n>] [--interval <seconds>] [--no-open] [--no-prs] [--no-recaps] [--no-supervisor]
               [--no-connectors] [--no-usage]
        pitwall --connector-tools <name> [--config <path>]
+       pitwall --claude-ai-connectors
 
 Lists the Claude Code sessions running under each root, in a local web UI.
 The roots default to the config file's, then to the current directory.
@@ -109,6 +115,10 @@ Options:
                         and no headers), it lists them through claude -p on
                         Haiku, with Claude Code's sign-in, or says how to sign
                         in.
+  --claude-ai-connectors
+                        Print the names of the claude.ai connectors your Claude
+                        account has, to put in a connector's "claudeAi", and
+                        exit. Runs claude -p with no turn, so it uses no tokens.
   --no-usage            Don't read your plan's usage percentages, and never run
                         claude's /usage. Without it, while a pitwall page is
                         open and visible, pitwall runs /usage with claude -p at
@@ -165,6 +175,11 @@ Config file:
                         ones the supervisor may call; "otherTools" the rest,
                         kept from it. pitwall --connector-tools <name> lists
                         them. A tool in neither stops the supervisor.
+                        A claude.ai connector your sessions already have is
+                        { "name", "claudeAi", "tools" }: "claudeAi" is its
+                        display name, such as "Slack", and pitwall keeps out
+                        every tool and connector you didn't choose, learning
+                        them from Claude Code at each start. No credentials.
 
   A flag wins over an environment variable, which wins over the file. Roots
   given as arguments replace the file's, and each keeps its "github" settings
@@ -236,6 +251,8 @@ export type CliCommand =
   | { kind: 'version' }
   /** `--connector-tools <name>` (W184): list a connector's tools and exit. */
   | { kind: 'connector-tools'; name: string; config?: string }
+  /** `--claude-ai-connectors` (W191): list the account's claude.ai connectors and exit. */
+  | { kind: 'claude-ai-connectors'; config?: string }
   | {
       kind: 'run';
       /** As given, not yet resolved. Empty means the config file's roots, else the current directory. */
@@ -276,6 +293,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
         'no-supervisor': { type: 'boolean' },
         'no-connectors': { type: 'boolean' },
         'connector-tools': { type: 'string' },
+        'claude-ai-connectors': { type: 'boolean' },
         'no-usage': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'v' },
@@ -294,6 +312,10 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     if (connectorTools === '') throw new UsageError('--connector-tools needs a connector\'s name');
     if (positionals.length > 0) throw new UsageError('--connector-tools takes no roots');
     return { kind: 'connector-tools', name: connectorTools, ...(values.config === undefined ? {} : { config: values.config }) };
+  }
+  if (values['claude-ai-connectors']) {
+    if (positionals.length > 0) throw new UsageError('--claude-ai-connectors takes no roots');
+    return { kind: 'claude-ai-connectors' };
   }
   return {
     kind: 'run',
@@ -568,9 +590,11 @@ export function claimOpenMarker(marker: string): boolean {
  * its tools, prints them and the lists for the config file, and exits: 0 when listed, 1 when not.
  */
 async function printConnectorTools(name: string, config: LoadedConfig): Promise<number> {
+  const claudeAi = config.supervisor?.claudeAi?.find((entry) => entry.name === name);
+  if (claudeAi !== undefined) return printClaudeAiTools(claudeAi);
   const connector = config.supervisor?.connectors.find((entry) => entry.name === name);
   if (connector === undefined) {
-    const names = config.supervisor?.connectors.map((entry) => entry.name) ?? [];
+    const names = [...(config.supervisor?.connectors ?? []), ...(config.supervisor?.claudeAi ?? [])].map((entry) => entry.name);
     console.error(`pitwall: ${config.file} has no connector named ${JSON.stringify(name.slice(0, 40))} in supervisor.connectors${names.length === 0 ? '' : `; it has ${names.join(', ')}`}.`);
     return 1;
   }
@@ -585,6 +609,48 @@ async function printConnectorTools(name: string, config: LoadedConfig): Promise<
     return 1;
   }
   process.stdout.write(formatToolListing(connector, listing));
+  return 0;
+}
+
+/** Asks Claude Code for the account's claude.ai connectors, with no model turn (W191, claudeAi.ts). */
+async function probeAccount(chosen: readonly string[]): Promise<ClaudeAiSnapshot> {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'pitwall-claude-ai-'));
+  try {
+    return await probeClaudeAi(chosen, { spawn: spawnRelayChild, claudeBin: 'claude', cwd: dir, env: supervisorEnvironment(process.env) });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** `pitwall --connector-tools <name>` for a claude.ai connector: its tools, hints and the list to paste. Zero tokens. */
+async function printClaudeAiTools(connector: ClaudeAiConnector): Promise<number> {
+  console.error(`pitwall: asking Claude Code for claude.ai ${connector.claudeAi}'s tools, with no model turn, so no tokens are used.`);
+  const snapshot = await probeAccount([connector.claudeAi]);
+  if (!snapshot.ok) {
+    console.error(`pitwall: couldn't list the connector ${connector.name}'s tools: ${snapshot.error}`);
+    return 1;
+  }
+  const server = snapshot.servers.find((entry) => entry.name === claudeAiServerName(connector.claudeAi));
+  if (server === undefined) {
+    console.error(`pitwall: your account has no claude.ai connector named ${JSON.stringify(connector.claudeAi)}. Run pitwall --claude-ai-connectors to list yours.`);
+    return 1;
+  }
+  if (server.status !== 'connected') {
+    console.error(`pitwall: claude.ai ${connector.claudeAi} is ${server.status}, not connected. Sign in to it on claude.ai or in a Claude Code session, then run this again.`);
+    return 1;
+  }
+  process.stdout.write(formatClaudeAiListing(connector, server));
+  return 0;
+}
+
+/** `pitwall --claude-ai-connectors`: the names to put in "claudeAi". */
+async function printClaudeAiConnectors(): Promise<number> {
+  const snapshot = await probeAccount([]);
+  if (!snapshot.ok) {
+    console.error(`pitwall: couldn't list your claude.ai connectors: ${snapshot.error}`);
+    return 1;
+  }
+  process.stdout.write(formatClaudeAiNames(snapshot.servers));
   return 0;
 }
 
@@ -631,6 +697,7 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
     config = loadConfig({ ...(command.config === undefined ? {} : { file: command.config }), cwd });
     for (const warning of config.warnings) console.error(`pitwall: ${warning}`);
     if (command.kind === 'connector-tools') return await printConnectorTools(command.name, config);
+    if (command.kind === 'claude-ai-connectors') return await printClaudeAiConnectors();
     roots = effectiveRoots(command.roots, config, cwd);
     token = resolveToken();
   } catch (error) {
@@ -696,7 +763,11 @@ export async function main(argv: string[] = process.argv.slice(2), options: Main
   if (command.supervisor && connectors.length > 0) {
     console.error(`pitwall: the supervisor's connectors, read-only: ${connectors.map((connector) => connector.name).join(', ')}. --no-connectors turns them off.`);
   }
-  const supervisor = command.supervisor ? createSupervisor({ work: () => work.choice('supervisor'), connectors }) : undefined;
+  const claudeAiConnectors = command.connectors ? (config.supervisor?.claudeAi ?? []) : [];
+  if (command.supervisor && claudeAiConnectors.length > 0) {
+    console.error(`pitwall: the supervisor's claude.ai connectors, read-only: ${claudeAiConnectors.map((connector) => connector.name).join(', ')}. --no-connectors turns them off.`);
+  }
+  const supervisor = command.supervisor ? createSupervisor({ work: () => work.choice('supervisor'), connectors, claudeAiConnectors }) : undefined;
   // The Usage view's source (W158): reads the transcripts and the plan's week from `/usage` (W157) only
   // when the view asks, and the header's run rate (W159) when a visible page asks, against the config
   // file's weekend reserve. The index leaves its `/usage` call out, as it does a recap call. With

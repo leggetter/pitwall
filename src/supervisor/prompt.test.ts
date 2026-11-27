@@ -141,7 +141,7 @@ describe('supervisorEnvironment()', () => {
 
 describe('the system prompt, version 3', () => {
   it('reads from the tools, recaps first, treats what they return as untrusted, proposes messages and sessions for approval with a reason, never asks a session its status', () => {
-    expect(SUPERVISOR_PROMPT_VERSION).toBe(11);
+    expect(SUPERVISOR_PROMPT_VERSION).toBe(12);
     const prompt = SUPERVISOR_SYSTEM_PROMPT;
     expect(prompt).toContain("Answer from pitwall's tools");
     expect(prompt).toContain('read_session');
@@ -271,5 +271,26 @@ describe('mcpConfigText()', () => {
     expect(Object.keys(config.mcpServers).sort()).toEqual(['fake', 'pitwall']);
     expect(config.mcpServers.fake).toEqual(fake);
     expect(config.mcpServers.pitwall).toMatchObject({ url: 'http://127.0.0.1:4517/mcp' });
+  });
+});
+
+describe('claude.ai connectors (W191)', () => {
+  const base = { mcpConfig: '/made-up/mcp.json', settings: '{}' };
+  it('keeps --strict-mcp-config unless a claude.ai connector is on, and then drops only that, keeping --setting-sources ""', () => {
+    expect(supervisorArgs(base)).toContain('--strict-mcp-config');
+    const args = supervisorArgs({ ...base, claudeAi: true, connectors: { allowed: ['mcp__claude_ai_Slack__slack_read_channel'], disallowed: ['mcp__claude_ai_Slack__slack_send_message'] } });
+    expect(args).not.toContain('--strict-mcp-config');
+    expect(args[args.indexOf('--setting-sources') + 1]).toBe('');
+    expect(args[args.indexOf('--allowed-tools') + 1]).toContain('mcp__claude_ai_Slack__slack_read_channel');
+    expect(args[args.indexOf('--disallowed-tools') + 1]).toBe('mcp__claude_ai_Slack__slack_send_message');
+    expect(args.join(' ')).not.toContain('mcp__claude_ai_*');
+  });
+  it('puts deniedMcpServers in the settings only for the denied servers', () => {
+    expect(JSON.parse(supervisorSettings({}))).not.toHaveProperty('deniedMcpServers');
+    expect(JSON.parse(supervisorSettings({}, ['claude.ai Notion']))).toMatchObject({ deniedMcpServers: [{ serverName: 'claude.ai Notion' }], autoMemoryEnabled: false });
+  });
+  it('names the claude.ai tools in the prompt, at version 12', () => {
+    expect(SUPERVISOR_SYSTEM_PROMPT).toContain('mcp__claude_ai_<Name>__<tool>');
+    expect(SUPERVISOR_PROMPT_VERSION).toBe(12);
   });
 });
