@@ -125,6 +125,8 @@ import { createRelayManager } from './relay.js';
 import { registerRelay } from './relayRoute.js';
 import { DIAGNOSTICS_INTERVAL_MS, DiagnosticsLog, NeedsYouRecorder } from './diagnostics.js';
 import { createFlagView, FlagStore, registerFlags } from './flags.js';
+import { createLeadsView, LeadStore, type LeadStoreOptions } from './leads.js';
+import { registerLeads } from './leadRoutes.js';
 import { createLineageView, LineageStore } from './lineage.js';
 import { createSnoozeView, registerSnoozes, SnoozeStore } from './snoozes.js';
 import { SessionLaunches } from './sessionLaunches.js';
@@ -255,6 +257,11 @@ export interface ServerInternals {
    * adapter (src/index/jobs.ts): tests pass a fake, so none reads the user's jobs folder.
    */
   savedPermission?: SupervisorActionSources['savedPermission'];
+  /**
+   * Reads a session's `derived-from` entry for leads and workers (W218, leads.ts): tests pass a fake, so
+   * none reads the user's transcripts under ~/.claude/projects (W218 review, F6).
+   */
+  readDerived?: LeadStoreOptions['readDerived'];
 }
 
 export async function startServerWithInternals(
@@ -327,9 +334,12 @@ export async function startServerWithInternals(
   // Session lineage (W167): each session's `lineage`, the ids of the session it continues and the one that continues it.
   const lineage = options.lineage ?? new LineageStore(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
   const lineaged = createLineageView(snoozed, lineage);
+  // Leads and workers (W218): each lead's `lead` and each worker's `workerOf`, ids only, over lineage, since a lead keeps its workers through its chain.
+  const leads = new LeadStore({ lineage, ...(options.pitwallHome === undefined ? {} : { home: options.pitwallHome }), ...(internals.readDerived === undefined ? {} : { readDerived: internals.readDerived }) });
+  const led = createLeadsView(lineaged, leads);
   // Started and dismissed spin-off proposals (W212): each one's `settled`, from a click on any page or a session found with its name and folder.
   const spinOffs = options.spinOffs ?? new SpinOffStore({ ...(options.pitwallHome === undefined ? {} : { home: options.pitwallHome }), predecessorOf: (id) => lineage.linksOf(id).from });
-  const spunOff = createSpinOffView(lineaged, spinOffs);
+  const spunOff = createSpinOffView(led, spinOffs);
   // The supervisor (M5, W113), or off. Started only when the page asks, stopped on close().
   const supervisor = options.supervisor;
   // With it, the snapshot carries its state, under W105's view.
@@ -451,6 +461,7 @@ export async function startServerWithInternals(
     registerRecaps(app, indexer, recaps);
     registerFlags(app, { snapshots: flagged, store: flags, relay, recaps });
     registerSnoozes(app, { snapshots: snoozed, store: snoozes });
+    registerLeads(app, { snapshots, store: leads, spawned });
     registerSpinOffs(app, { snapshots, conversation: (id, before) => indexer.conversation(id, before), reads });
     registerSpinOffSettle(app, { snapshots, store: spinOffs });
     registerClearAndContinue(app, { snapshots, runner: clearAndContinue, spawned, lineage, ...(recaps === undefined ? {} : { recapHandoff: (session) => recaps.handoffOf(session) }) });
@@ -562,6 +573,8 @@ export async function startServerWithInternals(
       prs.stop();
       snapshots.stop();
       supervised?.stop();
+      led.stop();
+      leads.close();
       snoozed.stop();
       snoozes.close();
       flagged.stop();

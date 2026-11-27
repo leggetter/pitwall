@@ -13,6 +13,9 @@ import {
   conversationPath,
   PROTOCOL_VERSION,
   SNAPSHOT_PATH,
+  leadPath,
+  workerPath,
+  workerStartedPath,
   subagentConversationPath,
   subagentsPath,
   WS_CLOSE_UNAUTHORIZED,
@@ -146,6 +149,9 @@ afterEach(async () => {
   await Promise.all(running.splice(0).map((server) => server.close()));
 });
 
+/** Leads' `derived-from` reader, so no server test reads the user's transcripts (W218 review, F6). */
+const noDerived = async () => ({});
+
 async function start(
   indexer: Indexer = fakeIndexer(),
   overrides: { webRoot?: string; port?: number } = {},
@@ -153,7 +159,8 @@ async function start(
 ): Promise<RunningServer> {
   const server = await startServerWithInternals(
     { indexer, token: TOKEN, webRoot: overrides.webRoot ?? webRoot, port: overrides.port ?? 0 },
-    internals,
+    // No `derived-from` read reaches the user's transcripts (W218 review, F6).
+    { readDerived: noDerived, ...internals },
   );
   running.push(server);
   return server;
@@ -1344,7 +1351,7 @@ describe('startServer', () => {
       const onAuthenticated = vi.fn(() => {
         throw new Error('the hook failed');
       });
-      const server = await startServerWithInternals({ indexer: fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')), token: TOKEN, webRoot, port: 0, onAuthenticated });
+      const server = await startServerWithInternals({ indexer: fakeIndexer(snapshot('2026-10-16T00:00:00.000Z')), token: TOKEN, webRoot, port: 0, onAuthenticated }, { readDerived: noDerived });
       running.push(server);
 
       const wrong = await challenged(server.port);
@@ -1659,7 +1666,7 @@ describe('startServer', () => {
   describe('close()', () => {
     it('closes WebSocket clients and the HTTP server, but not the indexer', async () => {
       const indexer = fakeIndexer(snapshot('2026-10-16T00:00:00.000Z'));
-      const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0 });
+      const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0 }, { readDerived: noDerived });
       const client = await authedClient(server.port);
       await client.nextMessage();
 
@@ -1678,6 +1685,46 @@ describe('startServer', () => {
   });
 });
 
+describe('leads and workers (W218)', () => {
+  const SID = '99999999-9999-4999-8999-999999999999';
+  const post = (port: number, path: string, headers: Record<string, string>, body: string) =>
+    new Promise<HttpResult>((resolve, reject) => {
+      const req = httpRequest({ host: '127.0.0.1', port, path, method: 'POST', headers: { 'content-type': 'application/json', ...headers }, agent: false }, (res) => {
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => (text += chunk));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: text }));
+      });
+      req.on('error', reject);
+      req.end(body);
+    });
+
+  it('needs the apiKey, this Origin and this Host; with them, Make lead shows on the snapshot', async () => {
+    const server = await start(fakeIndexer(withSession('2026-10-16T00:00:00.000Z', 'pitwall-test-lead', SID)));
+    const apiKey = await apiKeyOf(server.port);
+    const routes: [string, string][] = [
+      [leadPath(SID), '{"on":true}'],
+      [workerPath(SID), '{"lead":null}'],
+      [workerStartedPath(SID), '{"shortId":"0f0f0f0f"}'],
+    ];
+    for (const [path, body] of routes) {
+      for (const headers of [{}, { authorization: 'Bearer wrong' }] as Record<string, string>[]) {
+        expect((await post(server.port, path, { ...headers, origin: origin(server.port) }, body)).status, path).toBe(401);
+      }
+      expect((await post(server.port, path, { ...bearer, origin: origin(server.port) }, body)).status, path).toBe(403);
+      expect((await post(server.port, path, { authorization: `Bearer ${apiKey}` }, body)).status, path).toBe(403);
+      expect((await post(server.port, path, { authorization: `Bearer ${apiKey}`, origin: 'http://evil.example' }, body)).status, path).toBe(403);
+      expect((await post(server.port, path, { authorization: `Bearer ${apiKey}`, origin: origin(server.port), host: 'evil.example' }, body)).status, path).toBe(403);
+    }
+    const snapshotOf = async () => JSON.parse((await get(server.port, SNAPSHOT_PATH, bearer)).body) as IndexSnapshot;
+    expect((await snapshotOf()).groups.flatMap((group) => group.sessions)[0]?.lead).toBeUndefined();
+    const res = await post(server.port, leadPath(SID), { authorization: `Bearer ${apiKey}`, origin: origin(server.port) }, '{"on":true}');
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ ok: true });
+    expect((await snapshotOf()).groups.flatMap((group) => group.sessions)[0]?.lead).toEqual({ workers: [], marked: true });
+  });
+});
+
 describe('the diagnostics log (W165)', () => {
   it('writes when a session enters Needs you, on its own timer, and stops writing on close()', async () => {
     const home = await mkdtemp(join(tmpdir(), 'pitwall-test-diag-server-'));
@@ -1688,7 +1735,7 @@ describe('the diagnostics log (W165)', () => {
       const indexer = fakeIndexer(needing);
       const server = await startServerWithInternals(
         { indexer, token: TOKEN, webRoot, port: 0, diagnostics: new DiagnosticsLog({ home }) },
-        { diagnosticsIntervalMs: 10 },
+        { diagnosticsIntervalMs: 10, readDerived: noDerived },
       );
       running.push(server);
       await waitFor(() => readDiagnosticsLog(file).some((line) => line.kind === 'enter'));

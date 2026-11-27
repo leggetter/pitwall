@@ -40,6 +40,8 @@ import { FlagButton } from './FlagButton.js';
 import { runningText } from '../subagents.js';
 import { contextLevel } from '../context.js';
 import { Badge, StatusBadge } from './Badge.js';
+import { Icon } from './Icon.js';
+import { underText } from '../leads.js';
 import { ContextBadge } from './ContextGauge.js';
 import { Highlight } from './Highlight.js';
 import { canResumeFromRow, RowResume } from './RowResume.js';
@@ -224,9 +226,17 @@ export interface SessionRowProps {
    * where such a session stays until its PR closes. Not in the Finished section, which never lists one.
    */
   offerResume?: boolean;
+  /**
+   * A lead's row (W218, leads.ts): "Lead" first among its badges, and its workers' count first on line 2,
+   * with the most urgent state among them while they're closed. With workers, a caret before its name
+   * opens and closes them: a button with aria-expanded, controlling their list, `listId`.
+   */
+  lead?: { text: string; open: boolean; onToggle: () => void; listId: string; hasWorkers: boolean } | undefined;
+  /** A worker whose lead isn't shown with it (W218): "under <lead>" on line 2, after its group's label. */
+  under?: string | undefined;
 }
 
-export function SessionRow({ session, group, showGroup = false, onOpen, onStep, isOpen = false, starred = false, onStar, onSnooze, onFlag, owned, offerResume = false }: SessionRowProps) {
+export function SessionRow({ session, group, showGroup = false, onOpen, onStep, isOpen = false, starred = false, onStar, onSnooze, onFlag, owned, offerResume = false, lead, under }: SessionRowProps) {
   // Snoozed (W154) or flagged as not needing you (W153): it still needs you, by the index, but has no
   // bar, its badge is outlined, and line 2 says so.
   const snoozed = isSnoozed(session);
@@ -252,7 +262,9 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
   const waitingOn = waitingText !== undefined && waitingOnPr !== undefined ? `${waitingText}: ${waitingOnPr}` : (waitingText ?? waitingOnPr);
   const pr = sessionPrBadge(owned);
   // Line 2's label: the group's, in Needs you and All sessions.
-  const label = showGroup ? plainText(groupLabel(group)) : undefined;
+  const label = [showGroup ? plainText(groupLabel(group)) : undefined, under === undefined ? undefined : underText(plainText(under))].filter((part) => part !== undefined).join(' · ') || undefined;
+  // A lead's workers (W218): "3 workers", first on line 2.
+  const workers = lead?.text;
   // How many of its sub-agents are running, at the end of line 2, while any are (W77).
   const running = session.subagentsRunning !== undefined && session.subagentsRunning > 0 ? runningText(session.subagentsRunning) : undefined;
   // The repos it worked in under another root (W149): Main repo keeps it in its own root's tab, so the row says where else it worked.
@@ -272,10 +284,15 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
     event.preventDefault();
     onStep(session.sessionId, event.key === 'ArrowDown' ? 1 : -1);
   };
-  const className = ['session', attention && 'attention', quiet && 'set-aside', finished && 'finished', onOpen && 'openable', isOpen && 'open', onStar && starred && 'starred']
+  const className = ['session', lead && 'lead', attention && 'attention', quiet && 'set-aside', finished && 'finished', onOpen && 'openable', isOpen && 'open', onStar && starred && 'starred']
     .filter(Boolean)
     .join(' ');
   const badges = [
+    lead && (
+      <Badge key="lead" look="subtle-neutral" className="session-lead-badge">
+        Lead
+      </Badge>
+    ),
     // Its context, over 200K (W133), first, as the PR badge is, so the status badges still line up. Not on a muted row.
     !finished && contextOver(session.contextTokens) && <ContextBadge key="context" tokens={session.contextTokens} />,
     // First, so the status badges still line up down the list against the time's slot (W95).
@@ -299,11 +316,21 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
   ].filter(Boolean);
 
   // Line 2, when there's anything to say (the flag and snooze controls have a line 2 to themselves when there isn't).
-  const line2 = (label !== undefined || wants || running || aside !== undefined || waitingOn !== undefined || elsewhere !== undefined) && (
+  const line2 = (workers !== undefined || label !== undefined || wants || running || aside !== undefined || waitingOn !== undefined || elsewhere !== undefined) && (
     <Tooltip content={wants?.hint} relation="none" onlyIfCut>
       <p className="session-what">
         {/* What gives way, with an ellipsis, before the running count does. */}
         <span className="session-what-text">
+          {workers !== undefined && (
+            <>
+              <span className="session-lead-workers">{workers}</span>
+              {(label !== undefined || aside !== undefined || wants || waitingOn !== undefined) && (
+                <span className="session-what-sep" aria-hidden="true">
+                  {' · '}
+                </span>
+              )}
+            </>
+          )}
           {label !== undefined && (
             <>
               <span className="session-group">
@@ -343,7 +370,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
         {running !== undefined && (
           // Quiet, and never cut: "· 2 sub-agents running", after whatever is before it.
           <span className="session-running">
-            {(label !== undefined || wants || aside !== undefined || waitingOn !== undefined) && (
+            {(workers !== undefined || label !== undefined || wants || aside !== undefined || waitingOn !== undefined) && (
               <span className="session-what-sep" aria-hidden="true">
                 {' · '}
               </span>
@@ -354,7 +381,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
         {elsewhere !== undefined && (
           // Quiet, as the count is, after it: "· also in phil-skills", "+1" for each more.
           <span className="session-elsewhere">
-            {(label !== undefined || wants || aside !== undefined || waitingOn !== undefined || running !== undefined) && (
+            {(workers !== undefined || label !== undefined || wants || aside !== undefined || waitingOn !== undefined || running !== undefined) && (
               <span className="session-what-sep" aria-hidden="true">
                 {' · '}
               </span>
@@ -401,6 +428,19 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
     <li className={className} data-attention={attention || undefined} onClick={openFromRow}>
       <div className="session-line">
         <div className="session-ident">
+          {lead?.hasWorkers === true && (
+            <button
+              type="button"
+              className="session-lead-toggle"
+              aria-expanded={lead.open}
+              aria-controls={lead.listId}
+              aria-label={`Workers of ${name}`}
+              data-lead-toggle={session.sessionId}
+              onClick={lead.onToggle}
+            >
+              <Icon name="expand" className="chevron" />
+            </button>
+          )}
           <Tooltip content={`Session ${session.sessionId}, started ${absoluteTime(session.startedAt)}`} relation="none">
             <h3 className="session-name">
               {onOpen ? (

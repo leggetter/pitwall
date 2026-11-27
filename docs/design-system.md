@@ -1246,6 +1246,23 @@ Sessions you star (W53), from their rows or their views, listed together in the 
   - Storage is per origin too, so a pitwall on a fallback port starts with nothing starred; a fixed `--port` keeps the stars.
 - **Known limit:** the star is keyed on `sessionId`, as drafts are. If Claude Code ever gave a running session a new id, its star wouldn't follow it.
 
+### Leads and workers
+
+A lead is one of your sessions that hands work to other sessions, its workers (W218, [spike 021](spikes/021-lead-sessions.md)). The snapshot says which, by id (`lead`, `workerOf`); `arrangeLeads()` in `web/src/leads.ts` arranges a list's rows, and `LeadRows` (`web/src/components/LeadRows.tsx`) draws them.
+
+- **The lead's row:** a [session row](#session-rows) with a "Lead" badge on line 1 and a caret before the name, a 20 px ghost toggle with `aria-expanded`, named "Workers of *lead*", that hangs 4 px into the row's padding. Line 2 starts with the count, "3 workers", in `--pw-text-subtle`, medium weight. A lead you marked with no workers says "No workers", with no caret.
+  - **Closed,** line 2 adds the most urgent state among the workers, so nothing that needs you is hidden: "3 workers, 1 needs you", else "3 workers, 2 working".
+  - **The count** covers every listed worker, whatever the filters hide.
+- **Its workers:** indented under it, `padding-left` 16 + 24 px, in their own `<ul>`, oldest link first, open by default. A 1 px `--pw-border-strong` guide line runs under the middle of the caret, from the lead's row to the last worker's line 2. A worker from another repo group has that group's label on its row; a finished worker stays under its lead.
+- **The pointer:** in a repo group, a worker whose lead is listed under another group is one quiet line, its name then "↳ under *lead* (*repo*)", so a search by repo still finds it. All sessions and Starred have no pointers: a worker whose lead isn't shown keeps its own row, with "under *lead*" on line 2. Needs you stays flat, and a worker's card says "under *lead*".
+- **A finished lead** with a worker that is current, one that isn't finished or that owns an open PR, in this group or another, stays with the current rows, so a worker that needs you is never folded into the [Finished section](#finished-section).
+- **The actions** are in the [session view](#session-view-header-tabs-and-footer)'s actions menu, after the flag and snooze, before the editors, in their own group: Make lead and Report to… on a session that is neither; Start a worker… and Not a lead on a lead; Report to… and Not a worker on a worker. Report to… shows only when there's a lead to pick. Rows have no menu.
+  - **Report to…** opens a [dialog](#dialogs), "Report to a lead", with the leads as a radio group, each with its repo, and "pitwall lists it under the lead you pick. Nothing is sent to either session."
+  - **Start a worker…** opens New session, with "For: *lead*" as its subtitle.
+  - Each confirms with a toast, such as "*name* is a lead."; a failure shows the server's words.
+- **A worker's view** says "worker for *lead*" under the header's other lines, the lead's name a link to its view.
+- **Storage:** which leads are closed is the viewer's, in `localStorage` `pitwall.leads.v1`, `{"v":1,"closed":["<session id>"]}`: only closed leads, since open is the default, at most 200, the oldest dropped first. Read with validation, in try/catch; without storage every lead is open.
+
 ### Snooze
 
 A session in Needs you can be snoozed (W154, Snooze; Phil, 2026-11-06: "'later' means I actually don't want to prioritize this now, which is really a snooze."): Needs you is right about it, but not now. It replaced W88 (Not needed now), which the browser kept. A [flag](#flag-it-doesnt-need-me) (W153) is the other action: Needs you is wrong. They're two controls, not one with two outcomes.

@@ -127,6 +127,7 @@ import {
   countRows,
   filterRows,
   hiddenOwners,
+  isDone,
   isPrRow,
   listWork,
   matchesRelations,
@@ -187,6 +188,7 @@ import {
   filterNeedle,
   groupLabel,
   isOlderEnded,
+  listedOnce,
   NO_FILTERS,
   noMatchText,
   sessionsIn,
@@ -219,6 +221,9 @@ import { UsageDialog } from './UsageDialog.js';
 import { RepoDrawer } from './RepoDrawer.js';
 import { RepoList } from './RepoList.js';
 import { olderText, SessionList, type SessionListHeading } from './SessionList.js';
+import { useLeadsOpen } from './LeadRows.js';
+import { arrangeLeads, leadActions, leadChoices, leadDoneText, makeLead, reportedText, reportTo, startWorkerSubtitle, workerStarted, type LeadAction, type LeadScope } from '../leads.js';
+import { ReportToDialog } from './ReportToDialog.js';
 import { SessionView, UnlistedSessionView, WaitingSessionView } from './SessionView.js';
 import { SupervisorOffView, SupervisorView } from './SupervisorView.js';
 import { ShortcutsDialog } from './ShortcutsDialog.js';
@@ -532,7 +537,28 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     () => (prsSelected ? filterRows(listed.current, prFilters, work).filter((row) => matchesRelations(row, prRelations, work)) : filterRows(listed.current, filters, work)),
     [listed, filters, prsSelected, prFilters, prRelations, work],
   );
-  const finished = useMemo(() => filterRows(listed.finished, filters, work), [listed, filters, work]);
+  const filteredFinished = useMemo(() => filterRows(listed.finished, filters, work), [listed, filters, work]);
+  // Leads and their workers (W218, leads.ts): each lead's workers indented under it, in a repo group
+  // with those listed under other groups too, and a pointer where a worker's lead is listed elsewhere.
+  const everyListedById = useMemo(() => new Map(listedOnce(groups, grouped.home).map((each) => [each.session.sessionId, each])), [groups, grouped.home]);
+  const leadScope: LeadScope | undefined = prsSelected ? { kind: 'prs' } : scope === undefined ? undefined : scope.kind === 'group' ? { kind: 'group', group: scope.group } : { kind: scope.kind };
+  const arranged = useMemo(
+    () =>
+      leadScope === undefined
+        ? { current, finished: filteredFinished }
+        : arrangeLeads({ current, finished: filteredFinished }, leadScope, {
+            every: everyListedById,
+            matches: (each) => filterRows([each], filters, work).length > 0,
+            isCurrent: (each) => !isDone(each.session, work),
+          }),
+    // leadScope is rebuilt each render; its kind and group say all of it.
+    [current, filteredFinished, leadScope?.kind, selectedGroup, everyListedById, filters, work],
+  );
+  const finished = arranged.finished;
+  const leadsOpen = useLeadsOpen(storage);
+  // The actions menu's Report to… and Start a worker… (W218): the session each is for, while its dialog is open.
+  const [reportingTo, setReportingTo] = useState<SessionSummary>();
+  const [workerFor, setWorkerFor] = useState<SessionSummary>();
   // The PR rows you dismissed, Not for me (W188), as the filters show them: the Dismissed section's.
   const dismissedRows = useMemo(
     () => (prsSelected ? filterRows(listed.dismissed, prFilters, work).filter((row) => matchesRelations(row, prRelations, work)) : filterRows(listed.dismissed, filters, work)),
@@ -1660,7 +1686,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     );
   }
   const total = listed.current.length + listed.finished.length + listed.dismissed.length;
-  const shown = current.length + finished.length + dismissedRows.length;
+  const shown = current.length + filteredFinished.length + dismissedRows.length;
   // No summary where it would only repeat the empty state below it: "0 sessions · Nothing needs you"
   // over no sessions at all, or "Nothing needs you" over Needs you's own "Nothing needs you right now",
   // or over Starred's "No starred sessions", or Pull requests' "No open pull requests", or its states
@@ -1862,6 +1888,26 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     );
   }
 
+  // Leads and workers from the session view's actions menu (W218): done, a toast; refused, the server's words in an error toast.
+  const leadKey = (sessionId: string) => `lead:${sessionId}`;
+  const onLeadAction = (session: SessionSummary, action: LeadAction) => {
+    if (!api) return;
+    if (action === 'report-to') return setReportingTo(session);
+    if (action === 'start-worker') return setWorkerFor(session);
+    const name = plainText(session.name);
+    const request = action === 'not-worker' ? reportTo(api, session.sessionId, null) : makeLead(api, session.sessionId, action === 'make-lead');
+    void request.then((error) => toasts.show({ tone: error === undefined ? 'success' : 'error', key: leadKey(session.sessionId), message: error ?? leadDoneText(action, name) }));
+  };
+  const leadsOf = (session: SessionSummary) => {
+    const lead = session.workerOf === undefined ? undefined : everyListedById.get(session.workerOf.lead);
+    return {
+      actions: api ? leadActions(session, leadChoices(everyListedById.values(), session.sessionId).length > 0) : [],
+      onAction: (action: LeadAction) => onLeadAction(session, action),
+      workerFor: lead === undefined ? undefined : { sessionId: lead.session.sessionId, name: lead.session.name },
+      onOpen: openSession,
+    };
+  };
+
   const repoList = (from: 'list' | 'drawer') => (
     <RepoList
       groups={snapshot ? shownGroups : undefined}
@@ -1934,6 +1980,7 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             }
       }
       recaps={snapshot?.recaps}
+      leads={leadsOf(session)}
       spinOffs={api ? { onStart: setSpinOffStart, onOpenSession: (sessionId) => openSession(sessionId) } : undefined}
       backLabel={hiddenIn === undefined ? backLabel : undefined}
       prs={{
@@ -2180,8 +2227,9 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             notices={prsSelected ? <PrNotices list={prList} /> : scope?.kind === 'needs-you' ? needsYouNotices : undefined}
             foot={prsSelected ? prsFoot : undefined}
             className={prsSelected ? 'pr-list' : undefined}
-            current={current}
+            current={arranged.current}
             finished={finished}
+            leads={leadsOpen}
             empty={empty}
             finishedCollapsed={!(finishedId !== undefined && (finishedOpen.get(finishedId) ?? false))}
             onToggleFinished={toggleFinished}
@@ -2272,6 +2320,43 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
             }
             dismissedSpinOffs.start(spinOffStart.sessionId, spinOffStart.key);
             setSpinOffStart(undefined);
+            started.wait(session);
+            toasts.show({ tone: 'success', key: startedKey(session.shortId), message: startedText(session.name) });
+          }}
+        />
+      )}
+
+      {reportingTo && api && (
+        <ReportToDialog
+          session={reportingTo}
+          leads={leadChoices(everyListedById.values(), reportingTo.sessionId)}
+          onClose={() => setReportingTo(undefined)}
+          onReport={async (leadId) => {
+            const error = await reportTo(api, reportingTo.sessionId, leadId);
+            const leadName = everyListedById.get(leadId)?.session.name ?? '';
+            if (error === undefined) toasts.show({ tone: 'success', key: leadKey(reportingTo.sessionId), message: reportedText(plainText(reportingTo.name), plainText(leadName)) });
+            return error;
+          }}
+        />
+      )}
+
+      {workerFor && snapshot && (
+        <NewSessionDialog
+          key={`worker:${workerFor.sessionId}`}
+          snapshot={dialogSnapshot ?? snapshot}
+          tab={tab}
+          prefill={{ cwd: workerFor.cwd }}
+          subtitle={startWorkerSubtitle(plainText(workerFor.name))}
+          onClose={() => setWorkerFor(undefined)}
+          onStarted={(session) => {
+            // Within 30 seconds of the spawn: the server links the job to its lead once a snapshot lists it.
+            if (api) {
+              const lead = workerFor;
+              void workerStarted(api, lead.sessionId, session.shortId).then((error) => {
+                if (error !== undefined) toasts.show({ tone: 'error', key: leadKey(lead.sessionId), message: error });
+              });
+            }
+            setWorkerFor(undefined);
             started.wait(session);
             toasts.show({ tone: 'success', key: startedKey(session.shortId), message: startedText(session.name) });
           }}

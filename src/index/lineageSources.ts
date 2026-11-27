@@ -11,8 +11,17 @@
 //                      2.1.325); one of the first OPENING_ENTRIES user or system entries is enough,
 //                      since a caveat entry can come before it.
 //
-// Nothing here returns a prompt or any other transcript text: only a boolean, an absolute path and a
-// branch name, each cleaned and capped.
+//   readDerivedFrom()  the same first 64 KiB, only for Claude Code's `derived-from` entry (W218, spike
+//                      021, finding 2; undocumented, seen on 2.1.332): the session that launched this one
+//                      with `claude --bg` from its shell (`via: "launch"`), and the one this one carries on
+//                      from after /clear (`via: "clear"`). Its shape:
+//                        {"type":"derived-from","v":1,"sessionId":"<this one>","sessions":[
+//                          {"type":"claude_code_session","id":"<other>","via":"launch","started":"<this one>"}]}
+//                      Only an entry whose `sessionId` is the transcript's own, at `v` 1, with each id a
+//                      canonical UUID other than its own, is taken; anything else is skipped.
+//
+// Nothing here returns a prompt or any other transcript text: only a boolean, an absolute path, a
+// branch name and session ids, each cleaned and capped.
 
 import { constants } from 'node:fs';
 import { open, readdir, stat } from 'node:fs/promises';
@@ -121,6 +130,78 @@ export function parseOpening(text: string): TranscriptOpening {
     }
   }
   return { clear, ...(cwd === undefined ? {} : { cwd }), ...(branch === undefined ? {} : { branch }) };
+}
+
+/** What a transcript's `derived-from` entry says (W218): session ids only. */
+export interface DerivedFrom {
+  /** The session that started this one with `claude --bg` from its shell. */
+  launchedBy?: string;
+  /** The session this one carries on from after /clear. */
+  clearedFrom?: string;
+}
+
+/** How many entries of `sessions` are looked at; Claude Code writes one or two. */
+const DERIVED_SESSIONS_MAX = 4;
+
+/**
+ * The `derived-from` entry of session `sessionId` in the start of its transcript, `text`: the first one
+ * that checks out, or undefined. Pure; a cut last line is dropped.
+ */
+export function parseDerivedFrom(text: string, sessionId: string): DerivedFrom | undefined {
+  if (!isSessionUuid(sessionId)) return undefined;
+  const lines = text.split('\n');
+  lines.pop();
+  for (const line of lines) {
+    // Cheap first: most lines aren't it, and some are large.
+    if (!line.includes('"derived-from"')) continue;
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!isRecord(entry) || entry.type !== 'derived-from' || entry.v !== 1 || entry.sessionId !== sessionId || !Array.isArray(entry.sessions)) continue;
+    const found: DerivedFrom = {};
+    for (const each of (entry.sessions as unknown[]).slice(0, DERIVED_SESSIONS_MAX)) {
+      if (!isRecord(each) || each.type !== 'claude_code_session' || typeof each.id !== 'string' || !isSessionUuid(each.id) || each.id === sessionId) continue;
+      if (each.via === 'launch' && found.launchedBy === undefined) found.launchedBy = each.id;
+      if (each.via === 'clear' && found.clearedFrom === undefined) found.clearedFrom = each.id;
+    }
+    return found;
+  }
+  return undefined;
+}
+
+/** The first OPENING_BYTES of the regular file at `file`, as text, or undefined. Never rejects. */
+async function readStart(file: string): Promise<string | undefined> {
+  let handle;
+  try {
+    handle = await open(file, OPEN_FLAGS);
+    const info = await handle.stat();
+    if (!info.isFile()) return undefined;
+    const size = Math.min(info.size, OPENING_BYTES);
+    const buffer = Buffer.alloc(size);
+    let read = 0;
+    while (read < size) {
+      const { bytesRead } = await handle.read(buffer, read, size - read, read);
+      if (bytesRead === 0) break;
+      read += bytesRead;
+    }
+    return buffer.subarray(0, read).toString('utf8');
+  } catch {
+    return undefined;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
+/**
+ * The `derived-from` entry in the start of `sessionId`'s transcript at `file`: `{}` when it has none,
+ * undefined when the file couldn't be read. Never rejects.
+ */
+export async function readDerivedFrom(file: string, sessionId: string): Promise<DerivedFrom | undefined> {
+  const text = await readStart(file);
+  return text === undefined ? undefined : (parseDerivedFrom(text, sessionId) ?? {});
 }
 
 /** The opening of the transcript at `file`, or undefined when it can't be read as a regular file. Never rejects. */

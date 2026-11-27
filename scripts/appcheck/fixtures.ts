@@ -1481,6 +1481,17 @@ export class World {
     this.#sessions.set(sessionId, lineage === undefined ? rest : { ...rest, lineage });
   }
 
+  /** Until the next reset, `leadId` is a lead (W218) with `workerIds` as its workers, oldest link first; none and `marked`, a lead you marked. */
+  leads(leadId: string, workerIds: readonly string[], marked = false): void {
+    const lead = this.#sessions.get(leadId);
+    if (!lead) return;
+    this.#sessions.set(leadId, { ...lead, lead: { workers: [...workerIds], ...(marked ? { marked: true as const } : {}) } });
+    for (const id of workerIds) {
+      const worker = this.#sessions.get(id);
+      if (worker) this.#sessions.set(id, { ...worker, workerOf: { lead: leadId, how: 'reported' } });
+    }
+  }
+
   /** Until the next reset, the session proposes a new session (W163), or proposes nothing. */
   spinOff(sessionId: string, spinOff: SessionSummary['spinOff']): void {
     const session = this.#sessions.get(sessionId);

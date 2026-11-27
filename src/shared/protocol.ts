@@ -311,6 +311,16 @@ export interface SessionSummary {
    */
   lineage?: SessionLineageLinks;
   /**
+   * A lead (W218): one of your sessions that hands work to other sessions, its workers. Set when you
+   * marked it with Make lead, or it has a worker pitwall lists. Ids only. Left out otherwise.
+   */
+  lead?: SessionLead;
+  /**
+   * A worker (W218): the lead it does work for, when pitwall lists that lead. Never with `lead`: a
+   * worker isn't a lead, and a lead isn't a worker. Left out otherwise.
+   */
+  workerOf?: SessionWorkerOf;
+  /**
    * You snoozed it (W154): Needs you is right about it, but not now. The web UI leaves a snoozed
    * session out of Needs you and every count, as it does a flagged one; `needsYou` stays set. Kept on
    * the server, in a 0600 file under pitwall's home, so it holds in every browser and across restarts.
@@ -1098,6 +1108,51 @@ export interface SessionLineageLinks {
   from?: string;
   to?: string;
 }
+
+/** A lead's side of W218's links: its workers that pitwall lists, by session id, oldest link first. */
+export interface SessionLead {
+  workers: string[];
+  /** You marked it with Make lead, so it's a lead whether or not it has workers yet. */
+  marked?: true;
+}
+
+/**
+ * How a worker was linked to its lead (W218): 'started' from the lead's Start a worker…, 'reported'
+ * from Report to… on the worker, 'launched' from Claude Code's own record that the lead ran
+ * `claude --bg` to start it (its transcript's `derived-from` entry, `via: "launch"`).
+ */
+export type WorkerHow = 'started' | 'reported' | 'launched';
+
+/** A worker's side of W218's links: its lead's session id, the newest session in the lead's lineage chain. */
+export interface SessionWorkerOf {
+  lead: string;
+  how: WorkerHow;
+}
+
+/** Make a session a lead, or with `on: false` not a lead (W218): POST { on } as JSON. Nothing is sent to the session. */
+export function leadPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/lead`;
+}
+
+/**
+ * Make a session a worker for a lead, Report to…, or with `lead: null` not a worker (W218): POST
+ * { lead } as JSON, the lead's session id. Records the link only: nothing is sent to either session.
+ */
+export function workerPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/worker`;
+}
+
+/**
+ * Tell pitwall which session was just started from a lead's Start a worker… (W218): POST { shortId }
+ * as JSON, the short id `claude --bg` reported. Only a short id this pitwall started a moment ago is
+ * taken; the link is written when the listing gives that job its session id.
+ */
+export function workerStartedPath(leadSessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(leadSessionId)}/worker-started`;
+}
+
+/** The answer to a POST to leadPath(), workerPath() or workerStartedPath(). */
+export type LeadResult = { ok: true } | { ok: false; error: string };
 
 /** A flag you put on a session in Needs you (W153): it doesn't need you. */
 export interface SessionFlag {
