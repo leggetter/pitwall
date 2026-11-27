@@ -15,7 +15,7 @@ import { group, minutesAgo, mixedSnapshot, NOW, session, snapshot, withoutSubage
 import { withoutComments, block, declarations } from '../test/css.js';
 import stylesCss from '../styles.css?raw';
 import { ConnectionBadge } from './ConnectionBadge.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 import { SessionView } from './SessionView.js';
 import { Spinner } from './Spinner.js';
 import { useWaiting } from './Waiting.js';
@@ -42,7 +42,7 @@ function wait(ms: number) {
 }
 
 function dashboard(view: ConnectionView, navigation: NavigationEnv = memoryNavigation('')) {
-  const ui = (next: ConnectionView) => <Dashboard view={next} navigation={navigation} />;
+  const ui = (next: ConnectionView) => <AppShell view={next} navigation={navigation} />;
   const result = render(ui(view));
   return { ...result, navigation, update: (next: ConnectionView) => result.rerender(ui(next)) };
 }

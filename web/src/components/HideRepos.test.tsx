@@ -10,7 +10,7 @@ import { hiddenKey } from '../hidden.js';
 import { memoryNavigation, type NavigationEnv } from '../selection.js';
 import { group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
 import { toastMessages } from '../test/toasts.js';
-import { Dashboard, hiddenText, unhiddenText } from './Dashboard.js';
+import { AppShell, hiddenText, unhiddenText } from './AppShell.js';
 import { HIDE_LABEL, SHOW_LABEL } from './HideButton.js';
 
 const ROOT = '/Users/example/code';
@@ -39,7 +39,7 @@ function several() {
   return { snap: snapshot(Object.values(groups)), groups, waits, multi, calm, inOld, notes, inRoot };
 }
 
-/** localStorage-like storage that lasts for the test, so a reload is a new Dashboard on the same storage. */
+/** localStorage-like storage that lasts for the test, so a reload is a new AppShell on the same storage. */
 function memory(initial: Record<string, string> = {}) {
   const items = new Map<string, string>(Object.entries(initial));
   const source: StorageSource = () => ({ getItem: (name) => items.get(name) ?? null, setItem: (name, value) => void items.set(name, value) });
@@ -53,10 +53,10 @@ interface Options {
 }
 
 function ui(snap: IndexSnapshot, { storage, navigation }: { storage?: StorageSource | undefined; navigation: NavigationEnv }) {
-  return <Dashboard view={{ state: 'live', snapshot: snap }} navigation={navigation} {...(storage ? { storage } : {})} />;
+  return <AppShell view={{ state: 'live', snapshot: snap }} navigation={navigation} {...(storage ? { storage } : {})} />;
 }
 
-function renderDashboard(snap: IndexSnapshot, options: Options = {}) {
+function renderAppShell(snap: IndexSnapshot, options: Options = {}) {
   const navigation = options.navigation ?? memoryNavigation(options.search ?? '');
   const result = render(ui(snap, { storage: options.storage, navigation }));
   return { ...result, navigation, again: (next: IndexSnapshot) => result.rerender(ui(next, { storage: options.storage, navigation })) };
@@ -130,7 +130,7 @@ afterEach(() => {
 
 describe('Hide from repo list, in the session list header', () => {
   it("is there for a group, git or directory, the root's own included, and not for Needs you or All sessions", () => {
-    renderDashboard(several().snap);
+    renderAppShell(several().snap);
     expect(headerButton()).toBeNull();
     choose('Needs you');
     expect(headerButton()).toBeNull();
@@ -147,13 +147,13 @@ describe('Hide from repo list, in the session list header', () => {
   });
 
   it("isn't there for a selected group that has left the snapshot and isn't hidden", () => {
-    renderDashboard(several().snap, { search: `?repo=${key('gone')}` });
+    renderAppShell(several().snap, { search: `?repo=${key('gone')}` });
     expect(screen.getByText('No sessions in gone now')).toBeTruthy();
     expect(headerButton()).toBeNull();
   });
 
   it('hides a git repo: only its entry leaves the repo list, and the views, their counts, other groups and every list stay as they were', () => {
-    renderDashboard(several().snap);
+    renderAppShell(several().snap);
     const before = repoItems();
     expect(before).toEqual(['Needs you3 need you', 'All sessions6 sessions', 'Starred', '~/code, directory1 session', 'app, git repo2 need you', 'notes, directory1 session', 'old, git repo1 needs you']);
     choose('All sessions');
@@ -180,7 +180,7 @@ describe('Hide from repo list, in the session list header', () => {
   });
 
   it("hides a directory, and the root's own group, the same way", () => {
-    renderDashboard(several().snap);
+    renderAppShell(several().snap);
     hide('notes');
     hide('~/code');
     expect(repoItems()).toEqual(['Needs you3 need you', 'All sessions6 sessions', 'Starred', 'app, git repo2 need you', 'old, git repo1 needs you']);
@@ -192,7 +192,7 @@ describe('Hide from repo list, in the session list header', () => {
   });
 
   it('keeps the group selected, opens the Hidden section on it, and keeps focus on the button, now Show in repo list', () => {
-    const { navigation } = renderDashboard(several().snap);
+    const { navigation } = renderAppShell(several().snap);
     const button = hide('old');
     expect(navigation.location.search).toBe(`?repo=${key('old')}`);
     expect(listHeading().textContent).toBe('old, git repo');
@@ -204,7 +204,7 @@ describe('Hide from repo list, in the session list header', () => {
   });
 
   it('confirms each hide and unhide with a toast that says where the group went', () => {
-    renderDashboard(several().snap);
+    renderAppShell(several().snap);
     hide('old');
     expect(toastMessages()).toEqual(["Hid old. It's under Hidden, at the foot of the repo list."]);
     expect(hiddenText('old')).toBe(toastMessages()[0]);
@@ -216,7 +216,7 @@ describe('Hide from repo list, in the session list header', () => {
   });
 
   it('shows the group again from the same button, back in its place, with focus staying on it', () => {
-    renderDashboard(several().snap);
+    renderAppShell(several().snap);
     const button = hide('old');
     fireEvent.click(button);
     expect(repoItems().at(-1)).toBe('old, git repo1 needs you');
@@ -229,7 +229,7 @@ describe('Hide from repo list, in the session list header', () => {
   it("leaves the session view's Started in … · worked in … line as it was", () => {
     setWidth(1300);
     const { snap, multi } = several();
-    renderDashboard(snap, { search: `?repo=${key('app')}&session=${multi.sessionId}` });
+    renderAppShell(snap, { search: `?repo=${key('app')}&session=${multi.sessionId}` });
     const line = () => document.querySelector('#session-view .session-view-worked-text')?.textContent;
     expect(line()).toContain('Started in app');
     expect(line()).toContain('worked in old, docs');
@@ -242,14 +242,14 @@ describe('Hide from repo list, in the session list header', () => {
 
 describe('the Hidden section', () => {
   it('is absent when nothing is hidden', () => {
-    renderDashboard(several().snap);
+    renderAppShell(several().snap);
     expect(hiddenToggle()).toBeNull();
     expect(repoList().querySelectorAll('hr')).toHaveLength(1);
   });
 
   it('is a disclosure, collapsed by default, after the groups, whose open state is remembered', () => {
     const { source, items } = memory({ [hiddenKey(ROOT)]: JSON.stringify({ v: 1, open: false, groups: [{ key: key('old'), label: 'old', kind: 'git' }] }) });
-    const first = renderDashboard(several().snap, { storage: source });
+    const first = renderAppShell(several().snap, { storage: source });
     const toggle = hiddenToggle() as HTMLButtonElement;
     expect(toggle.textContent).toBe('Hidden (1)1 needs you');
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
@@ -264,14 +264,14 @@ describe('the Hidden section', () => {
     expect(JSON.parse(items.get(hiddenKey(ROOT)) ?? 'null').open).toBe(true);
 
     first.unmount();
-    renderDashboard(several().snap, { storage: source });
+    renderAppShell(several().snap, { storage: source });
     expect(hiddenToggle()?.getAttribute('aria-expanded')).toBe('true');
     fireEvent.click(hiddenToggle() as HTMLButtonElement);
     expect(JSON.parse(items.get(hiddenKey(ROOT)) ?? 'null').open).toBe(false);
   });
 
   it('carries the needs-you badge when any session in a hidden group needs you, counting each session once', () => {
-    renderDashboard(several().snap);
+    renderAppShell(several().snap);
     hide('notes');
     expect(hiddenToggle()?.querySelector('.badge')).toBeNull();
     expect(hiddenToggle()?.textContent).toBe('Hidden (1)');
@@ -287,7 +287,7 @@ describe('the Hidden section', () => {
     const { source } = memory({
       [hiddenKey(ROOT)]: JSON.stringify({ v: 1, open: true, groups: [{ key: key('old'), label: 'old', kind: 'git' }, { key: key('notes'), label: 'notes', kind: 'directory' }, { key: key('gone'), label: 'gone', kind: 'git' }] }),
     });
-    renderDashboard(several().snap, { storage: source });
+    renderAppShell(several().snap, { storage: source });
     expect(hiddenItems()).toEqual(['gone, git repoNo sessions', 'notes, directory1 session', 'old, git repo1 needs you']);
     expect(hiddenLink('notes').className).toContain('hidden-item');
     expect(hiddenLink('notes').getAttribute('href')).toBe(`?repo=${key('notes')}`);
@@ -299,7 +299,7 @@ describe('the Hidden section', () => {
 
   it('lists a hidden repo that sessions only worked in with "No sessions", since it has no group (W39)', () => {
     const { source } = memory({ [hiddenKey(ROOT)]: JSON.stringify({ v: 1, open: true, groups: [{ key: key('docs'), label: 'docs', kind: 'git' }] }) });
-    renderDashboard(several().snap, { storage: source });
+    renderAppShell(several().snap, { storage: source });
     expect(hiddenItems()).toEqual(['docs, git repoNo sessions']);
     expect(hiddenToggle()?.textContent).toBe('Hidden (1)');
     // multi, which worked there, is in app, and still counted in the views.
@@ -309,7 +309,7 @@ describe('the Hidden section', () => {
 
   it('keeps an entry while its group is absent from the snapshot, and when it comes back', () => {
     const { snap, groups } = several();
-    const { again } = renderDashboard(snap);
+    const { again } = renderAppShell(snap);
     hide('notes');
     choose('All sessions');
     again(snapshot([groups.root, groups.app, groups.old]));
@@ -328,7 +328,7 @@ describe('the Hidden section', () => {
       ],
       { roots: [ROOT, WORK] },
     );
-    renderDashboard(snap);
+    renderAppShell(snap);
     hide('app');
     fireEvent.click(rootTab('~/work'));
     hide('svc');
@@ -343,7 +343,7 @@ describe('the Hidden section', () => {
   });
 
   it("selects a hidden group from its link, so its sessions show in the session list as usual, and leaves a modified click to the browser", () => {
-    const { navigation } = renderDashboard(several().snap);
+    const { navigation } = renderAppShell(several().snap);
     hide('old');
     choose('All sessions');
     fireEvent.click(hiddenLink('old'));
@@ -360,7 +360,7 @@ describe('the Hidden section', () => {
   });
 
   it("unhides from the section: the group is back in its place, with focus on its item, and the section goes once it's empty", () => {
-    renderDashboard(several().snap);
+    renderAppShell(several().snap);
     hide('old');
     hide('notes');
     choose('All sessions');
@@ -382,7 +382,7 @@ describe('the Hidden section', () => {
   it('unhides a group with no sessions: focus goes to the next Unhide, or the one before, then the list’s Tab stop', () => {
     const entry = (name: string) => ({ key: key(name), label: name, kind: 'git' });
     const { source } = memory({ [hiddenKey(ROOT)]: JSON.stringify({ v: 1, open: true, groups: [entry('gone-a'), entry('gone-b'), entry('gone-c')] }) });
-    renderDashboard(several().snap, { storage: source });
+    renderAppShell(several().snap, { storage: source });
     fireEvent.click(unhideButton('gone-b'));
     expect(toastMessages()).toContain("Unhid gone-b. It's back in the repo list once it has sessions.");
     expect(document.activeElement).toBe(unhideButton('gone-c'));
@@ -397,7 +397,7 @@ describe('the Hidden section', () => {
 describe('hidden groups and the URL', () => {
   it('opens a hidden group from a link or a URL, with its sessions, and Show in repo list', () => {
     const { source } = memory({ [hiddenKey(ROOT)]: JSON.stringify({ v: 1, open: false, groups: [{ key: key('old'), label: 'old', kind: 'git' }] }) });
-    renderDashboard(several().snap, { storage: source, search: `?repo=${key('old')}` });
+    renderAppShell(several().snap, { storage: source, search: `?repo=${key('old')}` });
     expect(listHeading().textContent).toBe('old, git repo');
     expect(visibleRowNames().sort()).toEqual(['in-old']);
     expect(headerButton()?.getAttribute('aria-label')).toBe(SHOW_LABEL);
@@ -408,7 +408,7 @@ describe('hidden groups and the URL', () => {
 
   it("shows a hidden group that has left the snapshot by its kind, with its empty state, and Show in repo list", () => {
     const { source } = memory({ [hiddenKey(ROOT)]: JSON.stringify({ v: 1, open: true, groups: [{ key: key('gone'), label: 'gone', kind: 'directory' }] }) });
-    renderDashboard(several().snap, { storage: source });
+    renderAppShell(several().snap, { storage: source });
     fireEvent.click(hiddenLink('gone'));
     expect(listHeading().textContent).toBe('gone, directory');
     expect(screen.getByText('No sessions in gone now')).toBeTruthy();
@@ -427,21 +427,21 @@ describe('hidden groups in storage', () => {
   it("keeps each root's under its own key, so two pitwalls with different roots keep separate lists", () => {
     const { source, items } = memory();
     const one = snapshot([group({ key: key('app'), label: 'app', sessions: [session({ name: 'a' })] })]);
-    const first = renderDashboard(one, { storage: source });
+    const first = renderAppShell(one, { storage: source });
     hide('app');
     expect(JSON.parse(items.get(hiddenKey(ROOT)) ?? 'null')).toEqual({ v: 1, open: true, groups: [{ key: key('app'), label: 'app', kind: 'git' }] });
     first.unmount();
 
     // Another root, on the same origin: none of the first root's.
     const other = snapshot([group({ key: key('app', WORK), label: 'app', root: WORK, sessions: [session({ name: 'w', cwd: key('app', WORK) })] })], { roots: [WORK] });
-    const second = renderDashboard(other, { storage: source });
+    const second = renderAppShell(other, { storage: source });
     expect(hiddenToggle()).toBeNull();
     expect(repoItems()).toContain('app, git repo1 session');
     second.unmount();
 
     // Both roots: each root's key is read, and a hide writes its own root's.
     const both = snapshot([...one.groups, ...other.groups], { roots: [ROOT, WORK] });
-    renderDashboard(both, { storage: source });
+    renderAppShell(both, { storage: source });
     // The first root's tab is open: its hidden app, not the other root's app.
     expect(hiddenItems()).toEqual(['app, git repo1 session']);
     expect(hiddenLink('app').getAttribute('href')).toBe(`?repo=${key('app')}&root=${ROOT}`);
@@ -455,13 +455,13 @@ describe('hidden groups in storage', () => {
 
   it('stores paths and labels only, no session content, and reads them back after a reload', () => {
     const { source, items } = memory();
-    const first = renderDashboard(several().snap, { storage: source });
+    const first = renderAppShell(several().snap, { storage: source });
     hide('old');
     const value = items.get(hiddenKey(ROOT)) ?? '';
     expect(value).toBe('{"v":1,"open":true,"groups":[{"key":"/Users/example/code/old","label":"old","kind":"git"}]}');
     for (const text of ['in-old', 'multi', 'Keep the made-up flag', 'permission prompt', 'run the tests']) expect(value).not.toContain(text);
     first.unmount();
-    renderDashboard(several().snap, { storage: source });
+    renderAppShell(several().snap, { storage: source });
     expect(repoItems().some((item) => item.startsWith('old'))).toBe(false);
     expect(hiddenItems()).toEqual(['old, git repo1 needs you']);
   });
@@ -479,7 +479,7 @@ describe('hidden groups in storage', () => {
       ['not JSON', memory({ [hiddenKey(ROOT)]: '{"v":1,' }).source],
     ];
     for (const [name, storage] of cases) {
-      const view = renderDashboard(several().snap, { storage });
+      const view = renderAppShell(several().snap, { storage });
       expect(hiddenToggle(), name).toBeNull();
       expect(() => hide('old'), name).not.toThrow();
       expect(hiddenItems(), name).toEqual(['old, git repo1 needs you']);
@@ -494,7 +494,7 @@ describe('hidden groups in storage', () => {
 
 describe('hidden groups and the keyboard', () => {
   it("makes the disclosure, the links and Unhide Tab stops of their own, and leaves the list's ↓, ↑, Home and End to its own items", () => {
-    renderDashboard(several().snap);
+    renderAppShell(several().snap);
     hide('old');
     choose('All sessions');
     const toggle = hiddenToggle() as HTMLButtonElement;
@@ -537,7 +537,7 @@ describe('hidden groups and the keyboard', () => {
 
   it('hands focus on when a focused item leaves the list: to the one that took its place, or the one before it', () => {
     const { snap, groups } = several();
-    const { again } = renderDashboard(snap);
+    const { again } = renderAppShell(snap);
     repoItem('notes').focus();
     again(snapshot([groups.root, groups.app, groups.old]));
     expect(document.activeElement).toBe(repoItem('old'));
@@ -553,7 +553,7 @@ describe('hidden groups below 900 and 1,200 px', () => {
   it("shows the Hidden section in the drawer; choosing a hidden group closes it, with focus on the session list's heading", () => {
     const { source } = memory({ [hiddenKey(ROOT)]: JSON.stringify({ v: 1, open: true, groups: [{ key: key('old'), label: 'old', kind: 'git' }] }) });
     setWidth(600);
-    renderDashboard(several().snap, { storage: source });
+    renderAppShell(several().snap, { storage: source });
     fireEvent.click(repos());
     expect(within(drawer() as HTMLElement).getByRole('button', { name: /^Hidden \(1\)/ })).toBeTruthy();
     fireEvent.click(hiddenLink('old'));
@@ -564,7 +564,7 @@ describe('hidden groups below 900 and 1,200 px', () => {
 
   it('hides from the header with the drawer closed, and unhides in the drawer, focus on the item back in it', () => {
     setWidth(600);
-    renderDashboard(several().snap, { search: `?repo=${key('old')}` });
+    renderAppShell(several().snap, { search: `?repo=${key('old')}` });
     const button = screen.getByRole('button', { name: HIDE_LABEL });
     button.focus();
     fireEvent.click(button);
@@ -579,7 +579,7 @@ describe('hidden groups below 900 and 1,200 px', () => {
   it("keeps Tab inside the drawer, past the Hidden section's controls, and skips them while it's closed", () => {
     const { source } = memory({ [hiddenKey(ROOT)]: JSON.stringify({ v: 1, open: false, groups: [{ key: key('old'), label: 'old', kind: 'git' }] }) });
     setWidth(600);
-    renderDashboard(several().snap, { storage: source });
+    renderAppShell(several().snap, { storage: source });
     fireEvent.click(repos());
     const toggle = hiddenToggle() as HTMLButtonElement;
     // Closed: the toggle is the last stop, so Tab from it goes back to the list.
@@ -599,12 +599,12 @@ describe('hidden groups below 900 and 1,200 px', () => {
     const { snap, calm } = several();
     const { source } = memory({ [hiddenKey(ROOT)]: JSON.stringify({ v: 1, open: true, groups: [{ key: key('old'), label: 'old', kind: 'git' }] }) });
     setWidth(950);
-    const view = renderDashboard(snap, { storage: source, search: `?view=all&session=${calm.sessionId}` });
+    const view = renderAppShell(snap, { storage: source, search: `?view=all&session=${calm.sessionId}` });
     expect(repoList().hasAttribute('inert')).toBe(true);
     expect(unhideButton('old').closest('[inert]')).toBe(repoList());
     view.unmount();
     setWidth(1100);
-    renderDashboard(snap, { storage: source, search: `?view=all&session=${calm.sessionId}` });
+    renderAppShell(snap, { storage: source, search: `?view=all&session=${calm.sessionId}` });
     expect(repoList().hasAttribute('inert')).toBe(false);
     fireEvent.click(unhideButton('old'));
     expect(document.activeElement).toBe(repoItem('old'));

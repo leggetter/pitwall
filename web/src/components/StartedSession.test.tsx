@@ -17,7 +17,7 @@ import { fakeHistory } from '../test/history.js';
 import { toastMessages, toastSaying } from '../test/toasts.js';
 import { chooseFirstDirectory } from '../test/newSession.js';
 import { TOAST_ACTION_TIMEOUT_MS } from '../timing.js';
-import { Dashboard, listedText, OPEN_LISTED, startedText } from './Dashboard.js';
+import { AppShell, listedText, OPEN_LISTED, startedText } from './AppShell.js';
 import type { TerminalHandle } from './Terminal.js';
 
 // xterm.js, replaced by a terminal that does nothing, through the module the view loads it from.
@@ -106,7 +106,7 @@ function fakeServer() {
   });
 }
 
-function renderDashboard(first: IndexSnapshot = snap(), options: { search?: string; groupBy?: GroupBy } = {}) {
+function renderAppShell(first: IndexSnapshot = snap(), options: { search?: string; groupBy?: GroupBy } = {}) {
   const history = fakeHistory(options.search ?? '?view=all');
   const api = createApiClient({ apiKey: 'k'.repeat(43), fetch: fakeServer() });
   const attach: AttachEnv = { token: 'pitwall-test-token-0123456789abcdefghijklmnop', createSocket: fakeSockets().factory, host: '127.0.0.1:4517' };
@@ -114,7 +114,7 @@ function renderDashboard(first: IndexSnapshot = snap(), options: { search?: stri
   const ui = (s: IndexSnapshot) => (
     <ApiContext.Provider value={api}>
       <AttachContext.Provider value={attach}>
-        <Dashboard view={{ state: 'live', snapshot: s }} navigation={history.navigation} storage={storage} />
+        <AppShell view={{ state: 'live', snapshot: s }} navigation={history.navigation} storage={storage} />
       </AttachContext.Provider>
     </ApiContext.Provider>
   );
@@ -181,7 +181,7 @@ afterEach(() => {
 describe('a session started from New session, once it is listed', () => {
   describe.each(GROUP_BY_MODES)('grouped by %s', (mode) => {
     it('selects the repo it started in, opens its view, and marks its row as the open one', async () => {
-      const { update, history } = renderDashboard(snap(), { groupBy: mode });
+      const { update, history } = renderAppShell(snap(), { groupBy: mode });
       await startSession();
       expect(toastMessages()).toEqual([startedText(STARTED.name)]);
       await update(snap({ in: 'web', session: startedIn('web') }));
@@ -193,7 +193,7 @@ describe('a session started from New session, once it is listed', () => {
     });
 
     it("selects the root's own group for one started in the root itself, whether or not the repo list had it before", async () => {
-      const { update, history } = renderDashboard(snap(), { groupBy: mode });
+      const { update, history } = renderAppShell(snap(), { groupBy: mode });
       // Only Where it started lists from-root under ~/code; the others list it under api.
       expect(repoLabels().includes('~/code')).toBe(mode === 'where-started');
       await startSession();
@@ -207,7 +207,7 @@ describe('a session started from New session, once it is listed', () => {
   });
 
   it('selects its group from Needs you, which doesn’t list it', async () => {
-    const { update, history } = renderDashboard(snap(), { search: '?view=needs-you' });
+    const { update, history } = renderAppShell(snap(), { search: '?view=needs-you' });
     expect(selectedRepo()).toBe('Needs you');
     await startSession();
     await update(snap({ in: 'web', session: startedIn('web') }));
@@ -217,7 +217,7 @@ describe('a session started from New session, once it is listed', () => {
   });
 
   it('selects its group from another group, closing nothing but the view it replaces', async () => {
-    const { update } = renderDashboard();
+    const { update } = renderAppShell();
     fireEvent.click(repoItem('api'));
     await open('api-one');
     await startSession();
@@ -227,7 +227,7 @@ describe('a session started from New session, once it is listed', () => {
   });
 
   it('pushes one history entry, as opening a row does, so back goes to where you were', async () => {
-    const { update, history } = renderDashboard();
+    const { update, history } = renderAppShell();
     await open('api-one');
     const before = history.entries.length;
     await startSession();
@@ -242,7 +242,7 @@ describe('a session started from New session, once it is listed', () => {
   });
 
   it("switches to its root tab from another, and says so in the URL, keeping the tab you left as it was", async () => {
-    const { update, history } = renderDashboard(twoRoots(), { search: `?view=all&root=${ROOT}` });
+    const { update, history } = renderAppShell(twoRoots(), { search: `?view=all&root=${ROOT}` });
     await startSession();
     fireEvent.click(tab('~/oss'));
     await open('blog-one');
@@ -261,7 +261,7 @@ describe('a session started from New session, once it is listed', () => {
 
 describe('where focus goes', () => {
   it('stays on New session, where the dialog gave it back', async () => {
-    const { update } = renderDashboard();
+    const { update } = renderAppShell();
     await startSession();
     const button = screen.getByRole('button', { name: 'New session' });
     expect(document.activeElement).toBe(button);
@@ -271,7 +271,7 @@ describe('where focus goes', () => {
   });
 
   it("goes to the view's heading when the switch takes away the row that had it", async () => {
-    const { update } = renderDashboard();
+    const { update } = renderAppShell();
     fireEvent.click(repoItem('api'));
     // `n` on a row: the dialog gives focus back to the row, which web's list doesn't have.
     await startSession(rowButton('api-one'));
@@ -286,7 +286,7 @@ describe('where focus goes', () => {
     act(() => {
       window.dispatchEvent(new Event('resize'));
     });
-    const { update } = renderDashboard();
+    const { update } = renderAppShell();
     await startSession(rowButton('web-one'));
     await update(snap({ in: 'web', session: startedIn('web') }));
     expect(screen.getByRole('dialog', { name: STARTED.name })).toBeTruthy();
@@ -296,7 +296,7 @@ describe('where focus goes', () => {
 
 describe("not over what you're in the middle of", () => {
   it('keeps the open view with a draft, and says the session is listed, with Open, in place of the toast that said it started', async () => {
-    const { update, history } = renderDashboard();
+    const { update, history } = renderAppShell();
     await open('api-one');
     fireEvent.change(messageBox(), { target: { value: 'A made-up draft, kept.' } });
     await startSession();
@@ -326,7 +326,7 @@ describe("not over what you're in the middle of", () => {
   });
 
   it('keeps the open view while it asks to stop its session', async () => {
-    const { update } = renderDashboard();
+    const { update } = renderAppShell();
     await open('api-job');
     fireEvent.click(within(view()!).getByRole('button', { name: 'Session actions' }));
     fireEvent.click(within(view()!).getByRole('menuitem', { name: 'Stop session' }));
@@ -344,7 +344,7 @@ describe("not over what you're in the middle of", () => {
   });
 
   it('keeps your place while you type in the filter', async () => {
-    const { update, history } = renderDashboard();
+    const { update, history } = renderAppShell();
     await startSession();
     const field = screen.getByRole('searchbox', { name: 'Filter sessions' }) as HTMLInputElement;
     field.focus();
@@ -358,7 +358,7 @@ describe("not over what you're in the middle of", () => {
   });
 
   it("keeps the view open in the session's own tab when it has a draft, which the session would replace", async () => {
-    const { update } = renderDashboard(twoRoots(), { search: `?view=all&root=${ROOT}` });
+    const { update } = renderAppShell(twoRoots(), { search: `?view=all&root=${ROOT}` });
     await open('api-one');
     fireEvent.change(messageBox(), { target: { value: 'A made-up draft, kept.' } });
     await startSession();
@@ -379,7 +379,7 @@ describe("not over what you're in the middle of", () => {
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     vi.setSystemTime(NOW);
     const advance = (ms: number) => act(async () => void vi.advanceTimersByTime(ms));
-    const { update } = renderDashboard();
+    const { update } = renderAppShell();
     await open('api-one');
     fireEvent.change(messageBox(), { target: { value: 'A made-up draft, kept.' } });
     // New session, without waitFor, whose own timeout would wait on the fake clock.
@@ -406,7 +406,7 @@ describe("not over what you're in the middle of", () => {
   });
 
   it('takes the toast away once the session is opened another way, from its row', async () => {
-    const { update } = renderDashboard();
+    const { update } = renderAppShell();
     await open('api-one');
     fireEvent.change(messageBox(), { target: { value: 'A made-up draft, kept.' } });
     await startSession();

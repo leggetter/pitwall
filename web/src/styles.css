@@ -131,7 +131,7 @@ textarea {
 }
 
 .app[data-layout='sidebar'] .columns {
-  grid-template-columns: var(--pw-sidebar-w) minmax(0, 1fr);
+  grid-template-columns: var(--pw-repo-list-w) minmax(0, 1fr);
   grid-template-areas: 'repos list';
 }
 
@@ -139,13 +139,13 @@ textarea {
  * The session view's column takes the width its pane has: see .session-pane below.
  *
  * While the supervisor's panel is a column of its own (W187), below 1,520 px the repo list folds into
- * the header's Repos drawer (data-repos="folded", from Dashboard.tsx and layout.ts), so it takes no
+ * the header's Repos drawer (data-repos="folded", from AppShell.tsx and layout.ts), so it takes no
  * column, and the panel is --pw-supervisor-col-folded wide rather than --pw-supervisor-col: 560 px,
- * giving way to 360 px before the session view goes under its 560 px. panelWidth.ts's
+ * giving way to 360 px before the session view goes under its 560 px. sessionPaneWidth.ts's
  * supervisorColumn() works out the same, for the divider.
  */
 .app[data-layout='three-columns'] .columns {
-  grid-template-columns: var(--pw-sidebar-w) minmax(var(--pw-list-min-w), 1fr) auto;
+  grid-template-columns: var(--pw-repo-list-w) minmax(var(--pw-list-min-w), 1fr) auto;
   grid-template-areas: 'repos list view';
 }
 
@@ -182,7 +182,7 @@ textarea {
   display: flex;
   width: var(--pw-view-w);
   min-width: 0;
-  max-width: calc(100cqw - var(--pw-sidebar-w) - var(--pw-list-min-w));
+  max-width: calc(100cqw - var(--pw-repo-list-w) - var(--pw-list-min-w));
   min-height: 0;
 }
 
@@ -438,7 +438,7 @@ textarea {
   left: 0;
   z-index: var(--pw-z-dialog);
   display: flex;
-  width: min(var(--pw-sidebar-w), 100vw);
+  width: min(var(--pw-repo-list-w), 100vw);
   background: var(--pw-surface);
   box-shadow: var(--pw-shadow-overlay);
   animation: repo-drawer-in var(--pw-duration-base) var(--pw-ease-out);
@@ -2318,7 +2318,7 @@ mark.match {
  * the body, which is all that scrolls, and for an interactive session the footer with the message box.
  * In the third column from 1,200 px. Below that, over the right of the columns, in their row, so it
  * starts below the header and the app strip, whatever their height: as wide as the panel or the app,
- * whichever is less. What it covers is inert while it's open (Dashboard.tsx).
+ * whichever is less. What it covers is inert while it's open (AppShell.tsx).
  */
 .session-view {
   display: flex;
@@ -2331,7 +2331,7 @@ mark.match {
   z-index: var(--pw-z-panel);
   grid-area: 1 / 1 / 2 / -1;
   justify-self: end;
-  width: min(var(--pw-panel-w), 100%);
+  width: min(var(--pw-session-pane-w), 100%);
   min-width: 0;
   min-height: 0;
   box-shadow: var(--pw-shadow-overlay);

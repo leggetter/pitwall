@@ -1,6 +1,6 @@
 // The repo list as a drawer, below the sidebar breakpoint (docs/design-system.md, 3: Repo list): it
 // slides in from the left over a backdrop, and it's modal, like a dialog. Escape or a click on the
-// backdrop closes it; the Dashboard puts focus back on the header's Repos button.
+// backdrop closes it; the AppShell puts focus back on the header's Repos button.
 
 import { useRef, type KeyboardEvent, type ReactNode } from 'react';
 

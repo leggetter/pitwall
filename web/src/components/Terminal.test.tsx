@@ -18,7 +18,7 @@ import { fakeSockets, group, NOW, session, snapshot, type FakeSocket } from '../
 import { descriptionOf } from '../test/tooltips.js';
 import { BACKGROUND_TAB_KEY } from '../backgroundTab.js';
 import { TOKEN_STORAGE_KEY } from '../token.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 import { LINE_EDIT_KEYS, NEW_LINE, pasteGoesToTerminal, type TerminalHandle } from './Terminal.js';
 
 // Made-up sessions only. xterm.js is replaced by FakeTerminal, through the
@@ -149,7 +149,7 @@ const emptyPages = vi.fn<FetchLike>(async (url) => {
   return new Response(JSON.stringify(page), { status: 200 });
 });
 
-function renderDashboard(first: IndexSnapshot = snap(), withAttach = true) {
+function renderAppShell(first: IndexSnapshot = snap(), withAttach = true) {
   const fake = fakeSockets();
   const env: AttachEnv = { token: TOKEN, createSocket: fake.factory, host: '127.0.0.1:4517' };
   const api = createApiClient({ apiKey: API_KEY, fetch: emptyPages });
@@ -158,10 +158,10 @@ function renderDashboard(first: IndexSnapshot = snap(), withAttach = true) {
     <ApiContext.Provider value={api}>
       {withAttach ? (
         <AttachContext.Provider value={env}>
-          <Dashboard view={view} />
+          <AppShell view={view} />
         </AttachContext.Provider>
       ) : (
-        <Dashboard view={view} />
+        <AppShell view={view} />
       )}
     </ApiContext.Provider>
   );
@@ -211,7 +211,7 @@ function binary(socket: FakeSocket, text: string) {
 
 describe('SessionView: attach, from the Terminal tab', () => {
   it("opens for a background session; an interactive session's Terminal tab is aria-disabled, says why, and attaches nothing", async () => {
-    const { fake } = renderDashboard();
+    const { fake } = renderAppShell();
     let view = await openView('demo-docs');
     const off = tab(view, 'Terminal');
     expect(off.getAttribute('aria-disabled')).toBe('true');
@@ -233,14 +233,14 @@ describe('SessionView: attach, from the Terminal tab', () => {
   });
 
   it("is aria-disabled where the app gave no way to attach", async () => {
-    renderDashboard(snap(), false);
+    renderAppShell(snap(), false);
     const view = await openView('demo-worker');
     expect(tab(view, 'Terminal').getAttribute('aria-disabled')).toBe('true');
     expect(descriptionOf(tab(view, 'Terminal'))).toBe('Attach is unavailable here.');
   });
 
   it('with Preferences on Conversation, attaches only when Terminal is opened, never when the view opens', async () => {
-    const { fake } = renderDashboard();
+    const { fake } = renderAppShell();
     const view = await openView('demo-worker');
     expect(tab(view, 'Conversation').getAttribute('aria-selected')).toBe('true');
     expect(fake.sockets).toHaveLength(0);
@@ -253,7 +253,7 @@ describe('SessionView: attach, from the Terminal tab', () => {
   });
 
   it('detaches when the Conversation tab is opened, and attaches afresh on Terminal', async () => {
-    const { fake } = renderDashboard();
+    const { fake } = renderAppShell();
     const view = await openView('demo-worker');
     const first = await attach(view, fake);
     await ready(first.socket);
@@ -271,7 +271,7 @@ describe('SessionView: attach, from the Terminal tab', () => {
   });
 
   it('shows a success dot on the Terminal tab while attached, and says so to screen readers', async () => {
-    const { fake } = renderDashboard();
+    const { fake } = renderAppShell();
     const view = await openView('demo-worker');
     const { socket } = await attach(view, fake);
     expect(view.querySelector('.session-tab-dot')).toBeNull();
@@ -286,7 +286,7 @@ describe('SessionView: attach, from the Terminal tab', () => {
   });
 
   it("proves the token without sending it, then opens the session at the terminal's size", async () => {
-    const { fake } = renderDashboard();
+    const { fake } = renderAppShell();
     const view = await openView('demo-worker');
     const { socket, terminal } = await attach(view, fake);
 
@@ -304,7 +304,7 @@ describe('SessionView: attach, from the Terminal tab', () => {
   });
 
   it('shows output in the terminal, sends typing, and focuses the terminal once attached', async () => {
-    const { fake } = renderDashboard();
+    const { fake } = renderAppShell();
     const view = await openView('demo-worker');
     const { socket, terminal } = await attach(view, fake);
     await ready(socket);
@@ -318,7 +318,7 @@ describe('SessionView: attach, from the Terminal tab', () => {
   });
 
   it('takes the place of the conversation, which comes back on Detach, and detaching closes the socket', async () => {
-    const { fake } = renderDashboard();
+    const { fake } = renderAppShell();
     const view = await openView('demo-worker');
     const body = view.querySelector<HTMLElement>('.session-view-body')!;
     expect(body.hidden).toBe(false);
@@ -338,7 +338,7 @@ describe('SessionView: attach, from the Terminal tab', () => {
   });
 
   it('sends a resize when the panel resizes', async () => {
-    const { fake } = renderDashboard();
+    const { fake } = renderAppShell();
     const view = await openView('demo-worker');
     const { socket, terminal } = await attach(view, fake);
     await ready(socket);
@@ -354,7 +354,7 @@ describe('SessionView: attach, from the Terminal tab', () => {
   });
 
   it("opens xterm.js in a box of its own inside the screen's padding, the box the fit addon measures, and watches that box for resizes (W74)", async () => {
-    const { fake } = renderDashboard();
+    const { fake } = renderAppShell();
     const view = await openView('demo-worker');
     const { socket, terminal } = await attach(view, fake);
     const box = terminal.container;
@@ -378,7 +378,7 @@ describe('SessionView: attach, from the Terminal tab', () => {
 
   describe('a session that is not running', () => {
     async function needingRestart() {
-      const { fake } = renderDashboard(snap([background({ pid: undefined, alive: false, status: undefined, state: 'done', finished: true })]));
+      const { fake } = renderAppShell(snap([background({ pid: undefined, alive: false, status: undefined, state: 'done', finished: true })]));
       // A finished session sits in its group's collapsed Finished list, and keeps attach.
       fireEvent.click(screen.getByRole('button', { name: 'Finished (1)', expanded: false }));
       const view = await openView('demo-worker');
@@ -424,7 +424,7 @@ describe('SessionView: attach, from the Terminal tab', () => {
     });
 
     it("says a session that's still starting is starting, never asks to restart it, and can try again", async () => {
-      const { fake } = renderDashboard(snap([background({ pid: undefined, alive: false, status: undefined, state: 'working' })]));
+      const { fake } = renderAppShell(snap([background({ pid: undefined, alive: false, status: undefined, state: 'working' })]));
       const view = await openView('demo-worker');
       const { socket } = await attach(view, fake);
       await ready(socket);
@@ -460,7 +460,7 @@ describe('SessionView: attach, from the Terminal tab', () => {
   });
 
   it('says so when 4 sessions are already attached, and can try again', async () => {
-    const { fake } = renderDashboard();
+    const { fake } = renderAppShell();
     const view = await openView('demo-worker');
     const { socket } = await attach(view, fake);
     act(() => {
@@ -477,7 +477,7 @@ describe('SessionView: attach, from the Terminal tab', () => {
   });
 
   it('shows a short notice when claude attach exits, or the server refuses', async () => {
-    const { fake } = renderDashboard();
+    const { fake } = renderAppShell();
     const view = await openView('demo-worker');
     const first = await attach(view, fake);
     await ready(first.socket);
@@ -495,7 +495,7 @@ describe('SessionView: attach, from the Terminal tab', () => {
   });
 
   it('detaches when the panel closes', async () => {
-    const { fake } = renderDashboard();
+    const { fake } = renderAppShell();
     const view = await openView('demo-worker');
     const { socket, terminal } = await attach(view, fake);
     await ready(socket);
@@ -509,7 +509,7 @@ describe('SessionView: attach, from the Terminal tab', () => {
   });
 
   it('keeps Escape for the terminal, and closes the panel on Escape elsewhere', async () => {
-    const { fake } = renderDashboard();
+    const { fake } = renderAppShell();
     const view = await openView('demo-worker');
     const { socket, terminal } = await attach(view, fake);
     await ready(socket);
@@ -536,7 +536,7 @@ describe('SessionView: the terminal bar, its notices and F6 (W29)', () => {
   }
 
   it('Attaching…: a subtle neutral badge with a spinner, the F6 hint, and a ghost sm Detach', async () => {
-    const { fake } = renderDashboard();
+    const { fake } = renderAppShell();
     const view = await openView('demo-worker');
     await attach(view, fake);
     expect(bar(view)).toEqual({ look: 'badge-subtle-neutral', lead: 'spinner', label: 'Attaching…', buttons: ['Detach (button ghost sm)'] });
@@ -550,7 +550,7 @@ describe('SessionView: the terminal bar, its notices and F6 (W29)', () => {
   });
 
   it("gives xterm.js the F6 hint's id, to describe its textarea, and sends the new size when a late font resizes the cells (W31)", async () => {
-    const { fake } = renderDashboard();
+    const { fake } = renderAppShell();
     const view = await openView('demo-worker');
     const { socket } = await attach(view, fake);
     await ready(socket);
@@ -563,7 +563,7 @@ describe('SessionView: the terminal bar, its notices and F6 (W29)', () => {
   });
 
   it('Attached: a subtle success badge with a dot, the hint, and Detach', async () => {
-    const { fake } = renderDashboard();
+    const { fake } = renderAppShell();
     const view = await openView('demo-worker');
     const { socket } = await attach(view, fake);
     await ready(socket);
@@ -573,7 +573,7 @@ describe('SessionView: the terminal bar, its notices and F6 (W29)', () => {
   });
 
   it('Detached: a subtle neutral badge with no lead, then a ghost sm Attach again with the retry icon, and Back to the conversation', async () => {
-    const { fake } = renderDashboard();
+    const { fake } = renderAppShell();
     const view = await openView('demo-worker');
     const { socket } = await attach(view, fake);
     await ready(socket);
@@ -591,7 +591,7 @@ describe('SessionView: the terminal bar, its notices and F6 (W29)', () => {
   });
 
   it('Not running: an outline badge while it asks to restart', async () => {
-    const { fake } = renderDashboard(snap([background({ pid: undefined, alive: false, status: undefined, state: 'done', finished: true })]));
+    const { fake } = renderAppShell(snap([background({ pid: undefined, alive: false, status: undefined, state: 'done', finished: true })]));
     fireEvent.click(screen.getByRole('button', { name: 'Finished (1)', expanded: false }));
     const view = await openView('demo-worker');
     const { socket } = await attach(view, fake);
@@ -602,7 +602,7 @@ describe('SessionView: the terminal bar, its notices and F6 (W29)', () => {
 
   describe('notices: an inline alert above the screen', () => {
     async function ended(end: (socket: FakeSocket) => void) {
-      const { fake } = renderDashboard();
+      const { fake } = renderAppShell();
       const view = await openView('demo-worker');
       const { socket } = await attach(view, fake);
       await ready(socket);
@@ -665,7 +665,7 @@ describe('SessionView: the terminal bar, its notices and F6 (W29)', () => {
 
   describe('F6 leaves the terminal, and every other key stays in it', () => {
     async function attached() {
-      const { fake } = renderDashboard();
+      const { fake } = renderAppShell();
       const view = await openView('demo-worker');
       const { socket, terminal } = await attach(view, fake);
       await ready(socket);
@@ -713,7 +713,7 @@ describe('SessionView: the terminal bar, its notices and F6 (W29)', () => {
 
 describe("SessionView: Shift+Enter, a new line in Claude Code's prompt (W41)", () => {
   async function attached() {
-    const { fake } = renderDashboard();
+    const { fake } = renderAppShell();
     const view = await openView('demo-worker');
     const { socket, terminal } = await attach(view, fake);
     await ready(socket);
@@ -812,7 +812,7 @@ describe("SessionView: Shift+Enter, a new line in Claude Code's prompt (W41)", (
   });
 
   it('before the attach has started, Shift+Enter still never reaches xterm.js, and sends nothing', async () => {
-    const { fake } = renderDashboard();
+    const { fake } = renderAppShell();
     const view = await openView('demo-worker');
     const { socket, terminal } = await attach(view, fake);
     expect(fireEvent.keyDown(terminal.screen, { ...ENTER, shiftKey: true })).toBe(false);
@@ -825,7 +825,7 @@ describe("SessionView: Shift+Enter, a new line in Claude Code's prompt (W41)", (
 
 describe('SessionView: ⌘ line-editing keys, as a Mac text field has them (W151)', () => {
   async function attached() {
-    const { fake } = renderDashboard();
+    const { fake } = renderAppShell();
     const view = await openView('demo-worker');
     const { socket, terminal } = await attach(view, fake);
     await ready(socket);
@@ -875,7 +875,7 @@ describe('SessionView: ⌘ line-editing keys, as a Mac text field has them (W151
 
 describe('SessionView: a paste with focus outside the screen goes to the terminal (W151)', () => {
   async function attached() {
-    const result = renderDashboard();
+    const result = renderAppShell();
     const view = await openView('demo-worker');
     const { socket, terminal } = await attach(view, result.fake);
     await ready(socket);
@@ -986,7 +986,7 @@ describe('SessionView: a paste with focus outside the screen goes to the termina
   });
 
   it('an empty paste, or one before the attach or after it ended, goes nowhere', async () => {
-    const { fake } = renderDashboard();
+    const { fake } = renderAppShell();
     const view = await openView('demo-worker');
     const { socket, terminal } = await attach(view, fake);
     expect(paste(document.body)).toBe(true);

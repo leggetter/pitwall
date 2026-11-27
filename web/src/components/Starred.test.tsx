@@ -16,7 +16,7 @@ import { STARRED_CAP, STARRED_KEY } from '../starred.js';
 import { group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
 import { chooseSort } from '../test/sort.js';
 import { toastMessages } from '../test/toasts.js';
-import { Dashboard, NO_STARRED, starredText } from './Dashboard.js';
+import { AppShell, NO_STARRED, starredText } from './AppShell.js';
 import type { TerminalHandle } from './Terminal.js';
 
 // xterm.js, replaced by a terminal that does nothing, through the module the view loads it from.
@@ -65,7 +65,7 @@ function twoRoots(): IndexSnapshot {
   );
 }
 
-/** localStorage-like storage that lasts for the test, so a reload is a new Dashboard on the same storage. */
+/** localStorage-like storage that lasts for the test, so a reload is a new AppShell on the same storage. */
 function memory(initial: Record<string, string> = {}) {
   const items = new Map<string, string>(Object.entries(initial));
   const source: StorageSource = () => ({ getItem: (name) => items.get(name) ?? null, setItem: (name, value) => void items.set(name, value) });
@@ -81,14 +81,14 @@ interface Options {
   shortcuts?: ShortcutsStore;
 }
 
-function renderDashboard(first: IndexSnapshot = snap(), options: Options = {}) {
+function renderAppShell(first: IndexSnapshot = snap(), options: Options = {}) {
   const store = memory();
   const storage = options.storage ?? store.source;
   const navigation = options.navigation ?? memoryNavigation(options.search ?? '?view=all');
   const shortcuts = options.shortcuts ?? createShortcutsStore({ storage: memory().source, events: { addEventListener: () => {} } });
   const ui = (s: IndexSnapshot) => (
     <ShortcutsStoreContext.Provider value={shortcuts}>
-      <Dashboard view={{ state: 'live', snapshot: s }} navigation={navigation} storage={storage} />
+      <AppShell view={{ state: 'live', snapshot: s }} navigation={navigation} storage={storage} />
     </ShortcutsStoreContext.Provider>
   );
   const result = render(ui(first));
@@ -152,7 +152,7 @@ afterEach(() => {
 
 describe('the star toggle on a row', () => {
   it("is a toggle button on every row, finished ones too, named for its session, and not pressed", () => {
-    renderDashboard();
+    renderAppShell();
     fireEvent.click(finishedToggle()!);
     for (const name of ['alpha', 'beta', 'gamma', 'delta', 'epsilon']) {
       const star = rowStar(name);
@@ -164,7 +164,7 @@ describe('the star toggle on a row', () => {
   });
 
   it('stars and unstars, its name the same either way, and never opens or selects the session', () => {
-    const { items, navigation } = renderDashboard();
+    const { items, navigation } = renderAppShell();
     const star = rowStar('beta');
     star.focus();
     fireEvent.click(star);
@@ -187,7 +187,7 @@ describe('the star toggle on a row', () => {
 
   it("keeps an open session's view as it is, and opens none, in a group's list too", async () => {
     setWidth(1300);
-    const { navigation } = renderDashboard(snap(), { search: `?repo=${ROOT}/app` });
+    const { navigation } = renderAppShell(snap(), { search: `?repo=${ROOT}/app` });
     await open('beta');
     const search = navigation.location.search;
     fireEvent.click(rowStar('delta'));
@@ -200,7 +200,7 @@ describe('the star toggle on a row', () => {
 describe("the star toggle in the session view's header", () => {
   it('sits before the actions menu, named for its session, and follows the row', async () => {
     setWidth(1300);
-    const { items } = renderDashboard();
+    const { items } = renderAppShell();
     await open('alpha');
     const star = viewStar();
     const menu = within(view()!).getByRole('button', { name: 'Session actions' });
@@ -224,7 +224,7 @@ describe("the star toggle in the session view's header", () => {
 
   it('says s in its tooltip and aria-keyshortcuts while the single-key shortcuts are on, and neither while they are off', async () => {
     setWidth(1300);
-    const { shortcuts } = renderDashboard();
+    const { shortcuts } = renderAppShell();
     await open('alpha');
     expect(viewStar().getAttribute('aria-keyshortcuts')).toBe('s');
     expect(rowStar('alpha').hasAttribute('aria-keyshortcuts')).toBe(false);
@@ -235,7 +235,7 @@ describe("the star toggle in the session view's header", () => {
 
 describe('the Starred view', () => {
   it('comes after All sessions, before the divider, counting nothing until a session is starred', () => {
-    renderDashboard();
+    renderAppShell();
     const views = [...repoList().querySelector('ul.repo-items')!.querySelectorAll('a[data-repo-item]')].map((link) => link.querySelector('.repo-item-label')?.textContent);
     expect(views).toEqual(['Needs you', 'All sessions', 'Starred']);
     expect(repoItem('Starred').textContent).toBe('Starred');
@@ -251,7 +251,7 @@ describe('the Starred view', () => {
   });
 
   it('lists only the starred sessions, each with its group, with the summary, and ?view=starred in the URL', () => {
-    const { navigation } = renderDashboard();
+    const { navigation } = renderAppShell();
     fireEvent.click(rowStar('alpha'));
     fireEvent.click(rowStar('epsilon'));
     choose('Starred');
@@ -264,7 +264,7 @@ describe('the Starred view', () => {
   });
 
   it('sorts as the Sort setting says, as the other lists do', () => {
-    renderDashboard();
+    renderAppShell();
     for (const name of ['beta', 'delta', 'epsilon', 'alpha']) fireEvent.click(rowStar(name));
     choose('Starred');
     // Urgency: what needs you first, then the most recently active.
@@ -277,7 +277,7 @@ describe('the Starred view', () => {
 
   it('takes the stored Sort setting, and the filter, as other lists do', () => {
     const store = memory({ [SORT_KEY]: 'recent', [STARRED_KEY]: JSON.stringify({ v: 1, ids: [id(1), id(4)] }) });
-    renderDashboard(snap(), { storage: store.source, search: '?view=starred' });
+    renderAppShell(snap(), { storage: store.source, search: '?view=starred' });
     expect(rowNames()).toEqual(['delta', 'alpha']);
     fireEvent.change(screen.getByRole('searchbox', { name: 'Filter sessions' }), { target: { value: 'export' } });
     expect(rowNames()).toEqual(['alpha']);
@@ -287,14 +287,14 @@ describe('the Starred view', () => {
 
   it('shows Starred again after a reload, from ?view=starred, with the stars kept', () => {
     const store = memory();
-    const first = renderDashboard(snap(), { storage: store.source });
+    const first = renderAppShell(snap(), { storage: store.source });
     fireEvent.click(rowStar('beta'));
     fireEvent.click(rowStar('epsilon'));
     choose('Starred');
     const search = first.navigation.location.search;
     first.unmount();
 
-    renderDashboard(snap(), { storage: store.source, navigation: memoryNavigation(search) });
+    renderAppShell(snap(), { storage: store.source, navigation: memoryNavigation(search) });
     expect(listHeading().textContent).toBe('Starred');
     expect(rowNames()).toEqual(['beta', 'epsilon']);
     expect(pressed(rowStar('beta'))).toBe('true');
@@ -302,7 +302,7 @@ describe('the Starred view', () => {
 
   it("puts a starred finished session in Starred's own Finished section, collapsed at first, and remembers it", () => {
     const store = memory({ [STARRED_KEY]: JSON.stringify({ v: 1, ids: [id(3), id(2)] }) });
-    const first = renderDashboard(snap(), { storage: store.source, search: '?view=starred' });
+    const first = renderAppShell(snap(), { storage: store.source, search: '?view=starred' });
     // gamma is in the collapsed section, so it isn't shown.
     expect(rowNames()).toEqual(['beta']);
     const toggle = finishedToggle()!;
@@ -312,7 +312,7 @@ describe('the Starred view', () => {
     expect(rowNames()).toEqual(['beta', 'gamma']);
     expect(JSON.parse(store.items.get(FINISHED_STATE_KEY)!)).toMatchObject({ 'view:starred': true });
     first.unmount();
-    renderDashboard(snap(), { storage: store.source, search: '?view=starred' });
+    renderAppShell(snap(), { storage: store.source, search: '?view=starred' });
     expect(finishedToggle()!.getAttribute('aria-expanded')).toBe('true');
     // All sessions' own stays as it was.
     choose('All sessions');
@@ -320,7 +320,7 @@ describe('the Starred view', () => {
   });
 
   it('shows an empty state that says how to star, with no summary, and Show all sessions', () => {
-    renderDashboard(snap(), { search: '?view=starred' });
+    renderAppShell(snap(), { search: '?view=starred' });
     expect(screen.getByText(NO_STARRED.title)).toBeTruthy();
     expect(screen.getByText('Star a session from its row or its view to keep it here.')).toBeTruthy();
     expect(summary()).toBe('');
@@ -332,14 +332,14 @@ describe('the Starred view', () => {
 
   it('shows the empty state too when the starred sessions are none of these', () => {
     const store = memory({ [STARRED_KEY]: JSON.stringify({ v: 1, ids: ['00000000-0000-4000-8000-00000000dead'] }) });
-    renderDashboard(snap(), { storage: store.source, search: '?view=starred' });
+    renderAppShell(snap(), { storage: store.source, search: '?view=starred' });
     expect(screen.getByText(NO_STARRED.title)).toBeTruthy();
     expect(repoItem('Starred').textContent).toBe('Starred');
   });
 
   it('lets a row go at once when it is unstarred there, focus moving to the star of the row that took its place, then to the heading', () => {
     const store = memory({ [STARRED_KEY]: JSON.stringify({ v: 1, ids: [id(2), id(4), id(5)] }) });
-    renderDashboard(snap(), { storage: store.source, search: '?view=starred' });
+    renderAppShell(snap(), { storage: store.source, search: '?view=starred' });
     expect(rowNames()).toEqual(['beta', 'delta', 'epsilon']);
     rowStar('beta').focus();
     fireEvent.click(rowStar('beta'));
@@ -357,7 +357,7 @@ describe('the Starred view', () => {
 
   it('moves focus to the star before when the last row is unstarred from its star', () => {
     const store = memory({ [STARRED_KEY]: JSON.stringify({ v: 1, ids: [id(2), id(4)] }) });
-    renderDashboard(snap(), { storage: store.source, search: '?view=starred' });
+    renderAppShell(snap(), { storage: store.source, search: '?view=starred' });
     rowStar('delta').focus();
     fireEvent.click(rowStar('delta'));
     expect(rowNames()).toEqual(['beta']);
@@ -367,7 +367,7 @@ describe('the Starred view', () => {
   it('keeps an open session open when it is unstarred there', async () => {
     setWidth(1300);
     const store = memory({ [STARRED_KEY]: JSON.stringify({ v: 1, ids: [id(2), id(4)] }) });
-    renderDashboard(snap(), { storage: store.source, search: '?view=starred' });
+    renderAppShell(snap(), { storage: store.source, search: '?view=starred' });
     await open('beta');
     fireEvent.click(viewStar());
     expect(rowNames()).toEqual(['delta']);
@@ -377,7 +377,7 @@ describe('the Starred view', () => {
 
   it('is walked with j and k, as the other lists are, from a row or its star', () => {
     const store = memory({ [STARRED_KEY]: JSON.stringify({ v: 1, ids: [id(2), id(5)] }) });
-    renderDashboard(snap(), { storage: store.source, search: '?view=starred' });
+    renderAppShell(snap(), { storage: store.source, search: '?view=starred' });
     (document.activeElement as HTMLElement | null)?.blur();
     press('j', document.body);
     expect(document.activeElement).toBe(rowButton('beta'));
@@ -393,7 +393,7 @@ describe('the Starred view', () => {
 
 describe('the Starred view under root tabs', () => {
   it("lists and counts only the open tab's starred sessions, with the root in the URL; the stars are every root's", () => {
-    const { items, navigation } = renderDashboard(twoRoots(), { search: `?view=all&root=${ROOT}` });
+    const { items, navigation } = renderAppShell(twoRoots(), { search: `?view=all&root=${ROOT}` });
     fireEvent.click(rowStar('api-one'));
     fireEvent.click(screen.getAllByRole('tab')[1]!);
     fireEvent.click(rowStar('svc-one'));
@@ -413,7 +413,7 @@ describe('the Starred view under root tabs', () => {
 
 describe('pitwall.starred.v1', () => {
   it('holds the ids alone: no name, title, prompt or path', () => {
-    const { items } = renderDashboard();
+    const { items } = renderAppShell();
     fireEvent.click(rowStar('alpha'));
     const raw = items.get(STARRED_KEY)!;
     expect(JSON.parse(raw)).toEqual({ v: 1, ids: [id(1)] });
@@ -421,7 +421,7 @@ describe('pitwall.starred.v1', () => {
   });
 
   it("never prunes a star whose session is missing from a snapshot, as after a failed poll", () => {
-    const { items, again } = renderDashboard();
+    const { items, again } = renderAppShell();
     fireEvent.click(rowStar('beta'));
     again(snapshot([], { source: { ok: false, error: 'a made-up failure' } }));
     again(snapshot([group({ key: `${ROOT}/jobs`, label: 'jobs', sessions: [sessions().epsilon] })]));
@@ -433,7 +433,7 @@ describe('pitwall.starred.v1', () => {
   it('holds its cap, dropping the oldest star, however many came before', () => {
     const old = Array.from({ length: STARRED_CAP }, (_, n) => `00000000-0000-4000-8000-0000000099${String(n).padStart(2, '0')}`);
     const store = memory({ [STARRED_KEY]: JSON.stringify({ v: 1, ids: old }) });
-    renderDashboard(snap(), { storage: store.source });
+    renderAppShell(snap(), { storage: store.source });
     fireEvent.click(rowStar('beta'));
     const kept = JSON.parse(store.items.get(STARRED_KEY)!).ids as string[];
     expect(kept).toHaveLength(STARRED_CAP);
@@ -444,7 +444,7 @@ describe('pitwall.starred.v1', () => {
   it("doesn't break the page when it's malformed: nothing is starred, and a star replaces it", () => {
     for (const raw of ['not json', '{"v":1,"ids":"alpha"}', '[1,2]', '{"v":9,"ids":["x"]}']) {
       const store = memory({ [STARRED_KEY]: raw });
-      const { unmount } = renderDashboard(snap(), { storage: store.source, search: '?view=starred' });
+      const { unmount } = renderAppShell(snap(), { storage: store.source, search: '?view=starred' });
       expect(screen.getByText(NO_STARRED.title)).toBeTruthy();
       choose('All sessions');
       fireEvent.click(rowStar('beta'));
@@ -457,7 +457,7 @@ describe('pitwall.starred.v1', () => {
     const denied = () => {
       throw new DOMException('The operation is insecure.', 'SecurityError');
     };
-    renderDashboard(snap(), { storage: () => ({ getItem: denied, setItem: denied }), search: '?view=starred' });
+    renderAppShell(snap(), { storage: () => ({ getItem: denied, setItem: denied }), search: '?view=starred' });
     expect(screen.getByText(NO_STARRED.title)).toBeTruthy();
     choose('All sessions');
     fireEvent.click(rowStar('beta'));
@@ -468,7 +468,7 @@ describe('pitwall.starred.v1', () => {
 
   it('follows a star made in another tab, with the window’s storage event', () => {
     const store = memory();
-    renderDashboard(snap(), { storage: store.source });
+    renderAppShell(snap(), { storage: store.source });
     store.items.set(STARRED_KEY, JSON.stringify({ v: 1, ids: [id(4)] }));
     act(() => {
       window.dispatchEvent(new StorageEvent('storage', { key: STARRED_KEY }));
@@ -481,7 +481,7 @@ describe('pitwall.starred.v1', () => {
 describe('s', () => {
   it('stars and unstars the open session, from its header and its conversation, with a toast, and focus stays', async () => {
     setWidth(1300);
-    const { items } = renderDashboard();
+    const { items } = renderAppShell();
     await open('beta');
     const heading = document.getElementById(view()!.getAttribute('aria-labelledby')!)!;
     heading.focus();
@@ -502,7 +502,7 @@ describe('s', () => {
   });
 
   it('does nothing with no session open, from the page or a row', () => {
-    const { items } = renderDashboard();
+    const { items } = renderAppShell();
     expect(press('s', document.body)).toBe(true);
     rowButton('beta').focus();
     expect(press('s')).toBe(true);
@@ -512,7 +512,7 @@ describe('s', () => {
 
   it('is ignored while typing, in the terminal, held down, with a modifier, and while the single-key shortcuts are off', async () => {
     setWidth(1300);
-    const { items, container, shortcuts } = renderDashboard();
+    const { items, container, shortcuts } = renderAppShell();
     await open('alpha');
     const nothing = (target: Element, init: KeyboardEventInit = {}) => {
       expect(press('s', target, init), target.className).toBe(true);
@@ -550,14 +550,14 @@ describe('s', () => {
 
 describe('a row stays as it was', () => {
   it('two lines, with its star at the end of line 1, after the time', () => {
-    renderDashboard();
+    renderAppShell();
     const line = rowStar('beta').closest('.session-line')!;
     expect([...line.children].map((child) => child.className.split(' ')[0])).toEqual(['session-ident', 'activity', 'icon-button']);
     expect(rowStar('beta').classList.contains('sm')).toBe(true);
   });
 
   it('lists a session with a starred row the same in every view, only its star pressed', () => {
-    renderDashboard();
+    renderAppShell();
     fireEvent.click(rowStar('alpha'));
     for (const label of ['Needs you', 'All sessions', 'app', 'Starred']) {
       choose(label);
@@ -567,7 +567,7 @@ describe('a row stays as it was', () => {
 
   it('shows the name as text: a star for a session whose name has markup names it as written', () => {
     const odd: SessionSummary = session({ sessionId: id(9), name: '<b>odd</b>', cwd: `${ROOT}/app` });
-    renderDashboard(snapshot([group({ key: `${ROOT}/app`, label: 'app', sessions: [odd] })]));
+    renderAppShell(snapshot([group({ key: `${ROOT}/app`, label: 'app', sessions: [odd] })]));
     expect(rowStar('<b>odd</b>')).toBeTruthy();
     expect(main().querySelector('b')).toBeNull();
   });

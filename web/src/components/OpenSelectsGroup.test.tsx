@@ -13,7 +13,7 @@ import { GROUP_BY_KEY } from '../groupBy.js';
 import type { StorageSource } from '../groupState.js';
 import { group, minutesAgo, NOW, pr, prLink, prList, session, snapshot, withoutSubagents } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 
 const WORK = '/Users/example/work';
 const PERSONAL = '/Users/example/personal';
@@ -76,14 +76,14 @@ function fakeServer() {
   });
 }
 
-function renderDashboard(first: IndexSnapshot, options: { search: string; prs?: PullRequestList }) {
+function renderAppShell(first: IndexSnapshot, options: { search: string; prs?: PullRequestList }) {
   const history = fakeHistory(options.search);
   const api = createApiClient({ apiKey: 'k'.repeat(43), fetch: withoutSubagents(fakeServer()) });
   // Conversation first, so no running background session's view attaches.
   const storage = memory({ [BACKGROUND_TAB_KEY]: 'conversation', [GROUP_BY_KEY]: 'where-started' });
   const ui = (s: IndexSnapshot) => (
     <ApiContext.Provider value={api}>
-      <Dashboard view={{ state: 'live', snapshot: s, ...(options.prs ? { prs: options.prs } : {}) }} navigation={history.navigation} storage={storage} />
+      <AppShell view={{ state: 'live', snapshot: s, ...(options.prs ? { prs: options.prs } : {}) }} navigation={history.navigation} storage={storage} />
     </ApiContext.Provider>
   );
   const result = render(ui(first));
@@ -132,7 +132,7 @@ afterEach(() => {
 
 describe("from the supervisor's Sent and started (W144)", () => {
   it("with root tabs: a session in the other root's tab opens there, under its group, in one pushed entry", async () => {
-    const { history } = renderDashboard(twoRoots(spawned), { search: `?repo=${at(PERSONAL, 'blog')}&root=${PERSONAL}&supervisor` });
+    const { history } = renderAppShell(twoRoots(spawned), { search: `?repo=${at(PERSONAL, 'blog')}&root=${PERSONAL}&supervisor` });
     await settle();
     expect(activeTab()).toContain('personal');
     await openFromHandoffs(started.name);
@@ -146,7 +146,7 @@ describe("from the supervisor's Sent and started (W144)", () => {
   });
 
   it('one Back returns to the tab, the group and the supervisor, which is still usable', async () => {
-    const { history } = renderDashboard(twoRoots(spawned), { search: `?repo=${at(PERSONAL, 'blog')}&root=${PERSONAL}&supervisor` });
+    const { history } = renderAppShell(twoRoots(spawned), { search: `?repo=${at(PERSONAL, 'blog')}&root=${PERSONAL}&supervisor` });
     await settle();
     await openFromHandoffs(started.name);
     history.back();
@@ -163,7 +163,7 @@ describe("from the supervisor's Sent and started (W144)", () => {
   });
 
   it('with one root: a group that does not list it gives way to its group', async () => {
-    const { history } = renderDashboard(oneRoot(handoffs({ name: started.name, sessionId: started.sessionId })), { search: `?repo=${at(WORK, 'web')}&supervisor` });
+    const { history } = renderAppShell(oneRoot(handoffs({ name: started.name, sessionId: started.sessionId })), { search: `?repo=${at(WORK, 'web')}&supervisor` });
     await settle();
     await openFromHandoffs(started.name);
     expect(history.entries).toEqual([`?repo=${at(WORK, 'web')}&supervisor`, `?repo=${at(WORK, 'api')}&session=${started.sessionId}&supervisor`]);
@@ -177,13 +177,13 @@ describe("from the supervisor's Sent and started (W144)", () => {
   });
 
   it('keeps a selection that already lists it: its group, or a view in its tab', async () => {
-    const first = renderDashboard(oneRoot(handoffs({ name: started.name, sessionId: started.sessionId })), { search: `?repo=${at(WORK, 'api')}&supervisor` });
+    const first = renderAppShell(oneRoot(handoffs({ name: started.name, sessionId: started.sessionId })), { search: `?repo=${at(WORK, 'api')}&supervisor` });
     await settle();
     await openFromHandoffs(started.name);
     expect(first.history.entries).toEqual([`?repo=${at(WORK, 'api')}&supervisor`, `?repo=${at(WORK, 'api')}&session=${started.sessionId}&supervisor`]);
     first.unmount();
 
-    const { history } = renderDashboard(twoRoots(handoffs({ name: started.name, sessionId: started.sessionId })), { search: `?view=all&root=${WORK}&supervisor` });
+    const { history } = renderAppShell(twoRoots(handoffs({ name: started.name, sessionId: started.sessionId })), { search: `?view=all&root=${WORK}&supervisor` });
     await settle();
     await openFromHandoffs(started.name);
     expect(history.entries).toEqual([`?view=all&root=${WORK}&supervisor`, `?view=all&root=${WORK}&session=${started.sessionId}&supervisor`]);
@@ -192,7 +192,7 @@ describe("from the supervisor's Sent and started (W144)", () => {
   });
 
   it("Starred, which doesn't list it, gives way to its group (W148)", async () => {
-    const { history } = renderDashboard(oneRoot(handoffs({ name: started.name, sessionId: started.sessionId })), { search: '?view=starred&supervisor' });
+    const { history } = renderAppShell(oneRoot(handoffs({ name: started.name, sessionId: started.sessionId })), { search: '?view=starred&supervisor' });
     await settle();
     await openFromHandoffs(started.name);
     expect(history.entries).toEqual(['?view=starred&supervisor', `?repo=${at(WORK, 'api')}&session=${started.sessionId}&supervisor`]);
@@ -201,7 +201,7 @@ describe("from the supervisor's Sent and started (W144)", () => {
   });
 
   it("a view in the other root's tab does not keep it", async () => {
-    const { history } = renderDashboard(twoRoots(handoffs({ name: inWeb.name, sessionId: inWeb.sessionId })), { search: `?view=all&root=${PERSONAL}&supervisor` });
+    const { history } = renderAppShell(twoRoots(handoffs({ name: inWeb.name, sessionId: inWeb.sessionId })), { search: `?view=all&root=${PERSONAL}&supervisor` });
     await settle();
     await openFromHandoffs(inWeb.name);
     expect(history.location.search).toBe(`?repo=${at(WORK, 'web')}&root=${WORK}&session=${inWeb.sessionId}&supervisor`);
@@ -210,7 +210,7 @@ describe("from the supervisor's Sent and started (W144)", () => {
   });
 
   it('offers no Open for a session the index does not list yet, so nothing changes (selectionShowing() keeps the selection for one)', async () => {
-    const { history } = renderDashboard(twoRoots(handoffs({ name: 'pitwall-test-later', sessionId: notYet })), { search: `?repo=${at(PERSONAL, 'blog')}&root=${PERSONAL}&supervisor` });
+    const { history } = renderAppShell(twoRoots(handoffs({ name: 'pitwall-test-later', sessionId: notYet })), { search: `?repo=${at(PERSONAL, 'blog')}&root=${PERSONAL}&supervisor` });
     await settle();
     expect(within(sentAndStarted()).getByText('Not listed')).toBeDefined();
     expect(within(sentAndStarted()).queryByRole('button', { name: 'Open pitwall-test-later' })).toBeNull();
@@ -224,7 +224,7 @@ describe("from a PR view's Sessions (W144)", () => {
 
   it("with root tabs: a session under the other root opens in its tab and group, in one pushed entry, and one Back returns to the PR", async () => {
     const start = prSearch(`?repo=${at(PERSONAL, 'blog')}&root=${PERSONAL}`);
-    const { history } = renderDashboard(twoRoots(undefined, { api: linkedApi, blog: linkedBlog }), { search: start, prs });
+    const { history } = renderAppShell(twoRoots(undefined, { api: linkedApi, blog: linkedBlog }), { search: start, prs });
     await settle();
     expect(prView()).toBeDefined();
     await openFromPrView(started.name);
@@ -244,7 +244,7 @@ describe("from a PR view's Sessions (W144)", () => {
 
   it('keeps a group that already lists it', async () => {
     const start = prSearch(`?repo=${at(PERSONAL, 'blog')}&root=${PERSONAL}`);
-    const { history } = renderDashboard(twoRoots(undefined, { api: linkedApi, blog: linkedBlog }), { search: start, prs });
+    const { history } = renderAppShell(twoRoots(undefined, { api: linkedApi, blog: linkedBlog }), { search: start, prs });
     await settle();
     await openFromPrView(inBlog.name);
     expect(history.entries).toEqual([start, `?repo=${at(PERSONAL, 'blog')}&root=${PERSONAL}&session=${inBlog.sessionId}`]);
@@ -254,13 +254,13 @@ describe("from a PR view's Sessions (W144)", () => {
 
   it('with one root: Pull requests, a view, keeps it; a group that does not list it gives way', async () => {
     const one = oneRoot(undefined, linkedApi);
-    const first = renderDashboard(one, { search: '?view=prs&pr=example/blog/7', prs });
+    const first = renderAppShell(one, { search: '?view=prs&pr=example/blog/7', prs });
     await settle();
     await openFromPrView(started.name);
     expect(first.history.location.search).toBe(`?view=prs&session=${started.sessionId}`);
     first.unmount();
 
-    const { history } = renderDashboard(one, { search: prSearch(`?repo=${at(WORK, 'web')}`), prs });
+    const { history } = renderAppShell(one, { search: prSearch(`?repo=${at(WORK, 'web')}`), prs });
     await settle();
     await openFromPrView(started.name);
     expect(history.entries).toEqual([prSearch(`?repo=${at(WORK, 'web')}`), `?repo=${at(WORK, 'api')}&session=${started.sessionId}`]);

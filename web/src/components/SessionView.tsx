@@ -12,7 +12,7 @@
 // A session that needs you can be flagged (W153) or snoozed (W154) from the actions menu, and the flag
 // or snooze taken off from there too. While it's set aside, its status badge is outlined, with "You
 // flagged this" or "Snoozed until 14:30" after it, as its row has; once a snooze ended by itself,
-// "Snooze ended" or "Woken: a new turn". The server keeps both; the Dashboard says so in a toast.
+// "Snooze ended" or "Woken: a new turn". The server keeps both; the AppShell says so in a toast.
 //
 // An ended interactive session (W67), whose process has exited, has the Conversation tab alone, Ended
 // as its status, and in the footer a note with Resume in background and Copy command, which its actions
@@ -37,7 +37,7 @@
 // after. A view opened by stepping (j, k, ↑, ↓) waits before its terminal attaches (Terminal.tsx).
 //
 // The terminal takes focus as it attaches only right after you asked for it in this page (W57,
-// focusGesture.ts): a click or Enter on the session's row (`openedBy`, from the Dashboard), on the
+// focusGesture.ts): a click or Enter on the session's row (`openedBy`, from the AppShell), on the
 // Terminal tab, on Attach again or on Restart and attach, and only while focus is still in the view.
 // A view opened from the URL, a reload, back or forward, a root tab's switch or a step attaches as
 // W54 has it, but leaves focus where it is, and the terminal's bar says how to type to it. A setting
@@ -56,7 +56,7 @@
 // header's PR links (W95) name the ones it owns.
 //
 // The conversation is its own component (Conversation.tsx, W27), and the terminal's internals are
-// W29's. The message box (RelayBox) and the inline confirmations (SessionActions, and the terminal's
+// W29's. The message box (MessageBox) and the inline confirmations (SessionActions, and the terminal's
 // restart) are W24's; the tooltips, toasts and copy buttons are W25's.
 
 import { Fragment, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
@@ -73,7 +73,7 @@ import { FileLinksContext, useFileLinks } from './FileLinks.js';
 import { focusGesture, spendGesture, type FocusGesture } from '../focusGesture.js';
 import { DEFAULT_TERMINAL_FOCUS, type TerminalFocus } from '../terminalFocus.js';
 import { formatRoots, plainText, shortenHome } from '../format.js';
-import { PANEL_MENU_STEP, PANEL_MIN, panelLimits, panelReset, shownPanel, type PanelWidthStore } from '../panelWidth.js';
+import { SESSION_PANE_MENU_STEP, SESSION_PANE_MIN, sessionPaneLimits, sessionPaneReset, shownSessionPane, type SessionPaneWidthStore } from '../sessionPaneWidth.js';
 import { replyInConversation } from '../relay.js';
 import { finishedWaitingOnYou, WAITING_ON_TEXT, waitingPrLink } from '../recap.js';
 import { prNeedOf } from '../work.js';
@@ -115,7 +115,7 @@ const LEAD_ACTION_LABELS: Readonly<Record<LeadAction, string>> = {
 };
 const LEAD_ACTION_ICONS: Readonly<Record<LeadAction, IconName>> = { 'make-lead': 'subagents', 'not-lead': 'undo', 'start-worker': 'add', 'report-to': 'send', 'not-worker': 'undo' };
 import { MiddleEllipsis } from './MiddleEllipsis.js';
-import { RelayBox } from './RelayBox.js';
+import { MessageBox } from './MessageBox.js';
 import { SessionConfirm, useSessionActions } from './SessionActions.js';
 import { RecapStrip } from './RecapStrip.js';
 import { asideText, finishedAskedHint, finishedRecapHint, SESSION_VIEW_ID, STALE_HINT, titleHint } from './SessionRow.js';
@@ -243,7 +243,7 @@ export interface SessionPlacement {
 /** The actions menu's width items' tooltips, when they can't do anything. */
 export const WIDTH_HINTS = {
   wider: "It's as wide as this window allows.",
-  narrower: `It's as narrow as it goes, ${PANEL_MIN} px.`,
+  narrower: `It's as narrow as it goes, ${SESSION_PANE_MIN} px.`,
   reset: "It's at its usual width.",
 } as const;
 
@@ -283,7 +283,7 @@ export interface FrameProps {
 }
 
 /** The attribute that marks the supervisor's panel, whose Escape comes before a view's (W177). */
-export const PANEL_ATTRIBUTE = 'data-view-panel';
+export const SESSION_PANE_ATTRIBUTE = 'data-view-panel';
 
 /**
  * The view's region: a <section> named by its heading, which is a non-modal dialog when it overlays
@@ -306,7 +306,7 @@ export function Frame({ layout, id = SESSION_VIEW_ID, className, hidden = false,
   useEffect(() => {
     const onKey = (event: globalThis.KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented || hiddenRef.current) return;
-      const top = document.querySelector(`[${PANEL_ATTRIBUTE}]`);
+      const top = document.querySelector(`[${SESSION_PANE_ATTRIBUTE}]`);
       if (top !== null && top !== own.current) return;
       // The panel's Escape goes no further, even once it has gone: the browser runs the page's
       // updates between listeners, so a view's listener after this one would find no panel.
@@ -324,7 +324,7 @@ export function Frame({ layout, id = SESSION_VIEW_ID, className, hidden = false,
       hidden={hidden}
       className={['session-view', className, layout === 'column' ? 'in-column' : 'overlay', panel && 'view-panel', opening && 'opening'].filter(Boolean).join(' ')}
       {...(layout === 'overlay' ? { role: 'dialog', 'aria-modal': false } : panel ? { role: 'complementary' } : {})}
-      {...(panel ? { [PANEL_ATTRIBUTE]: '' } : {})}
+      {...(panel ? { [SESSION_PANE_ATTRIBUTE]: '' } : {})}
       aria-labelledby={titleId}
       onAnimationEnd={(event) => {
         if (event.target === event.currentTarget) setOpening(false);
@@ -400,7 +400,7 @@ export interface SessionViewProps {
    * The view's width as the third column, which the divider also changes: the actions menu then has
    * Make view wider, Make view narrower and Reset view width, so it can be resized without a drag.
    */
-  panel?: PanelWidthStore | undefined;
+  panel?: SessionPaneWidthStore | undefined;
   /** In a root tab that isn't open (W38): kept, hidden, so its terminal, draft and sends carry on. */
   hidden?: boolean;
   /** Its star toggle, before the actions menu (W53): whether it's starred, and a way to star or unstar it. */
@@ -420,7 +420,7 @@ export interface SessionViewProps {
   /**
    * The tab a running background session's view opens on (W54), Preferences' Open running
    * background sessions on, read as the view is first shown. Left out, as the gallery's specimens and
-   * the tests of a view alone do, it opens on Conversation. The Dashboard always gives it.
+   * the tests of a view alone do, it opens on Conversation. The AppShell always gives it.
    */
   backgroundTab?: BackgroundTab | undefined;
   /**
@@ -905,7 +905,7 @@ export function SessionView({
   }, [prompting]);
   useEffect(() => () => onPromptRef.current?.(false), []);
   // What the width items can do, which changes only at the limits, so a drag doesn't re-render the view.
-  const limits = useSyncExternalStore(panel?.subscribe ?? noStore, () => (panel ? panelLimits(panel.get()) : ''));
+  const limits = useSyncExternalStore(panel?.subscribe ?? noStore, () => (panel ? sessionPaneLimits(panel.get()) : ''));
   const [canWiden, canNarrow, canReset] = limits.split('|').map((part) => part !== '');
   const widthEntries: MenuEntry[] = panel
     ? [
@@ -915,16 +915,16 @@ export function SessionView({
           label: 'Make view wider',
           disabled: !canWiden,
           hint: WIDTH_HINTS.wider,
-          onSelect: () => panel.set(shownPanel(panel.get()) + PANEL_MENU_STEP, true),
+          onSelect: () => panel.set(shownSessionPane(panel.get()) + SESSION_PANE_MENU_STEP, true),
         },
         {
           id: 'narrower',
           label: 'Make view narrower',
           disabled: !canNarrow,
           hint: WIDTH_HINTS.narrower,
-          onSelect: () => panel.set(shownPanel(panel.get()) - PANEL_MENU_STEP, true),
+          onSelect: () => panel.set(shownSessionPane(panel.get()) - SESSION_PANE_MENU_STEP, true),
         },
-        { id: 'reset-width', label: 'Reset view width', disabled: !canReset, hint: WIDTH_HINTS.reset, onSelect: () => panel.set(panelReset(panel.get().appWidth), true) },
+        { id: 'reset-width', label: 'Reset view width', disabled: !canReset, hint: WIDTH_HINTS.reset, onSelect: () => panel.set(sessionPaneReset(panel.get().appWidth), true) },
       ]
     : [];
   // One item per editor the server found (W72), while it's listed and its directory exists: an ended
@@ -1385,7 +1385,7 @@ export function SessionView({
           <footer className="session-view-foot" hidden={tab === 'subagents'}>
             {/* An ended session has no message box, except to keep a draft, which is never lost to the session going (W31). */}
             {(!ended || drafting) && (
-              <RelayBox
+              <MessageBox
                 session={session}
                 listed={listed}
                 replyShown={replyShown}

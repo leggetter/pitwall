@@ -23,7 +23,7 @@
  */
 @media (min-width: 900px) {
   .dialog.preferences-dialog {
-    width: min(var(--pw-dialog-lg), 100%, 100vw - 2 * var(--pw-sidebar-w));
+    width: min(var(--pw-dialog-lg), 100%, 100vw - 2 * var(--pw-repo-list-w));
   }
 }
 

@@ -11,7 +11,7 @@ import type { StorageSource } from '../groupState.js';
 import { ASK_PR_TITLE_MAX, ASK_SUPERVISOR, askAboutPr, askAboutSession } from '../supervisor.js';
 import { group, pr, prList, session, snapshot, withoutSubagents } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 
 const ROOT = '/Users/example/code';
 const alpha = session({ sessionId: '00000000-0000-4000-8000-00000000a178', name: 'pitwall-test-alpha', cwd: `${ROOT}/demo-app` });
@@ -27,7 +27,7 @@ function memory(): StorageSource {
   return () => ({ getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => void values.set(key, value) });
 }
 
-function renderDashboard(first: IndexSnapshot, search = '?view=all') {
+function renderAppShell(first: IndexSnapshot, search = '?view=all') {
   const fetch = vi.fn<FetchLike>(async (url) => {
     if (url.startsWith('/api/supervisor')) return new Response('{}', { status: 404 });
     return new Response(JSON.stringify({ sessionId: 'x', entries: [] }), { status: 200 });
@@ -37,7 +37,7 @@ function renderDashboard(first: IndexSnapshot, search = '?view=all') {
   const storage = memory();
   render(
     <ApiContext.Provider value={api}>
-      <Dashboard view={{ state: 'live', snapshot: first, prs: prList([change]) }} navigation={history.navigation} storage={storage} />
+      <AppShell view={{ state: 'live', snapshot: first, prs: prList([change]) }} navigation={history.navigation} storage={storage} />
     </ApiContext.Provider>,
   );
   return { fetch, history };
@@ -68,7 +68,7 @@ describe('the texts', () => {
 
 describe('Ask the supervisor from a session', () => {
   it('opens the panel with the box started for you, focus in it, and sends nothing', async () => {
-    const { fetch, history } = renderDashboard(snap());
+    const { fetch, history } = renderAppShell(snap());
     await askFromMenu();
     expect(history.location.search).toContain('supervisor');
     expect(box().value).toBe(askAboutSession(alpha));
@@ -77,7 +77,7 @@ describe('Ask the supervisor from a session', () => {
   });
 
   it('adds to a draft already in the box, on a line of its own, instead of replacing it', async () => {
-    renderDashboard(snap(), '?view=all&supervisor');
+    renderAppShell(snap(), '?view=all&supervisor');
     await settle();
     fireEvent.change(box(), { target: { value: 'First, a thought' } });
     await askFromMenu();
@@ -85,7 +85,7 @@ describe('Ask the supervisor from a session', () => {
   });
 
   it('is not offered while pitwall runs no supervisor', async () => {
-    renderDashboard(snap(null));
+    renderAppShell(snap(null));
     fireEvent.click(screen.getByRole('button', { name: alpha.name }));
     await settle();
     fireEvent.click(within(sessionView()).getByRole('button', { name: 'Session actions' }));
@@ -95,7 +95,7 @@ describe('Ask the supervisor from a session', () => {
 
 describe('Ask the supervisor from a PR', () => {
   it('is a button in the PR view that starts the box with the PR, and sends nothing', async () => {
-    const { fetch } = renderDashboard(snap(), '?view=prs&pr=example/demo-app/31');
+    const { fetch } = renderAppShell(snap(), '?view=prs&pr=example/demo-app/31');
     await settle();
     const view = document.getElementById('pr-view')!;
     fireEvent.click(within(view).getByRole('button', { name: ASK_SUPERVISOR }));
@@ -105,7 +105,7 @@ describe('Ask the supervisor from a PR', () => {
   });
 
   it('is not offered while pitwall runs no supervisor', async () => {
-    renderDashboard(snap(null), '?view=prs&pr=example/demo-app/31');
+    renderAppShell(snap(null), '?view=prs&pr=example/demo-app/31');
     await settle();
     expect(within(document.getElementById('pr-view')!).queryByRole('button', { name: ASK_SUPERVISOR })).toBeNull();
   });

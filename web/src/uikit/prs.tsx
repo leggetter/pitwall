@@ -1,5 +1,5 @@
 // Pull requests (M4, W95, W106; docs/design-system.md, 4: Pull requests): the real RepoList,
-// SessionList's rows, PrRow, PrView, SessionView and the Dashboard, with made-up PRs in public-looking
+// SessionList's rows, PrRow, PrView, SessionView and the AppShell, with made-up PRs in public-looking
 // repos and invented titles. A row is a piece of work (W106): the repo list's counts, with a cloned
 // repo of PR rows alone and one that isn't cloned; session rows with the PRs they own and PR rows with
 // none; the Pull requests view in each state, with its hidden line and Show older; the PR view with
@@ -12,7 +12,7 @@
 import { useState } from 'react';
 import type { PullRequestList, PullRequestPlace, PullRequestSummary, SessionSummary } from '../../../src/shared/protocol.js';
 import { ClonedNotice, CloneDialog } from '../components/CloneDialog.js';
-import { Dashboard } from '../components/Dashboard.js';
+import { AppShell } from '../components/AppShell.js';
 import { NewSessionDialog } from '../components/NewSessionDialog.js';
 import { PrRow, PrStartButton } from '../components/PrRow.js';
 import { PrView, UnlistedPrView, WaitingPrView } from '../components/PrView.js';
@@ -151,7 +151,7 @@ function Page({ search, prs = list() }: { search: string; prs?: PullRequestList 
   const [own] = useState(() => ({ storage: memoryStorage(), navigation: memoryNavigation(search) }));
   return (
     <Stubbed>
-      <Dashboard view={{ state: 'live', snapshot: snapshot(GROUPS), prs }} storage={own.storage} navigation={own.navigation} />
+      <AppShell view={{ state: 'live', snapshot: snapshot(GROUPS), prs }} storage={own.storage} navigation={own.navigation} />
     </Stubbed>
   );
 }

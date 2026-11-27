@@ -97,7 +97,7 @@ const SECTIONS: Section[] = [
     Content: SupervisorSpecimens,
   },
   { id: 'menus', title: 'Menus', intro: 'MenuButton: an icon button and its menu, which the session view\'s actions use, and its radio group, which nothing in the app uses since Preferences became a dialog (W59).', Content: Menus },
-  { id: 'message-box', title: 'Message box', intro: "RelayBox, in the session view's footer: typing, at and over the limit, sending, each send's result, the latest exchange, a session that can't be messaged, and a draft the tab kept through a reload.", Content: MessageBoxes },
+  { id: 'message-box', title: 'Message box', intro: "MessageBox, in the session view's footer: typing, at and over the limit, sending, each send's result, the latest exchange, a session that can't be messaged, and a draft the tab kept through a reload.", Content: MessageBoxes },
   {
     id: 'confirmations',
     title: 'Inline confirmations',
@@ -134,13 +134,13 @@ const SECTIONS: Section[] = [
     id: 'page-states',
     title: 'Page states',
     intro:
-      "The whole Dashboard in a window 560 px tall, at the gallery's width: the skeletons and the long-wait line before the first snapshot, the selections, alerts, filters and every empty state. Each column scrolls.",
+      "The whole AppShell in a window 560 px tall, at the gallery's width: the skeletons and the long-wait line before the first snapshot, the selections, alerts, filters and every empty state. Each column scrolls.",
     Content: Pages,
   },
   {
     id: 'layouts',
     title: 'Layouts',
-    intro: 'The whole Dashboard in windows of set widths, for one, two and three columns, with the session view in each, and the divider at its limits. A window wider than the gallery is scaled down to fit it, whole.',
+    intro: 'The whole AppShell in windows of set widths, for one, two and three columns, with the session view in each, and the divider at its limits. A window wider than the gallery is scaled down to fit it, whole.',
     Content: Layouts,
   },
   {

@@ -14,7 +14,7 @@ import { GROUP_BY_KEY, type GroupBy } from '../groupBy.js';
 import type { StorageSource } from '../groupState.js';
 import { group, minutesAgo, NOW, session, snapshot, withoutSubagents } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 
 const ROOT = '/Users/example/code';
 const APP = `${ROOT}/demo-app`;
@@ -87,7 +87,7 @@ function fakeServer() {
   });
 }
 
-function renderDashboard(first: IndexSnapshot, options: { search?: string; mode?: GroupBy } = {}) {
+function renderAppShell(first: IndexSnapshot, options: { search?: string; mode?: GroupBy } = {}) {
   const history = fakeHistory(options.search ?? '?view=all');
   const fetch = fakeServer();
   const api = createApiClient({ apiKey: 'k'.repeat(43), fetch: withoutSubagents(fetch) });
@@ -95,7 +95,7 @@ function renderDashboard(first: IndexSnapshot, options: { search?: string; mode?
   const storage = memory({ [BACKGROUND_TAB_KEY]: 'conversation', ...(options.mode ? { [GROUP_BY_KEY]: options.mode } : {}) });
   const ui = (s: IndexSnapshot) => (
     <ApiContext.Provider value={api}>
-      <Dashboard view={{ state: 'live', snapshot: s }} navigation={history.navigation} storage={storage} />
+      <AppShell view={{ state: 'live', snapshot: s }} navigation={history.navigation} storage={storage} />
     </ApiContext.Provider>
   );
   const result = render(ui(first));
@@ -150,7 +150,7 @@ afterEach(() => {
 
 describe('selecting a group with a session open (W139)', () => {
   it('closes a session the group does not list, in the one pushed entry, to "Select a session"', async () => {
-    const { history } = renderDashboard(oneRoot());
+    const { history } = renderAppShell(oneRoot());
     await open('demo-a');
     await choose('notes');
     expect(history.entries).toEqual(['?view=all', `?view=all&session=${A}`, `?repo=${NOTES}`]);
@@ -159,7 +159,7 @@ describe('selecting a group with a session open (W139)', () => {
   });
 
   it('keeps a session the group lists, adding the selection to its entry', async () => {
-    const { history } = renderDashboard(oneRoot());
+    const { history } = renderAppShell(oneRoot());
     await open('demo-a');
     await choose('demo-app');
     expect(history.location.search).toBe(`?repo=${APP}&session=${A}`);
@@ -167,7 +167,7 @@ describe('selecting a group with a session open (W139)', () => {
   });
 
   it('keeps it when the filter hides it in the group', async () => {
-    const { history } = renderDashboard(oneRoot());
+    const { history } = renderAppShell(oneRoot());
     await open('demo-a');
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'demo-b' } });
     await choose('demo-app');
@@ -177,7 +177,7 @@ describe('selecting a group with a session open (W139)', () => {
   });
 
   it("keeps a finished one, in the group's collapsed Finished section", async () => {
-    const { history } = renderDashboard(oneRoot(), { search: `?view=all&session=${DONE}` });
+    const { history } = renderAppShell(oneRoot(), { search: `?view=all&session=${DONE}` });
     await settle();
     await choose('demo-app');
     expect(within(main()).queryByRole('button', { name: 'demo-done' })).toBeNull();
@@ -186,7 +186,7 @@ describe('selecting a group with a session open (W139)', () => {
   });
 
   it('keeps an older ended one that Show older hides, and closes it for another group', async () => {
-    const { history } = renderDashboard(oneRoot(), { search: `?view=all&session=${OLD}` });
+    const { history } = renderAppShell(oneRoot(), { search: `?view=all&session=${OLD}` });
     await settle();
     expect(viewName()).toBe('demo-old');
     await choose('demo-app');
@@ -197,7 +197,7 @@ describe('selecting a group with a session open (W139)', () => {
   });
 
   it('keeps a starred one in its group, and Starred, as a view, keeps any', async () => {
-    const { history } = renderDashboard(oneRoot());
+    const { history } = renderAppShell(oneRoot());
     await open('demo-a');
     fireEvent.click(within(main()).getByRole('button', { name: 'Star demo-a' }));
     await choose('demo-app');
@@ -209,7 +209,7 @@ describe('selecting a group with a session open (W139)', () => {
   });
 
   it('views keep the open session as before: Needs you and All sessions', async () => {
-    const { history } = renderDashboard(oneRoot(), { search: `?repo=${NOTES}` });
+    const { history } = renderAppShell(oneRoot(), { search: `?repo=${NOTES}` });
     await open('notes-tidy');
     await choose('Needs you');
     expect(history.location.search).toBe(`?view=needs-you&session=${N}`);
@@ -219,7 +219,7 @@ describe('selecting a group with a session open (W139)', () => {
   });
 
   it('back returns to the session and the group it was under; forward closes it again', async () => {
-    const { history } = renderDashboard(oneRoot(), { search: `?repo=${APP}` });
+    const { history } = renderAppShell(oneRoot(), { search: `?repo=${APP}` });
     await open('demo-a');
     await choose('notes');
     expect(view()).toBeUndefined();
@@ -235,7 +235,7 @@ describe('selecting a group with a session open (W139)', () => {
   });
 
   it('a deep link to a group and a session it does not list shows both, as the URL says, until a group is chosen', async () => {
-    const { history } = renderDashboard(oneRoot(), { search: `?repo=${NOTES}&session=${A}` });
+    const { history } = renderAppShell(oneRoot(), { search: `?repo=${NOTES}&session=${A}` });
     await settle();
     expect(history.entries).toEqual([`?repo=${NOTES}&session=${A}`]);
     expect(viewName()).toBe('demo-a');
@@ -246,7 +246,7 @@ describe('selecting a group with a session open (W139)', () => {
   });
 
   it('a session that leaves the list on its own stays open; choosing its group then closes it', async () => {
-    const { update, history } = renderDashboard(oneRoot(), { search: `?repo=${APP}` });
+    const { update, history } = renderAppShell(oneRoot(), { search: `?repo=${APP}` });
     await open('demo-a');
     update(oneRoot({ app: [session({ sessionId: B, name: 'demo-b', cwd: APP })] }));
     await settle();
@@ -259,7 +259,7 @@ describe('selecting a group with a session open (W139)', () => {
 
   it('from the drawer below 900 px, too', async () => {
     setWidth(800);
-    const { history } = renderDashboard(oneRoot(), { search: `?repo=${APP}&session=${A}` });
+    const { history } = renderAppShell(oneRoot(), { search: `?repo=${APP}&session=${A}` });
     await settle();
     fireEvent.click(screen.getByRole('button', { name: 'Repos' }));
     const drawer = screen.getByRole('dialog', { name: 'Repos' });
@@ -273,7 +273,7 @@ describe('selecting a group with a session open (W139)', () => {
 
 describe('with groupings and root tabs (W139)', () => {
   it('Every repo it worked in: any group that lists the session keeps it, not only its home group', async () => {
-    const { history } = renderDashboard(twoRoots(), { mode: 'every-repo', search: `?repo=${at(WORK, 'api')}&root=${WORK}` });
+    const { history } = renderAppShell(twoRoots(), { mode: 'every-repo', search: `?repo=${at(WORK, 'api')}&root=${WORK}` });
     await settle();
     await open('cross');
     await choose('web');
@@ -285,7 +285,7 @@ describe('with groupings and root tabs (W139)', () => {
   });
 
   it('Main repo lists it under its main repo in the root it started in alone (W149): api keeps it, and web closes it', async () => {
-    const { history } = renderDashboard(twoRoots(), { mode: 'main-repo', search: `?view=all&root=${WORK}&session=${CROSS}` });
+    const { history } = renderAppShell(twoRoots(), { mode: 'main-repo', search: `?view=all&root=${WORK}&session=${CROSS}` });
     await settle();
     await choose('api');
     expect(history.location.search).toBe(`?repo=${at(WORK, 'api')}&root=${WORK}&session=${CROSS}`);
@@ -296,7 +296,7 @@ describe('with groupings and root tabs (W139)', () => {
   });
 
   it('a root tab change brings back the session its tab had open, as before', async () => {
-    const { history } = renderDashboard(twoRoots(), { mode: 'where-started', search: `?repo=${at(WORK, 'api')}&root=${WORK}` });
+    const { history } = renderAppShell(twoRoots(), { mode: 'where-started', search: `?repo=${at(WORK, 'api')}&root=${WORK}` });
     await settle();
     await open('in-api');
     fireEvent.click(tab('personal'));

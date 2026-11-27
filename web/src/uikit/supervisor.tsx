@@ -1,4 +1,4 @@
-// The supervisor (M5, W114): the real header button (W182) in each of its states, the real SupervisorView in
+// The supervisor (M5, W114): the real header button (W182) in each of its states, the real SupervisorPanel in
 // each of the supervisor's states, its draft cards of both kinds, editing, sending and failing, its
 // message box sending, queued, refused and stopping, and the page with Needs you saying its drafts
 // wait. Each specimen has its own stub API (stubs.ts) and its own drafts in memory, so typing in one
@@ -7,9 +7,9 @@
 import { useState, type ReactNode } from 'react';
 import type { IndexSnapshot, SupervisorApproval, SupervisorState } from '../../../src/shared/protocol.js';
 import { AppStrips } from '../components/AppStrip.js';
-import { Dashboard } from '../components/Dashboard.js';
+import { AppShell } from '../components/AppShell.js';
 import { SupervisorButton } from '../components/SupervisorButton.js';
-import { SupervisorOffView, SupervisorView } from '../components/SupervisorView.js';
+import { SupervisorOffPanel, SupervisorPanel } from '../components/SupervisorPanel.js';
 import { ToastProvider } from '../components/Toast.js';
 import { DraftStorageContext } from '../drafts.js';
 import { memoryNavigation } from '../selection.js';
@@ -37,7 +37,7 @@ function View({ state, options = {}, run }: { state: SupervisorState; options?: 
     <ToastProvider>
       <OwnDrafts>
         <Stubbed options={options}>
-          <SupervisorView state={state} onClose={noop} />
+          <SupervisorPanel state={state} onClose={noop} />
         </Stubbed>
       </OwnDrafts>
     </ToastProvider>
@@ -58,7 +58,7 @@ function Page({ state, search }: { state: SupervisorState; search: string }) {
   return (
     <OwnDrafts>
       <Stubbed>
-        <Dashboard view={{ state: 'live', snapshot: page }} storage={own.storage} navigation={own.navigation} />
+        <AppShell view={{ state: 'live', snapshot: page }} storage={own.storage} navigation={own.navigation} />
       </Stubbed>
     </OwnDrafts>
   );
@@ -137,7 +137,7 @@ export function SupervisorSpecimens() {
       </Specimen>
       <Specimen title="With --no-supervisor" note="A URL's ?supervisor when pitwall runs none." frame="short">
         <ToastProvider>
-          <SupervisorOffView onClose={noop} />
+          <SupervisorOffPanel onClose={noop} />
         </ToastProvider>
       </Specimen>
 

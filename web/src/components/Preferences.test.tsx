@@ -7,7 +7,7 @@
 // labels, the root tabs and their badges, the filter, hidden repos and ?session=; the stored mode; and
 // a switch that keeps the selection, or replaces it with focus kept, and leaves the session view open.
 // Open running background sessions on is W54's (TerminalFirst.test.tsx). Made-up sessions and paths
-// only. Where it started, W39's listing, is in Dashboard.test.tsx too.
+// only. Where it started, W39's listing, is in AppShell.test.tsx too.
 
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
@@ -28,7 +28,7 @@ import { group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
 import { chosenPreference, choosePreference, openPreferences, preferenceOption, preferenceOptions, preferencesButton, preferencesDialog } from '../test/preferences.js';
 import { shownTooltip } from '../test/tooltips.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 
 const WORK = '/Users/example/work';
 const PERSONAL = '/Users/example/personal';
@@ -80,7 +80,7 @@ function memory(entries: Record<string, string> = {}): StorageSource & { values:
 const lightSystem = { matches: false, addEventListener: () => {} };
 
 /**
- * The Dashboard on made-up storage. The theme and the single-key shortcuts are their stores', which
+ * The AppShell on made-up storage. The theme and the single-key shortcuts are their stores', which
  * the header's switch and the keyboard shortcuts dialog set, here on storage of their own: `theme`
  * and `shortcuts`.
  */
@@ -96,7 +96,7 @@ function renderApp(options: { mode?: GroupBy; search?: string; storage?: Storage
       <ShortcutsStoreContext.Provider value={shortcutsStore}>{children}</ShortcutsStoreContext.Provider>
     </ThemeStoreContext.Provider>
   );
-  const ui = (snap: IndexSnapshot) => wrap(<Dashboard view={{ state: 'live', snapshot: snap }} navigation={history.navigation} storage={storage} />);
+  const ui = (snap: IndexSnapshot) => wrap(<AppShell view={{ state: 'live', snapshot: snap }} navigation={history.navigation} storage={storage} />);
   const result = render(ui(options.snap ?? twoRoots()));
   return { ...result, history, storage, theme, shortcuts, update: (snap: IndexSnapshot) => result.rerender(ui(snap)) };
 }
@@ -302,7 +302,7 @@ describe('the Preferences dialog', () => {
     expect(dialog.classList.contains('preferences-dialog')).toBe(true);
     // From the sidebar breakpoint, at most the window less the repo list's width on each side.
     const wide = block(withoutComments(preferencesCss), /@media \(min-width: 900px\)\s*\{/);
-    expect(declarations(block(wide, /\.dialog\.preferences-dialog\s*\{/))).toEqual([['width', 'min(var(--pw-dialog-lg), 100%, 100vw - 2 * var(--pw-sidebar-w))']]);
+    expect(declarations(block(wide, /\.dialog\.preferences-dialog\s*\{/))).toEqual([['width', 'min(var(--pw-dialog-lg), 100%, 100vw - 2 * var(--pw-repo-list-w))']]);
     const css = withoutComments(dialogCss);
     const card = declarations(block(css, /\n\.dialog\s*\{/));
     expect(card.filter(([property]) => property === 'max-height').map(([, value]) => value)).toContain('calc(100dvh - 2 * var(--pw-space-12))');

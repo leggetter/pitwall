@@ -10,7 +10,7 @@ import { block, declarations, withoutComments } from '../test/css.js';
 import { fakeSockets, group, NOW, session, snapshot, type FakeSocket } from '../test/fixtures.js';
 import { chooseFirstDirectory } from '../test/newSession.js';
 import { hover, unhover } from '../test/tooltips.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 import dialogCss from './Dialog.css?raw';
 import { NO_TRUST_COMMAND_TEXT, TRUST_TEXT } from './NewSessionDialog.js';
 import { TRUST_BUTTON, TRUST_HERE, TRUST_PROMPT_LINE, TRUSTED } from './TrustFolder.js';
@@ -63,11 +63,11 @@ function posts(fetch: ReturnType<typeof fakeServer>) {
     .map(([url, init]) => ({ url, body: JSON.parse(String(init.body)) as unknown, headers: init.headers as Record<string, string> }));
 }
 
-function renderDashboard(fetch: FetchLike | undefined, first: IndexSnapshot = snap(), env?: AttachEnv) {
+function renderAppShell(fetch: FetchLike | undefined, first: IndexSnapshot = snap(), env?: AttachEnv) {
   const api = fetch ? createApiClient({ apiKey: API_KEY, fetch }) : undefined;
   const ui = (s: IndexSnapshot) => {
     const view: ConnectionView = { state: 'live', snapshot: s };
-    const dashboard = <Dashboard view={view} />;
+    const dashboard = <AppShell view={view} />;
     return <ApiContext.Provider value={api}>{env ? <AttachContext.Provider value={env}>{dashboard}</AttachContext.Provider> : dashboard}</ApiContext.Provider>;
   };
   const result = render(ui(first));
@@ -145,7 +145,7 @@ beforeEach(() => {
 
 describe('New session: the dialog', () => {
   it('opens from the header, with the directory picker focused, offering the groups under a root, then the roots', () => {
-    renderDashboard(fakeServer(started));
+    renderAppShell(fakeServer(started));
     const dialog = openDialog({ choose: false });
 
     expect(dialog.getAttribute('aria-modal')).toBe('true');
@@ -165,7 +165,7 @@ describe('New session: the dialog', () => {
   });
 
   it('closes with Cancel and with Escape, and gives focus back to the button', () => {
-    renderDashboard(fakeServer(started));
+    renderAppShell(fakeServer(started));
     const button = screen.getByRole('button', { name: 'New session' });
     button.focus();
     fireEvent.click(within(openDialog()).getByRole('button', { name: 'Cancel' }));
@@ -183,7 +183,7 @@ describe('New session: the dialog', () => {
   });
 
   it('has a header with the title, the intro and Close, a body, and a footer with ⌘ ↵, Cancel and Start session', async () => {
-    renderDashboard(fakeServer(started));
+    renderAppShell(fakeServer(started));
     const dialog = openDialog();
 
     expect(dialog.querySelector('.dialog-title')?.textContent).toBe('New session');
@@ -203,7 +203,7 @@ describe('New session: the dialog', () => {
   });
 
   it('traps Tab inside, from the last control to the first and back', () => {
-    renderDashboard(fakeServer(started));
+    renderAppShell(fakeServer(started));
     const dialog = openDialog();
     const close = within(dialog).getByRole('button', { name: 'Close' });
     const start = within(dialog).getByRole('button', { name: 'Start session' });
@@ -217,7 +217,7 @@ describe('New session: the dialog', () => {
 
   it('starts the session with ⌘ Enter or Ctrl Enter from any field, and Enter alone in the prompt adds a line', async () => {
     const server = fakeServer(started, started);
-    renderDashboard(server);
+    renderAppShell(server);
     let dialog = openDialog();
     fill(dialog, { prompt: 'first' });
     fireEvent.keyDown(within(dialog).getByLabelText('First prompt'), { key: 'Enter' });
@@ -236,7 +236,7 @@ describe('New session: the dialog', () => {
 
   it('⌘ Enter checks the fields like Start session does, and puts focus on the first problem', async () => {
     const server = fakeServer(started);
-    renderDashboard(server);
+    renderAppShell(server);
     const dialog = openDialog();
     fill(dialog, { name: '-bad', prompt: '' });
     fireEvent.keyDown(within(dialog).getByLabelText('Directory'), { key: 'Enter', metaKey: true });
@@ -250,7 +250,7 @@ describe('New session: the dialog', () => {
   });
 
   it('shows no problems until the first submit, then follows the typing', async () => {
-    renderDashboard(fakeServer(started));
+    renderAppShell(fakeServer(started));
     const dialog = openDialog();
     fill(dialog, { name: '-bad' });
     expect(dialog.querySelector('.field-problem')).toBeNull();
@@ -265,7 +265,7 @@ describe('New session: the dialog', () => {
   });
 
   it('closes on a click on the backdrop only while nothing has been typed', () => {
-    renderDashboard(fakeServer(started));
+    renderAppShell(fakeServer(started));
     const button = screen.getByRole('button', { name: 'New session' });
     button.focus();
     // Choosing a directory is a change, as typing is, so this one leaves Directory as it opened.
@@ -309,7 +309,7 @@ describe('New session: the dialog', () => {
   });
 
   it("isn't offered before the first snapshot", () => {
-    render(<Dashboard view={{ state: 'connecting', snapshot: undefined }} />);
+    render(<AppShell view={{ state: 'connecting', snapshot: undefined }} />);
     expect(screen.queryByRole('button', { name: 'New session' })).toBeNull();
   });
 });
@@ -317,7 +317,7 @@ describe('New session: the dialog', () => {
 describe('New session: starting one', () => {
   it('posts the directory, prompt, name and model with the apiKey, closes, and opens the session once it is listed', async () => {
     const server = fakeServer(started);
-    const { update } = renderDashboard(server);
+    const { update } = renderAppShell(server);
     const dialog = openDialog();
     chooseDirectory(dialog, 'api');
     expect(directory(dialog).value).toBe('~/code/demo-api');
@@ -346,7 +346,7 @@ describe('New session: starting one', () => {
 
   it("started from the no-sessions empty state, focuses the new session's heading once it's listed, since the button it came from has gone (W31)", async () => {
     const server = fakeServer(started);
-    const { update } = renderDashboard(server, snapshot([]));
+    const { update } = renderAppShell(server, snapshot([]));
     const fromEmpty = within(screen.getByRole('main')).getByRole('button', { name: 'New session' });
     // A click focuses the button it's on, as a browser's does.
     fromEmpty.focus();
@@ -366,7 +366,7 @@ describe('New session: starting one', () => {
 
   it('started from the header, leaves focus on its New session button when the view opens', async () => {
     const server = fakeServer(started);
-    const { update } = renderDashboard(server);
+    const { update } = renderAppShell(server);
     const header = within(document.querySelector<HTMLElement>('.app-header')!).getByRole('button', { name: 'New session' });
     header.focus();
     await submit(fill2(openDialog()));
@@ -380,7 +380,7 @@ describe('New session: starting one', () => {
 
   it('leaves out an empty name and the default model, and uses a typed directory and model', async () => {
     const server = fakeServer(started, started);
-    renderDashboard(server);
+    renderAppShell(server);
     let dialog = openDialog();
     fill(dialog, { prompt: 'first' });
     await submit(dialog);
@@ -401,7 +401,7 @@ describe('New session: starting one', () => {
 
   it("says what's wrong before sending: no prompt, a bad name, a path outside the roots, a bad model", async () => {
     const server = fakeServer(started);
-    renderDashboard(server);
+    renderAppShell(server);
     const dialog = openDialog();
     await submit(dialog);
     expect(within(dialog).getByText('Write the first prompt.')).toBeTruthy();
@@ -439,7 +439,7 @@ describe('New session: starting one', () => {
   it('shows "Starting…" and ignores Escape and a second submit while the request is out', async () => {
     let answer: (response: Response) => void = () => {};
     const server = vi.fn<FetchLike>(() => new Promise<Response>((resolve) => (answer = resolve)));
-    renderDashboard(server);
+    renderAppShell(server);
     const dialog = openDialog();
     fill(dialog, { prompt: 'go' });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
@@ -480,14 +480,14 @@ describe('New session: starting one', () => {
   });
 
   it('styles its fields and the first prompt’s textarea with the placeholder rule in actions.css', () => {
-    renderDashboard(fakeServer(started));
+    renderAppShell(fakeServer(started));
     const dialog = openDialog();
     expect(within(dialog).getByLabelText('First prompt').classList.contains('field-input')).toBe(true);
     expect((within(dialog).getByPlaceholderText('Claude Code names it from the prompt') as HTMLInputElement).classList.contains('field-input')).toBe(true);
   });
 
   it('keeps the session view behind it open on Escape', async () => {
-    renderDashboard(fakeServer(started));
+    renderAppShell(fakeServer(started));
     fireEvent.click(screen.getByRole('button', { name: 'demo-docs' }));
     await settle();
     const view = screen.getByRole('dialog', { name: 'demo-docs' });
@@ -511,7 +511,7 @@ describe('New session: when it is refused', () => {
   it("shows Claude Code's untrusted-workspace error, and the command to run with a copy button", async () => {
     const writeText = vi.fn(async () => {});
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
-    renderDashboard(fakeServer(untrusted), snap(), trustEnv().env);
+    renderAppShell(fakeServer(untrusted), snap(), trustEnv().env);
     const dialog = openDialog();
     fill(dialog, { prompt: 'go' });
     await submit(dialog);
@@ -542,7 +542,7 @@ describe('New session: when it is refused', () => {
 
   it("says in its own words, not in code style, why there's no command when an untrusted directory's 422 has no hint, as for a path with a ' or \\ (W87)", async () => {
     const error = `Workspace not trusted. Run \`claude\` in ${REPO} once and accept the trust prompt, then retry.`;
-    renderDashboard(fakeServer({ status: 422, body: { ok: false, error } }, { status: 409, body: { ok: false, error: 'Something else.' } }), snap(), trustEnv().env);
+    renderAppShell(fakeServer({ status: 422, body: { ok: false, error } }, { status: 409, body: { ok: false, error: 'Something else.' } }), snap(), trustEnv().env);
     const dialog = openDialog();
     fill(dialog, { prompt: 'go' });
     await submit(dialog);
@@ -566,7 +566,7 @@ describe('New session: when it is refused', () => {
   });
 
   it('shows any other error without a command, and a status when the answer is not JSON', async () => {
-    renderDashboard(fakeServer({ status: 429, body: { ok: false, error: 'Another session is still starting. Try again in a moment.' } }, { status: 500 }));
+    renderAppShell(fakeServer({ status: 429, body: { ok: false, error: 'Another session is still starting. Try again in a moment.' } }, { status: 500 }));
     const dialog = openDialog();
     fill(dialog, { prompt: 'go' });
     await submit(dialog);
@@ -592,7 +592,7 @@ describe('New session: Trust this folder… (W214)', () => {
   it('opens the prompt for the folder the request named, and once trusted sends the same request again, once, which starts the session', async () => {
     const { env, sockets } = trustEnv();
     const fetch = fakeServer(untrusted, started);
-    renderDashboard(fetch, snap(), env);
+    renderAppShell(fetch, snap(), env);
     const dialog = openDialog();
     fill(dialog, { prompt: 'go', name: 'pitwall-test-trust' });
     await submit(dialog);
@@ -617,7 +617,7 @@ describe('New session: Trust this folder… (W214)', () => {
   it('a second 422 after trusted brings the card back with the button, and opens nothing by itself', async () => {
     const { env, sockets } = trustEnv();
     const fetch = fakeServer(untrusted, untrusted);
-    renderDashboard(fetch, snap(), env);
+    renderAppShell(fetch, snap(), env);
     const dialog = openDialog();
     fill(dialog, { prompt: 'go' });
     await submit(dialog);
@@ -636,7 +636,7 @@ describe('New session: Trust this folder… (W214)', () => {
   it('declined: says so in the card and sends nothing again', async () => {
     const { env, sockets } = trustEnv();
     const fetch = fakeServer(untrusted, started);
-    renderDashboard(fetch, snap(), env);
+    renderAppShell(fetch, snap(), env);
     const dialog = openDialog();
     fill(dialog, { prompt: 'go' });
     await submit(dialog);
