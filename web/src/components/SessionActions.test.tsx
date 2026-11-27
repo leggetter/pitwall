@@ -93,7 +93,7 @@ describe('the actions menu', () => {
   it('has Copy session ID, Copy attach command, a separator, then Stop and Remove, for a background session', async () => {
     renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
     const bg = await openView('pitwall-test-bg');
-    expect(openMenu(bg)).toEqual(['Copy session ID', 'Copy attach command', '—', 'Stop session', 'Remove session']);
+    expect(openMenu(bg)).toEqual(['Copy session ID', 'Copy attach command', '—', 'Make lead', '—', 'Stop session', 'Remove session']);
     expect(item(bg, 'Remove session').className).toContain('danger');
     expect(item(bg, 'Stop session').className).not.toContain('danger');
   });
@@ -101,7 +101,7 @@ describe('the actions menu', () => {
   it('has Copy session ID, then End session, for an interactive session, which keeps its /bg note', async () => {
     renderDashboard(fakeServer({ status: 200, body: { ok: true } }));
     const interactive = await openView('pitwall-test-interactive');
-    expect(openMenu(interactive)).toEqual(['Copy session ID', '—', 'End session']);
+    expect(openMenu(interactive)).toEqual(['Copy session ID', '—', 'Make lead', '—', 'End session']);
     expect(within(interactive).queryByRole('menuitem', { name: 'Remove session' })).toBeNull();
     expect(within(interactive).getByRole('button', { name: /Typing \/bg in its terminal moves it to the background/ })).toBeTruthy();
   });
@@ -109,7 +109,7 @@ describe('the actions menu', () => {
   it('leaves out Copy attach command when the short id fails the shell-safety check', async () => {
     renderDashboard(fakeServer({ status: 200, body: { ok: true } }), snap(background({ shortId: '$(touch pitwall-test)' })));
     const bg = await openView('pitwall-test-bg');
-    expect(openMenu(bg)).toEqual(['Copy session ID', '—', 'Stop session', 'Remove session']);
+    expect(openMenu(bg)).toEqual(['Copy session ID', '—', 'Make lead', '—', 'Stop session', 'Remove session']);
   });
 
   describe('copying', () => {
@@ -337,6 +337,8 @@ describe('End session, for a running interactive session (W90)', () => {
     expect(end.querySelector('svg')).toBeTruthy();
     const menu = within(interactive).getByRole('menu');
     expect(document.activeElement?.textContent).toBe('Copy session ID');
+    fireEvent.keyDown(menu, { key: 'ArrowDown' });
+    expect(document.activeElement?.textContent).toBe('Make lead');
     fireEvent.keyDown(menu, { key: 'ArrowDown' });
     expect(document.activeElement).toBe(end);
   });
