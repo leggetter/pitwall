@@ -382,13 +382,29 @@ Branch from `main`, merge into `main` (Phil, 2026-11-18). Planned during M5.4; b
   - `Dashboard` → `AppShell`; `--pw-sidebar-w` → `--pw-repo-list-w` (the `sidebar` layout mode keeps its name); `--pw-panel-w`, `--pw-panel-min-w` and `panelWidth` → `--pw-session-pane-w`, `--pw-session-pane-min-w` and `sessionPaneWidth`; `SupervisorView` → `SupervisorPanel`; `RelayBox` → `MessageBox`. Files, tests, the `#uikit` gallery and the app check's parts follow.
   - Stays: anything stored or sent. The `localStorage` key `pitwall.panel-width.v1` keeps its name, so a saved width survives; the relay's server routes and protocol keep "relay".
   - Done when: typecheck, `npm test` and the app check's touched parts pass with no change in behaviour; `docs/design-system.md` uses the new names; `docs/ui-map.md` drops its "Code now" column.
-  - Status (2026-11-27): in review. Beyond the five names, the session pane width module's exports follow it (`SESSION_PANE_*`, `sessionPaneMax`, `shownSessionPane` and the rest, `REPO_LIST_WIDTH`); the `.relay-box` class is `.message-box`. Kept: `--pw-view-w` (the width the divider sets at run time, not an alias to take out), `createSupervisorView` in the server (a snapshot view, not a region), `web/src/relay.ts`, `relay.css` and the `.relay-*` classes, `UnsureSendNote`, the `pitwall.panel-width.v1` key and its `SESSION_PANE_WIDTH_KEY` value, `data-layout="sidebar"`, and the history docs.
+  - Status (2026-11-27): merged into `main` in [#354](https://github.com/leggetter/pitwall/pull/354). Beyond the five names, the session pane width module's exports follow it (`SESSION_PANE_*`, `sessionPaneMax`, `shownSessionPane` and the rest, `REPO_LIST_WIDTH`), and the `.relay-box` class is `.message-box`. The coordinator's review put back `PANEL_KEEPS_REPOS`, `PANEL_AS_LAYOUT` and `PANEL_ATTRIBUTE`, all three the supervisor panel's, and renamed the session view's `panel` prop, its pane width store, to `paneWidth`. Kept: `--pw-view-w` (the width the divider sets at run time), `createSupervisorView` in the server (a snapshot view, not a region), `web/src/relay.ts`, `relay.css` and the `.relay-*` classes, the `pitwall.panel-width.v1` key, `data-layout="sidebar"`, and the history docs.
 - **W224, The session pane fills the browser window** ([#143](https://github.com/leggetter/pitwall/issues/143), `w224-session-pane-full-window`, M; after W223). Phil, 2026-11-27: set the session pane "to not be full screen but to take up the full browser window. It collapses the far-left view containing the repos and directories, as well as the list of sessions. Those can be expanded and opened again."
   - In the UI map's names: a control in the view header collapses the repo list and the session list, so the session pane fills the window under the header. The whole session pane stays: the view header, the recap strip, the tabs and the message box. The Terminal tab's columns refit to the new width.
   - Each collapsed column opens again on its own. The repo list can reuse W187's fold into the repo drawer; collapsing the session list is new.
   - Not true fullscreen (the browser's Fullscreen API): Phil, 2026-11-27, "not required". This replaces #143's first version, which gave the window to the Conversation or Terminal tab alone and hid the recap strip.
   - To decide while building, with screenshots: the control's icon and shortcut, how a collapsed column is opened again, whether the state is remembered or in the URL, and what happens below 1,200 px, where the session view already lies over the session list.
   - A UI change: an app-check part for the collapsed layout at the usual widths.
+  - The #143 comment, waiting on Phil's OK (2026-11-27), with the issue retitled "Session view: let the session pane fill the browser window":
+
+    ```markdown
+    Changing the scope of this one (2026-11-27). Rather than giving the whole window to the Conversation or Terminal tab, I'd like the session pane to fill the browser window.
+
+    - The repo list and the session list collapse, and I can open each one again on its own.
+    - The header stays. So does everything in the session pane, including the view header, the recap strip, the tabs and the message box.
+    - Not true fullscreen (the browser's Fullscreen API). Filling the browser window is enough.
+    - The Terminal's columns refit to the new width, as before.
+    - W187 already folds the repo list into the repo drawer when the supervisor panel needs room, so the repo list half can probably reuse that.
+
+    Region names are from `docs/ui-map.md`. Planned as W224, after the UI map (#353) and the renames to match it (#354).
+
+    > Posted by an AI agent with human oversight.
+    ```
+
 - **W214, Trust a folder from pitwall** (`w214-trust-in-pitwall`, S to M). Phil, 2026-11-26: "when you try and start a new session in a directory that hasn't already got Claude authenticated in there or permissioned in there, it's so frustrating to have to copy and paste the command and run it in the terminal. I don't understand why we can't just launch something in Pitwall to confirm permissions within the Pitwall app." Replaces the nice-to-have "Open in Terminal on the 'Workspace not trusted' card".
   - **The lean:** a "Trust this folder" button on the card opens a terminal in the page, through the PTY code the Terminal tab already uses, running `claude` in that folder, so Claude Code shows its own trust prompt and Phil answers it. pitwall then ends that `claude` and starts the session he asked for. pitwall still never writes trust itself: it lives in Claude Code's internal config.
   - **A spike first:** what `claude` shows in a new folder (the trust prompt, then the prompt box); how pitwall ends it cleanly once the prompt is answered; whether the answer holds for the next `claude --bg` there; and whether a repo cloned under a trusted root behaves the same (README, Caveats).
