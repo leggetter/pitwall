@@ -815,6 +815,10 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
    * The list's row buttons, a session's name or a PR row's title (W106), in the order shown, without
    * those in a collapsed Finished section.
    */
+  /** Where focus goes in the session list: its heading, or its rail's button while it's collapsed (W224). */
+  const listFocusTarget = (): HTMLElement | null | undefined =>
+    listRail ? app.current?.querySelector<HTMLElement>('.pane-rail [data-open-rail="list"]') : listHeading.current;
+
   const rowButtons = useCallback(
     () => [...(app.current?.querySelectorAll<HTMLElement>('.session-list [data-open-session], .session-list [data-open-pr]') ?? [])].filter((button) => !button.closest('[hidden]')),
     [],
@@ -919,6 +923,8 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
     const id = rowIdOf(next);
     if (!next || id === undefined) return false;
     if (openRow === undefined) {
+      // A collapsed session list's rows can't take focus (W224): the key isn't one, so it isn't swallowed.
+      if (listRail) return false;
       closeMenus(root);
       next.focus();
       return true;
@@ -970,7 +976,8 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
     // The back button closed it: focus goes to the row only if it was inside the view, and so is lost now.
     const active = document.activeElement;
     if (!asked && active !== null && active !== document.body) return;
-    const restore = () => (rowButton(was) ?? listHeading.current)?.focus();
+    // With the session list collapsed (W224) its rows can't take focus, so its rail's button does.
+    const restore = () => (listRail ? listFocusTarget() : (rowButton(was) ?? listHeading.current))?.focus();
     if (layout === 'three-columns') {
       restore();
       return;
@@ -1039,7 +1046,7 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
     }
     const active = document.activeElement;
     if (!asked && active !== null && active !== document.body) return;
-    const restore = () => (prRowButton(was) ?? listHeading.current)?.focus();
+    const restore = () => (listRail ? listFocusTarget() : (prRowButton(was) ?? listHeading.current))?.focus();
     if (layout === 'three-columns') {
       restore();
       return;
@@ -1120,7 +1127,7 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
       (
         usable(opener) ??
         usable(supervisorButton.current) ??
-        (overlaid ? viewHeading.current : listHeading.current)
+        (overlaid ? viewHeading.current : listFocusTarget())
       )?.focus();
     if (layout === 'three-columns') {
       restore();
@@ -1321,6 +1328,20 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
     if (layout !== 'three-columns') return false;
     closeMenus(root);
     paneFill.toggle();
+    // A column that collapses hides what had focus in it, and a rail that goes takes its button with it:
+    // once the change has painted, focus goes to the control, else the view's heading, else the session
+    // list's rail or heading, so it's never lost to the page (W224's review).
+    requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active !== document.body && active.isConnected && active.getClientRects().length > 0) return;
+      const root = app.current;
+      (
+        root?.querySelector<HTMLElement>('.pane-fill-button') ??
+        viewHeading.current ??
+        root?.querySelector<HTMLElement>('.pane-rail [data-open-rail="list"]') ??
+        listHeading.current
+      )?.focus();
+    });
     return true;
   };
 

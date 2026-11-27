@@ -2539,7 +2539,7 @@ Claude Code's own trust prompt for a folder it hasn't trusted (W214, spike 020),
 
 - **Component:** `ShortcutsDialog` (`web/src/components/ShortcutsDialog.tsx`), on `Dialog` with `size="sm"` (`--pw-dialog-sm`, 408 px), titled "Keyboard shortcuts". With nothing to submit, it has no footer; Close and Escape close it, and focus goes back to whatever opened it.
 - **Opened** by `?` or the header's `keyboard` icon button.
-- **The off switch** comes first, and takes focus as the dialog opens: a [checkbox](#inputs-textareas-and-selects), "Single-key shortcuts", that turns off `/`, `?`, `n`, `j`, `k` and `s` (WCAG 2.1.4, Character Key Shortcuts), with help text below it, indented to the label, linked with `aria-describedby`: "The keys under Anywhere, which are ignored while you type in a field. While they're off, the keyboard button in the header opens this dialog."
+- **The off switch** comes first, and takes focus as the dialog opens: a [checkbox](#inputs-textareas-and-selects), "Single-key shortcuts", that turns off `/`, `?`, `n`, `j`, `k`, `s` and `f` (WCAG 2.1.4, Character Key Shortcuts), with help text below it, indented to the label, linked with `aria-describedby`: "The keys under Anywhere, which are ignored while you type in a field. While they're off, the keyboard button in the header opens this dialog."
   - On by default. Stored in `localStorage` as `pitwall.shortcuts.v1`, `on` or `off`; anything else, nothing stored, or storage that's missing or throws reads as on, and a choice that can't be stored lasts until the page reloads.
   - One store holds it (`web/src/shortcuts.ts`), as the theme's does, so the checkbox, the filter field's key cap and every tooltip agree, and a change made in another tab arrives with the window's `storage` event.
   - While it's off, the Anywhere heading adds "Off" (meta, `--pw-text-muted`), and the rest of the map still works.
@@ -2664,7 +2664,7 @@ See the [table](#empty-states). Calm wording when there's nothing to do: "Nothin
 
 ### 6.2 Keyboard map
 
-Single-key shortcuts (`/`, `?`, `n`, `j`, `k`, `s`) work only while they're switched on, in the [shortcuts dialog](#keyboard-shortcuts-dialog), and never:
+Single-key shortcuts (`/`, `?`, `n`, `j`, `k`, `s`, `f`) work only while they're switched on, in the [shortcuts dialog](#keyboard-shortcuts-dialog), and never:
 
 - while focus is in a text field, a textarea, a select, something contenteditable or the terminal (`.xterm`), so typing is typing;
 - with ⌘, Ctrl or Alt held, so the browser's and the system's shortcuts are untouched (Shift is allowed, since `?` needs it on most layouts; `N`, `J`, `K` and `S` aren't shortcuts);

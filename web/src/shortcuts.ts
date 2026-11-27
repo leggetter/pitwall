@@ -143,8 +143,8 @@ const NO_REPEAT: ReadonlySet<Shortcut> = new Set(['new-session', 'shortcuts', 's
 /**
  * The single-key shortcut a key press is, if any. Not with ⌘, Ctrl or Alt held, not while typing,
  * not while an input method is composing, not for a key something nearer already handled, and not
- * when `n`, `?` or `s` repeats as the key is held. Shift is allowed, since some layouts need it for `/`
- * and most for `?`; it makes `n`, `j`, `k` and `s` capitals, which aren't shortcuts. Whether the
+ * when `n`, `?`, `s` or `f` repeats as the key is held. Shift is allowed, since some layouts need it for `/`
+ * and most for `?`; it makes `n`, `j`, `k`, `s` and `f` capitals, which aren't shortcuts. Whether the
  * shortcuts are on is the caller's to check.
  */
 export function shortcutFor(event: Pick<KeyboardEvent, 'key' | 'altKey' | 'ctrlKey' | 'metaKey' | 'repeat' | 'isComposing' | 'defaultPrevented' | 'target'>): Shortcut | undefined {

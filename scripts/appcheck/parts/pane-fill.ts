@@ -6,7 +6,8 @@
 // - the control collapses both columns, the pane fills the window, and the Terminal tab's columns grow to fit;
 // - each rail opens its column again on its own, and the control then collapses both again;
 // - `f` does what the control does, and `/` opens a collapsed session list and focuses its filter field;
-// - the choice is remembered over a reload, and a stored value that isn't this shape collapses nothing.
+// - the choice is remembered over a reload, and a stored value that isn't this shape collapses nothing;
+// - focus is never lost to the page: `f` from a row moves it to the control, and Escape while filled to the list's rail.
 
 import { NAMES } from '../fixtures.js';
 import type { Part } from '../runner.js';
@@ -151,6 +152,25 @@ const part: Part = {
       const empty = await page.evaluate<Box>(box(`document.querySelector('.session-view-empty')`));
       t.expect(Math.abs(empty.left - 80) <= 1 && empty.right === t.viewport.width, 'the empty state fills the window with nothing open', { empty });
       await t.shot('empty-filled');
+    });
+
+    await t.step('focus is never lost to the page: f from a row of the list it hides, then Escape while filled', async () => {
+      await t.fresh({ search: '?view=all' });
+      await open(NAMES.conversation);
+      await page.evaluate(`document.querySelector('.session-list [data-open-session]')?.focus()`);
+      t.expect(await page.evaluate(`!!document.activeElement?.closest('.session-list')`), 'focus starts on a row');
+      await page.key('f');
+      await page.waitFor('the rails', `document.querySelectorAll('.pane-rail').length === 2`);
+      await page.waitFor('focus on the control', `document.activeElement === ${FILL}`);
+      // The control's tooltip can show while it has focus, and then the first Escape closes that, as everywhere in pitwall.
+      const tip = await page.evaluate<boolean>(`!!document.querySelector('[role="tooltip"]')`);
+      await page.key('Escape');
+      if (tip) {
+        await page.settle(150);
+        await page.key('Escape');
+      }
+      await page.waitFor('focus on the session list rail', `document.activeElement === ${rail('list')}`);
+      t.expect(await page.evaluate(`!${VIEW}`), 'the view closed');
     });
   },
 };
