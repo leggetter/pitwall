@@ -251,6 +251,9 @@ describe('a claude.ai connector in supervisor.connectors (W191)', () => {
 
   it('names the tool prefix and server as Claude Code does', () => {
     expect(claudeAiToolPrefix('Customer.io')).toBe('mcp__claude_ai_Customer_io__');
+    expect(claudeAiToolPrefix('Foo & Bar (x)')).toBe('mcp__claude_ai_Foo_Bar_x__');
+    expect(claudeAiToolPrefix('Zed.io')).toBe('mcp__claude_ai_Zed_io__');
+    expect(claudeAiToolPrefix('Trailing.')).toBe('mcp__claude_ai_Trailing__');
     expect(claudeAiToolPrefix('Typefully - Social Media Scheduler')).toBe('mcp__claude_ai_Typefully_-_Social_Media_Scheduler__');
     expect(claudeAiServerName('Slack')).toBe('claude.ai Slack');
   });

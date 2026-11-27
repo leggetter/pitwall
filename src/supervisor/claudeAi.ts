@@ -24,6 +24,10 @@ export interface ClaudeAiTool {
   name: string;
   /** True or false when the annotation is there, undefined when the tool has none. A hint, never a check. */
   readOnly: boolean | undefined;
+  /** The server's own `annotations.destructive`, when it gave one. A hint, never a check. */
+  destructive?: boolean | undefined;
+  /** False when the name isn't one pitwall can put in a deny list: `name` is then a printable stand-in, never the raw name. */
+  valid?: boolean;
 }
 
 /** One claude.ai connector as mcp_status lists it. */
@@ -35,10 +39,15 @@ export interface ClaudeAiServer {
   tools: ClaudeAiTool[];
 }
 
+/** A name or status with control characters (C0, C1, line and paragraph separators) as `?`, capped, so it can't forge a line or move a terminal. */
+export function printable(text: string, max = 64): string {
+  return text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, '?').slice(0, max);
+}
+
 export type ClaudeAiSnapshot = { ok: true; servers: ClaudeAiServer[] } | { ok: false; error: string };
 
 /** What a start gets from the probe, for the names of the connectors you chose. Never rejects. */
-export type ClaudeAiProbe = (chosen: readonly string[]) => Promise<ClaudeAiSnapshot>;
+export type ClaudeAiProbe = (chosen: readonly string[], signal?: AbortSignal) => Promise<ClaudeAiSnapshot>;
 
 const NAME_PREFIX = 'claude.ai ';
 const MAX_SERVERS = 200;
@@ -60,19 +69,31 @@ export function readMcpStatus(event: unknown, requestId: string): ClaudeAiSnapsh
   const body = event.response.response;
   const raw = isRecord(body) ? body.mcpServers : undefined;
   if (!Array.isArray(raw)) return { ok: false, error: "Claude Code's mcp_status answer wasn't in the shape pitwall reads." };
+  // A list cut short could hide a connector the supervisor must deny, so it isn't used: the caller runs strict.
+  if (raw.length > MAX_SERVERS) return { ok: false, error: `Claude Code listed more than ${MAX_SERVERS} servers, more than pitwall reads.` };
   const servers: ClaudeAiServer[] = [];
-  for (const item of raw.slice(0, MAX_SERVERS)) {
+  for (const item of raw) {
     if (!isRecord(item) || typeof item.name !== 'string') continue;
     if (!item.name.startsWith(NAME_PREFIX) && item.source !== 'claudeai') continue;
+    // A name pitwall can't print or put in a deny list as it is: not guessed at, so the caller runs strict.
+    if (printable(item.name, item.name.length) !== item.name || item.name.length > 200) return { ok: false, error: 'Claude Code listed a connector whose name holds a control character or is very long.' };
+    const rawTools = Array.isArray(item.tools) ? item.tools : [];
+    if (rawTools.length > MAX_TOOLS) return { ok: false, error: `Claude Code listed more than ${MAX_TOOLS} tools for one connector, more than pitwall reads.` };
     const prefix = claudeAiToolPrefix(item.name.slice(NAME_PREFIX.length));
     const tools: ClaudeAiTool[] = [];
-    for (const tool of (Array.isArray(item.tools) ? item.tools : []).slice(0, MAX_TOOLS)) {
+    for (const tool of rawTools) {
       if (!isRecord(tool) || typeof tool.name !== 'string') continue;
       const annotations = isRecord(tool.annotations) ? tool.annotations : {};
       const name = tool.name.startsWith(prefix) ? tool.name.slice(prefix.length) : tool.name;
-      tools.push({ name, readOnly: typeof annotations.readOnly === 'boolean' ? annotations.readOnly : undefined });
+      const valid = CONNECTOR_TOOL_PATTERN.test(name);
+      tools.push({
+        name: valid ? name : printable(name),
+        valid,
+        readOnly: typeof annotations.readOnly === 'boolean' ? annotations.readOnly : undefined,
+        destructive: typeof annotations.destructive === 'boolean' ? annotations.destructive : undefined,
+      });
     }
-    servers.push({ name: item.name, status: typeof item.status === 'string' ? item.status.slice(0, 40) : 'unknown', tools });
+    servers.push({ name: item.name, status: typeof item.status === 'string' ? printable(item.status, 40) : 'unknown', tools });
   }
   return { ok: true, servers };
 }
@@ -91,6 +112,10 @@ export interface ProbeOptions {
   timeoutMs?: number;
   /** The gap between mcp_status requests. Default 1 second. */
   pollMs?: number;
+  /** How long after SIGTERM before SIGKILL. Default 2 seconds. */
+  killMs?: number;
+  /** Aborting it stops the probe and kills its process, as the supervisor's close and stop do. */
+  signal?: AbortSignal;
 }
 
 /** What the probe runs: no turn, no tools, none of your settings, and every claude.ai connector's tools kept from a model that never runs. */
@@ -127,6 +152,7 @@ export function probeArgs(): string[] {
 export function probeClaudeAi(chosen: readonly string[], options: ProbeOptions): Promise<ClaudeAiSnapshot> {
   const timeoutMs = options.timeoutMs ?? 15_000;
   const pollMs = options.pollMs ?? 1000;
+  const killMs = options.killMs ?? 2000;
   const wanted = chosen.map(claudeAiServerName);
   return new Promise<ClaudeAiSnapshot>((resolve) => {
     let child: RelayChild | undefined;
@@ -136,19 +162,35 @@ export function probeClaudeAi(chosen: readonly string[], options: ProbeOptions):
     let latest: ClaudeAiSnapshot | undefined;
     let poll: NodeJS.Timeout | undefined;
     let timer: NodeJS.Timeout | undefined;
+    let exited = false;
     const finish = (answer: ClaudeAiSnapshot) => {
       if (done) return;
       done = true;
       clearInterval(poll);
       clearTimeout(timer);
+      options.signal?.removeEventListener('abort', onAbort);
+      const process = child;
       try {
-        child?.end();
-        child?.kill('SIGTERM');
+        process?.end();
+        process?.kill('SIGTERM');
       } catch {
         // Gone already.
       }
+      // A process that ignores SIGTERM is killed after a short grace, and the timer doesn't hold pitwall open.
+      if (process !== undefined && !exited) {
+        const grace = setTimeout(() => {
+          if (exited) return;
+          try {
+            process.kill('SIGKILL');
+          } catch {
+            // Gone already.
+          }
+        }, killMs);
+        grace.unref();
+      }
       resolve(answer);
     };
+    const onAbort = () => finish({ ok: false, error: 'the probe was stopped.' });
     const ask = () => {
       pending = `pitwall-probe-${++n}`;
       try {
@@ -182,12 +224,17 @@ export function probeClaudeAi(chosen: readonly string[], options: ProbeOptions):
           },
           stderr: () => undefined,
           error: (message) => finish({ ok: false, error: `pitwall couldn't start claude (${message.slice(0, 80)}).` }),
-          exit: () => finish({ ok: false, error: 'Claude Code exited before it listed its connectors.' }),
+          exit: () => {
+            exited = true;
+            finish({ ok: false, error: 'Claude Code exited before it listed its connectors.' });
+          },
         },
       );
     } catch {
       return finish({ ok: false, error: "pitwall couldn't start claude." });
     }
+    if (options.signal?.aborted === true) return finish({ ok: false, error: 'the probe was stopped.' });
+    options.signal?.addEventListener('abort', onAbort, { once: true });
     timer = setTimeout(() => finish(latest ?? { ok: false, error: `Claude Code didn't list its connectors within ${Math.round(timeoutMs / 1000)} seconds.` }), timeoutMs);
     poll = setInterval(() => {
       if (pending === undefined) ask();
@@ -221,18 +268,34 @@ export function planClaudeAi(chosen: readonly ClaudeAiConnector[], snapshot: Cla
   if (!snapshot.ok) return { why: snapshot.error };
   const plan: ClaudeAiPlan = { denyServers: [], allowed: [], disallowed: [], names: [], prefixes: [], notes: [] };
   const used = new Set<string>();
+  // Allow rules are by tool name, not by server, so two servers whose names map to one prefix would share
+  // a tool name, and a call could go to the one that wasn't chosen (review of W191, finding 2): both are denied.
+  const prefixCount = new Map<string, number>();
+  for (const entry of snapshot.servers) {
+    const key = claudeAiToolPrefix(entry.name.slice(NAME_PREFIX.length));
+    prefixCount.set(key, (prefixCount.get(key) ?? 0) + 1);
+  }
   for (const connector of chosen) {
     const serverName = claudeAiServerName(connector.claudeAi);
-    const server = snapshot.servers.find((entry) => entry.name === serverName);
+    const matches = snapshot.servers.filter((entry) => entry.name === serverName);
+    const server = matches[0];
+    if (matches.length > 1) {
+      plan.notes.push(`its connector ${connector.name} (claude.ai ${connector.claudeAi}) matches ${matches.length} servers your account lists, so it's off for this start.`);
+      continue;
+    }
+    if (server !== undefined && (prefixCount.get(claudeAiToolPrefix(connector.claudeAi)) ?? 0) > 1) {
+      plan.notes.push(`its connector ${connector.name} (claude.ai ${connector.claudeAi}) has the same tool prefix as another connector your account lists, so a rule for one would hold for both, and both are off for this start.`);
+      continue;
+    }
     if (server === undefined) {
       plan.notes.push(`its connector ${connector.name} (claude.ai ${connector.claudeAi}) isn't one your account lists, so it's off for this start.`);
       continue;
     }
     if (server.status !== 'connected') {
-      plan.notes.push(`its connector ${connector.name} is ${server.status}, so it's off for this start.${server.status === 'needs-auth' ? ' Sign in to it on claude.ai or in a Claude Code session.' : ''}`);
+      plan.notes.push(`its connector ${connector.name} is ${printable(server.status, 40)}, so it's off for this start.${server.status === 'needs-auth' ? ' Sign in to it on claude.ai or in a Claude Code session.' : ''}`);
       continue;
     }
-    if (server.tools.some((tool) => !CONNECTOR_TOOL_PATTERN.test(tool.name))) {
+    if (server.tools.some((tool) => tool.valid === false || !CONNECTOR_TOOL_PATTERN.test(tool.name))) {
       plan.notes.push(`its connector ${connector.name} lists a tool whose name pitwall can't put in a deny list, so it's off for this start.`);
       continue;
     }
@@ -264,7 +327,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // ------------------------------------------------------------------ --connector-tools
 
 /** Names that look like they take or fetch a URL: never preselected, marked `[may take a URL]` (spike 022, decision 3). */
-const URL_LOOKING = /fetch|download|url|uri|link|href|website|webpage|browse|scrape|crawl|attachment/i;
+const URL_LOOKING = /fetch|download|url|uri|link|href|website|webpage|web|http|internet|navigate|visit|browse|scrape|crawl|attachment/i;
 
 export function mayTakeUrl(tool: string): boolean {
   return URL_LOOKING.test(tool);
@@ -278,17 +341,18 @@ export function mayTakeUrl(tool: string): boolean {
  */
 export function formatClaudeAiListing(connector: Pick<ClaudeAiConnector, 'name' | 'claudeAi'> & { tools?: readonly string[] }, server: ClaudeAiServer): string {
   const lines: string[] = [];
-  lines.push(`${connector.name} (claude.ai ${connector.claudeAi}): ${server.tools.length} tool${server.tools.length === 1 ? '' : 's'}, ${server.status}. [read-only] is the connector's own claim, not a check; Claude Code gives names and hints only, no descriptions or inputs.`);
+  lines.push(`${connector.name} (claude.ai ${connector.claudeAi}): ${server.tools.length} tool${server.tools.length === 1 ? '' : 's'}, ${printable(server.status, 40)}. [read-only] is the connector's own claim, not a check; Claude Code gives names and hints only, no descriptions or inputs.`);
   lines.push('');
   for (const tool of server.tools) {
     const hint = tool.readOnly === true ? '[read-only]' : '[no hint]  ';
-    lines.push(`  ${hint} ${mayTakeUrl(tool.name) ? '[may take a URL] ' : ''}${tool.name}`);
+    // Printed through JSON.stringify, so a name that isn't a plain tool name shows as one quoted token and never starts a line of its own.
+    lines.push(`  ${hint} ${mayTakeUrl(tool.name) ? '[may take a URL] ' : ''}${tool.valid === false ? JSON.stringify(printable(tool.name)) : tool.name}`);
   }
   if (server.tools.some((tool) => mayTakeUrl(tool.name))) {
     lines.push('');
     lines.push("  [may take a URL]: the name looks like the tool takes or fetches a URL. Don't choose it unless you know it only reads inside the service: what the supervisor puts in it goes to whatever address it names, with no card. Check its inputs in the service's docs.");
   }
-  const chosen = server.tools.filter((tool) => tool.readOnly === true && !mayTakeUrl(tool.name)).map((tool) => tool.name);
+  const chosen = server.tools.filter((tool) => tool.valid !== false && tool.readOnly === true && tool.destructive !== true && !mayTakeUrl(tool.name)).map((tool) => tool.name);
   lines.push('');
   lines.push(`For the connector "${connector.name}" in supervisor.connectors, the read-only tools, without the ones that may take a URL (pitwall keeps out every other tool of this connector by itself):`);
   lines.push('');
@@ -300,7 +364,7 @@ export function formatClaudeAiListing(connector: Pick<ClaudeAiConnector, 'name' 
     lines.push('');
     if (gone.length === 0) lines.push('Every tool in your config file is listed by the connector.');
     else lines.push(`No longer listed by the connector, so pitwall ignores them: ${gone.join(', ')}.`);
-    const unticked = server.tools.filter((tool) => tool.readOnly === true && !known.has(tool.name)).map((tool) => tool.name);
+    const unticked = server.tools.filter((tool) => tool.valid !== false && tool.readOnly === true && !known.has(tool.name)).map((tool) => tool.name);
     if (unticked.length > 0) lines.push(`Read-only tools your config file doesn't choose, so they stay out: ${unticked.join(', ')}.`);
   }
   return `${lines.join('\n')}\n`;
@@ -310,6 +374,6 @@ export function formatClaudeAiListing(connector: Pick<ClaudeAiConnector, 'name' 
 export function formatClaudeAiNames(servers: readonly ClaudeAiServer[]): string {
   if (servers.length === 0) return 'Claude Code lists no claude.ai connectors. Sign in with your claude.ai account (not an API key) and add connectors at claude.ai.\n';
   const lines = ['The claude.ai connectors Claude Code lists, with the name to put in "claudeAi":', ''];
-  for (const server of servers) lines.push(`  ${JSON.stringify(server.name.slice(NAME_PREFIX.length))}  (${server.status}, ${server.tools.length} tools)`);
+  for (const server of servers) lines.push(`  ${JSON.stringify(printable(server.name.slice(NAME_PREFIX.length), 100))}  (${printable(server.status, 40)}, ${server.tools.length} tools)`);
   return `${lines.join('\n')}\n`;
 }

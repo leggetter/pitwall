@@ -656,6 +656,48 @@ describe('what it can do', () => {
       expect(supervisor.state()).toMatchObject({ status: 'failed', error: expect.stringContaining('claude.ai connector tool you haven\'t chosen') });
     });
 
+    it('stops before the first message when its own mcp_status shows a claude.ai server the probe did not list, or cannot be read', async () => {
+      const intruder = (shape: 'unknown' | 'bad'): Behaviour => (line, child) => {
+        answersInitialize(line, child);
+        if (line.type === 'control_request' && (line.request as { subtype?: string }).subtype === 'mcp_status') {
+          const response = shape === 'bad' ? { servers: 1 } : { mcpServers: [{ name: 'claude.ai Slack', status: 'connected', source: 'claudeai', tools: [] }, { name: 'claude.ai Fake_Slack', status: 'connected', source: 'claudeai', tools: [] }] };
+          child.emit({ type: 'control_response', response: { subtype: 'success', request_id: line.request_id, response } });
+        }
+      };
+      for (const shape of ['unknown', 'bad'] as const) {
+        const { supervisor, children } = harness({ claudeAiConnectors: chosen, claudeAiProbe: async () => listed, behaviour: intruder(shape), claudeAiPollMs: 5 });
+        await supervisor.send('hello');
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(supervisor.state()).toMatchObject({ status: 'failed', error: expect.stringMatching(/ress Start to try again/) });
+        expect(children[0]!.messages()).toEqual([]);
+      }
+    });
+
+    it('stops a turn whose init lists a claude.ai server pitwall neither chose nor denied', async () => {
+      const { supervisor, children } = harness({ claudeAiConnectors: chosen, claudeAiProbe: async () => listed, behaviour: statusBehaviour(0), claudeAiPollMs: 5 });
+      await supervisor.send('hello');
+      children[0]!.init(SESSION, { mcp_servers: [{ name: 'pitwall', status: 'connected' }, { name: 'claude.ai Slack', status: 'connected' }, { name: 'claude.ai Notion', status: 'connected' }] });
+      expect(supervisor.state().status).toBe('working');
+      children[0]!.result();
+      await supervisor.send('again');
+      children[0]!.init(SESSION, { mcp_servers: [{ name: 'pitwall', status: 'connected' }, { name: 'claude.ai Slack', status: 'connected' }, { name: 'claude.ai Fake_Slack', status: 'connected' }] });
+      expect(supervisor.state()).toMatchObject({ status: 'failed', error: expect.stringContaining("hadn't listed") });
+    });
+
+    it('does not start with a chosen connector that collides or is duplicated, and aborts a probe on close', async () => {
+      const collide: ClaudeAiSnapshot = { ok: true, servers: [{ name: 'claude.ai Slack', status: 'connected', tools: [{ name: 'slack_read_channel', readOnly: true }] }, { name: 'claude.ai Slack', status: 'connected', tools: [{ name: 'slack_read_channel', readOnly: true }] }] };
+      const { supervisor, children, logs } = harness({ claudeAiConnectors: chosen, claudeAiProbe: async () => collide });
+      await supervisor.start();
+      expect(children[0]!.args).toContain('--strict-mcp-config');
+      expect(logs.join('\n')).toContain('matches 2 servers');
+      let signal: AbortSignal | undefined;
+      const hung = harness({ claudeAiConnectors: chosen, claudeAiProbe: (_names, given) => ((signal = given), new Promise<ClaudeAiSnapshot>(() => undefined)) });
+      void hung.supervisor.start();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      void hung.supervisor.close();
+      expect(signal?.aborted).toBe(true);
+    });
+
     it('with no claude.ai connector configured, never runs the probe and keeps today’s command line', async () => {
       let probed = 0;
       const { supervisor, children } = harness({ claudeAiProbe: async () => (probed++, listed) });

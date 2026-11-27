@@ -130,9 +130,9 @@ function parseConnectorName(name: unknown, at: string, names: Set<string>, fail:
   return name;
 }
 
-/** `mcp__claude_ai_<Name>__`: Claude Code's prefix for a claude.ai connector's tools, each character outside A-Za-z0-9_- as `_` (spike 022, finding 7). */
+/** `mcp__claude_ai_<Name>__`: Claude Code's prefix for a claude.ai connector's tools, each character outside A-Za-z0-9_- as `_`, runs of `_` collapsed, leading and trailing `_` trimmed (spike 022, finding 7). */
 export function claudeAiToolPrefix(display: string): string {
-  return `mcp__claude_ai_${display.replace(/[^A-Za-z0-9_-]/g, '_')}__`;
+  return `mcp__claude_ai_${display.replace(/[^A-Za-z0-9_-]/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '')}__`;
 }
 
 /** A claude.ai connector's server name in Claude Code: `claude.ai <Name>`. */

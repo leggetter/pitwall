@@ -338,6 +338,8 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
   const claudeBin = options.claudeBin ?? 'claude';
   const claudeAiWaitMs = options.claudeAiWaitMs ?? 15_000;
   const claudeAiPollMs = options.claudeAiPollMs ?? 1000;
+  /** The start's probe, aborted by close and by a new conversation so its `claude` never outlives them. */
+  let probeAbort: AbortController | undefined;
   const spawn = options.spawn ?? spawnRelayChild;
   const agents = options.agents ?? createAgentsSource(options.claudeBin === undefined ? {} : { claudeBin: options.claudeBin });
   const claudeVersion =
@@ -537,9 +539,13 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
       let snapshot: ClaudeAiSnapshot;
       try {
         const names = chosenAi.map((connector) => connector.claudeAi);
-        snapshot = await (options.claudeAiProbe ?? ((chosen) => probeClaudeAi(chosen, { spawn, claudeBin, cwd, env: supervisorEnvironment(env) })))(names);
+        const abort = new AbortController();
+        probeAbort = abort;
+        snapshot = await (options.claudeAiProbe ?? ((chosen, signal) => probeClaudeAi(chosen, { spawn, claudeBin, cwd, env: supervisorEnvironment(env), ...(signal === undefined ? {} : { signal }) })))(names, abort.signal);
       } catch {
         snapshot = { ok: false, error: 'the probe failed.' };
+      } finally {
+        probeAbort = undefined;
       }
       if (closed) return { kind: 'closed' };
       const planned = planClaudeAi(chosenAi, snapshot);
@@ -547,7 +553,7 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
         log(`its claude.ai connectors are off for this start: ${oneLine(planned.why, 300)}`);
       } else {
         claudeAi = planned.plan;
-        for (const note of claudeAi.notes) log(note);
+        for (const note of claudeAi.notes) log(oneLine(note, 300));
       }
     }
 
@@ -831,18 +837,21 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     if (state === undefined) return;
     const snapshot = readMcpStatus(event, id);
     if (snapshot === undefined) return;
-    if (!snapshot.ok) return endClaudeAiWait(p, `couldn't read its connectors' status (${oneLine(snapshot.error, 100)}), so it starts without waiting.`);
-    for (const server of snapshot.servers) {
-      if (!state.known.has(server.name) && !p.reported.has(`unknown:${server.name}`)) {
-        p.reported.add(`unknown:${server.name}`);
-        log('a claude.ai connector pitwall had not seen is connected for it, and is held out. Run pitwall --claude-ai-connectors to review.');
-      }
-    }
+    // Fail closed: an answer pitwall can't read can't show that no connector it hasn't seen is there.
+    if (!snapshot.ok) return trip(p, `The supervisor's connectors' status couldn't be read (${oneLine(snapshot.error, 100)}), so pitwall stopped it before its first message. Press Start to try again.`);
+    const unknown = snapshot.servers.find((server) => !state.known.has(server.name));
+    // Allow rules are by tool name, not by server, so a claude.ai connector pitwall didn't probe, one added
+    // since or one whose name maps to a chosen prefix, could answer a chosen tool's call (review of W191).
+    if (unknown !== undefined) return trip(p, unknownClaudeAiMessage(unknown.name));
     const mine = state.servers.map((name) => snapshot.servers.find((server) => server.name === name));
     if (mine.every((server) => server?.status === 'connected')) return endClaudeAiWait(p);
     // Not listed yet is still connecting (Claude Code fetches the list after it starts, spike 022, finding 8).
     const bad = mine.find((server) => server !== undefined && server.status !== 'connected' && server.status !== 'pending');
     if (bad !== undefined) return endClaudeAiWait(p, `a claude.ai connector is ${oneLine(bad.status, 40)}, so its tools aren't there.`);
+  }
+
+  function unknownClaudeAiMessage(name: string): string {
+    return `The supervisor has a claude.ai connector pitwall hadn't listed (${oneLine(name, 60)}), so pitwall stopped it before its first message. Run pitwall --claude-ai-connectors to review, and press Start to try again.`;
   }
 
   /** Writes the next queued message, if it's idle. */
@@ -1013,6 +1022,12 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     // pitwall's MCP server, its only way to read anything (W113's review): missing or failed, it would
     // answer from nothing. Another status, such as pending, is only logged.
     if (Array.isArray(event.mcp_servers)) {
+      // A claude.ai server pitwall neither chose nor denied (the init check, W191's review): its tools could answer a chosen tool's call.
+      if (p.claudeAi !== undefined) {
+        const claudeAi = p.claudeAi;
+        const unknown = event.mcp_servers.find((server) => isRecord(server) && typeof server.name === 'string' && server.name.startsWith('claude.ai ') && !claudeAi.known.has(server.name));
+        if (isRecord(unknown)) return trip(p, unknownClaudeAiMessage(String(unknown.name)));
+      }
       const own = event.mcp_servers.find((server) => isRecord(server) && server.name === MCP_SERVER_NAME);
       const status = isRecord(own) ? own.status : undefined;
       if (own === undefined || status === 'failed') {
@@ -1182,6 +1197,7 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
       if (queue.length > 0) log(`${queue.length} queued ${queue.length === 1 ? 'message was' : 'messages were'} dropped with the conversation.`);
       queue.length = 0;
       changed();
+      probeAbort?.abort();
       const p = proc;
       if (p !== undefined && !p.exited) {
         stopProcess(p);
@@ -1256,6 +1272,7 @@ export function createSupervisor(options: SupervisorOptions = {}): Supervisor {
     async close() {
       if (closed) return;
       closed = true;
+      probeAbort?.abort();
       // Answered first, while the process can still read the denials.
       approvals.cancelAll("pitwall is closing, so this wasn't sent.");
       queue.length = 0;

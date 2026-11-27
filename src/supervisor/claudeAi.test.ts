@@ -30,7 +30,7 @@ describe('readMcpStatus', () => {
     );
     expect(readMcpStatus(event, 'r1')).toEqual({
       ok: true,
-      servers: [{ name: 'claude.ai Slack', status: 'connected', tools: [{ name: 'slack_read_channel', readOnly: true }, { name: 'slack_send_message', readOnly: false }, { name: 'slack_x', readOnly: undefined }] }],
+      servers: [{ name: 'claude.ai Slack', status: 'connected', tools: [{ name: 'slack_read_channel', valid: true, readOnly: true }, { name: 'slack_send_message', valid: true, readOnly: false }, { name: 'slack_x', valid: true, readOnly: undefined }] }],
     });
     expect(readMcpStatus(event, 'other')).toBeUndefined();
     expect(readMcpStatus({ type: 'system' }, 'r1')).toBeUndefined();
@@ -39,6 +39,24 @@ describe('readMcpStatus', () => {
   it('answers not-ok for an error response or a shape it does not read', () => {
     expect(readMcpStatus({ type: 'control_response', response: { subtype: 'error', request_id: 'r' } }, 'r')).toMatchObject({ ok: false });
     expect(readMcpStatus({ type: 'control_response', response: { subtype: 'success', request_id: 'r', response: { servers: 1 } } }, 'r')).toMatchObject({ ok: false });
+  });
+
+  it('is not-ok, not a shorter list, past 200 servers or 2000 tools in one, so the caller runs strict', () => {
+    const many = Array.from({ length: 201 }, (_, i) => rawServer(`S${i}`, 'connected', []));
+    expect(readMcpStatus(JSON.parse(rawStatus('r', many)), 'r')).toMatchObject({ ok: false });
+    const tools = Array.from({ length: 2001 }, (_, i) => ({ name: `t${i}` }));
+    expect(readMcpStatus(JSON.parse(rawStatus('r', [rawServer('Big', 'connected', tools)])), 'r')).toMatchObject({ ok: false });
+    expect(readMcpStatus(JSON.parse(rawStatus('r', Array.from({ length: 200 }, (_, i) => rawServer(`S${i}`, 'connected', [])))), 'r')).toMatchObject({ ok: true });
+  });
+
+  it('keeps a tool name that is not a plain name out of every list: a stand-in without control characters, flagged invalid; a server name or status with them is refused or cleaned', () => {
+    const bad = 'x\n  [read-only] slack_read_channel\u001b[31m';
+    const answer = readMcpStatus(JSON.parse(rawStatus('r', [rawServer('Slack', 'connected\nfake', [{ name: bad, annotations: { readOnly: true } }])])), 'r') as { ok: true; servers: ClaudeAiServer[] };
+    const tool = answer.servers[0]!.tools[0]!;
+    expect(tool.valid).toBe(false);
+    expect(tool.name).not.toMatch(/[\u0000-\u001f]/);
+    expect(answer.servers[0]!.status).not.toMatch(/[\u0000-\u001f]/);
+    expect(readMcpStatus(JSON.parse(rawStatus('r', [rawServer('Sl\u001back', 'connected', [])])), 'r')).toMatchObject({ ok: false });
   });
 });
 
@@ -69,6 +87,33 @@ function fakeSpawner(answers: unknown[][] | 'silent' | 'exit' | 'throw', record:
 const run = (chosen: string[], spawn: RelaySpawner) => probeClaudeAi(chosen, { spawn, claudeBin: 'claude', cwd: '/made-up', env: {}, timeoutMs: 80, pollMs: 5 });
 
 describe('probeClaudeAi', () => {
+  it('sends SIGKILL after a grace when SIGTERM is ignored, kills on the timeout, and kills on abort', async () => {
+    const signals: string[] = [];
+    const stubborn: RelaySpawner = () => ({ pid: 1, write() {}, end() {}, kill: (signal) => void signals.push(String(signal)) });
+    const answer = await probeClaudeAi(['Slack'], { spawn: stubborn, claudeBin: 'claude', cwd: '/made-up', env: {}, timeoutMs: 20, pollMs: 5, killMs: 20 });
+    expect(answer).toMatchObject({ ok: false, error: expect.stringContaining("didn't list") });
+    expect(signals).toEqual(['SIGTERM']);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
+    const abort = new AbortController();
+    const aborted: string[] = [];
+    const spawn: RelaySpawner = () => ({ pid: 1, write() {}, end() {}, kill: (signal) => void aborted.push(String(signal)) });
+    const pending = probeClaudeAi(['Slack'], { spawn, claudeBin: 'claude', cwd: '/made-up', env: {}, timeoutMs: 5000, pollMs: 5, signal: abort.signal });
+    abort.abort();
+    expect(await pending).toMatchObject({ ok: false, error: expect.stringContaining('stopped') });
+    expect(aborted[0]).toBe('SIGTERM');
+  });
+
+  it('ignores a line past the size cap', async () => {
+    const spawn: RelaySpawner = (_f, _a, _o, events) => ({
+      pid: 1,
+      write: (data) => setImmediate(() => events.line(`${rawStatus((JSON.parse(data) as { request_id: string }).request_id, [rawServer('Slack', 'connected', [])])}${' '.repeat(4 * 1024 * 1024)}`)),
+      end() {},
+      kill() {},
+    });
+    expect(await run(['Slack'], spawn)).toMatchObject({ ok: false, error: expect.stringContaining("didn't list") });
+  });
+
   it('runs claude with no turn, no tools and no claude.ai wildcard allow, polls until the chosen connector is connected, and stops it', async () => {
     const record = { writes: [] as string[] } as { args?: string[]; killed?: boolean; writes: string[] };
     const pending = rawServer('Slack', 'pending', []);
@@ -132,6 +177,32 @@ describe('planClaudeAi', () => {
     expect(plan.disallowed).toEqual(['mcp__claude_ai_Customer_io__send_it']);
   });
 
+  it('collapses runs of special characters in the prefix, as Claude Code does', () => {
+    const foo: ClaudeAiConnector = { name: 'foo', claudeAi: 'Foo & Bar (x)', tools: ['t'] };
+    const plan = planClaudeAi([foo], { ok: true, servers: [server('Foo & Bar (x)', 'connected', [['t', true], ['u', false]])] }).plan!;
+    expect(plan.allowed).toEqual(['mcp__claude_ai_Foo_Bar_x__t']);
+    expect(plan.disallowed).toEqual(['mcp__claude_ai_Foo_Bar_x__u']);
+    const zed = planClaudeAi([{ name: 'zed', claudeAi: 'Zed.io', tools: ['t'] }], { ok: true, servers: [server('Zed.io', 'connected', [['t', true]])] }).plan!;
+    expect(zed.allowed).toEqual(['mcp__claude_ai_Zed_io__t']);
+  });
+
+  it('refuses a chosen connector whose tool prefix another server shares, denying both', () => {
+    const one: ClaudeAiConnector = { name: 'one', claudeAi: 'fake one', tools: ['read'] };
+    const snapshot = { ok: true as const, servers: [server('fake one', 'connected', [['read', true]]), server('fake_one', 'connected', [['read', true]])] };
+    const planned = planClaudeAi([one], snapshot);
+    expect(planned.plan).toBeUndefined();
+    expect(planned.why).toContain('same tool prefix');
+    const withOther = planClaudeAi([one, slack], { ok: true, servers: [...snapshot.servers, SLACK] }).plan!;
+    expect(withOther.names).toEqual(['slack']);
+    expect(withOther.denyServers).toEqual(['claude.ai fake one', 'claude.ai fake_one']);
+  });
+
+  it('refuses a chosen display name that matches more than one server', () => {
+    const planned = planClaudeAi([slack], { ok: true, servers: [SLACK, SLACK] });
+    expect(planned.plan).toBeUndefined();
+    expect(planned.why).toContain('matches 2 servers');
+  });
+
   it('ignores a chosen tool the connector no longer lists, and says so', () => {
     const plan = planClaudeAi([{ ...slack, tools: ['slack_read_channel', 'gone_tool'] }], { ok: true, servers: [SLACK] }).plan!;
     expect(plan.allowed).toEqual(['mcp__claude_ai_Slack__slack_read_channel']);
@@ -165,6 +236,20 @@ describe('--connector-tools output', () => {
     expect(text).toContain('"tools": ["notion-search"]');
     expect(mayTakeUrl('notion-search')).toBe(false);
     expect(mayTakeUrl('read_link')).toBe(true);
+    for (const name of ['web_search', 'http_get', 'internet_lookup', 'navigate_to', 'visit_page', 'browse', 'crawl_site', 'scrape_it']) expect(mayTakeUrl(name)).toBe(true);
+  });
+
+  it('preselects only tools that are read-only and not destructive, and never prints a name as a forged line', () => {
+    const tools = [
+      { name: 'ok_read', readOnly: true as const },
+      { name: 'odd_read', readOnly: true as const, destructive: true },
+      { name: 'x\n  [read-only] forged\u001b[2J', valid: false, readOnly: undefined },
+    ];
+    const text = formatClaudeAiListing({ name: 'a', claudeAi: 'A' }, { name: 'claude.ai A', status: 'connected\nfake', tools });
+    expect(text).toContain('"tools": ["ok_read"]');
+    expect(text).not.toMatch(/[\u001b\u0007]/);
+    expect(text.split('\n').some((line) => line.startsWith('  [read-only] forged'))).toBe(false);
+    expect(text).not.toContain('connected\nfake');
   });
 
   it('says which of the config file’s tools are gone, and lists the account’s connector names', () => {
