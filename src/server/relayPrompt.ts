@@ -118,11 +118,18 @@ export function newRequestId(text: string, random: () => string = () => randomBy
 /**
  * Whether pitwall can address a session by this name: one line, no `<` or
  * `>`, which would break the framing, no control characters, no space before
- * or after it, which the relay can't be relied on to copy, and at most 300
+ * or after it, which the relay can't be relied on to copy, no `:`, `/`, `\` or
+ * `*`, which SendMessage reads as an address (`uds:`, `bridge:`, a path, every
+ * session) and would send to another session (W226's review), and at most 300
  * characters, as SendMessage allows.
  */
 export function isAddressable(name: string): boolean {
-  return name.trim() !== '' && name === name.trim() && name.length <= MAX_TO_LENGTH && !/[<>\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(name);
+  return (
+    name.trim() !== '' &&
+    name === name.trim() &&
+    name.length <= MAX_TO_LENGTH &&
+    !/[<>:/\\*\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(name)
+  );
 }
 
 /** A name as pitwall compares names for collisions: case doesn't count. */

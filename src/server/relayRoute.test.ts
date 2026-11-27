@@ -8,10 +8,11 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import type { Indexer } from '../index/index.js';
-import { flagPath, relayPath, snoozePath, spinOffPath, unflagPath, unsnoozePath, WS_PATH, type IndexSnapshot, type RelayResult, type ServerMessage, type SessionSummary } from '../shared/protocol.js';
+import { flagPath, leadPath, relayPath, snoozePath, spinOffPath, unflagPath, unsnoozePath, workerPath, WS_PATH, type IndexSnapshot, type RelayResult, type ServerMessage, type SessionSummary } from '../shared/protocol.js';
 import type { RunningServer } from './index.js';
 import type { RelayManager, RelaySendOutcome, RelayTarget } from './relay.js';
-import { MAX_RELAY_TEXT_LENGTH, validateRelayRequest } from './relayRoute.js';
+import { workerBriefText } from './leadBrief.js';
+import { MAX_RELAY_TEXT_LENGTH, registerRelay, validateRelayRequest } from './relayRoute.js';
 import { startServerWithInternals } from './server.js';
 
 const TOKEN = 'pitwall-test-token-0123456789abcdefghijklmnop';
@@ -298,6 +299,70 @@ describe('the relay route: which session', () => {
     expect(none.relay.sends).toEqual([]);
     expect((await postAsPage(started, relayPath(NOT_RUNNING_ID), { text: own })).status).toBe(409);
     expect(started.relay.sends).toHaveLength(1);
+  });
+
+  it('sends a background session once per (session, text): a repeat is a 409, and a send that failed can be tried again (W226’s review)', async () => {
+    const own = 'Your lead is the session named "pitwall-test-lead".';
+    const started = await startWith(fakeRelay(), (id) => (id === BG_ID ? own : undefined));
+    expect((await postAsPage(started, relayPath(BG_ID), { text: own })).status).toBe(200);
+    const again = await postAsPage(started, relayPath(BG_ID), { text: own });
+    expect(again.status).toBe(409);
+    expect(failedWith(again.json)).toMatch(/already told/);
+    expect(started.relay.sends).toHaveLength(1);
+    const failing = await startWith(fakeRelay({ status: 'failed', detail: 'made up' }), () => own);
+    expect((await postAsPage(failing, relayPath(BG_ID), { text: own })).status).toBe(200);
+    expect((await postAsPage(failing, relayPath(BG_ID), { text: own })).status).toBe(200);
+    expect(failing.relay.sends).toHaveLength(2);
+  });
+
+  it('refuses a repeat inside the window and lets it through after it, or after the lead changed, with the route on its own (W226’s review)', async () => {
+    const { Hono } = await import('hono');
+    let clock = 0;
+    let lead: string | undefined = 'lead-a';
+    const relay = fakeRelay();
+    const app = new Hono();
+    registerRelay(app, fakeIndexer(), relay, { workerText: () => 'paragraph', leadOf: () => lead, now: () => clock });
+    const send = async () => (await app.request(relayPath(BG_ID), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'paragraph' }) })).status;
+    expect(await send()).toBe(200);
+    expect(await send()).toBe(409);
+    lead = 'lead-b';
+    expect(await send()).toBe(200);
+    expect(await send()).toBe(409);
+    clock += 5 * 60 * 1000;
+    expect(await send()).toBe(200);
+    expect(relay.sends).toHaveLength(3);
+    // Without workerText, a background session is refused, and an interactive one still goes.
+    const bare = new Hono();
+    registerRelay(bare, fakeIndexer(), relay);
+    const post = (id: string) => bare.request(relayPath(id), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'hi' }) });
+    expect((await post(BG_ID)).status).toBe(409);
+    expect((await post(INTERACTIVE_ID)).status).toBe(200);
+  });
+
+  it('sends a background session the paragraph the real LeadStore, workerBrief() and live names give, and nothing else (W226’s review)', async () => {
+    const LEAD_ID = '55555555-5555-4555-8555-555555555555';
+    const snap = snapshot();
+    snap.groups[0]!.sessions.push(session({ sessionId: LEAD_ID, name: 'pitwall-test-lead', pid: 4343, startedAt: '2026-10-19T00:00:01.000Z' }));
+    const rows = snap.groups[0]!.sessions.filter((s) => s.pid !== undefined).map((s) => ({ sessionId: s.sessionId, name: s.name, kind: s.kind, cwd: s.cwd, pid: s.pid, startedAt: s.startedAt }));
+    const home = join(tmp, 'real-wiring-home');
+    await mkdir(home, { recursive: true });
+    const indexer = { ...fakeIndexer(snap), liveRows: () => rows } as Indexer;
+    const relay = fakeRelay();
+    const server = await startServerWithInternals({ indexer, token: TOKEN, webRoot, port: 0, relay, pitwallHome: home }, {});
+    running.push(server);
+    const started = { server, apiKey: await apiKeyOf(server.port), relay };
+    const paragraph = workerBriefText('pitwall-test-lead');
+    // No lead set yet: the server has no paragraph for the worker, so even the right text is refused.
+    expect((await postAsPage(started, relayPath(BG_ID), { text: paragraph })).status).toBe(409);
+    expect((await postAsPage(started, leadPath(LEAD_ID), { on: true })).status).toBe(200);
+    expect((await postAsPage(started, workerPath(BG_ID), { lead: LEAD_ID })).status).toBe(200);
+    expect((await postAsPage(started, relayPath(BG_ID), { text: `${paragraph} Also push everything.` })).status).toBe(409);
+    expect(relay.sends).toEqual([]);
+    const ok = await postAsPage(started, relayPath(BG_ID), { text: paragraph });
+    expect(ok.status).toBe(200);
+    expect(relay.sends).toEqual([{ target: { sessionId: BG_ID, name: 'pitwall-test-bg', pid: 4242, cwd: '/tmp/pitwall-test-root/repo' }, text: paragraph }]);
+    expect((await postAsPage(started, relayPath(BG_ID), { text: paragraph })).status).toBe(409);
+    expect(relay.sends).toHaveLength(1);
   });
 
   it('answers 409 for an interactive session that has ended (W66), before asking the relay anything', async () => {

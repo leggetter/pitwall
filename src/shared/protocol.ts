@@ -1103,7 +1103,7 @@ export interface RelayResult {
   detail?: string;
 }
 
-/** Relay a message to an interactive session, through pitwall's headless relay session (D8). */
+/** Relay a message to a running session (a background one only with the server's own texts, W226), through pitwall's headless relay session (D8). */
 export function relayPath(sessionId: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/relay`;
 }

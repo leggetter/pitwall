@@ -826,6 +826,14 @@ describe('the relay: not sent', () => {
     expect(h.agentCalls).toBe(0);
   });
 
+  it('refuses a name that reads as an address, which SendMessage would send to another session (W226’s review)', async () => {
+    const h = harness();
+    for (const name of ['uds:/tmp/cc-socks/1.sock', 'bridge:session_1', '*', '/tmp/x']) {
+      expect((await h.relay.send({ ...TARGET, name }, 'hello')).detail, name).toMatch(/can't address this session by its name/);
+    }
+    expect(h.agentCalls).toBe(0);
+  });
+
   it('fails when the relay can’t start', async () => {
     const h = harness();
     h.spawnError = 'claude was not found';

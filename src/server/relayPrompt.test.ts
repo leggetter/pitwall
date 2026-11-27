@@ -81,11 +81,11 @@ describe('framing', () => {
 });
 
 describe('isAddressable', () => {
-  it.each(['pitwall-test-target', 'demo-app-3f', 'release notes', 'Ünïcödé name'])('accepts %j', (name) => {
+  it.each(['pitwall-test-target', 'demo-app-3f', 'release notes', 'Ünïcödé name', 'W226 builder', 'pitwall spin-off session continuation'])('accepts %j', (name) => {
     expect(isAddressable(name)).toBe(true);
   });
 
-  it.each(['', '   ', 'a<b', 'a>b', 'two\nlines', 'tab\there', 'x'.repeat(301), 'nul\u0000', ' leading', 'trailing ', '\u00a0nbsp'])('refuses %j', (name) => {
+  it.each(['', '   ', 'a<b', 'a>b', 'two\nlines', 'tab\there', 'x'.repeat(301), 'nul\u0000', ' leading', 'trailing ', '\u00a0nbsp', 'uds:/tmp/cc-socks/1.sock', 'bridge:session_1', '*', '/tmp/x', 'a\\b'])('refuses %j', (name) => {
     expect(isAddressable(name)).toBe(false);
   });
 });

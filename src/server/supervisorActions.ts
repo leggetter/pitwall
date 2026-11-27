@@ -217,7 +217,7 @@ export function checkResumeText(text: unknown): Checked<string> {
 function checkTo(to: string): Checked<string> {
   const hidden = hiddenTextProblem(to, 'recipient');
   if (hidden !== undefined) return { ok: false, error: hidden };
-  if (!isAddressable(to)) return { ok: false, error: 'pitwall can’t address a session by that name: it has line breaks, < or >, a space at either end, or is too long.' };
+  if (!isAddressable(to)) return { ok: false, error: 'pitwall can’t address a session by that name: it has line breaks, < or >, “*” or “\”, a space at either end, or is too long.' };
   if (/[:/]/.test(to)) return { ok: false, error: 'Send a message to a session by its name alone: a name with “:” or “/” reads as an address, which pitwall doesn’t send to.' };
   return { ok: true, value: to };
 }

@@ -1,7 +1,7 @@
 // The relay (W11, D8): one headless Claude session that pitwall runs as its
 // own child process, `claude -p` with stream-json on stdin and stdout, named
 // pitwall-relay, on Haiku, with SendMessage as its only tool. It's the only
-// way pitwall can message an interactive session (D2), because only a Claude
+// way pitwall can message a running session (D2), because only a Claude
 // session can call SendMessage. Spike 003 has the evidence for most rules
 // below; the gate's are from the spike in the W11 review fixes (v2.1.303).
 //
@@ -456,7 +456,7 @@ export function createRelayManager(options: RelayOptions = {}): RelayManager {
     if (!isAddressable(target.name)) {
       return finish(
         job,
-        failed("pitwall can't address this session by its name, which has line breaks, < or >, a space at either end, or is too long. Rename it with /rename in its terminal."),
+        failed("pitwall can't address this session by its name, which has line breaks, < or >, “:”, “/”, “\\” or “*”, a space at either end, or is too long. Rename it with /rename in its terminal."),
       );
     }
     // Before starting the relay, so a name that can't work doesn't start one. Checked again right before the write.

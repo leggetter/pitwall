@@ -47,6 +47,9 @@ const ODD_CHARACTER = /(?! )\p{Zs}|\p{Co}|\p{Cn}/u;
  */
 const lookAlikeKey = (name: string): string => name.normalize('NFKC').replace(/\p{Zs}/gu, ' ').toLowerCase();
 
+/** The characters a lead's name may have in the paragraph: letters, digits and combining marks of any script, space, `.`, `_` and `-` (W226's review). */
+const LEAD_NAME_ALLOWED = /^[\p{L}\p{N}\p{M} ._-]+$/u;
+
 /** The paragraph, naming the lead by `leadName`, which is its address. Plain text, one line. */
 export function workerBriefText(leadName: string): string {
   return (
@@ -67,7 +70,7 @@ export function leadNameProblem(snapshot: IndexSnapshot, lead: SessionSummary, l
     return `pitwall names a lead in a worker’s first prompt only when its name is at most ${LEAD_BRIEF_NAME_MAX} characters, and this one has ${name.length}. Rename it with /rename.`;
   }
   if (name.trim() === '' || name !== name.trim() || name.length > LEAD_NAME_MAX) return unquotable;
-  if (/["\n\r\t]/.test(name) || /\[[0-9a-z]{1,32}\]$/i.test(name) || hiddenCharacter(name) !== undefined || ODD_CHARACTER.test(name) || !isAddressable(name)) return unquotable;
+  if (!LEAD_NAME_ALLOWED.test(name) || /["\n\r\t]/.test(name) || /\[[0-9a-z]{1,32}\]$/i.test(name) || hiddenCharacter(name) !== undefined || ODD_CHARACTER.test(name) || !isAddressable(name)) return unquotable;
   const key = lookAlikeKey(name);
   const shared = `Another running session is also named ${name}, so a report could reach the wrong one. Rename one with /rename.`;
   for (const group of snapshot.groups) {
