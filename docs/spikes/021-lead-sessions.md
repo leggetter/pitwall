@@ -34,7 +34,7 @@ Phil, 2026-11-26: "I have got two sessions running in Pitwall, and it's not clea
 | Option | What pitwall does | Fixes "which is the lead" | Reports back | Cost |
 | --- | --- | --- | --- | --- |
 | **A. Show only** | Infers links from `derived-from` and started spin-offs, labels the rows | Partly: only for sessions a lead launched or proposed | No | Small: a read and a label |
-| **B. Lead and delegated sessions in pitwall** (the lean) | Records the link from four sources, shows a tree, gives each delegated session its lead and how to report, teaches the rule | Yes, including the two sessions running now, by Make lead | Yes, by `SendMessage` to the lead | Medium: a lineage kind, a list change, a tab, a skill change, a security review |
+| **B. Lead and delegated sessions in pitwall** (chosen, 2026-11-27) | Records the link from four sources, shows them as a tree in the sessions list, gives each delegated session its lead and how to report, teaches the rule | Yes, including the two sessions running now, by Make lead | Yes, by `SendMessage` to the lead | Medium: a lineage kind, a list change, a skill change, a security review |
 | **C. Agent teams** | Turns teams on in sessions it starts and reads `~/.claude/teams` | Only inside one session | Through the team's mailbox | Builds on an experimental, internal format whose teammates pitwall can't list (finding 1) |
 | **D. The supervisor orchestrates** | The supervisor assigns and chases work | No: Phil, 2026-11-26, "the supervisor looks across all work, while the lead session is a normal session" | Through the supervisor | Ruled out by Phil |
 
@@ -44,40 +44,39 @@ Phil, 2026-11-26: "I have got two sessions running in Pitwall, and it's not clea
 
 A link is lead id → delegated id, ids only, appended to the lineage log (`~/.pitwall/lineage.jsonl`, W167) as a new kind, `delegate`, beside `clear` and `continue`. Four sources:
 
-1. **Start on a spin-off card** whose block says the session reports back (question 2 below): pitwall writes the link when the started session appears, as W212 already matches a start to its proposer.
+1. **Start on a spin-off card** whose block says the session reports back (Phil, 2026-11-27: one optional line in the block): pitwall writes the link when the started session appears, as W212 already matches a start to its proposer.
 2. **Delegate a session…** in a session's actions menu: New session, filled in with "For: <lead>", which writes the link on start.
 3. **`derived-from` with `via: "launch"`:** a session the lead started itself with `claude --bg`. Read from the transcript, fail-soft.
 4. **Report to…** on any running session's actions menu, to assign one that already exists. It records the link and offers, as a card, a message to that session telling it its lead (sent as Phil, so his click).
 
 A session is a lead when it has a delegated session, or when Phil marks it with **Make lead**, so the two sessions running now can be sorted before either delegates anything. **Not a lead** and **Not delegated** undo either. A lead's chain through `/clear` and hand-offs (lineage `clear` and `continue`) keeps its delegated sessions under the newest session in the chain.
 
-### The list
+### The list: delegated sessions indented under their lead (Phil, 2026-11-27)
 
-Delegated sessions sit under their lead, in the lead's repo group, with their own repo named when it differs. Their own repo group keeps a one-line pointer.
+The relationship shows in the sessions list itself, not only in a tab of the lead's view. Each delegated session is a row indented under its lead, with a guide line joining them, in the lead's repo group; its own repo is named on the row when it differs.
 
 ```
 ▾ pitwall
-  ◆ W218 design                         Lead · working          ba21807b
-    ├ W217 spike                        idle · reported 10:42
-    ├ outpost docs fix      outpost     needs you
-    └ flaky test fix                    done · reported 09:15
+  ▾ ◆ W218 design                       Lead · working · 3 delegated      ba21807b
+    │  W217 spike                       idle · reported 10:42
+    │  outpost docs fix     outpost     needs you
+    │  flaky test fix                   done · reported 09:15
     4518 restart notes                  idle
 ▾ outpost
-    outpost docs fix  ↳ delegated by W218 design (pitwall)
+    outpost docs fix  ↳ under W218 design (pitwall)
 ```
 
-### The lead's view: a Delegated tab beside Sub-agents
+- **Open and closed:** a caret on the lead's row opens and closes its delegated rows; open by default, and the choice is remembered per lead in the browser. Closed, the lead's row keeps the count and the most urgent state, so nothing that needs you is hidden:
 
 ```
-Conversation   Terminal   Sub-agents (2)   Delegated (3)
-
-                                              [ Delegate a session… ]
-W217 spike         pitwall   idle        Report 10:42  Spike done: option B works…
-outpost docs fix   outpost   needs you   Asked: Which branch should the fix go on?
-flaky test fix     pitwall   done        Report 09:15  Merged #344
+  ▸ ◆ W218 design                       Lead · working · 3 delegated, 1 needs you
 ```
 
-Each row links to the session; the report column is the newest message the delegated session sent its lead, from the transcripts Peers would read, shown as text.
+- **Needs you** still lists a delegated session that needs you, as today, with "under W218 design" on its card.
+- **Its own repo group** keeps a one-line pointer, so a search by repo still finds it.
+- **A finished delegated session** stays under its lead, as finished sessions stay in the list today, and goes when the lead's row goes.
+- **The lead's own view** has no new tab in the first build: its header says "Lead of 3", which opens the list at the lead. A Delegated tab, with each session's newest report, waits until the list proves not enough.
+- **The report** shows on the delegated session's row as "reported 10:42", and clicking it opens that session's Conversation tab at the `SendMessage` that sent it (Peers, M6, isn't built yet).
 
 ### A delegated session's view and first prompt
 
@@ -115,6 +114,14 @@ The spin-off card shows the kind and the reason:
 └────────────────────────────────────────────────────────────────────┘
 ```
 
+### Phil's answers (2026-11-27)
+
+- **Option B,** with the delegated sessions indented under their lead in the sessions list (above), not only a tab.
+- **Delegated sessions report to their lead with `SendMessage`,** which revises Peers' show-only rule for a lead and its delegated sessions only.
+- **A spin-off block gets one optional line** saying whether the new session reports back.
+- **Labels, option A, are not the way to group sessions:** that's projects, a future item (W219, `PLAN.md`, "Later: projects").
+- **The names "lead" and "delegated"** are checked against other tools before the build (below).
+
 ### What it changes in the plan
 
 - **Peers** (M6, show only): "pitwall never prompts or relies on sessions coordinating with each other". B prompts a delegated session to report to its lead. The evidence that led to show only (CooperBench's "30% lower success rates when working together") is about equal peers splitting one task; a lead handing pieces to workers is the shape Cursor found "solved most of our coordination problems" (`PLAN.md`, M6). Equal peers stay show only.
@@ -125,10 +132,10 @@ The spin-off card shows the kind and the reason:
 
 A new kind of lineage line (ids only, the log's existing checks), a new route for Make lead, Report to… and Delegate a session…, a paragraph pitwall adds to a prompt, and a new transcript read (`derived-from`). Each delegated session's report is session text, shown as text. An xhigh security review, as for any new route and stored state.
 
-## Pieces, if B is chosen
+## Pieces (Phil chose B, 2026-11-27)
 
 1. **Links and the list:** `delegate` lineage lines from the four sources, Make lead, the tree in the list. Fixes "which is the lead" on its own.
-2. **The Delegated tab and the first prompt's paragraph,** with the two `SendMessage` checks from finding 4 on `pitwall-test-*` sessions.
+2. **The first prompt's paragraph and the report on the row,** with the two `SendMessage` checks from finding 4 on `pitwall-test-*` sessions.
 3. **The rule** in the plugin's skill and on the spin-off card.
 
 ## Left on this machine

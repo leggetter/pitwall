@@ -328,6 +328,7 @@ Phil, 2026-11-26: "When I try and orchestrate from one session to the other, I t
   - **Which session is the lead:** pitwall marks a lead and the sessions delegated from it (spin-offs it proposed, sessions started for it, or ones Phil assigns), shows them as a tree in the list and in the lead's view, and gives each delegated session its lead, by name and id, in its first prompt.
   - **The rule, in pitwall:** a sub-agent when the lead needs the result back in its own context; a delegated session when the work outlives the lead's turn, needs its own context, repo or worktree, or Phil will steer it himself. The pitwall plugin's skill teaches it, and pitwall shows it where work is split (a spin-off card, New session from a lead).
   - **A design first:** options with mockups, after checking Claude Code's agent teams (below), then Phil's call. Done in [spike 021](docs/spikes/021-lead-sessions.md) (2026-11-27): four options; the lean is B, lead and delegated sessions in pitwall, built in three pieces (links and the list; the Delegated tab and the first prompt's paragraph; the rule). Waiting on Phil's call.
+  - **Phil's call, 2026-11-27:** option B, with each delegated session indented under its lead in the sessions list, a caret to open and close them, rather than a tab in the lead's view; delegated sessions report to their lead with `SendMessage`; a spin-off block gets one optional line saying whether the new session reports back. Before the build, the names "lead" and "delegated" are checked against what other tools call them (Phil: "I don't want to invent our own if there's something in T3 Code or similar").
 
 - **What the tools checked on 2026-11-26 do** (Context, "Checked again"): all three make parent and child explicit. hub has one coordinator, permanent agents with their own area, and short-lived executors that each work in their own worktree, report back and sleep. Herdr's agents start helpers with `hc run`, wait for them, and get each helper's report in their own input; helpers stop when the parent stops. T3 Code's `delegate_task` starts sub-threads that show as cards in the parent, with their approvals in the parent; stopping the parent stops them.
 - **What pitwall can build on:** lineage (W167: which session continues which), the proposer a spin-off records (W163), the Sub-agents tab, and Peers' show-only view of cross-session messages (above).
@@ -350,6 +351,14 @@ Phil, 2026-11-02, as New session from here was taken out (W130, D27): a future f
 
 - **To check first:** that `--fork-session` is in Claude Code's documented CLI reference, and how it behaves for a background session that's still running.
 - **The trade-off:** the fork re-reads the whole copied context on every turn, which runs against M5.2's efficiency goal, so it suits trying another direction on the same work, not unrelated work, which is New session's.
+
+### Later: projects, groups of associated sessions (W219, Phil, 2026-11-27)
+
+Phil, 2026-11-27: "I'd like to be able to group things by what I think I'm going to call projects. … I know we've got roots. I'm calling those workspaces. … Projects are groups of associated sessions. We need to dig into that. It's a future work item." Not taken on now.
+
+- **Workspaces** are what pitwall calls roots today: `~/work` and `~/oss` in the docs. Renaming roots to workspaces, in the UI, the config file and the docs, is part of this item, not done yet.
+- **Projects** group associated sessions, across repos and workspaces; how a session joins one, and how projects sit beside the list's repo groups and W218's lead trees, is to dig into first.
+- **Not labels:** spike 021's option A (labels on rows) was a way to show W218's links, not a way to group sessions; projects are.
 
 ## Open items
 
