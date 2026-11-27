@@ -134,7 +134,8 @@ src/supervisor/          the supervisor (M5, W113, W115, D4): one claude -p sess
                          view and routes are src/server/snapshotSupervisor.ts and supervisorRoutes.ts. Its
                          read-only connectors (W184, D28): connectors.ts the config and what a start adds,
                          connectorServer.ts the credential routes, connectorLauncher.mjs a stdio connector's
-                         environment, connectorTools.ts `--connector-tools`. Off with --no-supervisor
+                         environment, connectorTools.ts `--connector-tools`, claudeAi.ts the claude.ai connectors (W191: the
+                         mcp_status adapter, the deny lists, `--claude-ai-connectors`). Off with --no-supervisor
 src/usage/               the usage report's reads and totals (M5.1, W131): scan.ts streams transcripts and keeps
                          numbers only, report.ts aggregates them by repo, model, day, hour and sub-agent,
                          prices.ts has the API list prices behind its stand-in cost, format.ts the text tables,

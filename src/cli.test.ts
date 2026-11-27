@@ -151,6 +151,9 @@ describe('parseCliArgs', () => {
     expect(() => parseCliArgs(['--no-connectors=1'], {})).toThrow(UsageError);
     expect(USAGE).toContain('[--no-connectors]');
     expect(USAGE).toContain('pitwall --connector-tools <name>');
+    expect(parseCliArgs(['--claude-ai-connectors'], {})).toEqual({ kind: 'claude-ai-connectors' });
+    expect(() => parseCliArgs(['--claude-ai-connectors', 'a'], {})).toThrow(UsageError);
+    expect(USAGE).toContain('--claude-ai-connectors');
     expect(USAGE).toContain('supervisor.connectors');
   });
 
