@@ -24,7 +24,7 @@ export const SUPERVISOR_MIN = LIST_MIN;
  * the session view's 560 and the panel's 360. Narrower, while the panel is open, the repo list folds
  * into the header's Repos drawer, its form below 900 px, so the view keeps its 560 px (W187): 1,520 px.
  */
-export const SESSION_PANE_KEEPS_REPOS = REPO_LIST_WIDTH + LIST_MIN + SESSION_PANE_MIN + SUPERVISOR_MIN;
+export const PANEL_KEEPS_REPOS = REPO_LIST_WIDTH + LIST_MIN + SESSION_PANE_MIN + SUPERVISOR_MIN;
 
 /**
  * The room the supervisor's column takes in three columns, as styles.css works it out: the repo list's
@@ -34,7 +34,7 @@ export const SESSION_PANE_KEEPS_REPOS = REPO_LIST_WIDTH + LIST_MIN + SESSION_PAN
  */
 export function supervisorColumn(appWidth: number): { repos: number; panel: number } {
   const width = Math.floor(appWidth);
-  const repos = width >= SESSION_PANE_KEEPS_REPOS ? REPO_LIST_WIDTH : 0;
+  const repos = width >= PANEL_KEEPS_REPOS ? REPO_LIST_WIDTH : 0;
   const panel = Math.min(SUPERVISOR_WIDTH, Math.max(SUPERVISOR_MIN, width - repos - LIST_MIN - SESSION_PANE_MIN));
   return { repos, panel };
 }

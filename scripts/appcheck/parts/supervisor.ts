@@ -137,7 +137,7 @@ const part: Part = {
     const allowNew = () => t.allow(/\/api\/supervisor\/conversation$/, 'a new conversation, with no transcript yet: the empty state');
     // From 1,200 px the panel stays open beside a session opened from it; below, it closes so the session is in sight (W177).
     const beside = t.layout === 'three-columns';
-    const SESSION_PANE_AS_LAYOUT = beside ? `!!${SVIEW}` : `!${SVIEW}`;
+    const PANEL_AS_LAYOUT = beside ? `!!${SVIEW}` : `!${SVIEW}`;
     /** Shuts the repo drawer below 900 px, which covers the header's button while it's open. */
     const shutRepoList = async () => {
       if (!(await page.evaluate<boolean>(`!!document.querySelector('.repo-drawer')`))) return;
@@ -399,7 +399,7 @@ const part: Part = {
       t.expect(spill.every((r) => r.meta <= r.row + 0.5), 'each row’s state, when and Open inside its card', spill);
       await t.shot('handoffs');
       await page.click('Open pr-57', `${HANDOFFS}[0].querySelector('[data-handoff-open]')`);
-      await page.waitFor('its session view, beside the panel or in sight', `${SESSION_PANE_AS_LAYOUT} && !!document.querySelector('#session-view')`);
+      await page.waitFor('its session view, beside the panel or in sight', `${PANEL_AS_LAYOUT} && !!document.querySelector('#session-view')`);
       t.expect((await page.evaluate<string>('location.search')).includes('session='), 'the session in the URL', await page.evaluate('location.search'));
       t.expectEqual(await page.evaluate(`document.querySelector('#session-view h2 .session-view-name')?.textContent ?? null`), 'pr-57', 'the session it started');
     });
@@ -417,7 +417,7 @@ const part: Part = {
       t.expectEqual(records.decisions.at(-1), { id: SUPERVISOR_APPROVALS.spawn, decision: 'send', profile: 'Review', status: 200 }, 'the new session sent with its card’s profile');
       t.expectEqual(await page.evaluate(OPEN_TAB), '~/oss', 'in ~/oss’s tab');
       await page.click('Open pr-57', `${HANDOFFS}[0].querySelector('[data-handoff-open]')`);
-      await page.waitFor('its session view, beside the panel or in sight', `${SESSION_PANE_AS_LAYOUT} && ${viewName} === 'pr-57'`);
+      await page.waitFor('its session view, beside the panel or in sight', `${PANEL_AS_LAYOUT} && ${viewName} === 'pr-57'`);
       const search = await page.evaluate<string>('location.search');
       t.expect(search.startsWith(`?repo=${DEMO_APP}&root=${CODE}&session=`), 'its group and root in the URL, with the session', search);
       t.expectEqual(await page.evaluate(OPEN_TAB), '~/code', 'its root’s tab open');
@@ -719,7 +719,7 @@ const part: Part = {
       t.expectEqual(row, { kind: 'resume', what: `Resumed ${NAMES.ended}`, open: 'Open →' }, '“Resumed <name>” with Open');
       await t.shot('resume-handoff');
       await page.click(`Open ${NAMES.ended}`, `${HANDOFFS}[0].querySelector('[data-handoff-open]')`);
-      await page.waitFor('its session view, beside the panel or in sight', `${SESSION_PANE_AS_LAYOUT} && !!document.querySelector('#session-view')`);
+      await page.waitFor('its session view, beside the panel or in sight', `${PANEL_AS_LAYOUT} && !!document.querySelector('#session-view')`);
       t.expectEqual(await page.evaluate(`document.querySelector('#session-view h2 .session-view-name')?.textContent ?? null`), NAMES.ended, 'the session it resumed');
     });
 
@@ -753,13 +753,13 @@ const part: Part = {
       t.expectEqual([look.color, look.underline, look.weight, look.background, look.border], [look.link, 'underline', look.strong, 'rgba(0, 0, 0, 0)', '0px'], 'a link’s look, not a button chip');
       await t.shot('mentions');
       await page.click('pitwall-test-review', `${reply}.querySelector('button.md-mention')`);
-      await page.waitFor('its session view, beside the panel or in sight', `${SESSION_PANE_AS_LAYOUT} && !!document.querySelector('#session-view')`);
+      await page.waitFor('its session view, beside the panel or in sight', `${PANEL_AS_LAYOUT} && !!document.querySelector('#session-view')`);
       t.expectEqual(await page.evaluate(`document.querySelector('#session-view h2 .session-view-name')?.textContent ?? null`), NAMES.asked, 'the session it named');
       t.expect((await page.evaluate<string>('location.search')).includes('session='), 'the session in the URL', await page.evaluate('location.search'));
       await page.evaluate('history.back()');
       await page.waitFor('back to the supervisor', `!!${reply}?.querySelector('[data-mention="pr"]')`);
       await page.click('example/demo-app#57', `${reply}.querySelector('[data-mention="pr"]')`);
-      await page.waitFor('its PR view', `${SESSION_PANE_AS_LAYOUT} && new URLSearchParams(location.search).get('pr') === 'example/demo-app/57'`);
+      await page.waitFor('its PR view', `${PANEL_AS_LAYOUT} && new URLSearchParams(location.search).get('pr') === 'example/demo-app/57'`);
     });
 
     await t.step('Stop: while it works, Stop stops its turn, and focus goes to the box', async () => {

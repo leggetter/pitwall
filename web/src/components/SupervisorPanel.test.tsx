@@ -18,7 +18,7 @@ import { fakeHistory } from '../test/history.js';
 import stylesCss from '../styles.css?raw';
 import { tokens, withoutComments } from '../test/css.js';
 import { AppShell } from './AppShell.js';
-import { SESSION_PANE_KEEPS_REPOS, sessionPaneMax, sessionPaneMin, supervisorColumn } from '../sessionPaneWidth.js';
+import { PANEL_KEEPS_REPOS, sessionPaneMax, sessionPaneMin, supervisorColumn } from '../sessionPaneWidth.js';
 
 const ROOT = '/Users/example/code';
 const OSS = '/Users/example/oss';
@@ -199,7 +199,7 @@ describe('from 1,200 px: beside the open session, which stays', () => {
 
 describe('from 1,200 px, a column of its own (W187): the others give way, the repo list folding below 1,520 px', () => {
   it('works out the same room as styles.css: the panel 560 px, then down to 360 px, and the repo list folded below 1,520 px', () => {
-    expect(SESSION_PANE_KEEPS_REPOS).toBe(1520);
+    expect(PANEL_KEEPS_REPOS).toBe(1520);
     expect(supervisorColumn(1920)).toEqual({ repos: 240, panel: 560 });
     expect(supervisorColumn(1720)).toEqual({ repos: 240, panel: 560 });
     expect(supervisorColumn(1600)).toEqual({ repos: 240, panel: 440 });

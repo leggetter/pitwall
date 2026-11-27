@@ -353,7 +353,7 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
   const app = useRef<HTMLDivElement>(null);
   const { layout, compact, overlayCoversRepos, panelFoldsRepos } = useLayout(app);
   // The session view's width as the third column: the divider and the actions menu's width items change it.
-  const [panelWidth] = useState(() => createSessionPaneWidthStore(storage));
+  const [paneWidth] = useState(() => createSessionPaneWidthStore(storage));
   // Group sessions by, from Preferences (W42, W59): the snapshot's groups, grouped again for the mode.
   const [groupBy, setGroupBy] = useGroupBy(storage);
   // Which tab a running background session's view opens on, from Preferences too (W54).
@@ -1949,7 +1949,7 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
       compact={compact}
       headingRef={hiddenIn === undefined ? viewHeading : undefined}
       onStep={hiddenIn === undefined ? stepFromView : undefined}
-      panel={layout === 'three-columns' ? panelWidth : undefined}
+      paneWidth={layout === 'three-columns' ? paneWidth : undefined}
       animate={hiddenIn === undefined && animate}
       hidden={hiddenIn !== undefined}
       onDraftChange={(has) => {
@@ -2260,7 +2260,7 @@ export function AppShell({ view, storage = browserStorage, navigation = browserN
         {/* The third column from 1,200 px; below that, display: contents, and the view overlays the list.
             The supervisor's panel is last, over the views, which are inert under it below 1,200 px (W177). */}
         <div className="session-pane" {...(supervisorPanel === undefined ? {} : { 'data-panel-open': '' })}>
-          {layout === 'three-columns' && <Divider store={panelWidth} beside={supervisorPanel !== undefined} />}
+          {layout === 'three-columns' && <Divider store={paneWidth} beside={supervisorPanel !== undefined} />}
           <div className="pane-views" inert={viewCovered || undefined}>
             {paneViews}
           </div>

@@ -283,7 +283,7 @@ export interface FrameProps {
 }
 
 /** The attribute that marks the supervisor's panel, whose Escape comes before a view's (W177). */
-export const SESSION_PANE_ATTRIBUTE = 'data-view-panel';
+export const PANEL_ATTRIBUTE = 'data-view-panel';
 
 /**
  * The view's region: a <section> named by its heading, which is a non-modal dialog when it overlays
@@ -306,7 +306,7 @@ export function Frame({ layout, id = SESSION_VIEW_ID, className, hidden = false,
   useEffect(() => {
     const onKey = (event: globalThis.KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented || hiddenRef.current) return;
-      const top = document.querySelector(`[${SESSION_PANE_ATTRIBUTE}]`);
+      const top = document.querySelector(`[${PANEL_ATTRIBUTE}]`);
       if (top !== null && top !== own.current) return;
       // The panel's Escape goes no further, even once it has gone: the browser runs the page's
       // updates between listeners, so a view's listener after this one would find no panel.
@@ -324,7 +324,7 @@ export function Frame({ layout, id = SESSION_VIEW_ID, className, hidden = false,
       hidden={hidden}
       className={['session-view', className, layout === 'column' ? 'in-column' : 'overlay', panel && 'view-panel', opening && 'opening'].filter(Boolean).join(' ')}
       {...(layout === 'overlay' ? { role: 'dialog', 'aria-modal': false } : panel ? { role: 'complementary' } : {})}
-      {...(panel ? { [SESSION_PANE_ATTRIBUTE]: '' } : {})}
+      {...(panel ? { [PANEL_ATTRIBUTE]: '' } : {})}
       aria-labelledby={titleId}
       onAnimationEnd={(event) => {
         if (event.target === event.currentTarget) setOpening(false);
@@ -400,7 +400,7 @@ export interface SessionViewProps {
    * The view's width as the third column, which the divider also changes: the actions menu then has
    * Make view wider, Make view narrower and Reset view width, so it can be resized without a drag.
    */
-  panel?: SessionPaneWidthStore | undefined;
+  paneWidth?: SessionPaneWidthStore | undefined;
   /** In a root tab that isn't open (W38): kept, hidden, so its terminal, draft and sends carry on. */
   hidden?: boolean;
   /** Its star toggle, before the actions menu (W53): whether it's starred, and a way to star or unstar it. */
@@ -494,7 +494,7 @@ export function SessionView({
   onDraftChange,
   onRunningChange,
   onPromptChange,
-  panel,
+  paneWidth,
   hidden = false,
   star,
   onSnooze,
@@ -905,9 +905,9 @@ export function SessionView({
   }, [prompting]);
   useEffect(() => () => onPromptRef.current?.(false), []);
   // What the width items can do, which changes only at the limits, so a drag doesn't re-render the view.
-  const limits = useSyncExternalStore(panel?.subscribe ?? noStore, () => (panel ? sessionPaneLimits(panel.get()) : ''));
+  const limits = useSyncExternalStore(paneWidth?.subscribe ?? noStore, () => (paneWidth ? sessionPaneLimits(paneWidth.get()) : ''));
   const [canWiden, canNarrow, canReset] = limits.split('|').map((part) => part !== '');
-  const widthEntries: MenuEntry[] = panel
+  const widthEntries: MenuEntry[] = paneWidth
     ? [
         { kind: 'separator', id: 'width-separator' },
         {
@@ -915,16 +915,16 @@ export function SessionView({
           label: 'Make view wider',
           disabled: !canWiden,
           hint: WIDTH_HINTS.wider,
-          onSelect: () => panel.set(shownSessionPane(panel.get()) + SESSION_PANE_MENU_STEP, true),
+          onSelect: () => paneWidth.set(shownSessionPane(paneWidth.get()) + SESSION_PANE_MENU_STEP, true),
         },
         {
           id: 'narrower',
           label: 'Make view narrower',
           disabled: !canNarrow,
           hint: WIDTH_HINTS.narrower,
-          onSelect: () => panel.set(shownSessionPane(panel.get()) - SESSION_PANE_MENU_STEP, true),
+          onSelect: () => paneWidth.set(shownSessionPane(paneWidth.get()) - SESSION_PANE_MENU_STEP, true),
         },
-        { id: 'reset-width', label: 'Reset view width', disabled: !canReset, hint: WIDTH_HINTS.reset, onSelect: () => panel.set(sessionPaneReset(panel.get().appWidth), true) },
+        { id: 'reset-width', label: 'Reset view width', disabled: !canReset, hint: WIDTH_HINTS.reset, onSelect: () => paneWidth.set(sessionPaneReset(paneWidth.get().appWidth), true) },
       ]
     : [];
   // One item per editor the server found (W72), while it's listed and its directory exists: an ended
