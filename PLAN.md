@@ -63,7 +63,7 @@ Phil asked how pitwall compares to [icons8/hub](https://github.com/icons8/hub), 
 - **hub** (Apache-2.0, public since 2026-11-19, labelled experimental): a coordinator session you talk to, which starts and runs Claude Code or Codex sessions on its own copy of Claude Code, one `claude -p` stream-json process each, in `bypassPermissions` mode. It has a Now tab, question cards with buttons, Telegram and a watchdog.
 - **Herdr** (Apache-2.0, Rust): a terminal runtime for agents. It owns the terminals its agents run in, shows working, blocked or idle as each agent reports it, and has a phone app over SSH. It shows nothing above the terminal: no reasons, recaps, PRs or usage.
 - **T3 Code** (MIT, v0.1.12): a desktop and web app for threads across about ten agent CLIs, with worktrees, diff review, commit and PR buttons, usage, and phone apps. At first run it imports conversations from the last 30 days once, as copies you continue in T3 Code; it doesn't watch sessions running elsewhere.
-- **What Phil took from it** (2026-11-26): the suggestions in "Nice to have, later" (From the 2026-11-26 comparison), a watchdog in "M6 - Triage", and W218 (a lead session and its delegated sessions).
+- **What Phil took from it** (2026-11-26): the suggestions in "Nice to have, later" (From the 2026-11-26 comparison), a watchdog in "M6 - Triage", and W218 (a lead session and its workers).
 
 ## Architecture
 
@@ -316,7 +316,7 @@ The bullets (what already happens, the research, the leans) are in "Consideratio
 - **Peers is part of M6, show only** (Phil, 2026-11-02: option A, after the research): pitwall shows the messages sessions already send each other, both sides linked, a Peers tab beside Sub-agents, and "waiting on a peer" as a triage reason. pitwall never prompts or relies on sessions coordinating with each other, and the supervisor never uses peer messaging to run a batch ("M6 - Triage").
 - **Why show only:** the 2026-11-02 research questions directing peer coordination: [CooperBench](https://arxiv.org/abs/2601.13295) found agents "on average 30% lower success rates when working together" than doing both tasks alone.
 
-### W218, A lead session and its delegated sessions (Phil, 2026-11-26)
+### W218, A lead session and its workers (Phil, 2026-11-26)
 
 Phil, 2026-11-26: "When I try and orchestrate from one session to the other, I tend to find that it gets very mixed up in terms of which is the lead session and which are the sub-sessions. … Building a hierarchy of sessions into Pitwall so that there's very clearly a lead session and very clearly sub-sessions that are doing work for that lead session might be a good UX and work process improvement." On the supervisor: "the supervisor idea isn't quite working the way I would like … I think ultimately I wanted something to orchestrate different sessions, but the supervisor doesn't quite do that."
 
@@ -325,17 +325,18 @@ Phil, 2026-11-26: "When I try and orchestrate from one session to the other, I t
   - Priority: "I have got two sessions running in Pitwall, and it's not clear if either of them is the coordinator or the lead. I would say that working on that first, identifying it, and very clearly having a coordinator/lead and delegated other sessions would be a priority."
   - The rule: "when we're identifying work, we should be identifying whether these should be split off into additional sessions or whether subagents should be used. We should have a clear rule defined for that within Pitwall."
 - **What, in three parts:**
-  - **Which session is the lead:** pitwall marks a lead and the sessions delegated from it (spin-offs it proposed, sessions started for it, or ones Phil assigns), shows them as a tree in the list and in the lead's view, and gives each delegated session its lead, by name and id, in its first prompt.
-  - **The rule, in pitwall:** a sub-agent when the lead needs the result back in its own context; a delegated session when the work outlives the lead's turn, needs its own context, repo or worktree, or Phil will steer it himself. The pitwall plugin's skill teaches it, and pitwall shows it where work is split (a spin-off card, New session from a lead).
-  - **A design first:** options with mockups, after checking Claude Code's agent teams (below), then Phil's call. Done in [spike 021](docs/spikes/021-lead-sessions.md) (2026-11-27): four options; the lean is B, lead and delegated sessions in pitwall, built in three pieces (links and the list; the Delegated tab and the first prompt's paragraph; the rule). Waiting on Phil's call.
+  - **Which session is the lead:** pitwall marks a lead and its workers (spin-offs it proposed, sessions started for it, or ones Phil assigns), shows them as a tree in the list and in the lead's view, and gives each worker its lead, by name and id, in its first prompt.
+  - **The rule, in pitwall:** a sub-agent when the lead needs the result back in its own context; a worker when the work outlives the lead's turn, needs its own context, repo or worktree, or Phil will steer it himself. The pitwall plugin's skill teaches it, and pitwall shows it where work is split (a spin-off card, New session from a lead).
+  - **A design first:** options with mockups, after checking Claude Code's agent teams (below), then Phil's call. Done in [spike 021](docs/spikes/021-lead-sessions.md) (2026-11-27): four options; the lean is B, leads and workers in pitwall, built in three pieces (links and the list; the Workers tab and the first prompt's paragraph; the rule). Waiting on Phil's call.
+  - **Phil's call, 2026-11-27:** option B, with each worker indented under its lead in the sessions list, a caret to open and close them, rather than a tab in the lead's view; workers report to their lead with `SendMessage`; a spin-off block gets one optional line saying whether the new session reports back. Names (Phil, 2026-11-27, after spike 021's check of eight tools): **leads** and **workers**, rather than "delegated", which T3 Code and Codex use for sub-agents.
 
 - **What the tools checked on 2026-11-26 do** (Context, "Checked again"): all three make parent and child explicit. hub has one coordinator, permanent agents with their own area, and short-lived executors that each work in their own worktree, report back and sleep. Herdr's agents start helpers with `hc run`, wait for them, and get each helper's report in their own input; helpers stop when the parent stops. T3 Code's `delegate_task` starts sub-threads that show as cards in the parent, with their approvals in the parent; stopping the parent stops them.
 - **What pitwall can build on:** lineage (W167: which session continues which), the proposer a spin-off records (W163), the Sub-agents tab, and Peers' show-only view of cross-session messages (above).
 - **What it would change:** Peers is show only, and the supervisor reads and drafts (D4: read-only tools, acts only after your click). A lead with sub-sessions is a shape pitwall would show and help keep straight: each sub-session knows its lead and reports to it, and the lead's view lists its sub-sessions with their state and recaps. The evidence in "M6 - Triage" favours this shape over equal peers: Cursor found planners handing tasks to workers "solved most of our coordination problems".
 - **Questions before a design:**
   - ~~Is the lead one of Phil's own sessions, or the supervisor reworked into one?~~ One of his own sessions (Phil, 2026-11-26).
-  - Do sub-sessions report through cross-session messages, a shared file in the repo, or pitwall? The lean (spike 021): `SendMessage` to the lead, which revises Peers' show-only rule for a lead and its delegated sessions only. For Phil.
-  - Which work needs a sub-session at all, rather than a fresh sub-agent in the lead, which already reports back? Spike 021's rule: inline, a sub-agent, a delegated session or a spin-off, by who steers it, whether the result must come back into the lead's context, and whether it outlives the lead's turn.
+  - Do sub-sessions report through cross-session messages, a shared file in the repo, or pitwall? The lean (spike 021): `SendMessage` to the lead, which revises Peers' show-only rule for a lead and its workers only. For Phil.
+  - Which work needs a sub-session at all, rather than a fresh sub-agent in the lead, which already reports back? Spike 021's rule: inline, a sub-agent, a worker or a spin-off, by who steers it, whether the result must come back into the lead's context, and whether it outlives the lead's turn.
   - ~~Does Claude Code's [agent teams](https://code.claude.com/docs/en/agent-teams), cited above, already give this shape, so pitwall shows it rather than builds it? Check before designing.~~ No (spike 021, finding 1): agent teams are experimental, teammates aren't listed as sessions, share the lead's folder and end with it, and an existing session can't join a team. Claude Code does record which session launched another, in an undocumented `derived-from` transcript entry (finding 2), which pitwall can read behind the transcript adapter.
 
 ### Later: chatting with a session, and sessions pitwall hosts ([#108](https://github.com/leggetter/pitwall/issues/108))
@@ -350,6 +351,14 @@ Phil, 2026-11-02, as New session from here was taken out (W130, D27): a future f
 
 - **To check first:** that `--fork-session` is in Claude Code's documented CLI reference, and how it behaves for a background session that's still running.
 - **The trade-off:** the fork re-reads the whole copied context on every turn, which runs against M5.2's efficiency goal, so it suits trying another direction on the same work, not unrelated work, which is New session's.
+
+### Later: projects, groups of associated sessions (W219, Phil, 2026-11-27)
+
+Phil, 2026-11-27: "I'd like to be able to group things by what I think I'm going to call projects. … I know we've got roots. I'm calling those workspaces. … Projects are groups of associated sessions. We need to dig into that. It's a future work item." Not taken on now.
+
+- **Workspaces** are what pitwall calls roots today: `~/work` and `~/oss` in the docs. Renaming roots to workspaces, in the UI, the config file and the docs, is part of this item, not done yet.
+- **Projects** group associated sessions, across repos and workspaces; how a session joins one, and how projects sit beside the list's repo groups and W218's lead trees, is to dig into first.
+- **Not labels:** spike 021's option A (labels on rows) was a way to show W218's links, not a way to group sessions; projects are.
 
 ## Open items
 
