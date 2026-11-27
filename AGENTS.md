@@ -40,7 +40,8 @@ Usage limits are weekly, and pitwall's own work should leave room for the weeken
 
 - **Checks while you work are targeted:** run the tests for the files you change, and the full `npm test` once, at the end. CI runs it again.
 - **The app check runs only for the parts a change touches,** at two or three widths (`--only`, `--widths`, `--themes`), through `scratch/run-locked.sh` under `caffeinate -i`. The full run is for a milestone merge.
-- **One agent at a time,** unless Phil asks for more in parallel.
+- **Up to three items in parallel** (Phil, 2026-11-27, "yes"): each item gets its own worktree and builder, picked so that no two touch the same code, and the lead reviews and merges them one at a time. Within one item, one agent at a time.
+- **Size a builder's piece to about 40 calls or under 150K of context** (Phil, 2026-11-27, "yes", from the research in #363): at 200K, an agent finishes only if it is about 40 calls or fewer from a checkable end, its next step isn't a wait over 5 minutes, and it hasn't failed the same fix twice; otherwise it commits and reports. It stops at 400K. The `SendMessage` guard stays at 200K.
 - **Match the model and effort to the work:** high effort for building and ordinary reviews, xhigh only for security reviews. Use a smaller model for mechanical work, such as plan and doc updates, where the session can choose.
 - **Small review fixes are made by the coordinating session,** not by another agent round. Resuming a big agent re-reads its whole context.
 - **Read what you need:** excerpts and `grep`, not whole large files, and counts, not full outputs. Some lines are very long (`docs/decisions.md`'s entries, up to 3,200 characters; `PLAN.md`'s are under 1,100 since its Security bullets and M5.1 work breakdown were split into sub-bullets), so a `grep` that matches one prints all of it: cut it, `grep -n … | cut -c1-200`, or `grep -o '.\{0,80\}word.\{0,80\}'`, and read the whole line only when you need it.
