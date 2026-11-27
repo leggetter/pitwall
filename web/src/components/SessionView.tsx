@@ -576,7 +576,11 @@ export function SessionView({
   const [chosen, setChosen] = useState<Tab | undefined>(() => (hidden ? undefined : openingTab()));
   const tab = chosen ?? 'conversation';
   useLayoutEffect(() => {
-    if (chosen === undefined && !hidden) setChosen(openingTab());
+    if (chosen === undefined && !hidden) {
+      // A link followed while this view was hidden, in another root tab (W38), opens it at the card, not the Terminal tab.
+      if (wantsLatestSpinOff(browserNavigation.location.search, session.sessionId)) latestSpinOff.current = true;
+      setChosen(openingTab());
+    }
   });
   // The newest page every 2 s too while Claude Code says the session works and its Conversation tab is
   // shown (W102), until that page says the turn has ended: so the working line's step keeps up.
@@ -615,6 +619,8 @@ export function SessionView({
   }, [hasSpinOffs, spinSessionId, spinSessionName, proposedKey, settledHow, settledAt, settledSession, settledName]);
   const conversationStatus = conversation.state.status;
   // The same link followed in this tab while the session is open (W220, ownLinks.ts): the Conversation tab, at the newest card.
+  // Also when the view is shown again: a view kept hidden in another root tab (W38) ignores popstate, and the link that
+  // shows it is still in the address, so it's read here (Phil, 2026-11-27: the link left a hidden view on its Terminal tab).
   const [spinOffLinks, setSpinOffLinks] = useState(0);
   useEffect(() => {
     if (hidden) return undefined;
@@ -625,14 +631,27 @@ export function SessionView({
       setAttachStatus(undefined);
       setSpinOffLinks((count) => count + 1);
     };
+    follow();
     browserNavigation.addEventListener('popstate', follow);
     return () => browserNavigation.removeEventListener('popstate', follow);
   }, [hidden, session.sessionId]);
   useLayoutEffect(() => {
-    if (!latestSpinOff.current || (conversationStatus !== 'ready' && conversationStatus !== 'missing')) return;
+    // Once loading ends, whatever it ends in: a conversation that fails or is unavailable takes the parameter out too,
+    // so it isn't followed again each time the view is shown (W220's review of the fix).
+    if (!latestSpinOff.current || conversationStatus === 'loading') return;
     latestSpinOff.current = false;
-    const cards = conversation.scroller.current?.querySelectorAll(`.${SPIN_OFF_BLOCK_CLASS}`);
+    const scroller = conversation.scroller.current;
+    const cards = scroller?.querySelectorAll(`.${SPIN_OFF_BLOCK_CLASS}`);
+    // Only the conversation scrolls to the card. scrollIntoView also scrolls every box around it, the page's own
+    // included, which hides its overflow: the header went off the top, with a blank band at the bottom, and
+    // nothing could scroll it back (Phil, 2026-11-27). So the boxes outside the conversation are put back.
+    const outside: Array<[Element, number, number]> = [];
+    for (let box = scroller?.parentElement; box; box = box.parentElement) outside.push([box, box.scrollTop, box.scrollLeft]);
     cards?.[cards.length - 1]?.scrollIntoView({ block: 'start' });
+    for (const [box, top, left] of outside) {
+      if (box.scrollTop !== top) box.scrollTop = top;
+      if (box.scrollLeft !== left) box.scrollLeft = left;
+    }
     const { pathname, search, hash } = browserNavigation.location;
     browserNavigation.history.replaceState(browserNavigation.history.state, '', `${pathname}${withoutParams(search, [SPIN_OFF_LINK_PARAM])}${hash}`);
   }, [conversationStatus, conversation.scroller, spinOffLinks]);

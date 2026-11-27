@@ -5,9 +5,9 @@
 
 import { fingerprint } from '../../../src/shared/fingerprint.js';
 import type { ConversationEntry } from '../../../src/shared/protocol.js';
-import { DEMO_APP_WEB, NAMES, SPIN_OFF, SPIN_OFF_PROMPT } from '../fixtures.js';
+import { CODE, DEMO_APP_WEB, NAMES, SPIN_OFF, SPIN_OFF_PROMPT } from '../fixtures.js';
 import type { Part } from '../runner.js';
-import { DIALOG, dialogButton, dialogName, openFromRow, VIEW, viewClose, viewHeading, viewTab } from './_dom.js';
+import { DIALOG, dialogButton, dialogName, openFromRow, VIEW, viewClose, viewHeading, viewName, viewTab } from './_dom.js';
 
 const q = JSON.stringify;
 const CARD = `${VIEW}?.querySelector('.spin-off-block')`;
@@ -217,6 +217,7 @@ const part: Part = {
         return { top: ${CARD}.getBoundingClientRect().top, bodyTop: b.getBoundingClientRect().top, bottom: b.scrollHeight - b.clientHeight - b.scrollTop < 2 };
       })()`);
       t.expect(!at.bottom && at.top - at.bodyTop < 120 && at.top >= at.bodyTop - 2, 'scrolled to the card, not the newest entry', at);
+      t.expect(await page.evaluate<boolean>(`(document.scrollingElement?.scrollTop ?? 0) === 0 && document.querySelector('header')?.getBoundingClientRect().top === 0`), 'the page itself is not scrolled: the header is at the top');
       t.expect(await page.evaluate(`!location.search.includes('spinoff')`), 'the parameter is gone from the address');
       t.expect(await page.evaluate(`location.search.includes(${q('')} + 'session=')`), 'the session stays in it');
       await t.shot('spin-off-link');
@@ -241,6 +242,28 @@ const part: Part = {
       t.expectEqual(await page.evaluate<string | null>(`sessionStorage.getItem('pitwall.token')`), tokenBefore, 'the token is kept');
       t.expectEqual(await page.evaluate(viewTab), 'Conversation', 'the Conversation tab');
       t.expect(await page.evaluate<boolean>(`!!${CARD}`), 'the card is shown');
+    });
+
+    await t.step("the same link from another root tab shows a session's view kept hidden there at its card, with the parameter taken out (W220, Phil 2026-11-27)", async () => {
+      const id = server.world.byName(NAMES.conversation).sessionId;
+      await t.fresh({ search: `?view=all&root=${CODE}`, roots: 2 });
+      server.world.blockMessages(id, blockMessages());
+      server.world.blockMessages(server.world.byName(NAMES.blog).sessionId, blockMessages(`${server.origin}/?session=${id}&spinoff=latest`));
+      // Its view is opened in ~/code's tab, then kept there, hidden, while ~/oss's tab is open (W38).
+      await openFromRow(t, NAMES.conversation);
+      await page.click('the ~/oss tab', `[...document.querySelectorAll('header .root-tab')].find((tab) => tab.querySelector('.root-tab-label').textContent === '~/oss')`);
+      await page.waitFor('~/oss to open', `document.querySelector('header .root-tab[aria-selected="true"] .root-tab-label')?.textContent === '~/oss'`);
+      await openFromRow(t, NAMES.blog);
+      await page.waitFor('the message with the link', `!!${VIEW}.querySelector('a[href*="spinoff=latest"]')`);
+      await page.settle(200);
+      await page.evaluate(`${VIEW}.querySelector('a[href*="spinoff=latest"]').click()`);
+      await page.waitFor('the parameter taken out', `!location.search.includes('spinoff')`);
+      await page.settle(300);
+      t.expectEqual(await page.evaluate(viewName), NAMES.conversation, "the linked session's view");
+      t.expectEqual(await page.evaluate(viewTab), 'Conversation', 'the Conversation tab');
+      t.expect(await page.evaluate<boolean>(`!!${CARD}`), 'the card is shown');
+      t.expect(await page.evaluate<boolean>(`(document.scrollingElement?.scrollTop ?? 0) === 0 && document.querySelector('header')?.getBoundingClientRect().top === 0`), 'the page itself is not scrolled: the header is at the top');
+      await t.shot('spin-off-link-other-root');
     });
   },
 };
