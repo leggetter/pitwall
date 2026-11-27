@@ -32,7 +32,7 @@ import { absoluteTime, plainText } from '../format.js';
 import { prNeedText, sessionPrBadge } from '../prs.js';
 import { ENDED_RECAP_HINT, FINISHED_RECAP_HINT, finishedWaitingOnYou, forYouLabel, quietWaitingOn, recapForYou, WAITING_ON_TEXT, waitingPr } from '../recap.js';
 import { elsewhereRepos } from '../groupBy.js';
-import { canFlag, canSnooze, groupLabel, isFlagged, isSnoozed, needsAttention, needsText, recapNeedsText, rowStatusBadge, snoozeBack } from '../sessions.js';
+import { canFlag, canSnooze, groupLabel, handedOffNeedsYou, HANDED_OFF_NEXT_TEXT, isFlagged, isSnoozed, needsAttention, needsText, recapNeedsText, rowStatusBadge, snoozeBack } from '../sessions.js';
 import { SNOOZE_BACK_TEXT, snoozeBackPrText, snoozedText } from '../snooze.js';
 import { prNeedOf } from '../work.js';
 import { FLAGGED_TEXT } from '../flags.js';
@@ -159,6 +159,17 @@ function whatItWants(session: SessionSummary): { content: ReactNode; hint?: stri
         </span>
       ),
       hint: text,
+    };
+  }
+  // A hand-off (W225): the badge says Handed off, and its card in Needs you has the prompt.
+  if (handedOffNeedsYou(session)) {
+    return {
+      content: (
+        <span className="asked">
+          <span className="asked-label">{RECAP_NEXT_LABEL}</span> {HANDED_OFF_NEXT_TEXT}
+        </span>
+      ),
+      hint: HANDED_OFF_NEXT_TEXT,
     };
   }
   if (session.transcript !== 'ok') {

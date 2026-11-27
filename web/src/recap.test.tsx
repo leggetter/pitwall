@@ -166,6 +166,31 @@ function renderRow(s: SessionSummary) {
   return document.querySelector<HTMLElement>('li.session')!;
 }
 
+describe("Needs you's 'handed-off' reason (W225)", () => {
+  const handedOff = (extra: Partial<SessionSummary> = {}) => {
+    const base = session({ kind: 'background', shortId: 'pt225a', status: 'busy', state: 'working', turnEnded: true, lastUserPrompt: 'Yes to all three.', ...extra });
+    const prompt = `Continues session ${base.sessionId}.\nRead NOW.md.`;
+    return { ...base, needsYou: { reason: 'handed-off' as const }, spinOff: { kind: 'proposal' as const, key: 'fedcba9876543210', folder: '/made-up/handoffs', prompt }, ...extra };
+  };
+
+  it('is in Needs you as Handed off, though a monitor keeps the job busy', () => {
+    const job = handedOff();
+    expect(needsAttention(job)).toBe(true);
+    expect(countAttention([job])).toBe(1);
+    const row = renderRow(job);
+    expect(row.dataset.attention).toBe('true');
+    expect(row.querySelector('[data-status]')?.textContent).toBe('Handed off');
+    expect(row.querySelector('.session-what-text')?.textContent).toBe('Next: Carry it on from its hand-off card.');
+  });
+
+  it('leaves Needs you once its proposal is started', () => {
+    const job = handedOff();
+    const started = { ...job, spinOff: { ...job.spinOff, settled: { how: 'started' as const, at: new Date().toISOString() } } };
+    expect(needsAttention(started)).toBe(false);
+    expect(renderRow(started).querySelector('.session-what-text')?.textContent).toBe('You: Yes to all three.');
+  });
+});
+
 describe("Needs you's 'recap' reason", () => {
   const waiting = (extra: Partial<SessionSummary> = {}) =>
     session({ status: 'idle', recap: summary({ next: NEXT }), needsYou: { reason: 'recap', text: NEXT }, lastUserPrompt: 'Run the made-up export.', ...extra });

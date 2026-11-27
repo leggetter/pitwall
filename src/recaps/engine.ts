@@ -503,10 +503,14 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
    * A background job that says `done` while its process is alive (W162); due() checks its turn has ended.
    * A finished job's last message often asks you to act, and the out-of-date recap can't say so
    * (needsYouOf()), so its update shouldn't wait for the 15 minutes meant for sessions that take a
-   * turn every few minutes. A `working` or `blocked` job keeps the long wait.
+   * turn every few minutes. So too a `working` one whose transcript marks its turn ended (W225): a
+   * plugin's monitor keeps a job `working` after its turn (spike 007, finding 6), and on 2026-11-27 one
+   * that had handed off with a question open waited 15 minutes for its update. A `blocked` job, and a
+   * `working` one with no mark, keep the long wait.
    */
   function jobDone(session: SessionSummary): boolean {
-    return session.kind === 'background' && session.state === 'done' && session.alive;
+    if (session.kind !== 'background' || !session.alive) return false;
+    return session.state === 'done' || (session.state === 'working' && facts.get(session.sessionId)?.turnEnded === true);
   }
 
   /** The turn has ended: by the transcript's mark, or, when it has none, by Claude Code's status. */
@@ -885,7 +889,8 @@ export function createRecapEngine(options: RecapEngineOptions = {}): RecapEngine
     const next = working(session) ? dueNow(recap) : yourNext(recap);
     if (next === undefined || next === '') return undefined;
     const reason = session.needsYou?.reason;
-    if (reason !== undefined && reason !== 'restarted' && reason !== 'blocked') return undefined;
+    // A hand-off's reason gives no step (W225), so the recap's to-do for you takes its place, as for these two.
+    if (reason !== undefined && reason !== 'restarted' && reason !== 'blocked' && reason !== 'handed-off') return undefined;
     return { reason: 'recap', text: next };
   }
 

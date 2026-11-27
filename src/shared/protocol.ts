@@ -168,6 +168,11 @@ export type ContinuedResult = { ok: true } | { ok: false; error: string };
  *   from the job's `state.json`. Not its start placeholder, "send a prompt to
  *   start", which a resumed session shows though it asked nothing.
  * - 'asked': its last turn ended by asking you something (askedYou).
+ * - 'handed-off': its last turn ended with its own hand-off (W210's `Continues session <id>.` block,
+ *   SessionSummary.spinOff), so it waits for you to clear and continue it (W225). Until your next
+ *   prompt, or the proposal is started or dismissed (SpinOff.settled), which ends it at once. Phil,
+ *   2026-11-27: a job that handed off with a question open, its monitors keeping it busy, was in
+ *   Needs you only once its recap came, 13 minutes later, after he opened it.
  * - 'recap': its recap (M5, SessionSummary.recap) says it's waiting on you, and the recap is
  *   current: made after the session's newest activity. `text` is its first to-do for you. Phil,
  *   2026-10-29: sessions marked Done "whereas I'm sure there are open questions in them". The
@@ -180,7 +185,7 @@ export type ContinuedResult = { ok: true } | { ok: false; error: string };
  *   question is never hidden.
  */
 export interface NeedsYou {
-  reason: 'prompt' | 'claude-code' | 'asked' | 'recap' | 'restarted' | 'blocked';
+  reason: 'prompt' | 'claude-code' | 'asked' | 'handed-off' | 'recap' | 'restarted' | 'blocked';
   /**
    * For 'claude-code': Claude Code's line, as plain text, at most 200 characters. For 'recap':
    * the recap's first to-do for you (RecapSummary.next), plain text, at most RECAP_FIELD_MAX characters.

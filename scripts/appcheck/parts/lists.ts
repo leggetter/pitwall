@@ -286,6 +286,27 @@ const part: Part = {
       await page.waitFor('the card to go', `!${card}`);
     });
 
+    await t.step('a job that handed off is a row in Needs you itself, as Handed off, beside its card, though a monitor keeps it busy (W225)', async () => {
+      const card = `document.querySelector('.session-list li.spin-off-card')`;
+      const job = t.server.world.byName(NAMES.running);
+      t.server.world.spinOff(job.sessionId, handoffProposal(job.sessionId));
+      t.server.world.need(job.sessionId, { status: 'busy', state: 'working', needsYou: { reason: 'handed-off' } });
+      t.server.broadcast();
+      await page.waitFor('the card and the row', `!!${card} && !!${row(NAMES.running)}`);
+      const look = await page.evaluate<{ badge: string | null; what: string | null; attention: string | null }>(`(() => {
+        const li = ${row(NAMES.running)}.closest('li.session');
+        return { badge: li.querySelector('[data-status]')?.textContent ?? null, what: li.querySelector('.session-what-text')?.textContent ?? null, attention: li.dataset.attention ?? null };
+      })()`);
+      t.expectEqual(look.badge, 'Handed off', "the row's badge says Handed off");
+      t.expect(look.what?.endsWith(' · Next: Carry it on from its hand-off card.') === true, 'line 2, after its repo, points at its card', look);
+      t.expectEqual(look.attention, 'true', 'the row needs you');
+      await t.shot('handoff-row-needs-you');
+      t.server.world.spinOff(job.sessionId, undefined);
+      t.server.world.need(job.sessionId, { status: job.status, state: job.state, needsYou: undefined });
+      t.server.broadcast();
+      await page.waitFor('the card and the row to go', `!${card} && !${row(NAMES.running)}`);
+    });
+
     await t.step('rows are two lines: name, title and status; then where and what', async () => {
       await chooseInRepoList(t, 'All sessions');
       const rows = await page.evaluate<Array<{ name: string; height: number; line1: number; line2: number; what: string }>>(`[...document.querySelectorAll('.session-list .sessions > li.session')].filter((li) => !li.closest('[hidden]')).map((li) => {

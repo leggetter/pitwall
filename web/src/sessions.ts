@@ -50,6 +50,14 @@ export function recapNeedsText(session: SessionSummary): string | undefined {
   return text === undefined || text === '' ? undefined : text;
 }
 
+/** Line 2's text while a hand-off is why it needs you (W225): pitwall's own words, as the prompt is on its card. */
+export const HANDED_OFF_NEXT_TEXT = 'Carry it on from its hand-off card.';
+
+/** Whether a hand-off is why it needs you ('handed-off', W225), for the row's line 2. */
+export function handedOffNeedsYou(session: SessionSummary): boolean {
+  return indexNeedsYou(session) && session.needsYou?.reason === 'handed-off';
+}
+
 /**
  * The status badge a row shows, or undefined for an idle session (Phil, 2026-10-20): the list stays
  * quiet, and "Idle" is in the session view. Whether a session needs you never depends on this; it

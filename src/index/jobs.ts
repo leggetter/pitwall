@@ -21,6 +21,9 @@
 //              long-running one can list dozens, so with more than one none is taken: pitwall can't
 //              tell which one it waits on. Anything else there, or a malformed entry, is left out
 //              without making the file 'unknown': the line on what it needs still counts.
+//              W225: every PR there too (prsOf()), which the index gives the session as strong
+//              'linked' links, so a job that carries on after /clear keeps the PRs its earlier
+//              session opened: Claude Code's list is the job's, not one session's.
 //
 // And, for a resume's card only (W129, the re-review's L1), readSavedPermission(): the permission
 // mode in the job's `respawnFlags`, the flags Claude Code saved when the job started and wakes it
@@ -39,12 +42,15 @@ import { prRefOfUrl } from './prLinks.js';
 import { plainLine } from './text.js';
 import { defaultConfigDir, isSessionUuid } from './transcripts.js';
 
-/** What a job's file says it needs, and the one PR it links, if it links just one (W170). */
+/**
+ * What a job's file says it needs, the one PR it links, if it links just one (W170), and every PR it
+ * links, when it links any (W225).
+ */
 export type JobNeeds =
   /** Claude Code's line, as plain text, at most NEEDS_MAX characters. */
-  | { kind: 'needs'; text: string; pr?: JobPr }
+  | { kind: 'needs'; text: string; pr?: JobPr; prs?: JobPr[] }
   /** The file was read and asks nothing: no line, an empty one, or the start placeholder. */
-  | { kind: 'none'; pr?: JobPr }
+  | { kind: 'none'; pr?: JobPr; prs?: JobPr[] }
   /** The file couldn't be used: missing, unreadable, malformed, too big, or another session's. */
   | { kind: 'unknown' };
 
@@ -262,9 +268,10 @@ export function parseJobState(text: string, sessionId: string): JobNeeds {
   const needs = parsed.needs;
   if (needs !== undefined && needs !== null && typeof needs !== 'string') return UNKNOWN;
   const pr = onlyPrOf(parsed.children);
-  const withPr = pr === undefined ? {} : { pr };
+  const prs = prsOf(parsed.children);
+  const withPr = { ...(pr === undefined ? {} : { pr }), ...(prs.length === 0 ? {} : { prs }) };
   const line = typeof needs === 'string' ? needsText(needs) : '';
-  if (line === '' || line.toLowerCase() === START_PLACEHOLDER) return pr === undefined ? NONE : { kind: 'none', ...withPr };
+  if (line === '' || line.toLowerCase() === START_PLACEHOLDER) return pr === undefined && prs.length === 0 ? NONE : { kind: 'none', ...withPr };
   return { kind: 'needs', text: line, ...withPr };
 }
 
@@ -284,6 +291,22 @@ export function onlyPrOf(children: unknown): JobPr | undefined {
     found = { repo: ref.repo, number: ref.number };
   }
   return found;
+}
+
+/**
+ * Every PR a job's `children` link (W225), each once, in the file's order: the `pr` entries whose
+ * `href` is a PR URL (prRefOfUrl()). Empty for none and for anything that isn't an array, or one
+ * longer than CHILDREN_MAX, as onlyPrOf() reads it. Other entries are passed over.
+ */
+export function prsOf(children: unknown): JobPr[] {
+  if (!Array.isArray(children) || children.length > CHILDREN_MAX) return [];
+  const found = new Map<string, JobPr>();
+  for (const child of children) {
+    if (!isRecord(child) || child.kind !== 'pr') continue;
+    const ref = prRefOfUrl(child.href);
+    if (ref !== undefined) found.set(`${ref.repo}#${ref.number}`, { repo: ref.repo, number: ref.number });
+  }
+  return [...found.values()];
 }
 
 /** Claude Code's line as plain text: escapes and control characters removed, on one line, trimmed, at most NEEDS_MAX. */

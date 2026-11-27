@@ -9,7 +9,7 @@ Where Claude Code gives a value, it is quoted as Claude Code gives it: process s
 - **Process status:** `busy`, `waiting` or `idle`, from `claude agents --json`. `waiting` means a prompt is on screen.
 - **Background state:** `working`, `blocked`, `done`, `failed` or `stopped`. Interactive sessions have none.
 - **Flags on the session:** `alive` (its process is running), `finished`, `ended` (an interactive session whose process exited), `stale` (blocked with no activity for over 7 days) and `turnEnded` (the transcript says its turn is over).
-- **The index's Needs you reason:** one of `prompt`, `claude-code`, `asked`, `recap`, `restarted`, `blocked` (below).
+- **The index's Needs you reason:** one of `prompt`, `claude-code`, `asked`, `handed-off`, `recap`, `restarted`, `blocked` (below).
 - **Its recap:** pitwall's own, made after the session's newest activity, says what it waits on.
 - **Its pull requests:** the open PRs it owns (`review-requested`, `checks-failing`, `conflicts`, `changes-requested`).
 
@@ -27,7 +27,7 @@ The first rule that holds wins. A row shows no badge for `idle`; the session vie
 | `recap` | Waiting on you | Its current recap says it waits on you. A session that is also busy keeps Busy's dot. |
 | `blocked-stale` | Blocked | Claude Code says blocked, nothing needs you, and it is stale. Outlined. |
 | `failed` | Failed | The background state is `failed`. |
-| `handed-off` | Handed off | Its newest message is its own hand-off (W210, a hand-off shows as Handed off): a `Continues session <id>.` block, or its recap's word-for-word quote of a hand-off written by hand. Whatever Claude Code's state, but not `failed` or `stopped`: it carries on after `/clear`, so it is not done. Its card in Needs you offers Clear and continue, until your next prompt or the job's new session id. |
+| `handed-off` | Handed off | Its newest message is its own hand-off (W210, a hand-off shows as Handed off): a `Continues session <id>.` block, or its recap's word-for-word quote of a hand-off written by hand. Whatever Claude Code's state, but not `failed` or `stopped`: it carries on after `/clear`, so it is not done. It is in Needs you itself (reason `handed-off`, W225), and its card there offers Clear and continue, until your next prompt, the job's new session id, or you start or dismiss the proposal. |
 | `waiting-on` | Waiting on CI / another session / someone else | Claude Code says `done`, but pitwall's current recap says it waits on someone else. Never needs you. |
 | `done` | Done | The background state is `done` and the recap names no one else. |
 | `stopped` | Stopped | The background state is `stopped`. |
@@ -51,7 +51,8 @@ Its own reason, the first that holds:
 
 - `prompt`: Claude Code is showing a prompt; the badge says which.
 - `claude-code`: a background job's own line on what it needs.
-- `asked`: the last turn ended by asking you something.
+- `asked`: the last turn ended by asking you something: an "Open questions" or "Needs your decision" section, or a last line that ends with a question mark.
+- `handed-off`: the last turn ended with its own hand-off, so it waits for you to clear and continue it (W225). Whatever Claude Code's status, since a monitor can keep a job busy after its turn. It ends once you start or dismiss the proposal.
 - `recap`: its current recap says it waits on you.
 - `restarted`: you resumed or restarted it and have not sent a prompt since.
 - `blocked`: Claude Code says blocked and pitwall could not read why. Kept so a question is never hidden.
