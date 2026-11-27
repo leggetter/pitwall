@@ -185,9 +185,13 @@ export const NOT_A_WORKER = 'Not a worker';
 /** New session's subtitle from Start a worker…. */
 export const startWorkerSubtitle = (leadName: string) => `For: ${leadName}`;
 
-/** Which sessions you can pick in Report to…: every listed lead but the session itself, by name. */
+/**
+ * Which sessions you can pick in Report to…: every listed lead but the session itself, by name, and only a
+ * lead by your marks, links, launches and the lineage pitwall saw (`lead.trusted`, the review's F2), never
+ * one only by its own transcript's word: the server refuses that one until you choose Make lead on it.
+ */
 export function leadChoices(every: Iterable<Listed>, sessionId: string): Listed[] {
-  return [...every].filter(({ session }) => session.lead !== undefined && session.sessionId !== sessionId).sort((a, b) => a.session.name.localeCompare(b.session.name));
+  return [...every].filter(({ session }) => session.lead?.trusted === true && session.sessionId !== sessionId).sort((a, b) => a.session.name.localeCompare(b.session.name));
 }
 
 /** The menu items a session's view offers for leads and workers (W218). */
@@ -196,10 +200,12 @@ export type LeadAction = 'make-lead' | 'not-lead' | 'start-worker' | 'report-to'
 /**
  * Which of them `session` offers: a lead can start a worker or stop being a lead; a worker can report
  * to another lead or stop being a worker; any other session can be made a lead or report to one, a
- * finished one included. `leadsToPick` is whether Report to… has a lead to list.
+ * finished one included. A lead only by its own transcript's word (no `lead.trusted`) offers Make lead
+ * too, which is how it becomes one pitwall names (the review's F2). `leadsToPick` is whether Report to…
+ * has a lead to list.
  */
 export function leadActions(session: Pick<SessionSummary, 'lead' | 'workerOf'>, leadsToPick: boolean): LeadAction[] {
-  if (session.lead !== undefined) return ['start-worker', 'not-lead'];
+  if (session.lead !== undefined) return session.lead.trusted === true ? ['start-worker', 'not-lead'] : ['make-lead', 'start-worker', 'not-lead'];
   if (session.workerOf !== undefined) return [...(leadsToPick ? (['report-to'] as const) : []), 'not-worker'];
   return ['make-lead', ...(leadsToPick ? (['report-to'] as const) : [])];
 }

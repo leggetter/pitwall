@@ -179,9 +179,42 @@ const part: Part = {
       }; })()`);
       t.expectEqual([notice.label, notice.text], ['Added after your prompt', briefText(LEAD)], 'the label and the paragraph');
       t.expect(notice.above === true, 'above the first prompt');
+      t.expect((await page.evaluate(`${dialogButton('Start session')}?.getAttribute('aria-disabled')`)) === null, 'Start session is on once the paragraph is in');
       await t.shot('start-worker');
       await page.click('Cancel', dialogButton('Cancel'));
       await page.waitFor('the dialog to close', `!${DIALOG}`);
+      await closeView();
+    });
+
+    await t.step('Report to… lists only a trusted lead; one only by its own transcript’s word offers Make lead (the review’s F2)', async () => {
+      // pitwall-test-ended-asked becomes a lead only by its transcript's word: not in Report to…, and its own menu offers Make lead.
+      server.world.leads(id(NAMES.endedAsked), [], true, false);
+      server.broadcast();
+      await openFromRow(t, NAMES.asked);
+      await page.click('Session actions', MENU_BUTTON);
+      await page.click('Report to…', menuItem('Report to…'));
+      await page.waitFor('the dialog', `${dialogName} === 'Report to a lead'`);
+      const radios = await page.evaluate(`[...${DIALOG}.querySelectorAll('.radio-option label')].map((l) => l.textContent)`);
+      t.expectEqual(radios, [LEAD], 'only the trusted lead');
+      await page.click('Cancel', dialogButton('Cancel'));
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+      await closeView();
+    });
+
+    await t.step('Start a worker… sends the lead and the name its paragraph showed (the review’s F3)', async () => {
+      await openFromRow(t, LEAD);
+      await page.click('Session actions', MENU_BUTTON);
+      await page.click('Start a worker…', menuItem('Start a worker…'));
+      await page.waitFor('New session with the paragraph', `${dialogName} === 'New session' && !!${DIALOG}.querySelector('[data-worker-brief="ok"]')`);
+      await page.click('First prompt', `${DIALOG}.querySelector('textarea')`);
+      await page.type('A made-up task for the worker.');
+      await page.click('Start session', dialogButton('Start session'));
+      await page.waitFor('the dialog to close', `!${DIALOG}`);
+      const spawned = server.records.spawns.at(-1);
+      t.expectEqual([spawned?.lead, spawned?.leadName], [id(LEAD), LEAD], 'the lead and its name');
+      // Once listed, the worker's view opens in place of the lead's.
+      await page.waitFor('the worker’s view', `!!${viewName} && ${viewName} !== ${q(LEAD)}`, 8000);
+      await page.evaluate(`document.querySelectorAll('.toasts .toast:not(.leaving) .toast-dismiss').forEach((b) => b.click())`);
       await closeView();
     });
 

@@ -1481,11 +1481,14 @@ export class World {
     this.#sessions.set(sessionId, lineage === undefined ? rest : { ...rest, lineage });
   }
 
-  /** Until the next reset, `leadId` is a lead (W218) with `workerIds` as its workers, oldest link first; none and `marked`, a lead you marked. */
-  leads(leadId: string, workerIds: readonly string[], marked = false): void {
+  /**
+   * Until the next reset, `leadId` is a lead (W218) with `workerIds` as its workers, oldest link first; none and
+   * `marked`, a lead you marked. `trusted` false makes it a lead only by its own transcript's word (the review's F2).
+   */
+  leads(leadId: string, workerIds: readonly string[], marked = false, trusted = true): void {
     const lead = this.#sessions.get(leadId);
     if (!lead) return;
-    this.#sessions.set(leadId, { ...lead, lead: { workers: [...workerIds], ...(marked ? { marked: true as const } : {}) } });
+    this.#sessions.set(leadId, { ...lead, lead: { workers: [...workerIds], ...(marked ? { marked: true as const } : {}), ...(trusted ? { trusted: true as const } : {}) } });
     for (const id of workerIds) {
       const worker = this.#sessions.get(id);
       if (worker) this.#sessions.set(id, { ...worker, workerOf: { lead: leadId, how: 'reported' } });

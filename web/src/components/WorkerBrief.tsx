@@ -12,6 +12,9 @@ import { Spinner } from './Spinner.js';
 
 export type BriefState = { kind: 'loading' } | BriefOutcome;
 
+/** The loading line, and why Start session waits for it. */
+export const BRIEF_LOADING = 'Getting the paragraph about its lead…';
+
 /** The paragraph at `path` (leadBriefPath() or workerBriefPath()), read once; undefined `path` reads nothing. */
 export function useWorkerBrief(path: string | undefined): BriefState {
   const api = useContext(ApiContext);
@@ -46,7 +49,7 @@ export function WorkerBriefNotice({ state }: { state: BriefState }) {
   if (state.kind === 'loading') {
     return (
       <p className="worker-brief worker-brief-loading field-hint" data-worker-brief="loading">
-        <Spinner /> Getting the paragraph about its lead…
+        <Spinner /> {BRIEF_LOADING}
       </p>
     );
   }

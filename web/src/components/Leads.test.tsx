@@ -36,11 +36,11 @@ const id = (n: number) => `00000000-0000-4000-8000-0000002181${String(n).padStar
 
 /** A lead in app with a worker in app and one in docs that needs you; a plain session; a lead you marked in docs. */
 function snap(): IndexSnapshot {
-  const lead = session({ sessionId: id(1), name: 'design', cwd: `${ROOT}/app`, lastActivityAt: minutesAgo(2), lead: { workers: [id(2), id(3)] } });
+  const lead = session({ sessionId: id(1), name: 'design', cwd: `${ROOT}/app`, lastActivityAt: minutesAgo(2), lead: { workers: [id(2), id(3)], trusted: true } });
   const spike = session({ sessionId: id(2), name: 'spike', cwd: `${ROOT}/app`, lastActivityAt: minutesAgo(5), workerOf: { lead: id(1), how: 'started' } });
   const fix = session({ sessionId: id(3), name: 'docs fix', cwd: `${ROOT}/docs`, status: 'waiting', waitingFor: 'permission prompt', lastActivityAt: minutesAgo(1), workerOf: { lead: id(1), how: 'reported' } });
   const notes = session({ sessionId: id(4), name: 'notes', cwd: `${ROOT}/app`, lastActivityAt: minutesAgo(3) });
-  const marked = session({ sessionId: id(5), name: 'planner', cwd: `${ROOT}/docs`, lastActivityAt: minutesAgo(4), lead: { workers: [], marked: true } });
+  const marked = session({ sessionId: id(5), name: 'planner', cwd: `${ROOT}/docs`, lastActivityAt: minutesAgo(4), lead: { workers: [], marked: true, trusted: true } });
   return snapshot([
     group({ key: `${ROOT}/app`, label: 'app', sessions: [lead, spike, notes] }),
     group({ key: `${ROOT}/docs`, label: 'docs', sessions: [fix, marked] }),
@@ -317,6 +317,7 @@ describe("the worker's paragraph (W218 piece 2)", () => {
     await waitFor(() => expect(posts(fetch).some(([url]) => url === SPAWN_PATH)).toBe(true));
     const [, body] = posts(fetch).find(([url]) => url === SPAWN_PATH)!;
     expect(body.lead).toBe(id(1));
+    expect(body.leadName).toBe('design');
     expect(JSON.stringify(body)).not.toContain('Report to it');
   });
 
@@ -331,7 +332,9 @@ describe("the worker's paragraph (W218 piece 2)", () => {
     fireEvent.change(within(dialog).getByLabelText('First prompt'), { target: { value: 'A made-up task for the worker' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
     await waitFor(() => expect(posts(fetch).some(([url]) => url === SPAWN_PATH)).toBe(true));
-    expect(posts(fetch).find(([url]) => url === SPAWN_PATH)![1]).not.toHaveProperty('lead');
+    const [, body] = posts(fetch).find(([url]) => url === SPAWN_PATH)!;
+    expect(body).not.toHaveProperty('lead');
+    expect(body).not.toHaveProperty('leadName');
   });
 
   it("Report to…'s second step sends the server's paragraph through the relay only on Send", async () => {
@@ -413,5 +416,96 @@ describe("a worker's reports (W218 piece 2)", () => {
     await settle();
     expect(view()?.querySelector('.session-view-name')?.textContent).toBe('spike');
     expect(within(view()!).getByRole('tab', { name: /Conversation/ }).getAttribute('aria-selected')).toBe('true');
+  });
+});
+
+// The security review's F2 and F3 for W218 piece 2: only a trusted lead in Report to…, and a spawn that
+// carries the lead's name the dialog showed. Made-up sessions only.
+describe("the security review's F2 and F3 (W218 piece 2)", () => {
+  /** The snapshot, with planner a lead only by its own transcript's word: no `trusted`. */
+  function snapUntrustedPlanner(): IndexSnapshot {
+    const base = snap();
+    return { ...base, groups: base.groups.map((g) => ({ ...g, sessions: g.sessions.map((s) => (s.sessionId === id(5) ? { ...s, lead: { workers: [] } } : s)) })) };
+  }
+
+  it("Report to… lists only trusted leads, and isn't offered when there's none to pick", async () => {
+    const first = renderDashboard(`?repo=${ROOT}/app&session=${id(4)}`, { snapshot: snapUntrustedPlanner() });
+    await settle();
+    choose(REPORT_TO);
+    await settle();
+    const dialog = screen.getByRole('dialog', { name: REPORT_TO_TITLE });
+    expect(within(dialog).getAllByRole('radio').map((radio) => radio.closest('.radio-option')?.querySelector('label')?.textContent)).toEqual(['design']);
+    first.unmount();
+    // With design untrusted too, notes has no lead to pick, so no Report to…; an untrusted lead offers Make lead.
+    const base = snapUntrustedPlanner();
+    const none = { ...base, groups: base.groups.map((g) => ({ ...g, sessions: g.sessions.map((s) => (s.sessionId === id(1) ? { ...s, lead: { workers: [id(2), id(3)] } } : s)) })) };
+    const second = renderDashboard(`?repo=${ROOT}/app&session=${id(4)}`, { snapshot: none });
+    await settle();
+    expect(menuLabels()).toEqual(expect.arrayContaining([MAKE_LEAD]));
+    expect(menuLabels()).not.toContain(REPORT_TO);
+    second.unmount();
+    renderDashboard(`?repo=${ROOT}/docs&session=${id(5)}`, { snapshot: none });
+    await settle();
+    expect(menuLabels()).toEqual(expect.arrayContaining([MAKE_LEAD, START_WORKER, NOT_A_LEAD]));
+  });
+
+  it("shows Report to…'s 409, a lead only by its transcript's word, in the dialog", async () => {
+    const error = 'That session is a lead only by its own transcript’s word. Choose Make lead on it first.';
+    const fetch = fakeServer({ status: 409, body: { ok: false, error } });
+    renderDashboard(`?repo=${ROOT}/app&session=${id(4)}`, { fetch });
+    await settle();
+    choose(REPORT_TO);
+    await settle();
+    const dialog = screen.getByRole('dialog', { name: REPORT_TO_TITLE });
+    fireEvent.click(within(dialog).getByRole('button', { name: REPORT_TO_CONFIRM }));
+    await settle();
+    expect(within(dialog).getByRole('alert').textContent).toBe(error);
+    expect(screen.queryByRole('dialog', { name: TELL_WORKER_TITLE })).toBeNull();
+  });
+
+  it('Start session waits while the paragraph loads, then sends the lead and the name the paragraph showed', async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const inner = briefServer({ brief: { status: 200, body: { ok: true, leadId: id(1), leadName: 'design (renamed)', text: BRIEF } } });
+    const fetch = vi.fn<FetchLike>(async (url, init) => {
+      if (url.endsWith('/lead-brief')) await held;
+      return inner(url, init);
+    });
+    renderDashboard(`?repo=${ROOT}/app&session=${id(1)}`, { fetch });
+    await settle();
+    choose(START_WORKER);
+    const dialog = await screen.findByRole('dialog', { name: 'New session' });
+    expect(dialog.querySelector('[data-worker-brief="loading"]')).not.toBeNull();
+    fireEvent.change(within(dialog).getByLabelText('First prompt'), { target: { value: 'A made-up task for the worker' } });
+    const start = within(dialog).getByRole('button', { name: 'Start session' });
+    expect(start.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(start);
+    fireEvent.keyDown(within(dialog).getByLabelText('First prompt'), { key: 'Enter', metaKey: true });
+    await settle();
+    expect(posts(fetch).some(([url]) => url === SPAWN_PATH)).toBe(false);
+    release();
+    await waitFor(() => expect(dialog.querySelector('[data-worker-brief="ok"]')).not.toBeNull());
+    expect(start.getAttribute('aria-disabled')).toBeNull();
+    fireEvent.click(start);
+    await waitFor(() => expect(posts(fetch).some(([url]) => url === SPAWN_PATH)).toBe(true));
+    const [, body] = posts(fetch).find(([url]) => url === SPAWN_PATH)!;
+    expect([body.lead, body.leadName]).toEqual([id(1), 'design (renamed)']);
+  });
+
+  it("shows the spawn's 409, a lead's name that changed, in the dialog, and nothing else happens", async () => {
+    const error = 'The lead’s name is planner now, not the name the dialog showed, so nothing started. Open Start a worker… again to see the paragraph pitwall would add.';
+    const inner = briefServer();
+    const fetch = vi.fn<FetchLike>(async (url, init) => (url === SPAWN_PATH ? json(409, { ok: false, error }) : inner(url, init)));
+    renderDashboard(`?repo=${ROOT}/app&session=${id(1)}`, { fetch });
+    await settle();
+    choose(START_WORKER);
+    const dialog = await screen.findByRole('dialog', { name: 'New session' });
+    await waitFor(() => expect(dialog.querySelector('[data-worker-brief="ok"]')).not.toBeNull());
+    fireEvent.change(within(dialog).getByLabelText('First prompt'), { target: { value: 'A made-up task for the worker' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));
+    await waitFor(() => expect(within(dialog).getByRole('alert').textContent).toBe(`Couldn't start the session. ${error}`));
+    expect(screen.getByRole('dialog', { name: 'New session' })).toBe(dialog);
+    expect(posts(fetch).map(([url]) => url)).toEqual([SPAWN_PATH]);
+    expect(toastMessages()).toEqual([]);
   });
 });
