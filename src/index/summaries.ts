@@ -1,6 +1,7 @@
 // Turning validated rows and transcript fields into the contract's sessions and groups.
 
-import type { BackgroundState, NeedsYou, SessionGroup, SessionKind, SessionSummary } from '../shared/protocol.js';
+import { isOwnHandoff } from '../shared/handoff.js';
+import { PR_LINKS_STRONG_MAX, type BackgroundState, type NeedsYou, type SessionGroup, type SessionKind, type SessionSummary } from '../shared/protocol.js';
 import type { AgentRow } from './agents.js';
 import { groupLabel, type GroupKey } from './grouping.js';
 import type { JobNeeds } from './jobs.js';
@@ -104,6 +105,11 @@ export function toSessionSummary(
     summary.titleSource = 'claude-code';
   }
   if (extras.job !== undefined && extras.job.kind !== 'unknown' && extras.job.pr !== undefined) summary.jobPr = { ...extras.job.pr };
+  // Every PR the job's file links, as strong links (W225), timed at the job's start, as the file gives no
+  // time: a session that acts on one later still takes it over (prOwner()). The scanner's merge in (index.ts).
+  if (extras.job !== undefined && extras.job.kind !== 'unknown' && extras.job.prs !== undefined && extras.job.prs.length > 0) {
+    summary.prLinks = extras.job.prs.slice(0, PR_LINKS_STRONG_MAX).map((pr) => ({ kind: 'linked' as const, repo: pr.repo, number: pr.number, lastAt: row.startedAt }));
+  }
   const needsYou = needsYouOf(row, summary, transcript, extras);
   if (needsYou !== undefined) summary.needsYou = needsYou;
   return summary;
@@ -115,6 +121,9 @@ export function toSessionSummary(
  * 1. 'prompt': Claude Code shows a prompt, status 'waiting'.
  * 2. 'claude-code': the job's `state.json` has a `needs` line that isn't the start placeholder.
  * 3. 'asked': askedYou is set, so the last turn ended asking you something.
+ * 3a. 'handed-off': spinOff is its own hand-off (isOwnHandoff()), set only once the turn that wrote it
+ *    has ended (askedHolds()), and the job hasn't failed or stopped (W225). Whatever Claude Code's
+ *    status: a plugin's monitor can keep a job busy after its turn.
  * 4. 'restarted': you resumed it, or confirmed its restart, in this run of pitwall, its process is
  *    running, and the transcript has no prompt newer than that (restartHolds()). A restart that
  *    didn't wake it, as when `claude attach` exits at once, leaves no process, so no reason.
@@ -126,6 +135,7 @@ function needsYouOf(row: AgentRow, summary: SessionSummary, transcript: Transcri
   if (row.status === 'waiting') return { reason: 'prompt' };
   if (extras.job?.kind === 'needs') return { reason: 'claude-code', text: extras.job.text };
   if (summary.askedYou !== undefined) return { reason: 'asked' };
+  if (row.state !== 'failed' && row.state !== 'stopped' && isOwnHandoff(summary.sessionId, summary.spinOff)) return { reason: 'handed-off' };
   if (extras.restartedAtMs !== undefined && row.pid !== undefined && restartHolds(extras.restartedAtMs, transcript)) return { reason: 'restarted' };
   if (row.state === 'blocked' && (extras.job === undefined || extras.job.kind === 'unknown')) return { reason: 'blocked' };
   return undefined;

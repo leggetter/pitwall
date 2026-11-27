@@ -203,6 +203,20 @@ describe('toSessionSummary', () => {
     expect(toSessionSummary(done, { transcript: 'ok' }, NOW)).not.toHaveProperty('jobPr');
   });
 
+  it("gives every PR its job's file links as a strong 'linked' link, timed at the job's start (W225)", () => {
+    const job = row({ kind: 'background', shortId: 'pt225s', pid: 77, status: 'busy', state: 'working' });
+    const prs = [
+      { repo: 'example/demo-app', number: 7 },
+      { repo: 'example/other', number: 8 },
+    ];
+    expect(toSessionSummary(job, { transcript: 'ok' }, NOW, { job: { kind: 'none', prs } }).prLinks).toEqual([
+      { kind: 'linked', repo: 'example/demo-app', number: 7, lastAt: job.startedAt },
+      { kind: 'linked', repo: 'example/other', number: 8, lastAt: job.startedAt },
+    ]);
+    expect(toSessionSummary(job, { transcript: 'ok' }, NOW, { job: { kind: 'none' } })).not.toHaveProperty('prLinks');
+    expect(toSessionSummary(job, { transcript: 'ok' }, NOW, { job: { kind: 'unknown' } })).not.toHaveProperty('prLinks');
+  });
+
   describe('title', () => {
     const titled = (aiTitle: string, overrides: Partial<AgentRow> = {}) =>
       toSessionSummary(row(overrides), { transcript: 'ok', aiTitle }, NOW);
@@ -267,6 +281,41 @@ describe('toSessionSummary', () => {
       expect(toSessionSummary(row({ status: 'waiting' }), { ...transcript, turnEnded: true }, NOW)).not.toHaveProperty('spinOff');
       const stale = row({ kind: 'background', shortId: 'ab12', status: undefined, pid: undefined, state: 'blocked' });
       expect(toSessionSummary(stale, { ...transcript, lastActivityAt: iso(NOW - 9 * DAY) }, NOW)).not.toHaveProperty('spinOff');
+    });
+  });
+
+  describe("Needs you's 'handed-off' (W225)", () => {
+    const id = '55555555-5555-4555-8555-555555555555';
+    const handoff: SpinOff = {
+      kind: 'proposal',
+      key: 'fedcba9876543210',
+      folder: '/work/handoffs',
+      prompt: `Continues session ${id}.\nRead /work/handoffs/NOW.md, then start with the first item under "Next".`,
+    };
+    const transcript: TranscriptInfo = { transcript: 'ok', lastActivityAt: iso(NOW - 1000), turnEnded: true, spinOff: handoff };
+    // 2026-11-27: a job ended its turn with its own hand-off while two monitors kept it busy and working.
+    const job = (overrides: Partial<AgentRow> = {}) =>
+      row({ kind: 'background', shortId: 'ab12cd34', status: 'busy', state: 'working', ...overrides });
+
+    it('needs you once the turn that wrote it has ended, though a monitor keeps the job busy', () => {
+      expect(toSessionSummary(job(), transcript, NOW).needsYou).toEqual({ reason: 'handed-off' });
+      expect(toSessionSummary(row(), transcript, NOW).needsYou).toEqual({ reason: 'handed-off' });
+    });
+
+    it('waits while the turn runs', () => {
+      expect(toSessionSummary(job(), { ...transcript, turnEnded: false }, NOW)).not.toHaveProperty('needsYou');
+    });
+
+    it("isn't one for a proposal of new work, nor for a job that failed or stopped", () => {
+      const newWork: SpinOff = { ...handoff, prompt: 'Tidy the README.' };
+      expect(toSessionSummary(job(), { ...transcript, spinOff: newWork }, NOW)).not.toHaveProperty('needsYou');
+      expect(toSessionSummary(job({ state: 'failed', status: 'idle' }), transcript, NOW).needsYou).toBeUndefined();
+      expect(toSessionSummary(job({ state: 'stopped', status: 'idle' }), transcript, NOW).needsYou).toBeUndefined();
+    });
+
+    it('comes after a question the same message asks', () => {
+      const asked: AskedYou = { reason: 'open-questions', excerpt: 'Post the update?' };
+      expect(toSessionSummary(job(), { ...transcript, askedYou: asked }, NOW).needsYou).toEqual({ reason: 'asked' });
     });
   });
 

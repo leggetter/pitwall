@@ -44,7 +44,7 @@ export const DIAGNOSTICS_INTERVAL_MS = 5000;
 /** The most sessions whose last state is remembered; past it the oldest is forgotten. */
 export const DIAGNOSTICS_SESSIONS_MAX = 5000;
 
-const OWN_REASONS: readonly NeedsYou['reason'][] = ['prompt', 'claude-code', 'asked', 'recap', 'restarted', 'blocked'];
+const OWN_REASONS: readonly NeedsYou['reason'][] = ['prompt', 'claude-code', 'asked', 'handed-off', 'recap', 'restarted', 'blocked'];
 const PR_NEEDS: readonly PrNeedKind[] = ['review-requested', 'checks-failing', 'conflicts', 'changes-requested'];
 const SET_ASIDE = ['flagged', 'snoozed'] as const;
 const OVERS = ['finished', 'ended', 'stale'] as const;

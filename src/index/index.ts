@@ -3,6 +3,7 @@ import {
   DEFAULT_POLL_INTERVAL_MS,
   type ConversationPage,
   type IndexSnapshot,
+  type PrLink,
   type RelayAlert,
   type RelayExchange,
   type RelayOff,
@@ -543,6 +544,13 @@ async function placeEnded(
  * groups it by the viewer's Group sessions by, in Preferences (W59). A session seen for the first
  * time has no workedIn or prLinks until a later poll. Nothing here can fail the poll.
  */
+/** The transcript's links, then the job file's 'linked' ones (W225) for PRs it has no 'linked' link to. */
+export function withJobLinks(transcript: PrLink[], job: readonly PrLink[] | undefined): PrLink[] {
+  if (job === undefined || job.length === 0) return transcript;
+  const has = new Set(transcript.filter((link) => link.kind === 'linked').map((link) => `${link.repo}#${link.number}`));
+  return [...transcript, ...job.filter((link) => !has.has(`${link.repo}#${link.number}`))];
+}
+
 function addWorkedIn(kept: PlacedSession[], roots: readonly string[], deps: IndexerDeps): void {
   const scanner = deps.workedIn;
   if (scanner === undefined) return;
@@ -563,9 +571,10 @@ function addWorkedIn(kept: PlacedSession[], roots: readonly string[], deps: Inde
       if (repos !== undefined && repos.length > 0) {
         summary.workedIn = repos.map(({ key, root, calls, changes, lastAt }) => ({ key, label: groupLabel(key, root, deps.home), root, calls, changes, lastAt }));
       }
-      // Copies, so a snapshot never shares the scanner's objects.
+      // Copies, so a snapshot never shares the scanner's objects. The job file's links (W225) stay, after the
+      // transcript's, for the PRs the transcript has no 'linked' link to.
       const links = scanner.prLinks(summary.sessionId);
-      if (links !== undefined && links.length > 0) summary.prLinks = links.map((link) => ({ ...link }));
+      if (links !== undefined && links.length > 0) summary.prLinks = withJobLinks(links.map((link) => ({ ...link })), summary.prLinks);
     }
   } catch {
     // What was added stays, and the poll goes on: a scanner failure only leaves workedIn and prLinks out.

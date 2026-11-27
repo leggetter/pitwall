@@ -124,6 +124,59 @@ describe('detectAskedYou: an "Open questions" section', () => {
   });
 });
 
+describe('detectAskedYou: a "Needs your decision" section (W225)', () => {
+  // The closing block Phil's instructions have asked for since 2026-11-05.
+  it('is asked when the block lists a decision, with the first item as the excerpt', () => {
+    const text = lines(
+      'The fix is on the branch.',
+      '',
+      '**Needs your decision:**',
+      '- **Push the fix to the PR?** Recommended: yes.',
+      '- **Squash?** Recommended: no.',
+      '',
+      '**To review:**',
+      '- `src/a.ts:12`',
+      '',
+      '**Next steps:**',
+      '1. Me: push once you say so.',
+    );
+    expect(detectAskedYou(text)).toEqual({ reason: 'open-questions', excerpt: 'Push the fix to the PR? Recommended: yes.' });
+  });
+
+  it('is asked when the label is itself a list item, with the decisions nested under it', () => {
+    const text = lines(
+      'Done.',
+      '',
+      '- **Needs your decision:**',
+      '  - **Build it now?** Recommended: yes.',
+      '- **Next steps:**',
+      '  1. Me: build it.',
+    );
+    expect(detectAskedYou(text)).toEqual({ reason: 'open-questions', excerpt: 'Build it now? Recommended: yes.' });
+  });
+
+  it.each([
+    ['plural', '**Needs your decisions:**\n- Which branch?'],
+    ['a heading', '## Needs your decision\n\nMerge now or after the release?'],
+    ['an inline question', '**Needs your decision:** Merge now?'],
+    ['the colon outside the bold', '**Needs your decision**: Merge now?'],
+  ])('is asked for %s', (_name, text) => {
+    expect(detectAskedYou(text)?.reason).toBe('open-questions');
+  });
+
+  it('is not asked when the block says None', () => {
+    expect(detectAskedYou(lines('**Needs your decision:** None', '', '**Next steps:**', '1. Want me to open the PR?'))).toBeUndefined();
+  });
+
+  it('reads prose that only starts with the words as prose', () => {
+    expect(detectAskedYou('Needs your decision on the API is noted in the doc.')).toBeUndefined();
+  });
+
+  it('checks a label followed by emphasis and spaces in linear time', () => {
+    expect(timed(() => detectAskedYou(`needs your decision${'* _'.repeat(64 * 1024 / 3)}\u2028`))).toBeLessThan(FAST_MS);
+  });
+});
+
 describe('detectAskedYou: a question at the end', () => {
   it('is asked when the last line ends with a question mark', () => {
     expect(detectAskedYou(lines('All 12 tests pass.', '', 'Want me to open the PR?'))).toEqual({
