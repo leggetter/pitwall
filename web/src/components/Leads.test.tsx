@@ -7,13 +7,13 @@
 
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { SPAWN_PATH, workerStartedPath, type IndexSnapshot } from '../../../src/shared/protocol.js';
+import { SPAWN_PATH, workerStartedPath, type IndexSnapshot, type PullRequestList } from '../../../src/shared/protocol.js';
 import { ApiContext, createApiClient, type FetchLike } from '../api.js';
 import type { StorageSource } from '../groupState.js';
 import { LEADS_STORAGE_KEY, MAKE_LEAD, NOT_A_LEAD, NOT_A_WORKER, REPORT_TO, START_WORKER } from '../leads.js';
 import { memoryNavigation } from '../selection.js';
 import { createShortcutsStore, ShortcutsStoreContext } from '../shortcuts.js';
-import { group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
+import { group, minutesAgo, NOW, pr, prLink, prList, session, snapshot } from '../test/fixtures.js';
 import { toastMessages } from '../test/toasts.js';
 import { Dashboard } from './Dashboard.js';
 import { REPORT_TO_CONFIRM, REPORT_TO_TITLE } from './ReportToDialog.js';
@@ -63,7 +63,7 @@ function memory(initial: Record<string, string> = {}) {
   return { items, source };
 }
 
-function renderDashboard(search: string, options: { fetch?: Mock<FetchLike>; storage?: ReturnType<typeof memory> } = {}) {
+function renderDashboard(search: string, options: { fetch?: Mock<FetchLike>; storage?: ReturnType<typeof memory>; snapshot?: IndexSnapshot; prs?: PullRequestList } = {}) {
   const fetch = options.fetch ?? fakeServer();
   const store = options.storage ?? memory();
   const api = createApiClient({ apiKey: 'pitwall-test-key', fetch });
@@ -71,7 +71,7 @@ function renderDashboard(search: string, options: { fetch?: Mock<FetchLike>; sto
   const result = render(
     <ApiContext.Provider value={api}>
       <ShortcutsStoreContext.Provider value={shortcuts}>
-        <Dashboard view={{ state: 'live', snapshot: snap() }} navigation={memoryNavigation(search)} storage={store.source} />
+        <Dashboard view={{ state: 'live', snapshot: options.snapshot ?? snap(), ...(options.prs ? { prs: options.prs } : {}) }} navigation={memoryNavigation(search)} storage={store.source} />
       </ShortcutsStoreContext.Provider>
     </ApiContext.Provider>,
   );
@@ -154,6 +154,20 @@ describe('the list', () => {
     expect(pointer?.textContent).toBe('docs fix↳ under design (app)');
     expect(row('planner').querySelector('.session-lead-workers')?.textContent).toBe('No workers');
     expect(within(main()).queryByRole('button', { name: 'Workers of planner' })).toBeNull();
+  });
+
+  it("keeps a finished lead in its repo's current rows when its finished worker in another repo owns an open PR (the fix check's N1)", async () => {
+    const open = pr({ number: 21, repoLabel: 'example/docs' });
+    const lead = session({ sessionId: id(1), name: 'design', cwd: `${ROOT}/app`, finished: true, alive: false, lastActivityAt: minutesAgo(20), lead: { workers: [id(3)] } });
+    const fix = session({ sessionId: id(3), name: 'docs fix', cwd: `${ROOT}/docs`, finished: true, alive: false, lastActivityAt: minutesAgo(10), workerOf: { lead: id(1), how: 'reported' }, prLinks: [prLink('opened', open, 10)] });
+    const notes = session({ sessionId: id(4), name: 'notes', cwd: `${ROOT}/app`, lastActivityAt: minutesAgo(3) });
+    const s = snapshot([group({ key: `${ROOT}/app`, label: 'app', sessions: [lead, notes] }), group({ key: `${ROOT}/docs`, label: 'docs', sessions: [fix] })]);
+    renderDashboard(`?repo=${ROOT}/app`, { snapshot: s, prs: prList([open]) });
+    await settle();
+    // Not folded into the collapsed Finished section: the lead and its worker are rows you can see.
+    expect(row('design').closest('[hidden]')).toBeNull();
+    expect(within(workersList()!).getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['docs fix']);
+    expect(main().querySelector('.finished-toggle')).toBeNull();
   });
 
   it('says which lead a worker is under in Needs you', async () => {

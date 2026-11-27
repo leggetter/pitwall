@@ -132,6 +132,27 @@ describe('arrangeLeads', () => {
     expect(finished).toEqual([]);
   });
 
+  it("in a repo group, keeps a finished lead with the current rows when a finished worker from another group owns an open PR (the fix check's N1)", () => {
+    const m = made();
+    const lead = { ...m.lead, finished: true };
+    // docs fix, in docs, is finished but owns an open pull request: current there, so its lead is current here.
+    const fix = { ...m.fix, finished: true, alive: false };
+    const all = every({ ...m, fix });
+    const rows = { current: [at(m.notes, app)], finished: [at(lead, app), at(m.flaky, app)] };
+    const owned = new Set([fix.sessionId]);
+    const kept = arrangeLeads(rows, { kind: 'group', group: app }, { every: all, isCurrent: (l) => !l.session.finished || owned.has(l.session.sessionId) });
+    expect(names(kept.current)).toEqual(['notes', 'design']);
+    expect((kept.current[1] as ArrangedListed).workers?.map((w) => [w.session.name, w.repo])).toEqual([
+      ['flaky', undefined],
+      ['docs fix', 'docs'],
+    ]);
+    expect(kept.finished).toEqual([]);
+    // Without the open PR, every worker is done, and the lead folds into Finished.
+    const folded = arrangeLeads(rows, { kind: 'group', group: app }, { every: all, isCurrent: (l) => !l.session.finished });
+    expect(names(folded.current)).toEqual(['notes']);
+    expect(names(folded.finished)).toEqual(['design']);
+  });
+
   it('in a repo group, a worker whose lead is in the same group but hidden is a plain row saying "under", not a pointer (W218 review, F5)', () => {
     const m = made();
     // The filters hide design, the lead, in app; spike, its worker in app, still shows.

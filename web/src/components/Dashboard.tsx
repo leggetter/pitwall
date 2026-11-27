@@ -127,6 +127,7 @@ import {
   countRows,
   filterRows,
   hiddenOwners,
+  isDone,
   isPrRow,
   listWork,
   matchesRelations,
@@ -545,7 +546,11 @@ export function Dashboard({ view, storage = browserStorage, navigation = browser
     () =>
       leadScope === undefined
         ? { current, finished: filteredFinished }
-        : arrangeLeads({ current, finished: filteredFinished }, leadScope, { every: everyListedById, matches: (each) => filterRows([each], filters, work).length > 0 }),
+        : arrangeLeads({ current, finished: filteredFinished }, leadScope, {
+            every: everyListedById,
+            matches: (each) => filterRows([each], filters, work).length > 0,
+            isCurrent: (each) => !isDone(each.session, work),
+          }),
     // leadScope is rebuilt each render; its kind and group say all of it.
     [current, filteredFinished, leadScope?.kind, selectedGroup, everyListedById, filters, work],
   );

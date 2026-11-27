@@ -13,8 +13,9 @@
 //   pointers. A worker whose lead isn't shown stays a row of its own, with "under <lead>" on line 2.
 // - In Needs you, the list stays flat: a worker's card says "under <lead>". Pull requests is untouched.
 //
-// A finished worker stays under its lead. A finished lead with a worker that isn't finished is listed
-// with the current rows, so a worker that needs you is never folded into the collapsed Finished section.
+// A finished worker stays under its lead. A finished lead with a worker that is current, one that isn't
+// finished or that owns an open pull request (work.ts' isDone()), is listed with the current rows, so a
+// worker that needs you is never folded into the collapsed Finished section.
 //
 // Which leads' workers are closed is the viewer's, in localStorage pitwall.leads.v1: open by default, so
 // only closed leads' ids are kept, `{"v":1,"closed":["<session id>", …]}`, at most LEADS_CAP of them,
@@ -54,6 +55,12 @@ export interface ArrangeOptions {
   every: ReadonlyMap<string, Listed>;
   /** Whether a session from another group passes the list's filters. Everything does without it. */
   matches?: (listed: Listed) => boolean;
+  /**
+   * Whether a session from another group belongs with the current rows, as the list's own rows are
+   * sorted: not finished, or one that owns an open pull request (work.ts' isDone()). Without it, any that
+   * isn't finished.
+   */
+  isCurrent?: (listed: Listed) => boolean;
 }
 
 const sameGroup = (a: Pick<SessionGroup, 'root' | 'key'>, b: Pick<SessionGroup, 'root' | 'key'>) => a.root === b.root && a.key === b.key;
@@ -62,7 +69,7 @@ const sameGroup = (a: Pick<SessionGroup, 'root' | 'key'>, b: Pick<SessionGroup, 
 export function arrangeLeads(
   rows: { current: readonly ListRow[]; finished: readonly Listed[] },
   scope: LeadScope,
-  { every, matches = () => true }: ArrangeOptions,
+  { every, matches = () => true, isCurrent = (listed) => !listed.session.finished }: ArrangeOptions,
 ): { current: ArrangedRow[]; finished: ArrangedListed[] } {
   if (scope.kind === 'prs') return { current: [...rows.current], finished: [...rows.finished] };
   const nameOf = (id: string) => every.get(id)?.session.name;
@@ -129,8 +136,8 @@ export function arrangeLeads(
     if (arranged === undefined) continue;
     // A finished lead stays with the current rows, after the last of them, when a worker of its came from
     // them, such as a finished one that owns an open pull request (W218 review, F4), or when a worker
-    // from another group isn't finished.
-    const keep = arranged.workers?.some(({ session }) => currentIds.has(session.sessionId) || (!inList.has(session.sessionId) && !session.finished)) === true;
+    // from another group is current there, by the same rule (the fix check's N1).
+    const keep = arranged.workers?.some((worker) => currentIds.has(worker.session.sessionId) || (!inList.has(worker.session.sessionId) && isCurrent(worker))) === true;
     if (keep) current.push(arranged);
     else finished.push(arranged);
   }
