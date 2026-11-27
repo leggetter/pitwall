@@ -70,7 +70,7 @@ Still to do:
 
 ## Open questions for Phil
 
-1. **Post the scope change to [#143](https://github.com/leggetter/pitwall/issues/143) (Session view: expand the conversation or terminal to the full page)?** The comment's exact text is in `PLAN.md`, W224, "The #143 comment", checked with `phil-messaging`, with the issue retitled "Session view: let the session pane fill the browser window". Lean: yes, then post it.
+- Answered (Phil, 2026-11-27, "yes, post it"): the scope change is posted on [#143](https://github.com/leggetter/pitwall/issues/143#issuecomment-7222965099), now titled "Session view: let the session pane fill the browser window".
 
 - Answered (Phil, 2026-11-27, "yes to both"): merge #350 (W218 piece 1) into `main` with the builder's four UI calls (done); add W221 (the sessions pitwall starts don't inherit a session's sub-agent settings), after W218 (in `PLAN.md`).
 - Answered (Phil, 2026-11-27, W218, spike 021): merge the design (#343) and the answers (#344); option B, with workers indented under their lead in the sessions list; workers report with `SendMessage`; a spin-off block gets one optional line on whether it reports back; the names are **leads** and **workers**. Projects (groups of associated sessions, with roots renamed workspaces) are a future item, W219.

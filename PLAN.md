@@ -385,21 +385,7 @@ Branch from `main`, merge into `main` (Phil, 2026-11-18). Planned during M5.4; b
   - Not true fullscreen (the browser's Fullscreen API): Phil, 2026-11-27, "not required". This replaces #143's first version, which gave the window to the Conversation or Terminal tab alone and hid the recap strip.
   - To decide while building, with screenshots: the control's icon and shortcut, how a collapsed column is opened again, whether the state is remembered or in the URL, and what happens below 1,200 px, where the session view already lies over the session list.
   - A UI change: an app-check part for the collapsed layout at the usual widths.
-  - The #143 comment, waiting on Phil's OK (2026-11-27), with the issue retitled "Session view: let the session pane fill the browser window":
-
-    ```markdown
-    Changing the scope of this one (2026-11-27). Rather than giving the whole window to the Conversation or Terminal tab, I'd like the session pane to fill the browser window.
-
-    - The repo list and the session list collapse, and I can open each one again on its own.
-    - The header stays. So does everything in the session pane, including the view header, the recap strip, the tabs and the message box.
-    - Not true fullscreen (the browser's Fullscreen API). Filling the browser window is enough.
-    - The Terminal's columns refit to the new width, as before.
-    - W187 already folds the repo list into the repo drawer when the supervisor panel needs room, so the repo list half can probably reuse that.
-
-    Region names are from `docs/ui-map.md`. Planned as W224, after the UI map (#353) and the renames to match it (#354).
-
-    > Posted by an AI agent with human oversight.
-    ```
+  - Posted on #143 (Phil's OK, 2026-11-27): [the scope change](https://github.com/leggetter/pitwall/issues/143#issuecomment-7222965099), with the issue retitled "Session view: let the session pane fill the browser window".
 
 - **W221, The sessions pitwall starts don't inherit a session's sub-agent settings** (`w221-child-env`, S; Phil, 2026-11-27, "yes", after W218). Found by #350's (W218 piece 1) live check: `childEnvironment()` (`src/index/exec.ts`) drops `CLAUDE_CODE_MESSAGING_*` and the session's identity, but still passes `CLAUDE_CODE_SUBAGENT_MODEL`, `CLAUDE_CODE_CHILD_NOTES_DIR`, `CLAUDE_CODE_HOST_SHORT_TEMP_DIRS` and `CLAUDE_CODE_VERSION`. None makes a false parent, but when 4518 is restarted from inside a session, every session it starts inherits that session's sub-agent model.
   - **What:** drop `CLAUDE_CODE_SUBAGENT_MODEL` and `CLAUDE_CODE_CHILD_NOTES_DIR`; check the other two against Claude Code's docs and drop them unless they're needed; keep what the comment at `src/index/exec.ts:95` keeps (`ANTHROPIC_*`, `CLAUDE_CODE_USE_*`, `CLAUDE_CONFIG_DIR`, the OAuth token, effort and safe mode). A unit test per name.
