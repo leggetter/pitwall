@@ -7,7 +7,8 @@
 // - In a repo group's list, each lead's row carries its workers, oldest link first, shown indented under
 //   it. A worker listed in another group joins them, with that group's label on its row; one the filters
 //   hide doesn't. A worker in this group whose lead is listed elsewhere becomes a one-line pointer,
-//   "↳ under <lead> (<repo>)", so a search by repo still finds it.
+//   "↳ under <lead> (<repo>)", so a search by repo still finds it. One whose lead is in this group but
+//   hidden by the filters stays a row of its own, with "under <lead>" on line 2.
 // - In All sessions and Starred, each lead's row carries the workers that list has; there are no
 //   pointers. A worker whose lead isn't shown stays a row of its own, with "under <lead>" on line 2.
 // - In Needs you, the list stays flat: a worker's card says "under <lead>". Pull requests is untouched.
@@ -106,7 +107,9 @@ export function arrangeLeads(
     if (leadId === undefined) return row;
     const lead = every.get(leadId);
     if (lead === undefined) return row;
-    if (group !== undefined) return { ...row, pointer: { leadId, leadName: lead.session.name, leadRepo: groupLabel(lead.group) } };
+    // A pointer only when its lead is under another group: one in this group that the filters hide
+    // would point at a row that isn't there (W218 review, F5).
+    if (group !== undefined && !sameGroup(lead.group, group)) return { ...row, pointer: { leadId, leadName: lead.session.name, leadRepo: groupLabel(lead.group) } };
     return { ...row, under: { leadId, leadName: lead.session.name } };
   };
 
@@ -118,12 +121,17 @@ export function arrangeLeads(
       if (arranged !== undefined) current.push(arranged);
     }
   }
+  const currentIds = new Set<string>();
+  for (const row of rows.current) if (!isPrRow(row)) currentIds.add(row.session.sessionId);
   const finished: ArrangedListed[] = [];
   for (const row of rows.finished) {
     const arranged = arrange(row);
     if (arranged === undefined) continue;
-    // A finished lead with a worker that isn't finished stays with the current rows, after the last of them.
-    if (arranged.workers?.some((worker) => !worker.session.finished) === true) current.push(arranged);
+    // A finished lead stays with the current rows, after the last of them, when a worker of its came from
+    // them, such as a finished one that owns an open pull request (W218 review, F4), or when a worker
+    // from another group isn't finished.
+    const keep = arranged.workers?.some(({ session }) => currentIds.has(session.sessionId) || (!inList.has(session.sessionId) && !session.finished)) === true;
+    if (keep) current.push(arranged);
     else finished.push(arranged);
   }
   return { current, finished };

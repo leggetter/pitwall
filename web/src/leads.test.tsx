@@ -122,6 +122,25 @@ describe('arrangeLeads', () => {
     expect(names(stays.finished)).toEqual(['design']);
   });
 
+  it('keeps a finished lead with the current rows when a finished worker of its came from them, as one that owns an open PR (W218 review, F4)', () => {
+    const m = made();
+    const lead = { ...m.lead, finished: true };
+    // flaky is finished, but the list put it in the current rows: an open pull request of its own.
+    const { current, finished } = arrangeLeads({ current: [at(m.flaky, app)], finished: [at(lead, app)] }, { kind: 'all' }, { every: every(m) });
+    expect(names(current)).toEqual(['design']);
+    expect((current[0] as ArrangedListed).workers?.map((w) => w.session.name)).toEqual(['flaky']);
+    expect(finished).toEqual([]);
+  });
+
+  it('in a repo group, a worker whose lead is in the same group but hidden is a plain row saying "under", not a pointer (W218 review, F5)', () => {
+    const m = made();
+    // The filters hide design, the lead, in app; spike, its worker in app, still shows.
+    const { current } = arrangeLeads({ current: [at(m.spike, app), at(m.notes, app)], finished: [] }, { kind: 'group', group: app }, { every: every(m) });
+    expect(names(current)).toEqual(['spike', 'notes']);
+    expect((current[0] as ArrangedListed).pointer).toBeUndefined();
+    expect((current[0] as ArrangedListed).under).toEqual({ leadId: id(1), leadName: 'design' });
+  });
+
   it('leaves Pull requests alone, and a lead you marked with no workers has an empty list', () => {
     const m = made();
     const marked = session({ sessionId: id(8), name: 'marked', lead: { workers: [], marked: true } });
