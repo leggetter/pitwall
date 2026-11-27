@@ -14,12 +14,12 @@ const CARD = `${VIEW}?.querySelector('.spin-off-block')`;
 const PROMPT_FIELD = `[...(${DIALOG}?.querySelectorAll('input, select, textarea') ?? [])].find((el) => el.labels?.[0]?.textContent.trim().startsWith('First prompt'))`;
 
 /** The made-up assistant messages for W209: one with a spin-off block (the fence's body is the fixture's proposal, line for line), then a long one, so the newest isn't the card. */
-function blockMessages(): ConversationEntry[] {
+function blockMessages(link?: string): ConversationEntry[] {
   const body = ['folder: ' + DEMO_APP_WEB, 'name: pitwall-test-spin-off', 'prompt:', ...SPIN_OFF_PROMPT.split('\n')];
   const at = new Date().toISOString();
   return [
     { kind: 'assistant', markdown: true, at, text: ['That settings work is separate from this session, so here is a proposal for a new one.', '', '```spin-off', ...body, '```'].join('\n'), spinOffs: [{ spinOff: SPIN_OFF, lines: body.length, check: fingerprint(body.join('\n')) }] },
-    { kind: 'assistant', markdown: true, at, text: ['Meanwhile, the notes for this session:', '', ...Array.from({ length: 40 }, (_, index) => `- Note ${index + 1}: a made-up line, so the conversation is taller than the window.`)].join('\n') },
+    { kind: 'assistant', markdown: true, at, text: ['Meanwhile, the notes for this session:', '', ...(link ? [`Open the card: [the spin-off card](${link})`, ''] : []), ...Array.from({ length: 40 }, (_, index) => `- Note ${index + 1}: a made-up line, so the conversation is taller than the window.`)].join('\n') },
   ];
 }
 
@@ -220,6 +220,27 @@ const part: Part = {
       t.expect(await page.evaluate(`!location.search.includes('spinoff')`), 'the parameter is gone from the address');
       t.expect(await page.evaluate(`location.search.includes(${q('')} + 'session=')`), 'the session stays in it');
       await t.shot('spin-off-link');
+    });
+
+    await t.step("a link to pitwall's own address in a message navigates in the same tab: no question, no new tab, the token kept, the card shown (W220)", async () => {
+      const id = server.world.byName(NAMES.conversation).sessionId;
+      await t.fresh({ search: '?view=all' });
+      server.world.blockMessages(id, blockMessages(`${server.origin}/?view=all&session=${id}&spinoff=latest`));
+      await openFromRow(t, NAMES.conversation);
+      await page.waitFor('the message with the link', `!!${VIEW}.querySelector('a[href*="spinoff=latest"]')`);
+      await page.settle(200);
+      // A marker on the window: a reload, or a new document, would lose it.
+      await page.evaluate(`(window.__ownLinkMarker = 'same page', window.__opened = 0, window.open = () => { window.__opened += 1; return null; }, true)`);
+      const tokenBefore = await page.evaluate<string | null>(`sessionStorage.getItem('pitwall.token')`);
+      await page.evaluate(`${VIEW}.querySelector('a[href*="spinoff=latest"]').click()`);
+      await page.waitFor('the parameter taken out', `!location.search.includes('spinoff')`);
+      await page.settle(300);
+      t.expectEqual(await page.evaluate(`window.__ownLinkMarker`), 'same page', 'the page was not reloaded');
+      t.expectEqual(await page.evaluate(`window.__opened`), 0, 'no new tab');
+      t.expect(!(await page.evaluate<boolean>(`!!${VIEW}.querySelector('.inline-confirm')`)), 'no question');
+      t.expectEqual(await page.evaluate<string | null>(`sessionStorage.getItem('pitwall.token')`), tokenBefore, 'the token is kept');
+      t.expectEqual(await page.evaluate(viewTab), 'Conversation', 'the Conversation tab');
+      t.expect(await page.evaluate<boolean>(`!!${CARD}`), 'the card is shown');
     });
   },
 };

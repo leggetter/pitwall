@@ -12,8 +12,9 @@
 //   terminal link), with no Sec-Purpose (prefetch, prerender). window.open, location.reload(),
 //   location.href= and history.go(0) arrive as same-origin, so a stale page on this origin can't open
 //   pitwall and read the code from its tag. Page scripts can't set these headers. The page blanks the
-//   tag once it has read the code (tokenLink.ts). The cost: a link clicked inside pitwall or on a web
-//   page shows the sign-in notice, as before W175.
+//   tag once it has read the code (tokenLink.ts). The cost: a link clicked on a web page shows
+//   the sign-in notice, as before W175. A link to pitwall's own address clicked inside pitwall navigates in
+//   the same tab, which has the token (W220, web/src/ownLinks.ts), so it never gets here.
 // - Cross-Origin-Opener-Policy: same-origin (security.ts) is defence in depth only. A stale page can send
 //   the same header itself and keep its handle on a window it opens, so it is not what protects the code.
 // - The tab sends the channel only the code's hash. A tab that has the token, and a signed-in

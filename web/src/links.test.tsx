@@ -3,9 +3,37 @@ import { confirmMessage, createLinkHandler, openTerminalLink, terminalLinkHandle
 
 const RANGE = { start: { x: 1, y: 1 }, end: { x: 2, y: 1 } };
 
+describe('openTerminalLink: pitwall\'s own address (W220)', () => {
+  const own = () => ({ location: { origin: 'http://127.0.0.1:4518', pathname: '/', search: '' }, history: { pushState: vi.fn(), state: null }, dispatchEvent: vi.fn(() => true) });
+
+  it('follows it in this tab: no question, no new tab, a pushed entry and a popstate', () => {
+    const open = vi.fn();
+    const confirm = vi.fn(() => true);
+    const env = own();
+    expect(openTerminalLink('http://127.0.0.1:4518/?session=abc&spinoff=latest', { open, confirm, own: env })).toBe(true);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    expect(env.history.pushState).toHaveBeenCalledWith(null, '', '/?session=abc&spinoff=latest');
+    expect(env.dispatchEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the question and the new tab for an own link with a fragment, even an empty one', () => {
+    for (const uri of ['http://127.0.0.1:4518/#token=x', 'http://127.0.0.1:4518/?session=a#']) {
+      const open = vi.fn();
+      const confirm = vi.fn(() => true);
+      const env = own();
+      expect(openTerminalLink(uri, { open, confirm, own: env }), uri).toBe(true);
+      expect(confirm).toHaveBeenCalledTimes(1);
+      expect(open).toHaveBeenCalledWith(new URL(uri).href, '_blank', 'noopener,noreferrer');
+      expect(env.history.pushState).not.toHaveBeenCalled();
+      expect(env.dispatchEvent).not.toHaveBeenCalled();
+    }
+  });
+});
+
 describe('openTerminalLink', () => {
   it('asks first, naming the full URL, then opens http: and https: URLs in a new tab with noopener and noreferrer', () => {
-    for (const uri of ['https://example.com/a?b=c#d', 'http://127.0.0.1:4517/', 'HTTPS://EXAMPLE.COM']) {
+    for (const uri of ['https://example.com/a?b=c#d', 'http://127.0.0.1:4599/', 'HTTPS://EXAMPLE.COM']) {
       const open = vi.fn();
       const confirm = vi.fn(() => true);
       expect(openTerminalLink(uri, { open, confirm }), uri).toBe(true);

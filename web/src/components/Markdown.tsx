@@ -39,6 +39,7 @@ import { createContext, Fragment, memo, useCallback, useContext, useMemo, useRef
 import { fingerprint } from '../../../src/shared/fingerprint.js';
 import { plainText } from '../format.js';
 import { mentionLabel, type Mentions, type MentionTarget } from '../mentions.js';
+import { followOwnLink, ownLinkSearch } from '../ownLinks.js';
 import { asksFirst, elementCount, httpUrl, linkText, MAX_ELEMENTS, parseMarkdown, type Align, type Block, type Inline } from '../markdown.js';
 import { findFileRefs, isOwnFileTarget, parseFileTarget, type FileRef } from '../fileLinks.js';
 import { CopyButton } from './CopyButton.js';
@@ -396,11 +397,18 @@ function LinkQuestion({ url, onOpen, onCancel }: { url: URL; onOpen: () => void;
 }
 
 /**
- * A link: a new tab, with no opener or referrer, and the URL it opens in its tooltip. One that `asks`
+ * A link: a new tab, with no opener or referrer (pitwall's own address, with no fragment, opens in this tab, W220), and the URL it opens in its tooltip. One that `asks`
  * opens its question instead, on a click, Enter or a middle click; a modifier doesn't skip it.
  */
 function Link({ href, asks, children }: { href: string; asks: boolean; children: ReactNode }) {
   const ask = useContext(AskContext);
+  // A link to pitwall's own address, with no fragment (W220), is followed in this tab, which has the token: no
+  // question, no new tab. A modifier or a middle click does the same, since a new tab would have no token.
+  const search = ownLinkSearch(href);
+  const inPlace = (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    if (search !== undefined) followOwnLink(search);
+  };
   const question = (event: MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();
     const url = httpUrl(href);
@@ -413,13 +421,17 @@ function Link({ href, asks, children }: { href: string; asks: boolean; children:
         href={href}
         target="_blank"
         rel="noopener noreferrer"
-        onClick={asks ? question : undefined}
+        onClick={search !== undefined ? inPlace : asks ? question : undefined}
         onAuxClick={
-          asks
+          search !== undefined
             ? (event) => {
-                if (event.button === 1) question(event);
+                if (event.button === 1) inPlace(event);
               }
-            : undefined
+            : asks
+              ? (event) => {
+                  if (event.button === 1) question(event);
+                }
+              : undefined
         }
       >
         {children}
