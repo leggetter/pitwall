@@ -15,7 +15,7 @@ import { memoryNavigation } from '../selection.js';
 import { createShortcutsStore, ShortcutsStoreContext } from '../shortcuts.js';
 import { group, minutesAgo, NOW, pr, prLink, prList, session, snapshot } from '../test/fixtures.js';
 import { toastMessages } from '../test/toasts.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 import { REPORT_TO_CONFIRM, REPORT_TO_TITLE, TELL_WORKER_COPY, TELL_WORKER_NOT_NOW, TELL_WORKER_SEND, TELL_WORKER_TITLE } from './ReportToDialog.js';
 import type { TerminalHandle } from './Terminal.js';
 
@@ -63,7 +63,7 @@ function memory(initial: Record<string, string> = {}) {
   return { items, source };
 }
 
-function renderDashboard(search: string, options: { fetch?: Mock<FetchLike>; storage?: ReturnType<typeof memory>; snapshot?: IndexSnapshot; prs?: PullRequestList } = {}) {
+function renderAppShell(search: string, options: { fetch?: Mock<FetchLike>; storage?: ReturnType<typeof memory>; snapshot?: IndexSnapshot; prs?: PullRequestList } = {}) {
   const fetch = options.fetch ?? fakeServer();
   const store = options.storage ?? memory();
   const api = createApiClient({ apiKey: 'pitwall-test-key', fetch });
@@ -71,7 +71,7 @@ function renderDashboard(search: string, options: { fetch?: Mock<FetchLike>; sto
   const result = render(
     <ApiContext.Provider value={api}>
       <ShortcutsStoreContext.Provider value={shortcuts}>
-        <Dashboard view={{ state: 'live', snapshot: options.snapshot ?? snap(), ...(options.prs ? { prs: options.prs } : {}) }} navigation={memoryNavigation(search)} storage={store.source} />
+        <AppShell view={{ state: 'live', snapshot: options.snapshot ?? snap(), ...(options.prs ? { prs: options.prs } : {}) }} navigation={memoryNavigation(search)} storage={store.source} />
       </ShortcutsStoreContext.Provider>
     </ApiContext.Provider>,
   );
@@ -102,7 +102,7 @@ beforeEach(() => {
 
 describe('the list', () => {
   it("shows a lead's row with Lead and its count, and its workers under it, the one from docs named", async () => {
-    renderDashboard(`?repo=${ROOT}/app`);
+    renderAppShell(`?repo=${ROOT}/app`);
     await settle();
     const lead = row('design');
     expect(lead.querySelector('.session-lead-badge')?.textContent).toBe('Lead');
@@ -119,7 +119,7 @@ describe('the list', () => {
 
   it('closes and opens the workers from the caret, says what needs you while closed, and remembers it through a reload', async () => {
     const storage = memory();
-    const first = renderDashboard(`?repo=${ROOT}/app`, { storage });
+    const first = renderAppShell(`?repo=${ROOT}/app`, { storage });
     await settle();
     fireEvent.click(caret('design'));
     expect(caret('design').getAttribute('aria-expanded')).toBe('false');
@@ -127,7 +127,7 @@ describe('the list', () => {
     expect(row('design').querySelector('.session-lead-workers')?.textContent).toBe('2 workers, 1 needs you');
     expect(JSON.parse(storage.items.get(LEADS_STORAGE_KEY) ?? '{}')).toEqual({ v: 1, closed: [id(1)] });
     first.unmount();
-    renderDashboard(`?repo=${ROOT}/app`, { storage });
+    renderAppShell(`?repo=${ROOT}/app`, { storage });
     await settle();
     expect(caret('design').getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(caret('design'));
@@ -140,7 +140,7 @@ describe('the list', () => {
     throwing.source = () => {
       throw new Error('blocked');
     };
-    renderDashboard(`?repo=${ROOT}/app`, { storage: throwing });
+    renderAppShell(`?repo=${ROOT}/app`, { storage: throwing });
     await settle();
     expect(caret('design').getAttribute('aria-expanded')).toBe('true');
     fireEvent.click(caret('design'));
@@ -148,7 +148,7 @@ describe('the list', () => {
   });
 
   it("leaves a pointer in the worker's own repo group, and a lead you marked says No workers, with no caret", async () => {
-    renderDashboard(`?repo=${ROOT}/docs`);
+    renderAppShell(`?repo=${ROOT}/docs`);
     await settle();
     const pointer = main().querySelector('[data-lead-pointer]');
     expect(pointer?.textContent).toBe('docs fix↳ under design (app)');
@@ -162,7 +162,7 @@ describe('the list', () => {
     const fix = session({ sessionId: id(3), name: 'docs fix', cwd: `${ROOT}/docs`, finished: true, alive: false, lastActivityAt: minutesAgo(10), workerOf: { lead: id(1), how: 'reported' }, prLinks: [prLink('opened', open, 10)] });
     const notes = session({ sessionId: id(4), name: 'notes', cwd: `${ROOT}/app`, lastActivityAt: minutesAgo(3) });
     const s = snapshot([group({ key: `${ROOT}/app`, label: 'app', sessions: [lead, notes] }), group({ key: `${ROOT}/docs`, label: 'docs', sessions: [fix] })]);
-    renderDashboard(`?repo=${ROOT}/app`, { snapshot: s, prs: prList([open]) });
+    renderAppShell(`?repo=${ROOT}/app`, { snapshot: s, prs: prList([open]) });
     await settle();
     // Not folded into the collapsed Finished section: the lead and its worker are rows you can see.
     expect(row('design').closest('[hidden]')).toBeNull();
@@ -171,14 +171,14 @@ describe('the list', () => {
   });
 
   it('says which lead a worker is under in Needs you', async () => {
-    renderDashboard('?view=needs-you');
+    renderAppShell('?view=needs-you');
     await settle();
     expect(row('docs fix').querySelector('.session-group')?.textContent).toBe('docs · under design');
     expect(main().querySelector('[data-lead-pointer]')).toBeNull();
   });
 
   it('has no pointers in All sessions', async () => {
-    renderDashboard('?view=all');
+    renderAppShell('?view=all');
     await settle();
     expect(main().querySelector('[data-lead-pointer]')).toBeNull();
     expect(within(workersList()!).getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['spike', 'docs fix']);
@@ -187,7 +187,7 @@ describe('the list', () => {
 
 describe('the session view', () => {
   it("says which lead a worker works for, a link to the lead's view", async () => {
-    renderDashboard(`?repo=${ROOT}/app&session=${id(2)}`);
+    renderAppShell(`?repo=${ROOT}/app&session=${id(2)}`);
     await settle();
     const line = view()!.querySelector('[data-worker-for]');
     expect(line?.textContent).toBe('worker for design');
@@ -197,14 +197,14 @@ describe('the session view', () => {
   });
 
   it('offers each kind of session its items', async () => {
-    renderDashboard(`?repo=${ROOT}/app&session=${id(1)}`);
+    renderAppShell(`?repo=${ROOT}/app&session=${id(1)}`);
     await settle();
     expect(menuLabels()).toEqual(expect.arrayContaining([START_WORKER, NOT_A_LEAD]));
     expect(menuLabels()).not.toContain(MAKE_LEAD);
   });
 
   it('Make lead posts { on: true } and says so; Not a worker posts { lead: null }', async () => {
-    const { fetch } = renderDashboard(`?repo=${ROOT}/app&session=${id(4)}`);
+    const { fetch } = renderAppShell(`?repo=${ROOT}/app&session=${id(4)}`);
     await settle();
     expect(menuLabels()).toEqual(expect.arrayContaining([MAKE_LEAD, REPORT_TO]));
     choose(MAKE_LEAD);
@@ -215,7 +215,7 @@ describe('the session view', () => {
 
   it("shows a 409's error as it is", async () => {
     const fetch = fakeServer({ status: 409, body: { ok: false, error: 'It’s a lead itself. Choose Not a lead on it first.' } });
-    renderDashboard(`?repo=${ROOT}/app&session=${id(2)}`, { fetch });
+    renderAppShell(`?repo=${ROOT}/app&session=${id(2)}`, { fetch });
     await settle();
     choose(NOT_A_WORKER);
     await settle();
@@ -225,7 +225,7 @@ describe('the session view', () => {
 
   it('Report to… lists the leads in a radio group and posts the one picked; a refusal shows in the dialog', async () => {
     const fetch = fakeServer({ status: 409, body: { ok: false, error: 'That lead isn’t in pitwall’s list.' } });
-    renderDashboard(`?repo=${ROOT}/app&session=${id(4)}`, { fetch });
+    renderAppShell(`?repo=${ROOT}/app&session=${id(4)}`, { fetch });
     await settle();
     choose(REPORT_TO);
     await settle();
@@ -240,7 +240,7 @@ describe('the session view', () => {
   });
 
   it('Start a worker… opens New session for the lead', async () => {
-    renderDashboard(`?repo=${ROOT}/app&session=${id(1)}`);
+    renderAppShell(`?repo=${ROOT}/app&session=${id(1)}`);
     await settle();
     choose(START_WORKER);
     await settle();
@@ -254,7 +254,7 @@ describe('the session view', () => {
       if (url === SPAWN_PATH) return json(201, { ok: true, shortId: 'a1b2c3d4', name: 'helper' });
       return json(200, { ok: true });
     });
-    renderDashboard(`?repo=${ROOT}/app&session=${id(1)}`, { fetch });
+    renderAppShell(`?repo=${ROOT}/app&session=${id(1)}`, { fetch });
     await settle();
     choose(START_WORKER);
     const dialog = await screen.findByRole('dialog', { name: 'New session' });
@@ -285,7 +285,7 @@ const gets = (fetch: { mock: { calls: Parameters<FetchLike>[] } }) => fetch.mock
 
 /** Report to… on notes, to design, through to the second step. */
 async function reportNotes(options: { fetch: Mock<FetchLike>; snapshot?: IndexSnapshot }) {
-  renderDashboard(`?repo=${ROOT}/app&session=${id(4)}`, options);
+  renderAppShell(`?repo=${ROOT}/app&session=${id(4)}`, options);
   await settle();
   choose(REPORT_TO);
   await settle();
@@ -303,7 +303,7 @@ function snapWithBackgroundNotes(): IndexSnapshot {
 describe("the worker's paragraph (W218 piece 2)", () => {
   it('Start a worker… shows the paragraph above the fields and sends the lead with the prompt, never the text', async () => {
     const fetch = briefServer();
-    renderDashboard(`?repo=${ROOT}/app&session=${id(1)}`, { fetch });
+    renderAppShell(`?repo=${ROOT}/app&session=${id(1)}`, { fetch });
     await settle();
     choose(START_WORKER);
     const dialog = await screen.findByRole('dialog', { name: 'New session' });
@@ -323,7 +323,7 @@ describe("the worker's paragraph (W218 piece 2)", () => {
 
   it("Start a worker… says why there's no paragraph after a refusal, and starts the worker without a lead", async () => {
     const fetch = briefServer({ brief: { status: 409, body: { ok: false, error: 'Another running session is named design.' } } });
-    renderDashboard(`?repo=${ROOT}/app&session=${id(1)}`, { fetch });
+    renderAppShell(`?repo=${ROOT}/app&session=${id(1)}`, { fetch });
     await settle();
     choose(START_WORKER);
     const dialog = await screen.findByRole('dialog', { name: 'New session' });
@@ -400,7 +400,7 @@ describe("a worker's reports (W218 piece 2)", () => {
   }
 
   it("shows reported HH:MM on the worker's row, and none on a worker that hasn't reported", async () => {
-    renderDashboard(`?repo=${ROOT}/app`, { snapshot: snapReported() });
+    renderAppShell(`?repo=${ROOT}/app`, { snapshot: snapReported() });
     await settle();
     const link = row('spike').querySelector<HTMLElement>(`[data-reported="${id(2)}"]`)!;
     expect(link.textContent).toMatch(/^reported \d{1,2}:\d{2}/);
@@ -410,7 +410,7 @@ describe("a worker's reports (W218 piece 2)", () => {
   });
 
   it('opens the worker on its Conversation tab', async () => {
-    renderDashboard(`?repo=${ROOT}/app`, { snapshot: snapReported() });
+    renderAppShell(`?repo=${ROOT}/app`, { snapshot: snapReported() });
     await settle();
     fireEvent.click(row('spike').querySelector<HTMLElement>(`[data-reported="${id(2)}"]`)!);
     await settle();
@@ -429,7 +429,7 @@ describe("the security review's F2 and F3 (W218 piece 2)", () => {
   }
 
   it("Report to… lists only trusted leads, and isn't offered when there's none to pick", async () => {
-    const first = renderDashboard(`?repo=${ROOT}/app&session=${id(4)}`, { snapshot: snapUntrustedPlanner() });
+    const first = renderAppShell(`?repo=${ROOT}/app&session=${id(4)}`, { snapshot: snapUntrustedPlanner() });
     await settle();
     choose(REPORT_TO);
     await settle();
@@ -439,12 +439,12 @@ describe("the security review's F2 and F3 (W218 piece 2)", () => {
     // With design untrusted too, notes has no lead to pick, so no Report to…; an untrusted lead offers Confirm as lead, and no Start a worker… (the fix check's N1 and N2).
     const base = snapUntrustedPlanner();
     const none = { ...base, groups: base.groups.map((g) => ({ ...g, sessions: g.sessions.map((s) => (s.sessionId === id(1) ? { ...s, lead: { workers: [id(2), id(3)] } } : s)) })) };
-    const second = renderDashboard(`?repo=${ROOT}/app&session=${id(4)}`, { snapshot: none });
+    const second = renderAppShell(`?repo=${ROOT}/app&session=${id(4)}`, { snapshot: none });
     await settle();
     expect(menuLabels()).toEqual(expect.arrayContaining([MAKE_LEAD]));
     expect(menuLabels()).not.toContain(REPORT_TO);
     second.unmount();
-    renderDashboard(`?repo=${ROOT}/docs&session=${id(5)}`, { snapshot: none });
+    renderAppShell(`?repo=${ROOT}/docs&session=${id(5)}`, { snapshot: none });
     await settle();
     expect(menuLabels()).toEqual(expect.arrayContaining([CONFIRM_LEAD, NOT_A_LEAD]));
     expect(menuLabels()).not.toContain(START_WORKER);
@@ -454,7 +454,7 @@ describe("the security review's F2 and F3 (W218 piece 2)", () => {
   it("shows Report to…'s 409, a lead only by its transcript's word, in the dialog", async () => {
     const error = 'That session is a lead only by its own transcript’s word. Choose Confirm as lead on it first.';
     const fetch = fakeServer({ status: 409, body: { ok: false, error } });
-    renderDashboard(`?repo=${ROOT}/app&session=${id(4)}`, { fetch });
+    renderAppShell(`?repo=${ROOT}/app&session=${id(4)}`, { fetch });
     await settle();
     choose(REPORT_TO);
     await settle();
@@ -473,7 +473,7 @@ describe("the security review's F2 and F3 (W218 piece 2)", () => {
       if (url.endsWith('/lead-brief')) await held;
       return inner(url, init);
     });
-    renderDashboard(`?repo=${ROOT}/app&session=${id(1)}`, { fetch });
+    renderAppShell(`?repo=${ROOT}/app&session=${id(1)}`, { fetch });
     await settle();
     choose(START_WORKER);
     const dialog = await screen.findByRole('dialog', { name: 'New session' });
@@ -498,7 +498,7 @@ describe("the security review's F2 and F3 (W218 piece 2)", () => {
     const error = 'The lead’s name is planner now, not the name the dialog showed, so nothing started. Open Start a worker… again to see the paragraph pitwall would add.';
     const inner = briefServer();
     const fetch = vi.fn<FetchLike>(async (url, init) => (url === SPAWN_PATH ? json(409, { ok: false, error }) : inner(url, init)));
-    renderDashboard(`?repo=${ROOT}/app&session=${id(1)}`, { fetch });
+    renderAppShell(`?repo=${ROOT}/app&session=${id(1)}`, { fetch });
     await settle();
     choose(START_WORKER);
     const dialog = await screen.findByRole('dialog', { name: 'New session' });

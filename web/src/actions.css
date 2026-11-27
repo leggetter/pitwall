@@ -210,7 +210,7 @@
   gap: var(--pw-space-2);
 }
 
-.relay-box + .ended-foot {
+.message-box + .ended-foot {
   margin-top: var(--pw-space-3);
 }
 

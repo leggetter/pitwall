@@ -7,12 +7,12 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Badge } from '../components/Badge.js';
 import { CopyButton } from '../components/CopyButton.js';
 import { CopyCommand } from '../components/CopyCommand.js';
-import { listedText, OPEN_LISTED, startedText } from '../components/Dashboard.js';
+import { listedText, OPEN_LISTED, startedText } from '../components/AppShell.js';
 import { Header } from '../components/Header.js';
 import { InfoTip } from '../components/InfoTip.js';
 import { MenuButton, type MenuEntry } from '../components/Menu.js';
 import { MiddleEllipsis } from '../components/MiddleEllipsis.js';
-import { LIMITS_NOTE, RelayBox, SEND_EMPTY } from '../components/RelayBox.js';
+import { LIMITS_NOTE, MessageBox, SEND_EMPTY } from '../components/MessageBox.js';
 import { STOPPED, removedText } from '../components/SessionActions.js';
 import { SessionRow, STALE_HINT } from '../components/SessionRow.js';
 import { SessionView, TERMINAL_INTERACTIVE_NOTE } from '../components/SessionView.js';
@@ -134,7 +134,7 @@ export function Tooltips() {
         <Stubbed>
           <Scenario run={hoverOn('button[type="submit"]', SEND_EMPTY)}>
             <footer className="session-view-foot uikit-tip-stage">
-              <RelayBox session={session('tip-send')} />
+              <MessageBox session={session('tip-send')} />
             </footer>
           </Scenario>
         </Stubbed>

@@ -96,7 +96,7 @@ export const FAILED_FALLBACK = "The supervisor stopped, or couldn't start.";
 /** How long Start stays busy after pitwall took it, waiting for the snapshot to say it's starting. */
 export const START_WAIT_MS = 30_000;
 
-export interface SupervisorViewProps {
+export interface SupervisorPanelProps {
   /** The snapshot's, as asSupervisorState() reads it. */
   state: SupervisorState;
   onClose: () => void;
@@ -124,7 +124,7 @@ export interface SupervisorViewProps {
   onAskUsed?: (() => void) | undefined;
 }
 
-export function SupervisorView({ state, onClose, layout = 'overlay', compact = false, backLabel, headingRef, animate = true, onDraftChange, sessions = [], onOpenSession, prs, onOpenPr, ask, onAskUsed }: SupervisorViewProps) {
+export function SupervisorPanel({ state, onClose, layout = 'overlay', compact = false, backLabel, headingRef, animate = true, onDraftChange, sessions = [], onOpenSession, prs, onOpenPr, ask, onAskUsed }: SupervisorPanelProps) {
   const api = useContext(ApiContext);
   const mentions = useReplyMentions(sessions, onOpenSession, prs, onOpenPr);
   const ids = { title: useId(), conversation: useId(), panel: useId(), suggest: useId() };
@@ -516,7 +516,7 @@ function useReplyMentions(
   }, [signature, linkSessions, linkPrs]);
 }
 
-export interface SupervisorOffViewProps {
+export interface SupervisorOffPanelProps {
   onClose: () => void;
   layout?: SessionViewLayout;
   compact?: boolean;
@@ -535,7 +535,7 @@ export const NO_SUPERVISOR = {
  * `?supervisor` with no supervisor in the snapshot, as with `--no-supervisor` (W114): the view says
  * so, as an empty state whose title is its heading, with Close. It starts and sends nothing.
  */
-export function SupervisorOffView({ onClose, layout = 'overlay', compact = false, backLabel, headingRef, animate = true }: SupervisorOffViewProps) {
+export function SupervisorOffPanel({ onClose, layout = 'overlay', compact = false, backLabel, headingRef, animate = true }: SupervisorOffPanelProps) {
   const titleId = useId();
   return (
     <Frame layout={layout} id={SUPERVISOR_VIEW_ID} className="supervisor-view" panel animate={animate} titleId={titleId} onEscape={onClose}>

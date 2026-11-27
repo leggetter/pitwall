@@ -90,7 +90,7 @@ export function UnsureSendNote({ send }: { send: UnsureSend }) {
   );
 }
 
-export interface RelayBoxProps {
+export interface MessageBoxProps {
   /** An interactive session. */
   session: SessionSummary;
   /** The conversation already shows the latest exchange's reply, so the box shows only its status line. */
@@ -101,7 +101,7 @@ export interface RelayBoxProps {
   listed?: boolean;
 }
 
-export function RelayBox({ session, replyShown = false, onDraftChange, listed = true }: RelayBoxProps) {
+export function MessageBox({ session, replyShown = false, onDraftChange, listed = true }: MessageBoxProps) {
   const api = useContext(ApiContext);
   const drafts = useContext(DraftStorageContext);
   const ids = { heading: useId(), text: useId(), keys: useId(), count: useId(), kept: useId(), unsure: useId() };
@@ -234,7 +234,7 @@ export function RelayBox({ session, replyShown = false, onDraftChange, listed = 
   const describedBy = [unsureShown && ids.unsure, kept && ids.kept, ids.keys, count?.over && ids.count].filter(Boolean).join(' ');
 
   return (
-    <section className="relay-box" aria-labelledby={ids.heading}>
+    <section className="message-box" aria-labelledby={ids.heading}>
       {/* Named for assistive technology; on screen the text box and Send say what this is, as in a chat. */}
       <h3 className="visually-hidden" id={ids.heading}>
         Message this session

@@ -15,7 +15,7 @@ import { asideText } from './SessionRow.js';
 import { asSnoozeResult, snoozeBackPrText, OLD_MARKS_KEY, SNOOZE_BACK_TEXT, SNOOZE_CHOICES, snoozedText, snoozedToast, snoozeLabel, UNDO_SNOOZE, WAKE_ITEM, whenText, wokenText } from '../snooze.js';
 import { group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
 import { toastMessages, toastSaying } from '../test/toasts.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 import type { TerminalHandle } from './Terminal.js';
 
 class QuietTerminal implements TerminalHandle {
@@ -74,14 +74,14 @@ function memory(seed: Record<string, string> = {}): StorageSource & { items: Map
   return Object.assign(source, { items });
 }
 
-function renderDashboard(first: IndexSnapshot, fetch = fakeServer(), search = '?view=needs-you', storage = memory()) {
+function renderAppShell(first: IndexSnapshot, fetch = fakeServer(), search = '?view=needs-you', storage = memory()) {
   const api = createApiClient({ apiKey: 'pitwall-test-key', fetch });
   const navigation = memoryNavigation(search);
   const shortcuts = createShortcutsStore({ storage: memory(), events: { addEventListener: () => {} } });
   const ui = (s: IndexSnapshot) => (
     <ApiContext.Provider value={api}>
       <ShortcutsStoreContext.Provider value={shortcuts}>
-        <Dashboard view={{ state: 'live', snapshot: s }} navigation={navigation} storage={storage} />
+        <AppShell view={{ state: 'live', snapshot: s }} navigation={navigation} storage={storage} />
       </ShortcutsStoreContext.Provider>
     </ApiContext.Provider>
   );
@@ -173,7 +173,7 @@ describe('snooze.ts', () => {
 
 describe('the snooze menu on a row', () => {
   it('is on each row that needs you, named for its session, after the flag toggle; never on one that needs nothing', () => {
-    renderDashboard(snap(), fakeServer(), '?view=all');
+    renderAppShell(snap(), fakeServer(), '?view=all');
     expect(snoozeControl('review')?.getAttribute('aria-haspopup')).toBe('menu');
     expect(snoozeControl('docs')).not.toBeNull();
     expect(snoozeControl('idle')).toBeNull();
@@ -182,7 +182,7 @@ describe('the snooze menu on a row', () => {
   });
 
   it('snoozes it until the choice, and says so in a toast with Undo, which wakes it', async () => {
-    const { fetch } = renderDashboard(snap());
+    const { fetch } = renderAppShell(snap());
     fireEvent.click(snoozeControl('review')!);
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(SNOOZE_CHOICES.map((choice) => choice.label));
     fireEvent.click(screen.getByRole('menuitem', { name: 'For 1 hour' }));
@@ -196,7 +196,7 @@ describe('the snooze menu on a row', () => {
   });
 
   it('snoozes Later with no time', async () => {
-    const { fetch } = renderDashboard(snap());
+    const { fetch } = renderAppShell(snap());
     fireEvent.click(snoozeControl('review')!);
     fireEvent.click(screen.getByRole('menuitem', { name: "Later, until it's woken" }));
     await settle();
@@ -204,7 +204,7 @@ describe('the snooze menu on a row', () => {
   });
 
   it('says why when pitwall refuses the snooze', async () => {
-    renderDashboard(snap(), fakeServer({ status: 409, body: { ok: false, error: "It doesn't need you now, so there's nothing to snooze." } }));
+    renderAppShell(snap(), fakeServer({ status: 409, body: { ok: false, error: "It doesn't need you now, so there's nothing to snooze." } }));
     fireEvent.click(snoozeControl('review')!);
     fireEvent.click(screen.getByRole('menuitem', { name: 'For 3 hours' }));
     await settle();
@@ -212,7 +212,7 @@ describe('the snooze menu on a row', () => {
   });
 
   it('leaves Needs you once the snapshot says it is snoozed', async () => {
-    const { again } = renderDashboard(snap());
+    const { again } = renderAppShell(snap());
     expect(rowNames()).toContain('review');
     again(snap(sessions(LATER)));
     await settle();
@@ -220,7 +220,7 @@ describe('the snooze menu on a row', () => {
   });
 
   it('stays in All sessions, quietly: the badge outlined, until when on line 2, the toggle pressed, which wakes it with no toast', async () => {
-    const { fetch } = renderDashboard(snap(sessions(LATER)), fakeServer({ status: 200, body: { ok: true } }), '?view=all');
+    const { fetch } = renderAppShell(snap(sessions(LATER)), fakeServer({ status: 200, body: { ok: true } }), '?view=all');
     const snoozed = row('review');
     expect(snoozed.className).toContain('set-aside');
     expect(snoozed.querySelector('.session-set-aside')?.textContent).toBe("Snoozed until it's woken");
@@ -233,14 +233,14 @@ describe('the snooze menu on a row', () => {
   });
 
   it('says why it is back, before what it needs, and stays in Needs you', () => {
-    renderDashboard(snap(sessions(undefined, { snoozeEnded: { at: LATER.at, why: 'woken' } })));
+    renderAppShell(snap(sessions(undefined, { snoozeEnded: { at: LATER.at, why: 'woken' } })));
     expect(rowNames()).toContain('review');
     expect(row('review').querySelector('.session-set-aside')?.textContent).toBe(SNOOZE_BACK_TEXT.woken);
     expect(row('review').className).not.toContain('set-aside');
   });
 
   it('takes its toast away once the snooze ends by itself', async () => {
-    const { again } = renderDashboard(snap());
+    const { again } = renderAppShell(snap());
     fireEvent.click(snoozeControl('review')!);
     fireEvent.click(screen.getByRole('menuitem', { name: 'For 1 hour' }));
     await settle();
@@ -253,7 +253,7 @@ describe('the snooze menu on a row', () => {
 
 describe("the session view's actions menu", () => {
   it('has a Snooze item for each choice while it can be snoozed, and Wake now, with a toast, once it is', async () => {
-    const { fetch, again } = renderDashboard(snap(), fakeServer(), '?view=all');
+    const { fetch, again } = renderAppShell(snap(), fakeServer(), '?view=all');
     fireEvent.click(within(main()).getByRole('button', { name: 'review' }));
     await settle();
     const labels = menuLabels();
@@ -274,7 +274,7 @@ describe("the session view's actions menu", () => {
   });
 
   it('has neither for a session that needs nothing', async () => {
-    renderDashboard(snap(), fakeServer(), '?view=all');
+    renderAppShell(snap(), fakeServer(), '?view=all');
     fireEvent.click(within(main()).getByRole('button', { name: 'idle' }));
     await settle();
     const labels = menuLabels();
@@ -286,7 +286,7 @@ describe("the session view's actions menu", () => {
 describe("W88's marks", () => {
   it('are removed from storage once, as the page loads, and hide nothing', () => {
     const storage = memory({ [OLD_MARKS_KEY]: JSON.stringify({ v: 1, entries: [{ id: id(1), hash: '0123456789abcdef' }] }) });
-    renderDashboard(snap(), fakeServer(), '?view=needs-you', storage);
+    renderAppShell(snap(), fakeServer(), '?view=needs-you', storage);
     expect(storage.items.has(OLD_MARKS_KEY)).toBe(false);
     expect(rowNames()).toContain('review');
   });

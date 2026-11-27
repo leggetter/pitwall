@@ -1,13 +1,13 @@
 // Recaps outside the strip (M5, W111, W121): reading a recap defensively, the to-dos' tags and count, the
 // collapsed setting's storage, Needs you's 'recap' reason on a row's badge and line 2, the quiet
-// reason for what an idle session waits on otherwise, the app strip's recap line, and the Dashboard
+// reason for what an idle session waits on otherwise, the app strip's recap line, and the AppShell
 // passing the snapshot's recaps through. Made-up sessions and recaps only.
 
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { RECAP_DAILY_BUDGET, RECAP_FIELD_MAX, RECAP_TODOS_MAX, type RecapHealth, type RecapSummary, type SessionRecap, type SessionSummary } from '../../src/shared/protocol.js';
 import { AppStrips } from './components/AppStrip.js';
-import { Dashboard } from './components/Dashboard.js';
+import { AppShell } from './components/AppShell.js';
 import { SessionRow } from './components/SessionRow.js';
 import type { ConnectionView } from './connection.js';
 import {
@@ -398,10 +398,10 @@ describe('the app strip’s recap line', () => {
   });
 });
 
-describe('the Dashboard', () => {
+describe('the AppShell', () => {
   it('shows the app strip’s recap line from the snapshot', () => {
     const view: ConnectionView = { state: 'live', snapshot: snapshot([group({ sessions: [session({ name: 'pitwall-test-one' })] })], { recaps: { ...HEALTH, calls: RECAP_DAILY_BUDGET } }) };
-    render(<Dashboard view={view} />);
+    render(<AppShell view={view} />);
     expect(screen.getByText(/Today's 500 recaps are used up/)).toBeTruthy();
   });
 });

@@ -7,7 +7,7 @@ import { ICON_PATHS } from '../icons/paths.js';
 import { NO_FILTERS, type FilterChip, type Filters } from '../sessions.js';
 import { FilterControls, FilterField } from './Filters.js';
 
-/** The filters in state, as in the Dashboard, reporting every change. */
+/** The filters in state, as in the AppShell, reporting every change. */
 function renderFilters(start: Filters = NO_FILTERS) {
   const changes: Filters[] = [];
   function Host() {

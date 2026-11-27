@@ -14,7 +14,7 @@ import { memoryNavigation } from '../selection.js';
 import { spinOffTitle } from '../spinOff.js';
 import { fakeSockets, group, NOW, session, snapshot } from '../test/fixtures.js';
 import { toastMessages } from '../test/toasts.js';
-import { Dashboard, startedText } from './Dashboard.js';
+import { AppShell, startedText } from './AppShell.js';
 import type { TerminalHandle } from './Terminal.js';
 
 class QuietTerminal implements TerminalHandle {
@@ -70,14 +70,14 @@ function memory(): StorageSource & { values: Map<string, string> } {
   return Object.assign(() => storage, { values });
 }
 
-function renderDashboard(server: Server = fakeServer(), first: IndexSnapshot = snap(), storage = memory()) {
+function renderAppShell(server: Server = fakeServer(), first: IndexSnapshot = snap(), storage = memory()) {
   const api = createApiClient({ apiKey: 'k'.repeat(43), fetch: server.fetch });
   const navigation = memoryNavigation('?view=needs-you');
   const attach: AttachEnv = { token: 'pitwall-test-token-0123456789abcdefghijklmnop', createSocket: fakeSockets().factory, host: '127.0.0.1:4517' };
   const ui = (s: IndexSnapshot) => (
     <ApiContext.Provider value={api}>
       <AttachContext.Provider value={attach}>
-        <Dashboard view={{ state: 'live', snapshot: s }} navigation={navigation} storage={storage} />
+        <AppShell view={{ state: 'live', snapshot: s }} navigation={navigation} storage={storage} />
       </AttachContext.Provider>
     </ApiContext.Provider>
   );
@@ -116,7 +116,7 @@ afterEach(() => {
 
 describe('a spin-off proposal in Needs you', () => {
   it('is a card naming the session that asked, with the folder, the name and the whole prompt', () => {
-    renderDashboard();
+    renderAppShell();
     const region = screen.getByRole('region', { name: /Proposed sessions/ });
     expect(within(region).getByRole('heading', { level: 4 }).textContent).toBe(spinOffTitle('export-work'));
     expect(card().querySelector('.approval-where')?.textContent).toBe(`In ${DOCS}, named tidy-readme.`);
@@ -126,7 +126,7 @@ describe('a spin-off proposal in Needs you', () => {
   });
 
   it('counts in Needs you and the page title, though the session itself doesn’t need you', () => {
-    renderDashboard();
+    renderAppShell();
     expect(needsYouItem().textContent).toBe('Needs you1 needs you');
     expect(document.title).toMatch(/^\(1\) pitwall/);
     // No row needs you: Needs you says nothing else does.
@@ -134,13 +134,13 @@ describe('a spin-off proposal in Needs you', () => {
   });
 
   it('draws a character that doesn’t show as itself as its code', () => {
-    renderDashboard(fakeServer(), snap({ ...PROPOSAL, prompt: 'Tidy it.' }));
+    renderAppShell(fakeServer(), snap({ ...PROPOSAL, prompt: 'Tidy it.' }));
     expect(card().querySelector('.approval-hidden')?.textContent).toBe('U+00A0');
   });
 
   it('Start checks it with the server, then opens New session filled in with what it checked', async () => {
     const server = fakeServer();
-    renderDashboard(server);
+    renderAppShell(server);
     fireEvent.click(within(card()).getByRole('button', { name: 'Start…' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New session' })).not.toBeNull());
     expect(server.posts()).toEqual([{ url: spinOffPath(ASKER_ID), body: { key: KEY } }]);
@@ -152,7 +152,7 @@ describe('a spin-off proposal in Needs you', () => {
 
   it('starts nothing until New session’s own Start session, then its card goes', async () => {
     const server = fakeServer();
-    renderDashboard(server);
+    renderAppShell(server);
     fireEvent.click(within(card()).getByRole('button', { name: 'Start…' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New session' })).not.toBeNull());
     expect(server.posts().some((post) => post.url === SPAWN_PATH)).toBe(false);
@@ -167,7 +167,7 @@ describe('a spin-off proposal in Needs you', () => {
   });
 
   it('leaves the card when New session is closed without starting', async () => {
-    renderDashboard();
+    renderAppShell();
     fireEvent.click(within(card()).getByRole('button', { name: 'Start…' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New session' })).not.toBeNull());
     fireEvent.click(within(dialog()).getByRole('button', { name: 'Cancel' }));
@@ -176,7 +176,7 @@ describe('a spin-off proposal in Needs you', () => {
   });
 
   it('says why when the server refuses it, and opens nothing', async () => {
-    renderDashboard(fakeServer([409, { ok: false, error: 'The directory isn’t under one of your roots.' }]));
+    renderAppShell(fakeServer([409, { ok: false, error: 'The directory isn’t under one of your roots.' }]));
     fireEvent.click(within(card()).getByRole('button', { name: 'Start…' }));
     await waitFor(() => expect(within(card()).queryByRole('alert')).not.toBeNull());
     expect(within(card()).getByRole('alert').textContent).toBe('The directory isn’t under one of your roots.');
@@ -184,7 +184,7 @@ describe('a spin-off proposal in Needs you', () => {
   });
 
   it('Dismiss takes it away and out of the count, until the session proposes something else', async () => {
-    const { update } = renderDashboard();
+    const { update } = renderAppShell();
     fireEvent.click(within(card()).getByRole('button', { name: 'Dismiss' }));
     expect(cards()).toEqual([]);
     expect(needsYouItem().textContent).toBe('Needs you');
@@ -195,7 +195,7 @@ describe('a spin-off proposal in Needs you', () => {
   });
 
   it('goes when the session’s newer turn proposes nothing', async () => {
-    const { update } = renderDashboard();
+    const { update } = renderAppShell();
     expect(cards()).toHaveLength(1);
     await update(snap(null));
     expect(cards()).toEqual([]);
@@ -203,14 +203,14 @@ describe('a spin-off proposal in Needs you', () => {
   });
 
   it('says why pitwall won’t show one it couldn’t read, with no Start', () => {
-    renderDashboard(fakeServer(), snap({ kind: 'unreadable', key: KEY, problem: 'The block names no folder.' }));
+    renderAppShell(fakeServer(), snap({ kind: 'unreadable', key: KEY, problem: 'The block names no folder.' }));
     expect(card().textContent).toContain('The block names no folder.');
     expect(within(card()).queryByRole('button', { name: 'Start…' })).toBeNull();
     expect(within(card()).getByRole('button', { name: 'Dismiss' })).toBeTruthy();
   });
 
   it('Open session opens the session that asked', () => {
-    renderDashboard();
+    renderAppShell();
     fireEvent.click(within(card()).getByRole('button', { name: 'Open session' }));
     expect(document.getElementById('session-view') ?? screen.getByRole('heading', { name: /export-work/, level: 2 })).toBeTruthy();
   });

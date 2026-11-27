@@ -13,7 +13,7 @@ import { statusBadge } from '../sessions.js';
 import { clearedText, handoffTitle, SPIN_OFF_CLEAR_NOTE } from '../spinOff.js';
 import { fakeSockets, group, NOW, session, snapshot } from '../test/fixtures.js';
 import { toastMessages } from '../test/toasts.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 import type { TerminalHandle } from './Terminal.js';
 
 class QuietTerminal implements TerminalHandle {
@@ -65,14 +65,14 @@ function memory(): StorageSource & { values: Map<string, string> } {
   return Object.assign(() => storage, { values });
 }
 
-function renderDashboard(server = fakeServer(), first: IndexSnapshot = snap(), storage = memory()) {
+function renderAppShell(server = fakeServer(), first: IndexSnapshot = snap(), storage = memory()) {
   const api = createApiClient({ apiKey: 'k'.repeat(43), fetch: server.fetch });
   const navigation = memoryNavigation('?view=needs-you');
   const attach: AttachEnv = { token: 'pitwall-test-token-0123456789abcdefghijklmnop', createSocket: fakeSockets().factory, host: '127.0.0.1:4517' };
   render(
     <ApiContext.Provider value={api}>
       <AttachContext.Provider value={attach}>
-        <Dashboard view={{ state: 'live', snapshot: first }} navigation={navigation} storage={storage} />
+        <AppShell view={{ state: 'live', snapshot: first }} navigation={navigation} storage={storage} />
       </AttachContext.Provider>
     </ApiContext.Provider>,
   );
@@ -100,7 +100,7 @@ afterEach(() => {
 describe('a hand-off’s card', () => {
   it('for a running background job offers Clear and continue, with Start new session… and the prompt beside it, and sends nothing', () => {
     const server = fakeServer();
-    renderDashboard(server);
+    renderAppShell(server);
     expect(buttons()).toEqual(expect.arrayContaining(['Clear and continue', 'Start new session…', 'Open session', 'Dismiss']));
     expect(card().querySelector('.approval-note')?.textContent).toBe(SPIN_OFF_CLEAR_NOTE);
     expect(card().querySelector('.approval-text')?.textContent).toBe(HANDOFF);
@@ -109,7 +109,7 @@ describe('a hand-off’s card', () => {
 
   it('Clear and continue asks the server for the proposal by its key, then the card goes with a toast', async () => {
     const server = fakeServer();
-    renderDashboard(server);
+    renderAppShell(server);
     fireEvent.click(within(card()).getByRole('button', { name: 'Clear and continue' }));
     await waitFor(() => expect(cards()).toEqual([]));
     expect(server.posts().filter((post) => post.url !== spinOffSettlePath(ASKER_ID))).toEqual([{ url: clearAndContinuePath(ASKER_ID), body: { key: KEY } }]);
@@ -118,7 +118,7 @@ describe('a hand-off’s card', () => {
   });
 
   it('keeps the card, says why and leaves Start new session… when Clear and continue fails', async () => {
-    renderDashboard(fakeServer([504, { ok: false, error: 'The job didn’t list a new session id in time, so the prompt was not typed.' }]));
+    renderAppShell(fakeServer([504, { ok: false, error: 'The job didn’t list a new session id in time, so the prompt was not typed.' }]));
     fireEvent.click(within(card()).getByRole('button', { name: 'Clear and continue' }));
     await waitFor(() => expect(within(card()).queryByRole('alert')).not.toBeNull());
     expect(within(card()).getByRole('alert').textContent).toContain('the prompt was not typed.');
@@ -129,7 +129,7 @@ describe('a hand-off’s card', () => {
 
   it('Start new session… opens New session, and starting it tells the server it continues the old one', async () => {
     const server = fakeServer();
-    renderDashboard(server);
+    renderAppShell(server);
     fireEvent.click(within(card()).getByRole('button', { name: 'Start new session…' }));
     const dialog = await screen.findByRole('dialog', { name: 'New session' });
     expect(server.posts().some((post) => post.url === clearAndContinuePath(ASKER_ID))).toBe(false);
@@ -140,7 +140,7 @@ describe('a hand-off’s card', () => {
 
   it('for an interactive session offers Start new session… and End session…, and ends nothing until confirmed', async () => {
     const server = fakeServer();
-    renderDashboard(server, snap('interactive'));
+    renderAppShell(server, snap('interactive'));
     expect(buttons()).toEqual(expect.arrayContaining(['Start new session…', 'End session…']));
     expect(buttons()).not.toContain('Clear and continue');
     fireEvent.click(within(card()).getByRole('button', { name: 'End session…' }));
@@ -151,17 +151,17 @@ describe('a hand-off’s card', () => {
   });
 
   it('a proposal that isn’t this session’s own hand-off gets Start… only', () => {
-    renderDashboard(fakeServer(), snap('background', proposal('Fix the flaky export test.')));
+    renderAppShell(fakeServer(), snap('background', proposal('Fix the flaky export test.')));
     expect(buttons()).toContain('Start…');
     expect(buttons()).not.toContain('Clear and continue');
     expect(buttons()).not.toContain('End session…');
     cleanup();
-    renderDashboard(fakeServer(), snap('background', proposal('Continues session 00000000-0000-4000-8000-000000000999.\nDo it.')));
+    renderAppShell(fakeServer(), snap('background', proposal('Continues session 00000000-0000-4000-8000-000000000999.\nDo it.')));
     expect(buttons()).not.toContain('Clear and continue');
   });
 
   it('a hand-off whose prompt ends in a backslash is not offered Clear and continue', () => {
-    renderDashboard(fakeServer(), snap('background', proposal(`${HANDOFF}\\`)));
+    renderAppShell(fakeServer(), snap('background', proposal(`${HANDOFF}\\`)));
     expect(buttons()).not.toContain('Clear and continue');
   });
 });
@@ -180,13 +180,13 @@ describe('a hand-off written by hand, from the recap (W210)', () => {
     // A block that starts with its own Continues line is Handed off too; another session's, or a plain spin-off, is not.
     expect(statusBadge(asker('background', proposal(HANDOFF))).status).toBe('handed-off');
     expect(statusBadge(asker('background', proposal('Fix the flaky export test.'))).status).toBe('done');
-    renderDashboard(fakeServer(), snap('background', fromRecap()));
+    renderAppShell(fakeServer(), snap('background', fromRecap()));
     expect(card().querySelector('h4')?.textContent).toBe(handoffTitle('export-work'));
   });
 
   it('offers Clear and continue with the prompt shown whole, and sends only the key', async () => {
     const server = fakeServer();
-    renderDashboard(server, snap('background', fromRecap()));
+    renderAppShell(server, snap('background', fromRecap()));
     expect(buttons()).toEqual(expect.arrayContaining(['Clear and continue', 'Start new session…']));
     expect(card().querySelector('.approval-text')?.textContent).toBe(RECAP_PROMPT);
     fireEvent.click(within(card()).getByRole('button', { name: 'Clear and continue' }));
@@ -195,17 +195,17 @@ describe('a hand-off written by hand, from the recap (W210)', () => {
   });
 
   it('for an interactive session offers Start new session… only beside End session…, and a trailing backslash gets no Clear and continue', () => {
-    renderDashboard(fakeServer(), snap('interactive', fromRecap()));
+    renderAppShell(fakeServer(), snap('interactive', fromRecap()));
     expect(buttons()).toEqual(expect.arrayContaining(['Start new session…', 'End session…']));
     expect(buttons()).not.toContain('Clear and continue');
     cleanup();
-    renderDashboard(fakeServer(), snap('background', { kind: 'proposal', key: KEY, folder: DEMO, prompt: `${RECAP_PROMPT}\\`, source: 'recap' }));
+    renderAppShell(fakeServer(), snap('background', { kind: 'proposal', key: KEY, folder: DEMO, prompt: `${RECAP_PROMPT}\\`, source: 'recap' }));
     expect(buttons()).not.toContain('Clear and continue');
   });
 
   it('Start new session… tells the server it continues the old one', async () => {
     const server = fakeServer();
-    renderDashboard(server, snap('background', fromRecap()));
+    renderAppShell(server, snap('background', fromRecap()));
     fireEvent.click(within(card()).getByRole('button', { name: 'Start new session…' }));
     const dialog = await screen.findByRole('dialog', { name: 'New session' });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Start session' }));

@@ -14,7 +14,7 @@ import { VIEW_STATE_KEY } from '../selection.js';
 import { fakeSockets, group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
 import { fakeHistory } from '../test/history.js';
 import { chooseFirstDirectory } from '../test/newSession.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 import type { TerminalHandle } from './Terminal.js';
 
 // xterm.js, replaced by a terminal that does nothing, through the module the view loads it from.
@@ -115,7 +115,7 @@ interface Options {
   storage?: StorageSource;
 }
 
-function renderDashboard(first: IndexSnapshot = twoRoots(), options: Options = {}) {
+function renderAppShell(first: IndexSnapshot = twoRoots(), options: Options = {}) {
   const history = fakeHistory(options.search ?? '');
   const server = fakeServer();
   const api = createApiClient({ apiKey: 'k'.repeat(43), fetch: server.fetch });
@@ -125,7 +125,7 @@ function renderDashboard(first: IndexSnapshot = twoRoots(), options: Options = {
   const ui = (s: IndexSnapshot) => (
     <ApiContext.Provider value={api}>
       <AttachContext.Provider value={attach}>
-        <Dashboard view={{ state: 'live', snapshot: s }} navigation={history.navigation} storage={storage} />
+        <AppShell view={{ state: 'live', snapshot: s }} navigation={history.navigation} storage={storage} />
       </AttachContext.Provider>
     </ApiContext.Provider>
   );
@@ -195,7 +195,7 @@ afterEach(() => {
 
 describe('one root', () => {
   it('has no tabs: the header shows the root as it always did, and the URL names no root', () => {
-    const { history, storage } = renderDashboard(snapshot([group({ sessions: [session({ name: 'solo', ...waiting })] })]));
+    const { history, storage } = renderAppShell(snapshot([group({ sessions: [session({ name: 'solo', ...waiting })] })]));
 
     expect(screen.queryByRole('tablist')).toBeNull();
     expect(document.querySelector('header')?.className).toBe('app-header');
@@ -207,7 +207,7 @@ describe('one root', () => {
   });
 
   it('drops a root from a view in the URL, so it reads as before there were tabs', () => {
-    const { history } = renderDashboard(snapshot([group({ sessions: [session({ name: 'solo' })] })]), { search: '?view=needs-you&root=/Users/example/code' });
+    const { history } = renderAppShell(snapshot([group({ sessions: [session({ name: 'solo' })] })]), { search: '?view=needs-you&root=/Users/example/code' });
     expect(search(history)).toBe('?view=needs-you');
     expect(repoItem('Needs you').getAttribute('aria-current')).toBe('page');
   });
@@ -215,7 +215,7 @@ describe('one root', () => {
 
 describe('the tabs', () => {
   it('shows a tab per root, in the order pitwall was given them, labelled with its home-shortened path, as a tablist controlling the columns', () => {
-    renderDashboard(threeRoots());
+    renderAppShell(threeRoots());
 
     const list = screen.getByRole('tablist', { name: 'Roots' });
     expect(labels()).toEqual(['~/work', '~/personal', '~/scratch']);
@@ -234,19 +234,19 @@ describe('the tabs', () => {
   });
 
   it("opens the first root's tab the first time, and the URL says which tab is open", () => {
-    const { history } = renderDashboard();
+    const { history } = renderAppShell();
     expect(openTab()).toBe('~/work');
     expect(search(history)).toBe(`?view=all&root=${WORK}`);
   });
 
   it("gives each tab its root's full path in a tooltip that describes it", () => {
-    renderDashboard();
+    renderAppShell();
     const described = tab('~/personal').getAttribute('aria-describedby');
     expect(described && document.getElementById(described)?.textContent).toBe(PERSONAL);
   });
 
   it('names the open tab’s root in the page title, after the count of everything that needs you under every root', () => {
-    renderDashboard();
+    renderAppShell();
     expect(document.title).toBe('(3) pitwall · ~/work');
     switchTo('~/personal');
     expect(document.title).toBe('(3) pitwall · ~/personal');
@@ -255,7 +255,7 @@ describe('the tabs', () => {
 
 describe('what a tab narrows to its root', () => {
   it("narrows the repo list's views, their counts and groups, the session list and its summary", () => {
-    renderDashboard();
+    renderAppShell();
 
     expect(repoItems()).toEqual(['Needs you2 need you', 'All sessions5 sessions', 'Starred', 'api, git repo2 need you', 'web, git repo2 sessions']);
     expect(rows().sort()).toEqual(['w-job', 'w-one', 'w-shared', 'w-three', 'w-two']);
@@ -272,7 +272,7 @@ describe('what a tab narrows to its root', () => {
   });
 
   it("narrows the filter to the tab's sessions, and each tab keeps its own", () => {
-    renderDashboard();
+    renderAppShell();
     const field = () => screen.getByRole('searchbox', { name: 'Filter sessions' }) as HTMLInputElement;
     fireEvent.change(field(), { target: { value: 'one' } });
     expect(rows()).toEqual(['w-one']);
@@ -286,7 +286,7 @@ describe('what a tab narrows to its root', () => {
   });
 
   it('moves j and k through the open tab’s list alone', async () => {
-    renderDashboard();
+    renderAppShell();
     choose('api');
     document.body.focus();
     const press = (key: string) => fireEvent.keyDown(document.body, { key });
@@ -305,7 +305,7 @@ describe('what a tab narrows to its root', () => {
   });
 
   it("offers the tab's directories alone in the New session dialog, starting with them, and keeps a typed one in the tab", () => {
-    renderDashboard();
+    renderAppShell();
     switchTo('~/personal');
     fireEvent.click(screen.getByRole('button', { name: 'New session' }));
     const dialog = screen.getByRole('dialog', { name: 'New session' });
@@ -323,7 +323,7 @@ describe('what a tab narrows to its root', () => {
   });
 
   it("keeps a root with no sessions as a tab, with the usual empty state, naming its root", () => {
-    renderDashboard(threeRoots());
+    renderAppShell(threeRoots());
     switchTo('~/scratch');
     expect(openTab()).toBe('~/scratch');
     expect(screen.getByText('No Claude Code sessions under ~/scratch')).toBeTruthy();
@@ -332,7 +332,7 @@ describe('what a tab narrows to its root', () => {
   });
 
   it('keeps the page alerts and the header the whole page’s', () => {
-    renderDashboard(twoRoots(sessions(), { source: { ok: false, error: 'made-up failure' } }));
+    renderAppShell(twoRoots(sessions(), { source: { ok: false, error: 'made-up failure' } }));
     expect(screen.getByText("Couldn't list sessions")).toBeTruthy();
     switchTo('~/personal');
     expect(screen.getByText("Couldn't list sessions")).toBeTruthy();
@@ -342,7 +342,7 @@ describe('what a tab narrows to its root', () => {
 
 describe("an inactive tab's badge", () => {
   it('counts its sessions that need you, and is in its name; the open tab has none', () => {
-    renderDashboard();
+    renderAppShell();
     expect(badge('~/work')).toBeUndefined();
     expect(badge('~/personal')).toBe('1 needs you');
     expect(tab('~/personal').textContent).toBe('~/personal, 1 needs you');
@@ -351,7 +351,7 @@ describe("an inactive tab's badge", () => {
 
   it('appears and clears as sessions there need you and stop needing you', () => {
     const list = sessions();
-    const { update } = renderDashboard(twoRoots(list));
+    const { update } = renderAppShell(twoRoots(list));
     update(twoRoots({ ...list, p2: { ...list.p2, status: 'busy', waitingFor: undefined, needsYou: undefined } as SessionSummary }));
     expect(badge('~/personal')).toBeUndefined();
     update(
@@ -372,7 +372,7 @@ describe("an inactive tab's badge", () => {
 
 describe("each tab's own place", () => {
   it('keeps its selection and open session, and switching pushes one history entry with them', async () => {
-    const { history } = renderDashboard();
+    const { history } = renderAppShell();
     choose('api');
     await open('w-two');
     switchTo('~/personal');
@@ -396,14 +396,14 @@ describe("each tab's own place", () => {
 
   it('remembers the selection chosen, and the open tab, in storage', () => {
     const storage = memory();
-    renderDashboard(twoRoots(), { storage });
+    renderAppShell(twoRoots(), { storage });
     switchTo('~/personal');
     expect(storage.values.get(ROOT_TAB_KEY)).toBe(PERSONAL);
     expect(storage.values.get(VIEW_STATE_KEY)).toBe(`view=all&root=${PERSONAL}`);
   });
 
   it('follows the back button to the tab it left, and forward again', async () => {
-    const { history } = renderDashboard();
+    const { history } = renderAppShell();
     await open('w-one');
     switchTo('~/personal');
     history.back();
@@ -417,7 +417,7 @@ describe("each tab's own place", () => {
   });
 
   it('keeps a tab’s session view, hidden, while another is open: its terminal stays attached', async () => {
-    const { sockets } = renderDashboard();
+    const { sockets } = renderAppShell();
     await open('w-job');
     fireEvent.click(within(view()!).getByRole('tab', { name: 'Terminal' }));
     await waitFor(() => expect(sockets.sockets).toHaveLength(1));
@@ -448,7 +448,7 @@ describe("each tab's own place", () => {
   });
 
   it('keeps a draft, and a send that is out, through a switch, with its result shown on return', async () => {
-    const { server } = renderDashboard(twoRoots(), { search: `?view=all&root=${PERSONAL}` });
+    const { server } = renderAppShell(twoRoots(), { search: `?view=all&root=${PERSONAL}` });
     await open('p-one');
     const box = () => within(view()!).getByRole('textbox') as HTMLTextAreaElement;
     fireEvent.change(box(), { target: { value: 'A made-up draft, kept.' } });
@@ -469,7 +469,7 @@ describe("each tab's own place", () => {
 
   it('switches to the tab a session was started from once it’s listed, with its group and its view, keeping the tab you were in as you left it (W63)', async () => {
     const list = sessions();
-    const { update, history } = renderDashboard(twoRoots(list), { search: `?view=all&root=${PERSONAL}` });
+    const { update, history } = renderAppShell(twoRoots(list), { search: `?view=all&root=${PERSONAL}` });
     fireEvent.click(screen.getByRole('button', { name: 'New session' }));
     const dialog = screen.getByRole('dialog', { name: 'New session' });
     chooseFirstDirectory(dialog);
@@ -498,7 +498,7 @@ describe("each tab's own place", () => {
   });
 
   it("moves j from the conversation to the next session's conversation, past another tab's hidden view", async () => {
-    renderDashboard();
+    renderAppShell();
     await open('w-one');
     switchTo('~/personal');
     await open('p-one');
@@ -512,7 +512,7 @@ describe("each tab's own place", () => {
   });
 
   it("ignores Escape in a hidden view: only the open tab's view closes", async () => {
-    renderDashboard();
+    renderAppShell();
     await open('w-one');
     switchTo('~/personal');
     await open('p-one');
@@ -526,18 +526,18 @@ describe("each tab's own place", () => {
 
 describe('links and the URL', () => {
   it("opens the tab of a group in another root, with or without its root in the URL", () => {
-    const first = renderDashboard(twoRoots(), { search: `?repo=${at(PERSONAL, 'blog')}&root=${PERSONAL}` });
+    const first = renderAppShell(twoRoots(), { search: `?repo=${at(PERSONAL, 'blog')}&root=${PERSONAL}` });
     expect(openTab()).toBe('~/personal');
     expect(listHeading().textContent).toBe('blog, git repo');
     first.unmount();
 
-    const { history } = renderDashboard(twoRoots(), { search: `?repo=${at(PERSONAL, 'blog')}` });
+    const { history } = renderAppShell(twoRoots(), { search: `?repo=${at(PERSONAL, 'blog')}` });
     expect(openTab()).toBe('~/personal');
     expect(search(history)).toBe(`?repo=${at(PERSONAL, 'blog')}&root=${PERSONAL}`);
   });
 
   it("opens the tab of a session in another root, at the group it's listed under", () => {
-    const { history } = renderDashboard(twoRoots(), { search: `?session=${id(12)}` });
+    const { history } = renderAppShell(twoRoots(), { search: `?session=${id(12)}` });
     expect(openTab()).toBe('~/personal');
     expect(listHeading().textContent).toBe('blog, git repo');
     expect(viewName()).toBe('p-two');
@@ -545,21 +545,21 @@ describe('links and the URL', () => {
   });
 
   it('gives a view the tab its URL names, and one without a root, or with one pitwall doesn’t watch, the first', () => {
-    const one = renderDashboard(twoRoots(), { search: `?view=needs-you&root=${PERSONAL}` });
+    const one = renderAppShell(twoRoots(), { search: `?view=needs-you&root=${PERSONAL}` });
     expect(openTab()).toBe('~/personal');
     expect(rows()).toEqual(['p-two']);
     one.unmount();
-    const two = renderDashboard(twoRoots(), { search: '?view=needs-you' });
+    const two = renderAppShell(twoRoots(), { search: '?view=needs-you' });
     expect(openTab()).toBe('~/work');
     expect(search(two.history)).toBe(`?view=needs-you&root=${WORK}`);
     two.unmount();
-    const three = renderDashboard(twoRoots(), { search: '?view=all&root=/Users/example/gone' });
+    const three = renderAppShell(twoRoots(), { search: '?view=all&root=/Users/example/gone' });
     expect(openTab()).toBe('~/work');
     expect(search(three.history)).toBe(`?view=all&root=${WORK}`);
   });
 
   it("links each repo list item, the views included, with the tab's root", () => {
-    renderDashboard(twoRoots(), { search: `?view=all&root=${PERSONAL}` });
+    renderAppShell(twoRoots(), { search: `?view=all&root=${PERSONAL}` });
     expect(repoItem('Needs you').getAttribute('href')).toBe(`?view=needs-you&root=${PERSONAL}`);
     expect(repoItem('blog').getAttribute('href')).toBe(`?repo=${at(PERSONAL, 'blog')}&root=${PERSONAL}`);
   });
@@ -577,7 +577,7 @@ describe('the stored tab', () => {
 
   it('opens the stored tab for a URL with no selection, holding the root’s path alone', () => {
     const storage = memory({ [ROOT_TAB_KEY]: PERSONAL });
-    const { history } = renderDashboard(twoRoots(), { storage });
+    const { history } = renderAppShell(twoRoots(), { storage });
     expect(openTab()).toBe('~/personal');
     expect(search(history)).toBe(`?view=all&root=${PERSONAL}`);
     switchTo('~/work');
@@ -585,13 +585,13 @@ describe('the stored tab', () => {
   });
 
   it('lets a URL with a selection win over the stored tab', () => {
-    renderDashboard(twoRoots(), { storage: memory({ [ROOT_TAB_KEY]: PERSONAL }), search: `?view=all&root=${WORK}` });
+    renderAppShell(twoRoots(), { storage: memory({ [ROOT_TAB_KEY]: PERSONAL }), search: `?view=all&root=${WORK}` });
     expect(openTab()).toBe('~/work');
   });
 
   it('opens the first tab when storage is missing, throws, or holds a root pitwall no longer watches, and switching still works', () => {
     for (const storage of [() => null, thrower, memory({ [ROOT_TAB_KEY]: '/Users/example/gone' }), memory({ [ROOT_TAB_KEY]: '' })] as StorageSource[]) {
-      const shown = renderDashboard(twoRoots(), { storage });
+      const shown = renderAppShell(twoRoots(), { storage });
       expect(openTab()).toBe('~/work');
       expect(() => switchTo('~/personal')).not.toThrow();
       expect(openTab()).toBe('~/personal');
@@ -602,7 +602,7 @@ describe('the stored tab', () => {
 
 describe('the keyboard', () => {
   it('moves focus along the tabs with ← and →, wrapping, and Home and End, without opening one', () => {
-    renderDashboard(threeRoots());
+    renderAppShell(threeRoots());
     tab('~/work').focus();
     fireEvent.keyDown(tab('~/work'), { key: 'ArrowRight' });
     expect(document.activeElement).toBe(tab('~/personal'));
@@ -621,7 +621,7 @@ describe('the keyboard', () => {
   });
 
   it('opens the focused tab with Enter or Space, as its click, and leaves focus on it', () => {
-    renderDashboard();
+    renderAppShell();
     tab('~/personal').focus();
     // A button's Enter and Space are its click.
     fireEvent.click(tab('~/personal'));
@@ -632,7 +632,7 @@ describe('the keyboard', () => {
   });
 
   it('puts focus on the open tab when the back button switches tabs from inside the view it hides', async () => {
-    const { history } = renderDashboard();
+    const { history } = renderAppShell();
     switchTo('~/personal');
     await open('p-one');
     switchTo('~/work');
@@ -646,7 +646,7 @@ describe('the keyboard', () => {
   });
 
   it('keeps the shortcuts as they were: / focuses the open tab’s filter, and n opens the dialog for its root', () => {
-    renderDashboard(twoRoots(), { search: `?view=all&root=${PERSONAL}` });
+    renderAppShell(twoRoots(), { search: `?view=all&root=${PERSONAL}` });
     document.body.focus();
     fireEvent.keyDown(document.body, { key: '/' });
     expect(document.activeElement).toBe(screen.getByRole('searchbox', { name: 'Filter sessions' }));
@@ -671,7 +671,7 @@ describe('one root inside another', () => {
     );
 
   it("lists the inner root's sessions in its own tab alone, and badges it", () => {
-    renderDashboard(nested());
+    renderAppShell(nested());
     expect(labels()).toEqual(['~/code', '~/code/personal']);
     expect(rows()).toEqual(['outer-app']);
     expect(repoItems()).toEqual(['Needs you', 'All sessions1 session', 'Starred', 'app, git repo1 session']);
@@ -681,7 +681,7 @@ describe('one root inside another', () => {
   });
 
   it("keeps a typed directory under the inner root out of the outer root's New session dialog", () => {
-    renderDashboard(nested());
+    renderAppShell(nested());
     fireEvent.click(screen.getByRole('button', { name: 'New session' }));
     const dialog = screen.getByRole('dialog', { name: 'New session' });
     const directory = within(dialog).getByRole('combobox', { name: 'Directory' }) as HTMLInputElement;

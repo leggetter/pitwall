@@ -5,11 +5,11 @@
 // The CSS reads the result from data-layout on the app, so the two can't disagree. The header's
 // compact rule, which only moves things around, is a container query in styles.css; the session view
 // also needs it in its markup, for Back in place of Close, so it's measured here too. So is where the
-// session view over the list starts to cover the repo list, which is inert from there (Dashboard.tsx),
+// session view over the list starts to cover the repo list, which is inert from there (AppShell.tsx),
 // and, in three columns, where the supervisor's column folds the repo list into its drawer (W187).
 
 import { useLayoutEffect, useState, type RefObject } from 'react';
-import { PANEL_DEFAULT, PANEL_KEEPS_REPOS, SIDEBAR_WIDTH } from './panelWidth.js';
+import { SESSION_PANE_DEFAULT, PANEL_KEEPS_REPOS, REPO_LIST_WIDTH } from './sessionPaneWidth.js';
 
 /** The session view is the third column from here. Below it, it overlays the session list. */
 export const THREE_COLUMNS_MIN = 1200;
@@ -20,10 +20,10 @@ export const SIDEBAR_MIN = 900;
 export const COMPACT_MAX = 600;
 
 /**
- * Below this, the session view over the list, --pw-panel-w wide at the app's right edge, reaches into
- * the repo list beside it, --pw-sidebar-w wide: 1,000 px.
+ * Below this, the session view over the list, --pw-session-pane-w wide at the app's right edge, reaches into
+ * the repo list beside it, --pw-repo-list-w wide: 1,000 px.
  */
-export const OVERLAY_CLEARS_SIDEBAR = SIDEBAR_WIDTH + PANEL_DEFAULT;
+export const OVERLAY_CLEARS_SIDEBAR = REPO_LIST_WIDTH + SESSION_PANE_DEFAULT;
 
 export type Layout = 'three-columns' | 'sidebar' | 'drawer';
 

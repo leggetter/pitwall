@@ -17,8 +17,8 @@ import { group, minutesAgo, session, snapshot, withoutSubagents } from '../test/
 import { fakeHistory } from '../test/history.js';
 import stylesCss from '../styles.css?raw';
 import { tokens, withoutComments } from '../test/css.js';
-import { Dashboard } from './Dashboard.js';
-import { PANEL_KEEPS_REPOS, panelMax, panelMin, supervisorColumn } from '../panelWidth.js';
+import { AppShell } from './AppShell.js';
+import { PANEL_KEEPS_REPOS, sessionPaneMax, sessionPaneMin, supervisorColumn } from '../sessionPaneWidth.js';
 
 const ROOT = '/Users/example/code';
 const OSS = '/Users/example/oss';
@@ -50,13 +50,13 @@ function fakeServer() {
   });
 }
 
-function renderDashboard(first: IndexSnapshot, search = '?view=all') {
+function renderAppShell(first: IndexSnapshot, search = '?view=all') {
   const history = fakeHistory(search);
   const api = createApiClient({ apiKey: 'k'.repeat(43), fetch: withoutSubagents(fakeServer()) });
   const storage = memory({ [BACKGROUND_TAB_KEY]: 'conversation' });
   const ui = (s: IndexSnapshot) => (
     <ApiContext.Provider value={api}>
-      <Dashboard view={{ state: 'live', snapshot: s }} navigation={history.navigation} storage={storage} />
+      <AppShell view={{ state: 'live', snapshot: s }} navigation={history.navigation} storage={storage} />
     </ApiContext.Provider>
   );
   const result = render(ui(first));
@@ -103,7 +103,7 @@ const escape = async (on: Element = document.activeElement ?? document.body) => 
 describe('from 1,200 px: beside the open session, which stays', () => {
   it('adds ?supervisor to the URL in one pushed entry, the session view still open and usable', async () => {
     setWidth(1440);
-    const { history } = renderDashboard(snap());
+    const { history } = renderAppShell(snap());
     await click(row(beta.name));
     await click(item());
     expect(history.entries).toEqual(['?view=all', `?view=all&session=${beta.sessionId}`, `?view=all&session=${beta.sessionId}&supervisor`]);
@@ -126,7 +126,7 @@ describe('from 1,200 px: beside the open session, which stays', () => {
 
   it('stays open as another session opens beside it, and as the selection changes', async () => {
     setWidth(1920);
-    const { history } = renderDashboard(snap(), '?view=all&supervisor');
+    const { history } = renderAppShell(snap(), '?view=all&supervisor');
     await settle();
     await click(row(alpha.name));
     expect(history.location.search).toBe(`?view=all&session=${alpha.sessionId}&supervisor`);
@@ -145,7 +145,7 @@ describe('from 1,200 px: beside the open session, which stays', () => {
 
   it('stays open as the root tab changes: it is over the page, not a tab’s', async () => {
     setWidth(1440);
-    const { history } = renderDashboard(snap(idle, 2), `?view=all&root=${ROOT}&supervisor`);
+    const { history } = renderAppShell(snap(idle, 2), `?view=all&root=${ROOT}&supervisor`);
     await settle();
     fireEvent.click(screen.getByRole('tab', { name: /oss/ }));
     await settle();
@@ -155,7 +155,7 @@ describe('from 1,200 px: beside the open session, which stays', () => {
 
   it('Escape closes it first, wherever focus is, then the session view’s own Escape is back', async () => {
     setWidth(1440);
-    const { history } = renderDashboard(snap());
+    const { history } = renderAppShell(snap());
     await click(row(beta.name));
     await click(item());
     // Focus in the session view: still the panel's, the top layer.
@@ -170,7 +170,7 @@ describe('from 1,200 px: beside the open session, which stays', () => {
 
   it('Close gives focus back to what opened it: the header’s button, or Needs you’s Open the supervisor', async () => {
     setWidth(1440);
-    renderDashboard(snap({ status: 'idle', approvals: [{ id: 'a1', kind: 'message', to: beta.name, text: 'A made-up message.', at: minutesAgo(1), expiresAt: minutesAgo(-28) }] }), '?view=needs-you');
+    renderAppShell(snap({ status: 'idle', approvals: [{ id: 'a1', kind: 'message', to: beta.name, text: 'A made-up message.', at: minutesAgo(1), expiresAt: minutesAgo(-28) }] }), '?view=needs-you');
     await settle();
     const notice = screen.getByRole('button', { name: 'Open the supervisor' });
     notice.focus();
@@ -187,7 +187,7 @@ describe('from 1,200 px: beside the open session, which stays', () => {
 
   it('a session opened from it opens beside it, the panel kept, with focus on the session’s heading', async () => {
     setWidth(1440);
-    const { history } = renderDashboard(snap(withHandoff), '?view=all&supervisor');
+    const { history } = renderAppShell(snap(withHandoff), '?view=all&supervisor');
     await settle();
     await click(within(panel()!).getByRole('button', { name: `Open ${beta.name}` }));
     expect(history.location.search).toBe(`?view=all&session=${beta.sessionId}&supervisor`);
@@ -207,15 +207,15 @@ describe('from 1,200 px, a column of its own (W187): the others give way, the re
     expect(supervisorColumn(1440)).toEqual({ repos: 0, panel: 520 });
     expect(supervisorColumn(1200)).toEqual({ repos: 0, panel: 360 });
     // What's left for the view: 760 px at 1,920, 560 px from 1,280 up, and 480 px at 1,200.
-    expect([1920, 1600, 1520, 1440, 1280, 1200].map((width) => panelMax(width, true))).toEqual([760, 560, 560, 560, 560, 480]);
-    expect([panelMin(1440, true), panelMin(1200, true), panelMin(1200)]).toEqual([560, 480, 560]);
+    expect([1920, 1600, 1520, 1440, 1280, 1200].map((width) => sessionPaneMax(width, true))).toEqual([760, 560, 560, 560, 560, 480]);
+    expect([sessionPaneMin(1440, true), sessionPaneMin(1200, true), sessionPaneMin(1200)]).toEqual([560, 480, 560]);
     // Without the panel, as before.
-    expect(panelMax(1440)).toBe(840);
+    expect(sessionPaneMax(1440)).toBe(840);
   });
 
   it('at 1,440 px folds the repo list into the header’s Repos drawer while it’s open, and gives it back as it closes', async () => {
     setWidth(1440);
-    const { history } = renderDashboard(snap());
+    const { history } = renderAppShell(snap());
     await click(row(beta.name));
     expect([repoColumn() !== undefined, reposButton()]).toEqual([true, undefined]);
     await click(item());
@@ -237,14 +237,14 @@ describe('from 1,200 px, a column of its own (W187): the others give way, the re
 
   it('keeps the repo list from 1,520 px', async () => {
     setWidth(1520);
-    renderDashboard(snap(), '?view=all&supervisor');
+    renderAppShell(snap(), '?view=all&supervisor');
     await settle();
     expect([panel() !== undefined, repoColumn() !== undefined, reposButton()]).toEqual([true, true, undefined]);
   });
 
   it('moves focus from the repo list to its heading as the back button folds the list away', async () => {
     setWidth(1440);
-    const { history } = renderDashboard(snap());
+    const { history } = renderAppShell(snap());
     await click(item());
     await click(item());
     expect(panel()).toBeUndefined();
@@ -258,7 +258,7 @@ describe('from 1,200 px, a column of its own (W187): the others give way, the re
 
   it('the divider’s limits are what the column leaves, and what it sets is kept once the panel closes', async () => {
     setWidth(1920);
-    renderDashboard(snap(), `?view=all&session=${beta.sessionId}`);
+    renderAppShell(snap(), `?view=all&session=${beta.sessionId}`);
     await settle();
     const divider = () => screen.getByRole('separator', { name: 'Resize the session view' });
     expect([divider().getAttribute('aria-valuemin'), divider().getAttribute('aria-valuemax'), divider().getAttribute('aria-valuenow')]).toEqual(['560', '1320', '760']);
@@ -280,7 +280,7 @@ describe('from 1,200 px, a column of its own (W187): the others give way, the re
     const storage: StorageSource = () => ({ getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { writes.push([key, value]); values.set(key, value); } });
     render(
       <ApiContext.Provider value={api}>
-        <Dashboard view={{ state: 'live', snapshot: snap() }} navigation={history.navigation} storage={storage} />
+        <AppShell view={{ state: 'live', snapshot: snap() }} navigation={history.navigation} storage={storage} />
       </ApiContext.Provider>,
     );
     await settle();
@@ -308,7 +308,7 @@ describe('from 1,200 px, a column of its own (W187): the others give way, the re
 describe('below 1,200 px: over the view over the list', () => {
   it('covers the session view, which is inert under it, and Close gives it back', async () => {
     setWidth(1024);
-    const { history } = renderDashboard(snap());
+    const { history } = renderAppShell(snap());
     await click(row(beta.name));
     item().focus();
     await click(item());
@@ -327,7 +327,7 @@ describe('below 1,200 px: over the view over the list', () => {
 
   it('opens beside a session from 900 to 999 px, where the repo list is inert under the view: the header isn’t (W182)', async () => {
     setWidth(950);
-    const { history } = renderDashboard(snap());
+    const { history } = renderAppShell(snap());
     await click(row(beta.name));
     expect(repoList().closest('[inert]')).not.toBeNull();
     expect(item().closest('[inert]')).toBeNull();
@@ -343,7 +343,7 @@ describe('below 1,200 px: over the view over the list', () => {
 
   it('moves focus from the session view to its heading when it opens over it, as from the app strip', async () => {
     setWidth(1024);
-    renderDashboard(snap({ status: 'held', approvals: [], error: 'A made-up hold.' }), `?view=all&session=${beta.sessionId}`);
+    renderAppShell(snap({ status: 'held', approvals: [], error: 'A made-up hold.' }), `?view=all&session=${beta.sessionId}`);
     await settle();
     sessionView()!.querySelector<HTMLElement>('h2')!.focus();
     await click(screen.getByRole('button', { name: 'Open' }));
@@ -352,7 +352,7 @@ describe('below 1,200 px: over the view over the list', () => {
 
   it('a session opened from it closes it, in the same pushed entry, so the session is in sight', async () => {
     setWidth(1024);
-    const { history } = renderDashboard(snap(withHandoff), '?view=all&supervisor');
+    const { history } = renderAppShell(snap(withHandoff), '?view=all&supervisor');
     await settle();
     await click(within(panel()!).getByRole('button', { name: `Open ${beta.name}` }));
     expect(history.entries).toEqual(['?view=all&supervisor', `?view=all&session=${beta.sessionId}`]);
@@ -362,7 +362,7 @@ describe('below 1,200 px: over the view over the list', () => {
 
   it('`/` closes both, in one entry, and puts focus in the filter', async () => {
     setWidth(1024);
-    const { history } = renderDashboard(snap(), `?view=all&session=${beta.sessionId}&supervisor`);
+    const { history } = renderAppShell(snap(), `?view=all&session=${beta.sessionId}&supervisor`);
     await settle();
     fireEvent.keyDown(document.body, { key: '/' });
     await settle();
@@ -374,7 +374,7 @@ describe('below 1,200 px: over the view over the list', () => {
 
   it('at 600 px and narrower, Back says where it goes back to', async () => {
     setWidth(375);
-    renderDashboard(snap(), `?view=all&session=${beta.sessionId}&supervisor`);
+    renderAppShell(snap(), `?view=all&session=${beta.sessionId}&supervisor`);
     await settle();
     expect(within(panel()!).getByRole('button', { name: 'Back to the session' })).toBeDefined();
   });

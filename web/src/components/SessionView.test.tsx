@@ -15,7 +15,7 @@ import type { ConnectionView } from '../connection.js';
 import { fakeSockets, group, minutesAgo, NOW, session, snapshot, withEditorList, withoutSubagents } from '../test/fixtures.js';
 import { tooltipText } from '../test/tooltips.js';
 import { TOKEN_STORAGE_KEY } from '../token.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 import { FINISHED_ASKED_HINT, STALE_HINT } from './SessionRow.js';
 import { BACKGROUND_NOTES, CWD_MISSING_HINT, CWD_MISSING_NOTES, cwdMissingNote, EXIT_COMMAND, SessionView, WAITING_NOTES, waitingNote } from './SessionView.js';
 
@@ -71,13 +71,13 @@ function cursorsOf(fetch: ReturnType<typeof fakeServer>): (string | undefined)[]
 }
 
 /** Renders the dashboard with the app's API client over `fetch`, already holding an apiKey. Without `fetch`, there's no client. */
-function renderDashboard(fetch: FetchLike | undefined, first: IndexSnapshot = snap()) {
+function renderAppShell(fetch: FetchLike | undefined, first: IndexSnapshot = snap()) {
   const api = fetch ? createApiClient({ apiKey: API_KEY, fetch: withoutSubagents(fetch) }) : undefined;
   const ui = (s: IndexSnapshot) => {
     const view: ConnectionView = { state: 'live', snapshot: s };
     return (
       <ApiContext.Provider value={api}>
-        <Dashboard view={view} />
+        <AppShell view={view} />
       </ApiContext.Provider>
     );
   };
@@ -110,7 +110,7 @@ beforeEach(() => {
 describe('SessionView: opening and closing', () => {
   it("opens from the session's name, with its name and title, kind, status, directory and last activity", async () => {
     const server = fakeServer(ok([prompt(1)]));
-    renderDashboard(server);
+    renderAppShell(server);
     expect(screen.queryByRole('dialog')).toBeNull();
 
     const view = await openView();
@@ -135,7 +135,7 @@ describe('SessionView: opening and closing', () => {
   });
 
   it('opens from a click anywhere on the row, but not from a click that ends a text selection', async () => {
-    const { container } = renderDashboard(fakeServer(ok([prompt(1)])));
+    const { container } = renderAppShell(fakeServer(ok([prompt(1)])));
     const row = screen.getByRole('heading', { level: 3, name: 'demo-docs' }).closest('li')!;
 
     const selection = vi.spyOn(window, 'getSelection').mockReturnValue({ toString: () => 'run the' } as Selection);
@@ -150,7 +150,7 @@ describe('SessionView: opening and closing', () => {
   });
 
   it('closes with its button and with Escape, and gives focus back to the row', async () => {
-    renderDashboard(fakeServer(ok([prompt(1)])));
+    renderAppShell(fakeServer(ok([prompt(1)])));
     const name = screen.getByRole('button', { name: 'demo-docs' });
 
     fireEvent.click(within(await openView()).getByRole('button', { name: 'Close' }));
@@ -168,7 +168,7 @@ describe('SessionView: opening and closing', () => {
 
   it("switches to another session's view when another row is opened", async () => {
     const server = fakeServer(ok([prompt(1)]));
-    renderDashboard(server);
+    renderAppShell(server);
     await openView('demo-docs');
     const view = await openView('demo-other');
     expect(within(view).getByRole('heading', { level: 2 }).textContent).toBe('demo-other');
@@ -180,7 +180,7 @@ describe('SessionView: opening and closing', () => {
     const api = createApiClient({ fetch: withoutSubagents(fetch) });
     render(
       <ApiContext.Provider value={api}>
-        <Dashboard view={{ state: 'connecting', snapshot: snap() }} />
+        <AppShell view={{ state: 'connecting', snapshot: snap() }} />
       </ApiContext.Provider>,
     );
     const view = await openView();
@@ -193,7 +193,7 @@ describe('SessionView: opening and closing', () => {
   });
 
   it('says when there is no API client, as when the dashboard is rendered alone', async () => {
-    renderDashboard(undefined);
+    renderAppShell(undefined);
     expect(within(await openView()).getByText("The conversation can't be loaded here.")).toBeTruthy();
   });
 });
@@ -201,7 +201,7 @@ describe('SessionView: opening and closing', () => {
 describe('SessionView: the conversation', () => {
   it('renders text as text, never as markup, and keeps line breaks', async () => {
     const html = '<b>bold</b> <img src=x onerror="alert(1)"> <script>alert(2)</script>';
-    renderDashboard(fakeServer(ok([{ kind: 'assistant', at: at(1), text: `${html}\nsecond line` }])));
+    renderAppShell(fakeServer(ok([{ kind: 'assistant', at: at(1), text: `${html}\nsecond line` }])));
     const view = await openView();
 
     const text = view.querySelector('.entry-assistant .entry-text')!;
@@ -211,7 +211,7 @@ describe('SessionView: the conversation', () => {
   });
 
   it('labels prompts and replies, folds tool calls in a row, names cross-session senders, and mutes notices (more in Conversation.test.tsx)', async () => {
-    renderDashboard(
+    renderAppShell(
       fakeServer(
         ok([
           prompt(1, 'run the tests'),
@@ -247,7 +247,7 @@ describe('SessionView: the conversation', () => {
 
   it('loads earlier pages with the cursor, above the ones shown, until there are none', async () => {
     const server = fakeServer(ok([prompt(3), prompt(4)], 'cursor-1'), ok([prompt(1), prompt(2)], 'cursor-2'), ok([prompt(0)]));
-    renderDashboard(server);
+    renderAppShell(server);
     const view = await openView();
     expect(texts(view)).toEqual(['prompt 3', 'prompt 4']);
 
@@ -263,7 +263,7 @@ describe('SessionView: the conversation', () => {
 
   it('starts again from the newest page when the cursor is stale', async () => {
     const server = fakeServer(ok([prompt(3)], 'old-cursor'), status(410), ok([prompt(7), prompt(8)], 'new-cursor'));
-    renderDashboard(server);
+    renderAppShell(server);
     const view = await openView();
 
     await act(async () => fireEvent.click(within(view).getByRole('button', { name: 'Load earlier' })));
@@ -275,7 +275,7 @@ describe('SessionView: the conversation', () => {
   });
 
   it('says when earlier messages could not be loaded, and keeps what it shows', async () => {
-    renderDashboard(fakeServer(ok([prompt(3)], 'c'), status(500)));
+    renderAppShell(fakeServer(ok([prompt(3)], 'c'), status(500)));
     const view = await openView();
     await act(async () => fireEvent.click(within(view).getByRole('button', { name: 'Load earlier' })));
     expect(within(view).getByRole('alert').textContent).toBe("Couldn't load earlier messages (HTTP 500).Try again");
@@ -291,7 +291,7 @@ describe('SessionView: the conversation', () => {
         prompt(4),
       ]),
     );
-    const { update } = renderDashboard(server);
+    const { update } = renderAppShell(server);
     const view = await openView();
     expect(texts(view)).toEqual(['prompt 1', 'Part one.', 'Bash: npm test']);
 
@@ -310,7 +310,7 @@ describe('SessionView: the conversation', () => {
 
   it('replaces the entries when the newest page no longer overlaps them', async () => {
     const server = fakeServer(ok([prompt(1)]), ok([prompt(50), prompt(51)], 'c'));
-    const { update } = renderDashboard(server);
+    const { update } = renderAppShell(server);
     const view = await openView();
     update(snap(target({ lastActivityAt: minutesAgo(0) })));
     await settle();
@@ -323,7 +323,7 @@ describe('SessionView: the conversation', () => {
     vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(() => scrollHeight);
     vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(400);
     const server = fakeServer(ok([prompt(1)]), ok([prompt(1), prompt(2)]), ok([prompt(1), prompt(2), prompt(3)]));
-    const { update } = renderDashboard(server);
+    const { update } = renderAppShell(server);
     const view = await openView();
     const body = view.querySelector<HTMLElement>('.session-view-body')!;
     expect(body.scrollTop).toBe(1000);
@@ -346,19 +346,19 @@ describe('SessionView: the conversation', () => {
   });
 
   it('says when the session has no transcript, and offers a retry when loading failed', async () => {
-    const first = renderDashboard(fakeServer(status(404)));
+    const first = renderAppShell(fakeServer(status(404)));
     expect(within(await openView()).getByText('No transcript for this session.')).toBeTruthy();
     first.unmount();
 
     const retried = fakeServer(status(500), ok([prompt(1)]));
-    renderDashboard(retried);
+    renderAppShell(retried);
     const view = await openView();
     await act(async () => fireEvent.click(within(view).getByRole('button', { name: 'Try again' })));
     expect(texts(view)).toEqual(['prompt 1']);
   });
 
   it('keeps showing a session that left the snapshot, and says so', async () => {
-    const { update } = renderDashboard(fakeServer(ok([prompt(1)])));
+    const { update } = renderAppShell(fakeServer(ok([prompt(1)])));
     const view = await openView();
     update(snapshot([group({ sessions: [session({ name: 'demo-other' })] })]));
     await settle();
@@ -427,7 +427,7 @@ describe('SessionView: Back to sessions (W31)', () => {
 
 describe('SessionView: the /bg note', () => {
   it("is an info button after an interactive session's kind, named and tooltipped with how /bg lets pitwall attach to it and stop it", async () => {
-    renderDashboard(fakeServer(ok([])));
+    renderAppShell(fakeServer(ok([])));
     const view = await openView();
     const note = 'Typing /bg in its terminal moves it to the background, so pitwall can attach to it and stop it.';
     // A button, so Tab reaches it, whose name is its tooltip.
@@ -439,7 +439,7 @@ describe('SessionView: the /bg note', () => {
   });
 
   it('is not shown for a background session', async () => {
-    renderDashboard(fakeServer(ok([])), snap(target({ kind: 'background', shortId: 'bg1234', state: 'done', status: undefined })));
+    renderAppShell(fakeServer(ok([])), snap(target({ kind: 'background', shortId: 'bg1234', state: 'done', status: undefined })));
     const view = await openView();
     expect(within(view).queryByRole('button', { name: /moves it to the background/ })).toBeNull();
     expect(view.querySelector('.session-view-kind')?.textContent).toBe('Background');
@@ -461,7 +461,7 @@ describe('SessionView: the message box at the foot', () => {
 
   it('comes after the conversation, outside the header, with the latest exchange and the send result just above the text box', async () => {
     const relay = { sentAt: minutesAgo(3), status: 'delivered' as const, reply: { at: minutesAgo(2), text: 'All three fixed.' } };
-    renderDashboard(chatServer([prompt(1), { kind: 'assistant', at: at(2), text: 'The newest reply.' }]), snap(target({ relay })));
+    renderAppShell(chatServer([prompt(1), { kind: 'assistant', at: at(2), text: 'The newest reply.' }]), snap(target({ relay })));
     const view = await openView();
     const header = view.querySelector('header')!;
     const body = view.querySelector<HTMLElement>('.session-view-body')!;
@@ -484,7 +484,7 @@ describe('SessionView: the message box at the foot', () => {
   });
 
   it('goes when the session is no longer listed, and is not there for a background session', async () => {
-    const first = renderDashboard(fakeServer(ok([prompt(1)])));
+    const first = renderAppShell(fakeServer(ok([prompt(1)])));
     const view = await openView();
     expect(view.querySelector('.session-view-foot')).toBeTruthy();
     first.update(snapshot([group({ sessions: [session({ name: 'demo-other' })] })]));
@@ -492,7 +492,7 @@ describe('SessionView: the message box at the foot', () => {
     expect(view.querySelector('.session-view-foot')).toBeNull();
     first.unmount();
 
-    renderDashboard(fakeServer(ok([prompt(1)])), snap(target({ kind: 'background', shortId: 'bg1234', state: 'done', status: undefined })));
+    renderAppShell(fakeServer(ok([prompt(1)])), snap(target({ kind: 'background', shortId: 'bg1234', state: 'done', status: undefined })));
     expect((await openView()).querySelector('.session-view-foot')).toBeNull();
   });
 
@@ -515,7 +515,7 @@ describe('SessionView: the message box at the foot', () => {
       let clientHeight = 400;
       vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(1000);
       vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(() => clientHeight);
-      renderDashboard(fakeServer(ok([prompt(1)])));
+      renderAppShell(fakeServer(ok([prompt(1)])));
       const view = await openView();
       const body = view.querySelector<HTMLElement>('.session-view-body')!;
       const resized = () =>
@@ -693,7 +693,7 @@ describe('SessionView: notes that say what to do (W47)', () => {
       expect(note.previousElementSibling).toBe(view.querySelector('.session-view-meta'));
       expect(note.textContent).not.toMatch(/waiting|input needed/i);
       // The message box is still there, below, as the note says.
-      expect(view.querySelector('.session-view-foot > .relay-box')).toBeTruthy();
+      expect(view.querySelector('.session-view-foot > .message-box')).toBeTruthy();
     });
 
     it('says to answer a background session in its Terminal tab, which attaches, with no button, and attaches nothing by itself', () => {
@@ -850,7 +850,7 @@ describe('SessionView: notes that say what to do (W47)', () => {
       const { env } = attachEnv();
       for (const s of [target(), interactive(), target({ alive: false, pid: undefined, status: undefined })]) {
         const { view, unmount } = renderView(s, { env });
-        expect(view.querySelector('.session-view-foot > .relay-box')).toBeTruthy();
+        expect(view.querySelector('.session-view-foot > .message-box')).toBeTruthy();
         expect(footNote(view)).toBeNull();
         for (const note of Object.values(BACKGROUND_NOTES)) expect(view.textContent).not.toContain(note);
         unmount();

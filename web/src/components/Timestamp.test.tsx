@@ -8,7 +8,7 @@ import { clockState } from '../clock.js';
 import { absoluteTime, clockTime } from '../format.js';
 import { group, NOW, session, snapshot } from '../test/fixtures.js';
 import { tooltipText } from '../test/tooltips.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 import { Timestamp } from './Timestamp.js';
 
 const secondsAgo = (seconds: number) => new Date(NOW - seconds * 1000).toISOString();
@@ -90,7 +90,7 @@ describe('Timestamp', () => {
   it("drives every time in the dashboard from that one interval, none of them in a live region", () => {
     const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
     const sessions = Array.from({ length: 20 }, (_, index) => session({ name: `demo-${index}`, lastActivityAt: secondsAgo(60 * (index + 1)) }));
-    render(<Dashboard view={{ state: 'live', snapshot: snapshot([group({ sessions })]) }} />);
+    render(<AppShell view={{ state: 'live', snapshot: snapshot([group({ sessions })]) }} />);
     const times = [...document.querySelectorAll('time')];
     // The header's, and each row's.
     expect(times).toHaveLength(21);

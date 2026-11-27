@@ -49,7 +49,7 @@ interface StateCase {
   frame?: 'view' | 'short';
   waited?: 'shown' | 'long';
   width?: number;
-  /** 600 px and narrower: Back to sessions in the view's header, as the Dashboard has it there. */
+  /** 600 px and narrower: Back to sessions in the view's header, as the AppShell has it there. */
   compact?: boolean;
   run: (root: HTMLElement) => Promise<unknown>;
 }

@@ -2,8 +2,6 @@
 
 The names of the web UI's regions, so a request, a plan item or a review can say exactly where a change goes (W222, Phil, 2026-11-27). Use these names in conversation, `PLAN.md`, `docs/design-system.md`, code and tests. `docs/design-system.md` says how each region looks and behaves; this file says only what each one is called and where its code is.
 
-Until W223 (renames so the code matches these names) merges, five regions have an older name in code. The "Code now" column gives it.
-
 ## The app shell
 
 Three columns from 1,200 px wide:
@@ -23,22 +21,22 @@ Three columns from 1,200 px wide:
                                       ┃ the divider
 ```
 
-| Name | What it is | Code | Code now, before W223 |
-|---|---|---|---|
-| **App shell** | The whole page: the app strip, the header and the three columns. `data-layout` on it says which layout is in use. | `AppShell`, `.app` | `Dashboard` (`web/src/components/Dashboard.tsx`) |
-| **App strip** | A line above the header while something affects the whole app: the relay is off, recaps are paused, or the supervisor stopped. | `AppStrips`, `AppStrip`, `RecapsStrip`, `SupervisorStrip` | |
-| **Header** | The wordmark, the root or the root tabs, New session, the connection badge, Usage, shortcuts, Preferences, the theme switch and the Supervisor button. | `Header`, `.app-header-*` | |
-| **Root tabs** | One tab per root, in the header, when pitwall watches two or more. | `RootTabs` | |
-| **Repo list** | The first column: the views (Needs you, All sessions, Starred, Pull requests), then a group for each repo or directory, then the Hidden section. "Sidebar" names only the layout mode in which the repo list is a column (`data-layout="sidebar"`). | `RepoList`, `nav.repo-list`, `--pw-repo-list-w` | `--pw-sidebar-w` |
-| **Repo drawer** | The repo list's form below 900 px, opened from the header's Repos button, and when W187 folds the repo list to give the supervisor panel room. | `RepoDrawer` | |
-| **Session list** | The second column: the sessions of what the repo list selected. With Pull requests selected, it is the PR list. | `SessionList`, `.session-list-*`; `PrList`, `.pr-list` | |
-| **Page alerts** | Alerts at the top of the session list: the poll failed, a server error, the relay alert, "Lost the connection". | `.session-list-alerts` | |
-| **List header** | The session list's heading, its summary, the filter field, the chips and the sort menu. | `.session-list-head`, `FilterControls`, `SortMenu` | |
-| **Rows** | One per session, or per pull request in the PR list. | `SessionRow`, `PrRow` | |
-| **Finished section** | The finished sessions, collapsed, at the session list's foot. | `.finished-list` | |
-| **Session pane** | The third column. It holds one thing: a session view, a PR view, or the "Select a session" empty state. Below 1,200 px it has no box of its own, and the session view lies over the session list. | `.session-pane`, `.pane-views`, `--pw-session-pane-w`, `sessionPaneWidth` | `--pw-panel-w`, `--pw-panel-min-w`, `panelWidth` (`web/src/panelWidth.ts`) |
-| **Divider** | The line between the session list and the session pane, dragged to set the session pane's width. | `Divider` | |
-| **Supervisor panel** | The supervisor's conversation: a column beside the session view from 1,200 px, and over it below that. | `SupervisorPanel`, `--pw-supervisor-col` | `SupervisorView` (`web/src/components/SupervisorView.tsx`), `supervisorPanel` in `Dashboard.tsx` |
+| Name | What it is | Code |
+|---|---|---|
+| **App shell** | The whole page: the app strip, the header and the three columns. `data-layout` on it says which layout is in use. | `AppShell`, `.app` |
+| **App strip** | A line above the header while something affects the whole app: the relay is off, recaps are paused, or the supervisor stopped. | `AppStrips`, `AppStrip`, `RecapsStrip`, `SupervisorStrip` |
+| **Header** | The wordmark, the root or the root tabs, New session, the connection badge, Usage, shortcuts, Preferences, the theme switch and the Supervisor button. | `Header`, `.app-header-*` |
+| **Root tabs** | One tab per root, in the header, when pitwall watches two or more. | `RootTabs` |
+| **Repo list** | The first column: the views (Needs you, All sessions, Starred, Pull requests), then a group for each repo or directory, then the Hidden section. "Sidebar" names only the layout mode in which the repo list is a column (`data-layout="sidebar"`). | `RepoList`, `nav.repo-list`, `--pw-repo-list-w` |
+| **Repo drawer** | The repo list's form below 900 px, opened from the header's Repos button, and when W187 folds the repo list to give the supervisor panel room. | `RepoDrawer` |
+| **Session list** | The second column: the sessions of what the repo list selected. With Pull requests selected, it is the PR list. | `SessionList`, `.session-list-*`; `PrList`, `.pr-list` |
+| **Page alerts** | Alerts at the top of the session list: the poll failed, a server error, the relay alert, "Lost the connection". | `.session-list-alerts` |
+| **List header** | The session list's heading, its summary, the filter field, the chips and the sort menu. | `.session-list-head`, `FilterControls`, `SortMenu` |
+| **Rows** | One per session, or per pull request in the PR list. | `SessionRow`, `PrRow` |
+| **Finished section** | The finished sessions, collapsed, at the session list's foot. | `.finished-list` |
+| **Session pane** | The third column. It holds one thing: a session view, a PR view, or the "Select a session" empty state. Below 1,200 px it has no box of its own, and the session view lies over the session list. | `.session-pane`, `.pane-views`, `--pw-session-pane-w`, `sessionPaneWidth` |
+| **Divider** | The line between the session list and the session pane, dragged to set the session pane's width. | `Divider` |
+| **Supervisor panel** | The supervisor's conversation: a column beside the session view from 1,200 px, and over it below that. | `SupervisorPanel`, `--pw-supervisor-col` |
 
 ## The session view
 
@@ -53,18 +51,18 @@ Three columns from 1,200 px wide:
 └──────────────────────────────────────────────────────────────┘
 ```
 
-| Name | What it is | Code | Code now, before W223 |
-|---|---|---|---|
-| **Session view** | One session, in the session pane. `PrView`, `WaitingSessionView` and `UnlistedSessionView` take its place in the same frame. | `SessionView`, `Frame`, `.session-view` | |
-| **View header** | Back at narrow widths, the session's name, the star, the meta line, lineage, the actions menu and Close. | `.session-view-head`, `Top`, `.session-view-meta`, `SessionActions`, `SessionLineage` | |
-| **Recap strip** | The session's recap: the summary, then Goal, Done, Working on, Plan, For you and Next. | `RecapStrip` | |
-| **Session tabs** | Conversation, Terminal, Sub-agents and Pull requests. | `.session-tabs` | |
-| **Conversation tab** | The transcript, paged from the end. | `ConversationPanel` (`Conversation.tsx`) | |
-| **Terminal tab** | The attached terminal. | `SessionTerminal` (`Terminal.tsx`) | |
-| **Sub-agents tab** | The session's sub-agents. | `SubagentsPanel` | |
-| **Pull requests tab** | The session's pull requests. | `SessionPrsPanel` | |
-| **View foot** | The message box for a live session, or Resume for an ended one. | `.session-view-foot`, `EndedFooter` | |
-| **Message box** | Where you type a message to the session. | `MessageBox` | `RelayBox` (`web/src/components/RelayBox.tsx`) |
+| Name | What it is | Code |
+|---|---|---|
+| **Session view** | One session, in the session pane. `PrView`, `WaitingSessionView` and `UnlistedSessionView` take its place in the same frame. | `SessionView`, `Frame`, `.session-view` |
+| **View header** | Back at narrow widths, the session's name, the star, the meta line, lineage, the actions menu and Close. | `.session-view-head`, `Top`, `.session-view-meta`, `SessionActions`, `SessionLineage` |
+| **Recap strip** | The session's recap: the summary, then Goal, Done, Working on, Plan, For you and Next. | `RecapStrip` |
+| **Session tabs** | Conversation, Terminal, Sub-agents and Pull requests. | `.session-tabs` |
+| **Conversation tab** | The transcript, paged from the end. | `ConversationPanel` (`Conversation.tsx`) |
+| **Terminal tab** | The attached terminal. | `SessionTerminal` (`Terminal.tsx`) |
+| **Sub-agents tab** | The session's sub-agents. | `SubagentsPanel` |
+| **Pull requests tab** | The session's pull requests. | `SessionPrsPanel` |
+| **View foot** | The message box for a live session, or Resume for an ended one. | `.session-view-foot`, `EndedFooter` |
+| **Message box** | Where you type a message to the session. | `MessageBox` |
 
 ## Naming rules
 

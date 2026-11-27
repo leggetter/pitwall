@@ -36,7 +36,7 @@ import { chooseFirstDirectory } from '../test/newSession.js';
 import { toastMessages } from '../test/toasts.js';
 import { ATTACH_DELAY_MS } from '../timing.js';
 import { TOKEN_STORAGE_KEY } from '../token.js';
-import { Dashboard, listedText } from './Dashboard.js';
+import { AppShell, listedText } from './AppShell.js';
 import { SessionView } from './SessionView.js';
 import { TYPE_HINT, type TerminalHandle } from './Terminal.js';
 
@@ -142,7 +142,7 @@ interface Options {
   attach?: boolean;
 }
 
-function renderDashboard(first: IndexSnapshot = snap(), options: Options = {}) {
+function renderAppShell(first: IndexSnapshot = snap(), options: Options = {}) {
   const history = fakeHistory(options.search ?? '?view=all');
   const fetch = fakeServer();
   const api = createApiClient({ apiKey: API_KEY, fetch: withoutSubagents(fetch) });
@@ -150,7 +150,7 @@ function renderDashboard(first: IndexSnapshot = snap(), options: Options = {}) {
   const env: AttachEnv = { token: TOKEN, createSocket: sockets.factory, host: '127.0.0.1:4517' };
   const storage = options.storage ?? memory();
   const ui = (s: IndexSnapshot) => {
-    const dashboard = <Dashboard view={{ state: 'live', snapshot: s }} navigation={history.navigation} storage={storage} />;
+    const dashboard = <AppShell view={{ state: 'live', snapshot: s }} navigation={history.navigation} storage={storage} />;
     return <ApiContext.Provider value={api}>{options.attach === false ? dashboard : <AttachContext.Provider value={env}>{dashboard}</AttachContext.Provider>}</ApiContext.Provider>;
   };
   const result = render(ui(first));
@@ -254,7 +254,7 @@ afterEach(() => {
 
 describe('the tab a view opens on', () => {
   it('is Terminal for a running background session, from a click (or Enter, a button’s click), and it attaches; the conversation is behind it, and the footer’s note with it', async () => {
-    const { sockets } = renderDashboard();
+    const { sockets } = renderAppShell();
     await open('job-one');
     expect(shownTab()).toBe('Terminal');
     expect(tab('Conversation').getAttribute('aria-selected')).toBe('false');
@@ -269,7 +269,7 @@ describe('the tab a view opens on', () => {
   });
 
   it('is Conversation for an interactive session, for a background one whose process has exited, and for a finished one, and nothing attaches', async () => {
-    const { sockets } = renderDashboard();
+    const { sockets } = renderAppShell();
     await open('demo-a');
     expect(shownTab()).toBe('Conversation');
     await open('job-exited');
@@ -286,13 +286,13 @@ describe('the tab a view opens on', () => {
   });
 
   it('is Conversation wherever the Terminal tab is off: with no way to attach here, or once the session is no longer listed', async () => {
-    const off = renderDashboard(snap(), { attach: false });
+    const off = renderAppShell(snap(), { attach: false });
     await open('job-one');
     expect(shownTab()).toBe('Conversation');
     expect(tab('Terminal').getAttribute('aria-disabled')).toBe('true');
     off.unmount();
 
-    const { sockets, update, history } = renderDashboard();
+    const { sockets, update, history } = renderAppShell();
     await open('job-two');
     await waitFor(() => expect(sockets.sockets).toHaveLength(1));
     await open('demo-a');
@@ -308,7 +308,7 @@ describe('the tab a view opens on', () => {
   });
 
   it('is Terminal for a running background session a ?session= names on load, which attaches, and nothing else: no message, no stop or remove, and no focus taken before it attaches', async () => {
-    const { sockets, fetch } = renderDashboard(snap(), { search: `?view=all&session=${J1}` });
+    const { sockets, fetch } = renderAppShell(snap(), { search: `?view=all&session=${J1}` });
     await settle();
     expect(viewName()).toBe('job-one');
     expect(shownTab()).toBe('Terminal');
@@ -324,7 +324,7 @@ describe('the tab a view opens on', () => {
       [EXITED, 'job-exited'],
       [DONE, 'job-done'],
     ] as const) {
-      const { sockets, unmount } = renderDashboard(snap(), { search: `?view=all&session=${sessionId}` });
+      const { sockets, unmount } = renderAppShell(snap(), { search: `?view=all&session=${sessionId}` });
       await settle();
       expect(viewName()).toBe(name);
       expect(shownTab()).toBe('Conversation');
@@ -334,7 +334,7 @@ describe('the tab a view opens on', () => {
   });
 
   it('is Terminal again when the back or forward button returns to a running background session', async () => {
-    const { sockets, history } = renderDashboard();
+    const { sockets, history } = renderAppShell();
     await open('job-one');
     await waitFor(() => expect(sockets.sockets).toHaveLength(1));
     await open('demo-a');
@@ -381,7 +381,7 @@ describe('the tab a view opens on', () => {
 
   it('is Conversation with Preferences on Conversation, from a click, a ?session= and the back button, and nothing attaches', async () => {
     const storage = memory({ [BACKGROUND_TAB_KEY]: 'conversation' });
-    const { sockets, history } = renderDashboard(snap(), { storage });
+    const { sockets, history } = renderAppShell(snap(), { storage });
     await open('job-one');
     expect(shownTab()).toBe('Conversation');
     expect(footerNote()).toBe('To message it, type in its Terminal tab, which attaches to it.');
@@ -393,7 +393,7 @@ describe('the tab a view opens on', () => {
     await settle();
     expect(sockets.sockets).toHaveLength(0);
 
-    const loaded = renderDashboard(snap(), { storage, search: `?view=all&session=${J2}` });
+    const loaded = renderAppShell(snap(), { storage, search: `?view=all&session=${J2}` });
     await settle();
     expect(shownTab()).toBe('Conversation');
     expect(loaded.sockets.sockets).toHaveLength(0);
@@ -402,7 +402,7 @@ describe('the tab a view opens on', () => {
 
 describe('a tab you chose', () => {
   it('stays chosen whatever the session does after: Conversation, chosen on a running one, through it waiting on you', async () => {
-    const { sockets, update } = renderDashboard();
+    const { sockets, update } = renderAppShell();
     await open('job-one');
     await waitFor(() => expect(sockets.sockets).toHaveLength(1));
     fireEvent.click(tab('Conversation'));
@@ -415,7 +415,7 @@ describe('a tab you chose', () => {
   });
 
   it('isn’t switched for you: a view on Terminal stays there as its session finishes, and one on Conversation stays there as its session runs again', async () => {
-    const { sockets, update } = renderDashboard();
+    const { sockets, update } = renderAppShell();
     await open('job-one');
     await waitFor(() => expect(sockets.sockets).toHaveLength(1));
     update(snap(sessions().map((each) => (each.sessionId === J1 ? { ...each, state: 'done', alive: false, pid: undefined, finished: true } : each))));
@@ -432,7 +432,7 @@ describe('a tab you chose', () => {
   });
 
   it('isn’t switched by Preferences either: a new choice is for the views that open after it', async () => {
-    const { sockets, storage } = renderDashboard();
+    const { sockets, storage } = renderAppShell();
     await open('job-one');
     await waitFor(() => expect(sockets.sockets).toHaveLength(1));
     choosePreference('Open running background sessions on', 'Conversation');
@@ -470,7 +470,7 @@ describe('a tab you chose', () => {
 
 describe('focus as a view opens on its Terminal tab', () => {
   it('goes to the heading, then into the terminal as it attaches, as when you open the tab yourself; Escape there is the terminal’s, and F6 leaves it', async () => {
-    const { sockets } = renderDashboard();
+    const { sockets } = renderAppShell();
     await open('job-one');
     expect(document.activeElement).toBe(heading());
     await waitFor(() => expect(sockets.sockets).toHaveLength(1));
@@ -488,7 +488,7 @@ describe('focus as a view opens on its Terminal tab', () => {
   });
 
   it('stays where it went outside the view meanwhile, as in the filter, so what is typed there never reaches the session', async () => {
-    const { sockets } = renderDashboard();
+    const { sockets } = renderAppShell();
     await open('job-one');
     const filter = screen.getByRole('searchbox', { name: 'Filter sessions' });
     filter.focus();
@@ -500,7 +500,7 @@ describe('focus as a view opens on its Terminal tab', () => {
 
   // Flipped by W57: before it, the terminal took focus here, so the next key after a reload went to the session.
   it('stays where it is as the terminal attaches from a ?session= on load, with nothing focused: the bar says how to type to it, and no key reaches the session', async () => {
-    const { sockets } = renderDashboard(snap(), { search: `?view=all&session=${J1}` });
+    const { sockets } = renderAppShell(snap(), { search: `?view=all&session=${J1}` });
     await waitFor(() => expect(sockets.sockets).toHaveLength(1));
     expect(document.activeElement).toBe(document.body);
     await attachIt(sockets.last);
@@ -545,7 +545,7 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
     });
 
     it('when back or forward returns to a running background session, even one a click opened moments before', async () => {
-      const { sockets, history } = renderDashboard();
+      const { sockets, history } = renderAppShell();
       await open('job-one');
       await waitFor(() => expect(sockets.sockets).toHaveLength(1));
       await attachIt(sockets.last);
@@ -576,7 +576,7 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
     });
 
     it('in the view of a session started from New session, which opens once it’s listed, even with its heading focused', async () => {
-      const { sockets, update } = renderDashboard();
+      const { sockets, update } = renderAppShell();
       // `n` with nothing focused, so focus has nowhere to go back to, and the view's heading takes it as the view opens.
       press('n');
       const dialog = screen.getByRole('dialog', { name: 'New session' });
@@ -605,7 +605,7 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
           { roots: ROOTS },
         );
       const rootTab = (root: string) => screen.getAllByRole('tab').find((candidate) => candidate.classList.contains('root-tab') && candidate.querySelector('.root-tab-label')?.textContent === `~/${root.split('/').at(-1)}`)!;
-      const { sockets, update } = renderDashboard(twoRoots(), { search: '' });
+      const { sockets, update } = renderAppShell(twoRoots(), { search: '' });
       await startSession();
       // The dialog has given focus back to New session by the time it has gone (W83).
       const newSession = screen.getByRole('button', { name: 'New session' });
@@ -631,7 +631,7 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
     it('when stepped onto with j, soon after a click opened the view before it: the click was that view’s', async () => {
       vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
       vi.setSystemTime(NOW);
-      const { sockets } = renderDashboard();
+      const { sockets } = renderAppShell();
       await open('demo-a');
       press('j');
       await settle();
@@ -647,7 +647,7 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
 
   describe('when you ask for it in this page', () => {
     it('after a click or Enter on its row, as it attaches, and the next key reaches the session; the bar shows F6’s hint', async () => {
-      const { sockets } = renderDashboard();
+      const { sockets } = renderAppShell();
       await open('job-one');
       await waitFor(() => expect(sockets.sockets).toHaveLength(1));
       // Attaching, the bar shows F6's hint, so one that's about to take focus doesn't flash the other.
@@ -660,7 +660,7 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
     });
 
     it('and keeps it, attached, when a session started from New session is listed while you type in it (W63)', async () => {
-      const { sockets, update } = renderDashboard();
+      const { sockets, update } = renderAppShell();
       await startSession();
       await open('job-one');
       await waitFor(() => expect(sockets.sockets).toHaveLength(1));
@@ -679,7 +679,7 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
     });
 
     it('after a click on its Terminal tab, in a view the URL opened without focus', async () => {
-      const { sockets } = renderDashboard(snap(), { search: `?view=all&session=${J1}` });
+      const { sockets } = renderAppShell(snap(), { search: `?view=all&session=${J1}` });
       await waitFor(() => expect(sockets.sockets).toHaveLength(1));
       await attachIt(sockets.last);
       expect(terminalHasFocus()).toBe(false);
@@ -693,7 +693,7 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
     });
 
     it('after Attach again, in a view a reload opened, though the button has gone by the time it attaches', async () => {
-      const { sockets } = renderDashboard(snap(), { search: `?view=all&session=${J1}` });
+      const { sockets } = renderAppShell(snap(), { search: `?view=all&session=${J1}` });
       await waitFor(() => expect(sockets.sockets).toHaveLength(1));
       await attachIt(sockets.last);
       act(() => sockets.last.receive({ type: 'exit', code: 0 }));
@@ -706,7 +706,7 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
     });
 
     it('after Restart and attach, for one the URL opened that had finished, once the confirmation had taken focus to Cancel', async () => {
-      const { sockets } = renderDashboard(snap(), { search: `?view=all&session=${J1}` });
+      const { sockets } = renderAppShell(snap(), { search: `?view=all&session=${J1}` });
       await waitFor(() => expect(sockets.sockets).toHaveLength(1));
       const socket = sockets.last;
       act(() => {
@@ -726,7 +726,7 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
 
   describe('the gesture', () => {
     it(`runs out: an attach that completes more than ${GESTURE_MS / 1000} s after the click takes no focus`, async () => {
-      const { sockets } = renderDashboard();
+      const { sockets } = renderAppShell();
       await open('job-one');
       await waitFor(() => expect(sockets.sockets).toHaveLength(1));
       vi.setSystemTime(NOW + GESTURE_MS + 1);
@@ -738,7 +738,7 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
     });
 
     it(`still holds at ${GESTURE_MS / 1000} s`, async () => {
-      const { sockets } = renderDashboard();
+      const { sockets } = renderAppShell();
       await open('job-one');
       await waitFor(() => expect(sockets.sockets).toHaveLength(1));
       vi.setSystemTime(NOW + GESTURE_MS);
@@ -747,7 +747,7 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
     });
 
     it('is used once: the attach it was for spends it, and a view opened again after takes none', async () => {
-      const { sockets, history } = renderDashboard();
+      const { sockets, history } = renderAppShell();
       await open('job-one');
       await waitFor(() => expect(sockets.sockets).toHaveLength(1));
       await attachIt(sockets.last);
@@ -763,7 +763,7 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
     });
 
     it('holds the guard: what’s typed in the filter after a click on a row stays in the filter, before and after the attach', async () => {
-      const { sockets } = renderDashboard();
+      const { sockets } = renderAppShell();
       await open('job-one');
       press('/');
       const filter = screen.getByRole('searchbox', { name: 'Filter sessions' });
@@ -782,7 +782,7 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
 
   describe('the hint', () => {
     it('says how to type to it while it’s attached without focus: in the bar, in the place F6’s hint keeps, read in place, and describing the Terminal tab, with no live region', async () => {
-      const { sockets } = renderDashboard(snap(), { search: `?view=all&session=${J1}` });
+      const { sockets } = renderAppShell(snap(), { search: `?view=all&session=${J1}` });
       await waitFor(() => expect(sockets.sockets).toHaveLength(1));
       const regions = () => document.querySelectorAll('[role="status"], [role="alert"], [aria-live]').length;
       const before = regions();
@@ -800,7 +800,7 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
     });
 
     it('gives way to F6’s once the terminal has focus, from a click on it or Tab, and comes back after F6', async () => {
-      const { sockets } = renderDashboard(snap(), { search: `?view=all&session=${J1}` });
+      const { sockets } = renderAppShell(snap(), { search: `?view=all&session=${J1}` });
       await waitFor(() => expect(sockets.sockets).toHaveLength(1));
       await attachIt(sockets.last);
       expect(shownHint()).toBe(TYPE_HINT);
@@ -814,7 +814,7 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
     });
 
     it('gives way to F6’s while it attaches and once the attach has ended, and goes with the terminal', async () => {
-      const { sockets } = renderDashboard(snap(), { search: `?view=all&session=${J1}` });
+      const { sockets } = renderAppShell(snap(), { search: `?view=all&session=${J1}` });
       await waitFor(() => expect(sockets.sockets).toHaveLength(1));
       expect(attachStatus()).toBe('Attaching…');
       expect(shownHint()).toBe('F6F6 to leave the terminal');
@@ -830,7 +830,7 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
 
   describe('the setting, pitwall.terminal-focus.v1 (terminalFocus.ts)', () => {
     it('on never, takes no focus after a click on the row, the Terminal tab or Attach again, and the hint says how to type to it', async () => {
-      const { sockets } = renderDashboard(snap(), { storage: memory({ [TERMINAL_FOCUS_KEY]: 'never' }) });
+      const { sockets } = renderAppShell(snap(), { storage: memory({ [TERMINAL_FOCUS_KEY]: 'never' }) });
       await open('job-one');
       await waitFor(() => expect(sockets.sockets).toHaveLength(1));
       await attachIt(sockets.last);
@@ -862,14 +862,14 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
 
     it('on after-open, stored or by default, takes focus after a click on the row, and still none after a reload', async () => {
       for (const storage of [memory({ [TERMINAL_FOCUS_KEY]: 'after-open' }), memory()]) {
-        const clicked = renderDashboard(snap(), { storage });
+        const clicked = renderAppShell(snap(), { storage });
         await open('job-one');
         await waitFor(() => expect(clicked.sockets.sockets).toHaveLength(1));
         await attachIt(clicked.sockets.last);
         expect(terminalHasFocus()).toBe(true);
         clicked.unmount();
 
-        const loaded = renderDashboard(snap(), { storage, search: `?view=all&session=${J1}` });
+        const loaded = renderAppShell(snap(), { storage, search: `?view=all&session=${J1}` });
         await waitFor(() => expect(loaded.sockets.sockets).toHaveLength(1));
         await attachIt(loaded.sockets.last);
         expect(terminalHasFocus()).toBe(false);
@@ -887,13 +887,13 @@ describe('the terminal takes the keyboard only when you ask for it (W57)', () =>
         },
       })) as StorageSource;
       for (const storage of [memory({ [TERMINAL_FOCUS_KEY]: 'always' }), memory({ [TERMINAL_FOCUS_KEY]: 'sideways' }), throwing]) {
-        const loaded = renderDashboard(snap(), { storage, search: `?view=all&session=${J1}` });
+        const loaded = renderAppShell(snap(), { storage, search: `?view=all&session=${J1}` });
         await waitFor(() => expect(loaded.sockets.sockets).toHaveLength(1));
         await attachIt(loaded.sockets.last);
         expect(terminalHasFocus()).toBe(false);
         loaded.unmount();
 
-        const clicked = renderDashboard(snap(), { storage });
+        const clicked = renderAppShell(snap(), { storage });
         await open('job-one');
         await waitFor(() => expect(clicked.sockets.sockets).toHaveLength(1));
         await attachIt(clicked.sockets.last);
@@ -911,7 +911,7 @@ describe('stepping with j, k, ↑ and ↓', () => {
   });
 
   it('j past three running background sessions attaches none of them; k back onto one attaches it once it has stayed open for the delay', async () => {
-    const { sockets } = renderDashboard();
+    const { sockets } = renderAppShell();
     await open('demo-a');
     for (const name of ['job-one', 'job-two', 'job-three', 'demo-c']) {
       press('j');
@@ -947,7 +947,7 @@ describe('stepping with j, k, ↑ and ↓', () => {
   });
 
   it('cancels the wait when it moves on, the wait counting from when each view opened', async () => {
-    const { sockets } = renderDashboard();
+    const { sockets } = renderAppShell();
     await open('demo-a');
     press('j');
     await settle();
@@ -964,7 +964,7 @@ describe('stepping with j, k, ↑ and ↓', () => {
   });
 
   it('from a row, leaves focus on the rows, there too once the session it rests on attaches, with ↓ and ↑ as with j and k', async () => {
-    const { sockets } = renderDashboard();
+    const { sockets } = renderAppShell();
     await open('demo-a');
     rowButton('demo-a').focus();
     press('j');
@@ -993,7 +993,7 @@ describe('stepping with j, k, ↑ and ↓', () => {
   });
 
   it('from the view’s header with ↓, waits the same way, and the terminal leaves focus on the heading', async () => {
-    const { sockets } = renderDashboard();
+    const { sockets } = renderAppShell();
     await open('demo-a');
     press('ArrowDown', heading());
     await settle();
@@ -1010,7 +1010,7 @@ describe('stepping with j, k, ↑ and ↓', () => {
   });
 
   it('attaches nothing when Conversation is chosen during the wait; Terminal, opened again, attaches at once and takes focus', async () => {
-    const { sockets } = renderDashboard();
+    const { sockets } = renderAppShell();
     await open('demo-a');
     press('j');
     await settle();
@@ -1024,7 +1024,7 @@ describe('stepping with j, k, ↑ and ↓', () => {
   });
 
   it('isn’t a step: a click on a row after stepping attaches at once', async () => {
-    const { sockets } = renderDashboard();
+    const { sockets } = renderAppShell();
     await open('demo-a');
     press('j');
     await settle();
@@ -1071,7 +1071,7 @@ describe('the four-attach limit (D9)', () => {
   }
 
   it('a fifth running background session, opened on its Terminal tab, says so as before, with Attach again; the four stay attached, and once one detaches, Attach again attaches', async () => {
-    const { sockets } = renderDashboard(fiveRoots(), { search: '' });
+    const { sockets } = renderAppShell(fiveRoots(), { search: '' });
     const admitted = new Set<FakeSocket>();
     for (const [index, root] of ROOTS.entries()) {
       if (index > 0) switchTo(root);
@@ -1109,7 +1109,7 @@ describe('the four-attach limit (D9)', () => {
   });
 
   it('takes one place at most in a root tab: opening the next session detaches the last', async () => {
-    const { sockets } = renderDashboard();
+    const { sockets } = renderAppShell();
     await open('job-one');
     await waitFor(() => expect(sockets.sockets).toHaveLength(1));
     await attachIt(sockets.last);
@@ -1127,7 +1127,7 @@ describe('Preferences: Open running background sessions on', () => {
   const checked = () => preferenceOptions(SETTING).map((radio) => radio.checked);
 
   it("is the Session view section's first radio group: Terminal, chosen by default, and Conversation, each with a line saying what it does", () => {
-    renderDashboard();
+    renderAppShell();
     const dialog = openPreferences();
     const section = within(dialog).getByRole('region', { name: 'Session view' });
     expect(within(section).getAllByRole('group')[0]).toBe(preferenceGroup(SETTING));
@@ -1142,7 +1142,7 @@ describe('Preferences: Open running background sessions on', () => {
   });
 
   it('applies a choice at once, with the dialog still open, stores it alone, and Escape then gives focus back to the button', () => {
-    const { storage } = renderDashboard();
+    const { storage } = renderAppShell();
     choosePreference(SETTING, 'Conversation', { close: false });
     expect(preferencesDialog()).not.toBeNull();
     expect(document.activeElement).toBe(preferenceOption(SETTING, 'Conversation'));
@@ -1156,10 +1156,10 @@ describe('Preferences: Open running background sessions on', () => {
 
   it('keeps the choice across a reload, under pitwall.background-tab.v1', async () => {
     const storage = memory();
-    const first = renderDashboard(snap(), { storage });
+    const first = renderAppShell(snap(), { storage });
     choosePreference(SETTING, 'Conversation');
     first.unmount();
-    const { sockets } = renderDashboard(snap(), { storage, search: `?view=all&session=${J1}` });
+    const { sockets } = renderAppShell(snap(), { storage, search: `?view=all&session=${J1}` });
     await settle();
     expect(shownTab()).toBe('Conversation');
     expect(sockets.sockets).toHaveLength(0);
@@ -1184,7 +1184,7 @@ describe('Preferences: Open running background sessions on', () => {
       }) as StorageSource,
       throwing,
     ]) {
-      const { sockets, unmount } = renderDashboard(snap(), { storage });
+      const { sockets, unmount } = renderAppShell(snap(), { storage });
       await open('job-one');
       expect(shownTab()).toBe('Terminal');
       await waitFor(() => expect(sockets.sockets).toHaveLength(1));
@@ -1209,7 +1209,7 @@ describe('Preferences: Open running background sessions on', () => {
       expect(readBackgroundTab()).toBe('terminal');
       expect(() => writeBackgroundTab('conversation')).not.toThrow();
       // The whole page, on the browser's storage: the view opens on Terminal, and a choice still works for the page.
-      const { sockets } = renderDashboard(snap(), { storage: browserStorage });
+      const { sockets } = renderAppShell(snap(), { storage: browserStorage });
       await open('job-one');
       expect(shownTab()).toBe('Terminal');
       await waitFor(() => expect(sockets.sockets).toHaveLength(1));
@@ -1227,7 +1227,7 @@ describe('Preferences: The terminal takes the keyboard (W57, W59)', () => {
   const labelOf = (radio: HTMLInputElement) => radio.labels?.[0]?.textContent;
 
   it("is the Session view section's second radio group: When you open it, chosen by default, then Never", () => {
-    renderDashboard();
+    renderAppShell();
     const section = within(openPreferences()).getByRole('region', { name: 'Session view' });
     expect(within(section).getAllByRole('group')[1]).toBe(preferenceGroup(SETTING));
     expect(preferenceOptions(SETTING).map(labelOf)).toEqual(['When you open it', 'Never']);
@@ -1235,7 +1235,7 @@ describe('Preferences: The terminal takes the keyboard (W57, W59)', () => {
   });
 
   it('is the setting the views read as they attach: Never, chosen there, keeps the keyboard out of the terminal after a click on a row, and When you open it gives it back', async () => {
-    const { sockets, storage } = renderDashboard();
+    const { sockets, storage } = renderAppShell();
     choosePreference(SETTING, 'Never');
     expect((storage as ReturnType<typeof memory>).values.get(TERMINAL_FOCUS_KEY)).toBe('never');
     await open('job-one');

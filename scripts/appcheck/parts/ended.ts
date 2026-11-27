@@ -152,7 +152,7 @@ const part: Part = {
       // It was given #19, which pitwall-test-from-root owns since it pushed it, so its Pull requests tab lists it (W106).
       t.expectEqual(await page.evaluate(TABS), ['Conversation', 'Pull requests (1)'], 'the Conversation tab alone, and Pull requests');
       t.expectEqual(await page.evaluate(`${VIEW}.querySelector('.session-view-meta .badge.state-ended')?.textContent`), 'Ended', 'Ended where the status goes');
-      t.expect(!(await page.evaluate(`!!${VIEW}.querySelector('.relay-box')`)), 'no message box');
+      t.expect(!(await page.evaluate(`!!${VIEW}.querySelector('.message-box')`)), 'no message box');
       t.expectEqual(await page.evaluate(NOTE), NOTE_TEXT, 'the note');
       t.expectEqual(await page.evaluate(ACTIONS), ['Copy command', 'Resume in background'], 'Copy command, then Resume in background');
       t.expect(await page.evaluate(`${footButton('Resume in background')}.classList.contains('primary')`), 'Resume in background is the primary');
@@ -295,7 +295,7 @@ const part: Part = {
       await page.waitFor('the toast', `${toasts}.includes(${q(toast)})`, 5000);
       await page.waitFor('the footer to go', `!${VIEW}?.querySelector('.ended-foot')`, 5000);
       await page.settle(100);
-      t.expect(await page.evaluate(`!!${VIEW}.querySelector('.relay-box')`), 'the message box in its place: it is running in its terminal');
+      t.expect(await page.evaluate(`!!${VIEW}.querySelector('.message-box')`), 'the message box in its place: it is running in its terminal');
       t.expect((await page.evaluate<string[]>(toasts)).includes(toast), 'the warning stays, in its toast', await page.evaluate(toasts));
       t.expect(await page.evaluate(ON_A_TAB), 'focus moved from Resume to the Terminal tab, not the page', await page.evaluate(focused));
       t.expectEqual(await page.evaluate(viewTab), 'Conversation', 'an interactive session: still on Conversation');

@@ -43,7 +43,7 @@ const part: Part = {
       t.expectEqual(await page.evaluate(`${VIEW}.querySelector('.session-view-meta .badge')?.textContent`), 'Idle', 'its status badge');
       t.expect(await page.evaluate(`${VIEW}.querySelector('.session-view-kind')?.textContent.includes('Interactive')`), 'its kind');
       t.expect(await page.evaluate(`(() => { const b = ${BODY}; return b.scrollHeight - b.clientHeight - b.scrollTop < 2; })()`), 'scrolled to the newest entry');
-      t.expect(await page.evaluate(`!!${VIEW}.querySelector('.relay-box textarea')`), 'an interactive session has the message box');
+      t.expect(await page.evaluate(`!!${VIEW}.querySelector('.message-box textarea')`), 'an interactive session has the message box');
       await t.shot('open');
     });
 

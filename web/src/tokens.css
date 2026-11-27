@@ -35,15 +35,15 @@
   --pw-header-h: 52px;
   --pw-strip-h: 32px;
 
-  --pw-sidebar-w: 240px;
+  --pw-repo-list-w: 240px;
   --pw-list-min-w: 360px;
-  --pw-panel-w: 760px;
-  --pw-panel-min-w: 560px;
-  --pw-view-w: var(--pw-panel-w);
+  --pw-session-pane-w: 760px;
+  --pw-session-pane-min-w: 560px;
+  --pw-view-w: var(--pw-session-pane-w);
   --pw-supervisor-w: 560px;
   /* The supervisor's column from 1,200 px (W187), with the repo list beside it or folded: 100cqw is the app's width where it's used. */
-  --pw-supervisor-col: clamp(var(--pw-list-min-w), 100cqw - var(--pw-sidebar-w) - var(--pw-list-min-w) - var(--pw-panel-min-w), var(--pw-supervisor-w));
-  --pw-supervisor-col-folded: clamp(var(--pw-list-min-w), 100cqw - var(--pw-list-min-w) - var(--pw-panel-min-w), var(--pw-supervisor-w));
+  --pw-supervisor-col: clamp(var(--pw-list-min-w), 100cqw - var(--pw-repo-list-w) - var(--pw-list-min-w) - var(--pw-session-pane-min-w), var(--pw-supervisor-w));
+  --pw-supervisor-col-folded: clamp(var(--pw-list-min-w), 100cqw - var(--pw-list-min-w) - var(--pw-session-pane-min-w), var(--pw-supervisor-w));
   --pw-dialog-sm: 408px;
   --pw-dialog-md: 624px;
   --pw-dialog-lg: 840px;

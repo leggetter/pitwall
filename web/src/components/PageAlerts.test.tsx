@@ -6,7 +6,7 @@ import type { IndexSnapshot, RelayAlert, RelayOff } from '../../../src/shared/pr
 import type { ConnectionView } from '../connection.js';
 import { memoryNavigation } from '../selection.js';
 import { group, minutesAgo, NOW, session, snapshot } from '../test/fixtures.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 
 const SENT: RelayAlert = { at: minutesAgo(2), detail: 'a SendMessage nobody asked for, made up for the test.', count: 1, blocked: false, cause: 'unrequested' };
 const BLOCKED: RelayAlert = { at: minutesAgo(1), detail: 'a SendMessage nobody asked for, blocked, made up for the test.', count: 3, blocked: true, cause: 'unrequested' };
@@ -17,8 +17,8 @@ const base = () => snapshot([group({ sessions: [session({ name: 'pitwall-test-on
 /** Renders the dashboard with `first`, and returns a way to send it the next view, as the connection would. */
 function renderViews(first: ConnectionView) {
   const navigation = memoryNavigation();
-  const { rerender, container } = render(<Dashboard view={first} navigation={navigation} />);
-  return { container, next: (view: ConnectionView) => rerender(<Dashboard view={view} navigation={navigation} />) };
+  const { rerender, container } = render(<AppShell view={first} navigation={navigation} />);
+  return { container, next: (view: ConnectionView) => rerender(<AppShell view={view} navigation={navigation} />) };
 }
 
 const live = (snap: IndexSnapshot, extra: Partial<ConnectionView> = {}): ConnectionView => ({ state: 'live', snapshot: snap, ...extra });
@@ -88,7 +88,7 @@ describe('the app strip', () => {
       setWidth(width);
       const one = session({ name: 'pitwall-test-one' });
       const snap = { ...snapshot([group({ sessions: [one] })]), relayAlert: SENT, relayOff: OFF };
-      render(<Dashboard view={live(snap)} navigation={memoryNavigation(`?view=all&session=${one.sessionId}`)} />);
+      render(<AppShell view={live(snap)} navigation={memoryNavigation(`?view=all&session=${one.sessionId}`)} />);
       // The alert is in the session list, which the view covers below 1,200 px.
       expect(document.getElementById('session-view')).toBeTruthy();
       return within(strip() as HTMLElement).getByRole('button', { name: 'Details' });

@@ -229,15 +229,15 @@ This is the content of `web/src/tokens.css`, apart from comments. The no-JavaScr
   --pw-header-h: 52px;
   --pw-strip-h: 32px;
 
-  --pw-sidebar-w: 240px;
+  --pw-repo-list-w: 240px;
   --pw-list-min-w: 360px;
-  --pw-panel-w: 760px;
-  --pw-panel-min-w: 560px;
-  --pw-view-w: var(--pw-panel-w);
+  --pw-session-pane-w: 760px;
+  --pw-session-pane-min-w: 560px;
+  --pw-view-w: var(--pw-session-pane-w);
   --pw-supervisor-w: 560px;
   /* The supervisor's column from 1,200 px (W187), with the repo list beside it or folded: 100cqw is the app's width where it's used. */
-  --pw-supervisor-col: clamp(var(--pw-list-min-w), 100cqw - var(--pw-sidebar-w) - var(--pw-list-min-w) - var(--pw-panel-min-w), var(--pw-supervisor-w));
-  --pw-supervisor-col-folded: clamp(var(--pw-list-min-w), 100cqw - var(--pw-list-min-w) - var(--pw-panel-min-w), var(--pw-supervisor-w));
+  --pw-supervisor-col: clamp(var(--pw-list-min-w), 100cqw - var(--pw-repo-list-w) - var(--pw-list-min-w) - var(--pw-session-pane-min-w), var(--pw-supervisor-w));
+  --pw-supervisor-col-folded: clamp(var(--pw-list-min-w), 100cqw - var(--pw-list-min-w) - var(--pw-session-pane-min-w), var(--pw-supervisor-w));
   --pw-dialog-sm: 408px;
   --pw-dialog-md: 624px;
   --pw-dialog-lg: 840px;
@@ -516,8 +516,8 @@ CSS custom properties don't work in media queries, so these are constants. Use t
 | Name | Query | What changes |
 |---|---|---|
 | **three columns** | `(min-width: 1200px)` | The session view is the third column. Below it, the view overlays the session list, below the header, and the list is inert while it's open |
-| **panel keeps the repo list** | `(min-width: 1520px)`, from `layout.ts` (`PANEL_KEEPS_REPOS`) | In three columns, with the supervisor's column open (W187), the repo list stays a column from here. Below it, it folds into the header's Repos drawer while the panel is open. 1,520 px is `--pw-sidebar-w`, `--pw-list-min-w`, `--pw-panel-min-w` and the panel's 360 px floor |
-| **overlay clears the sidebar** | `(min-width: 1000px)`, from `layout.ts` | Below it, in the sidebar layout, the view over the list reaches into the repo list, which is inert while it's open too; the header isn't, so its Supervisor button opens the supervisor's panel beside a session there (W182). Below it, at any layout, the Supervisor button hides its label. 1,000 px is `--pw-sidebar-w` plus `--pw-panel-w` |
+| **panel keeps the repo list** | `(min-width: 1520px)`, from `layout.ts` (`PANEL_KEEPS_REPOS`) | In three columns, with the supervisor's column open (W187), the repo list stays a column from here. Below it, it folds into the header's Repos drawer while the panel is open. 1,520 px is `--pw-repo-list-w`, `--pw-list-min-w`, `--pw-session-pane-min-w` and the panel's 360 px floor |
+| **overlay clears the sidebar** | `(min-width: 1000px)`, from `layout.ts` | Below it, in the sidebar layout, the view over the list reaches into the repo list, which is inert while it's open too; the header isn't, so its Supervisor button opens the supervisor's panel beside a session there (W182). Below it, at any layout, the Supervisor button hides its label. 1,000 px is `--pw-repo-list-w` plus `--pw-session-pane-w` |
 | **sidebar** | `(min-width: 900px)` | The repo list sits beside the session list. Below it, the repo list is a drawer opened from the header |
 | **compact** | `(max-width: 600px)` | The header's right side wraps under the wordmark (and the root tabs, which by then are usually under it too), but for the Supervisor button, on the top line (W182); the session list's header wraps; the overlay session view is full width, with Back; toasts are full width |
 | **short** | `(max-height: 760px)` | The session view's footer padding tightens and the latest reply shows two lines, not three |
@@ -532,11 +532,11 @@ CSS custom properties don't work in media queries, so these are constants. Use t
   - The other rows here are still media queries: they belong to components that only ever fill the window.
 
 - **Fixed widths:**
-  - Repo list: `--pw-sidebar-w` (240 px).
+  - Repo list: `--pw-repo-list-w` (240 px).
   - Session list: at least `--pw-list-min-w` (360 px).
-  - Session view: `--pw-panel-w` (760 px) by default, at least `--pw-panel-min-w` (560 px, about 80 terminal columns), at most the window less the repo list and 360 px. At 1,200 px that's 600 px.
-    - The third column is `auto` in the grid, and takes its pane's width. The pane is 760 px, or the width the divider set, with `max-width: calc(100cqw - var(--pw-sidebar-w) - var(--pw-list-min-w))`, so a narrower window shows less without losing the setting.
-  - The supervisor's column (W187), from 1,200 px: `--pw-supervisor-col` (`--pw-supervisor-col-folded` while the repo list is folded), from `--pw-supervisor-w` (560 px), giving way to `--pw-list-min-w` (360 px) before the session view goes under `--pw-panel-min-w` (560 px, about 80 terminal columns, the divider's own floor). The pane widens by it, as far as the session list's 360 px allows, and the panel takes its right, so the others give way in this order: the session list to 360 px, the view to 560 px, the panel to 360 px, then, below 1,520 px, the repo list folds into the header's Repos drawer (`data-repos="folded"` on `.app`). Only from 1,200 to 1,279 px is the view under 560 px, 480 to 559 px. At 1,920 px with the view at 760 px: repo list 240, session list 360, view 760, panel 560, so only the list narrows. At 1,440 px: no repo list, session list 360, view 560, panel 520. At 1,200 px: session list 360, view 480, panel 360. `supervisorColumn()` in `panelWidth.ts` works out the same for the divider, whose limits while the panel is open are what the column leaves; the width it sets then is kept after the panel closes. "Select a session" fills what the panel leaves. The view's width changes once as the panel opens and once as it closes, at once, never over an animation, so an attached terminal is resized once.
+  - Session view: `--pw-session-pane-w` (760 px) by default, at least `--pw-session-pane-min-w` (560 px, about 80 terminal columns), at most the window less the repo list and 360 px. At 1,200 px that's 600 px.
+    - The third column is `auto` in the grid, and takes its pane's width. The pane is 760 px, or the width the divider set, with `max-width: calc(100cqw - var(--pw-repo-list-w) - var(--pw-list-min-w))`, so a narrower window shows less without losing the setting.
+  - The supervisor's column (W187), from 1,200 px: `--pw-supervisor-col` (`--pw-supervisor-col-folded` while the repo list is folded), from `--pw-supervisor-w` (560 px), giving way to `--pw-list-min-w` (360 px) before the session view goes under `--pw-session-pane-min-w` (560 px, about 80 terminal columns, the divider's own floor). The pane widens by it, as far as the session list's 360 px allows, and the panel takes its right, so the others give way in this order: the session list to 360 px, the view to 560 px, the panel to 360 px, then, below 1,520 px, the repo list folds into the header's Repos drawer (`data-repos="folded"` on `.app`). Only from 1,200 to 1,279 px is the view under 560 px, 480 to 559 px. At 1,920 px with the view at 760 px: repo list 240, session list 360, view 760, panel 560, so only the list narrows. At 1,440 px: no repo list, session list 360, view 560, panel 520. At 1,200 px: session list 360, view 480, panel 360. `supervisorColumn()` in `sessionPaneWidth.ts` works out the same for the divider, whose limits while the panel is open are what the column leaves; the width it sets then is kept after the panel closes. "Select a session" fills what the panel leaves. The view's width changes once as the panel opens and once as it closes, at once, never over an animation, so an attached terminal is resized once.
   - Below 1,200 px, the supervisor's panel (W177) is as wide as the view over the list, over it: see [Its panel](#its-panel).
   - Dialogs: 408, 624 (the default) or 840 px; from 900 px, [Preferences](#preferences)' 840 px is at most the window less 480 px, so it never covers the repo list. Tooltips: at most 344 px. Toasts: 360 px. Menus: at least 192 px.
 - **Reflow:** the UI works at 320 px wide and at 200 % zoom. Only the terminal, and tables in messages, may scroll sideways, each in its own box; code blocks wrap (W137) (see [Markdown in messages](#markdown-in-messages)).
@@ -733,7 +733,7 @@ Phil runs pitwall over two folders of repos and wants both in one window (W38). 
 
 ### Repo list
 
-- **Fill and size:** `--pw-bg`, `--pw-sidebar-w` (240 px) wide, a right `1px solid var(--pw-border)`, padding 8 px. It scrolls on its own.
+- **Fill and size:** `--pw-bg`, `--pw-repo-list-w` (240 px) wide, a right `1px solid var(--pw-border)`, padding 8 px. It scrolls on its own.
 - **Landmark:** `<nav aria-label="Repos">`, holding a `<ul>` of the views, an `<hr>` divider, then a `<ul>` of [repo list items](#repo-list-items) for each root's groups, then, while any group is hidden, another `<hr>` and the [Hidden section](#hidden-groups).
   - With two or more roots, it's the open [root tab](#root-tabs)'s: that root's groups and hidden groups alone, under no heading, since the tab names the root.
 - **Contents, top to bottom:**
@@ -767,7 +767,7 @@ Phil runs pitwall over two folders of repos and wants both in one window (W38). 
   - A group whose sessions have all finished keeps its place, with its label muted. New groups appear in their place, and removed ones leave it.
 - **The root's own directory** is labelled with its path (`~/git`) rather than its last segment, so it doesn't read as a repo called "git", and is first among its root's groups.
 - **Below the sidebar breakpoint (900 px): a drawer.** So it is from 1,200 to 1,519 px while the supervisor's column is open (W187): the drawer is the repo list's only narrow form, so it folds into it to give the session view its 560 px, with the header's `menu` button, and comes back as the panel closes. Focus in it as it folds, as when the back button opens the panel, moves to the panel's heading.
-  - It slides in from the left with the same content, `--pw-sidebar-w` wide (or the window, if that's narrower), opened from the header's `menu` button.
+  - It slides in from the left with the same content, `--pw-repo-list-w` wide (or the window, if that's narrower), opened from the header's `menu` button.
   - `--pw-surface`, `--pw-shadow-overlay`, at `--pw-z-dialog` over a `--pw-backdrop` at `--pw-z-backdrop`, and `role="dialog"` with `aria-modal="true"`, like a dialog.
   - Choosing an item closes it. Escape, or a click on the backdrop, closes it and returns focus to the menu button.
 - **The selection is in the URL:** `?view=needs-you`, `?view=all`, `?view=starred`, `?view=prs` (W95), or `?repo=<key>`, a not-cloned repo's `github.com/<owner>/<name>` (W106).
@@ -848,8 +848,8 @@ Phil runs pitwall over two folders of repos and wants both in one window (W38). 
   - The session list stays interactive and keeps its scroll position.
   - With nothing open, the column stays and shows the "Select a session" empty state, so the layout doesn't jump. While a `?session=` from the URL waits for the first snapshot, the column shows the view's waiting state (below).
 - **Below 1,200 px: over the session list.**
-  - At the right edge of the columns, in their grid row, so it starts below the header, and the app strip while that shows, whatever their height: `width: min(var(--pw-panel-w), 100%)` of the app's width, `--pw-shadow-overlay`, `--pw-z-panel`, sliding in from the right when it opens. The header is never under it, so New session, the connection badge, "updated", the theme switch and the keyboard shortcuts button are always there (coordinator, W31).
-  - **What it covers is `inert` while it's open,** so nothing hidden can take focus or a click: the session list always, and the repo list beside it below 1,000 px (`--pw-sidebar-w` plus `--pw-panel-w`), where the view reaches into it. From 1,000 to 1,199 px the repo list is clear of it and stays usable, and so does the repo drawer, which opens over it from the header. A list it covers only in part is inert too: its controls at the right, such as the chips and Sort, are under the view.
+  - At the right edge of the columns, in their grid row, so it starts below the header, and the app strip while that shows, whatever their height: `width: min(var(--pw-session-pane-w), 100%)` of the app's width, `--pw-shadow-overlay`, `--pw-z-panel`, sliding in from the right when it opens. The header is never under it, so New session, the connection badge, "updated", the theme switch and the keyboard shortcuts button are always there (coordinator, W31).
+  - **What it covers is `inert` while it's open,** so nothing hidden can take focus or a click: the session list always, and the repo list beside it below 1,000 px (`--pw-repo-list-w` plus `--pw-session-pane-w`), where the view reaches into it. From 1,000 to 1,199 px the repo list is clear of it and stays usable, and so does the repo drawer, which opens over it from the header. A list it covers only in part is inert too: its controls at the right, such as the chips and Sort, are under the view.
   - `j` and `k` still change the session it shows, as ↑ and ↓ in its header do. Close, Back, Escape and `/` close it, and the list is usable again.
   - Focus in what it comes to cover, as when the window narrows past 1,200 px or the back button opens it, moves to its heading before the browser would drop it on the page.
   - It's a non-modal dialog with no backdrop (6.1, item 7): the header, and a repo list it doesn't reach, stay usable beside it.
@@ -859,7 +859,7 @@ Phil runs pitwall over two folders of repos and wants both in one window (W38). 
   - A 24 px hit area (WCAG 2.5.8) along the view's left edge, with a 1 px `--pw-border` line at the edge; on hover, focus or while dragging the line becomes 2 px `--pw-focus`, which is the focus indicator, so there's no ring. The hit area is 16 px over the view's gutter, which has nothing in it, and 8 px over the list's edge: its rows' padding and the outer 8 px of its scrollbar. So it covers none of the view's content, which starts after the gutter (W31).
   - `role="separator"`, `aria-orientation="vertical"`, `aria-valuenow` (the view's width in px, as shown), `aria-valuemin`, `aria-valuemax`, `aria-label="Resize the session view"`, `tabindex="0"`.
   - Drag to resize, within the widths in [2.12](#212-breakpoints-and-widths). ← and → move it 16 px (← widens the view, since the divider is its left edge), Home and End jump to the minimum and maximum, and a double-click resets to 760 px, or the maximum if that's less.
-  - **Without dragging** (WCAG 2.5.7): the actions menu's Make view wider and Make view narrower move it 80 px, and Reset view width goes back to 760 px or the maximum. Each is `aria-disabled` when it can't, with why in its tooltip. They change the same width as the divider, through one store (`createPanelWidthStore()` in `panelWidth.ts`), and are in three columns only.
+  - **Without dragging** (WCAG 2.5.7): the actions menu's Make view wider and Make view narrower move it 80 px, and Reset view width goes back to 760 px or the maximum. Each is `aria-disabled` when it can't, with why in its tooltip. They change the same width as the divider, through one store (`createSessionPaneWidthStore()` in `sessionPaneWidth.ts`), and are in three columns only.
   - Save the width in `localStorage` as `pitwall.panel-width.v1`: on each key, on a double-click, on each of the menu's width items, and when a drag ends. A value that isn't a whole number of px from 560 up reads as 760.
 - **The supervisor's panel** (M5, W114, W177, W187), from `?supervisor`, opens beside the view, which stays open, rather than in its place: from 1,200 px as a column of its own, which narrows the others; below, over the view. See [Supervisor](#supervisor).
 - **A pull request's view** (W95) takes the session view's place, frame and layout, from `?pr=`: the third column shows one thing, a session or a PR, and opening either takes the other's place in one history entry. With Pull requests selected and nothing open, the column says "Select a session or pull request" (W106). See [Pull requests](#pull-requests).
@@ -1712,7 +1712,7 @@ A session's recap (M5, W111, W121, W150, W172, W189; spike 010): since W189 (rec
 
 pitwall's supervisor (M5, W113, W114; D4): one headless Claude Code session pitwall runs, which knows every session from its recap and drafts messages and new sessions for you to send. Phil, 2026-10-29: "the point is to create a customized workflow that isn't just typing into a terminal and having a specialized UI". It's a button at the right of the header and a panel beside the open session's or PR's view (W177; Phil, 2026-11-09: "pop over the main window in some way rather than taking up the full view... you can get an idea of a context it's working in"), a column of its own from 1,200 px that pushes the other columns left (W187; Phil, 2026-11-11: "maybe the supervisor shouldn't pop over and instead it should push the other panels left"), never a terminal.
 
-- **Components:** `SupervisorView`, `SupervisorHandoffs`, `ApprovalCards` and `SupervisorBox` (`web/src/components/`), with the rules in `web/src/supervisor.ts` and the styles in `web/src/supervisor.css`. The snapshot's `supervisor` (`SupervisorState`) is read defensively (`asSupervisorState()`): a state that isn't one is no supervisor, and an approval that isn't well formed is left out.
+- **Components:** `SupervisorPanel`, `SupervisorHandoffs`, `ApprovalCards` and `SupervisorBox` (`web/src/components/`), with the rules in `web/src/supervisor.ts` and the styles in `web/src/supervisor.css`. The snapshot's `supervisor` (`SupervisorState`) is read defensively (`asSupervisorState()`): a state that isn't one is no supervisor, and an approval that isn't well formed is left out.
 - **Never started by the page:** opening the view, from the header's button, a URL, the back button or a reload, starts nothing. Only Start and a message do, each a click.
 
 #### The header's button
@@ -2271,7 +2271,7 @@ The header's dialog of settings, a section for each area they affect (W59; Phil,
 - **The button:** a ghost md `preferences` (tune) [icon button](#icon-buttons), named "Preferences" by its tooltip and `aria-label`, with `aria-haspopup="dialog"`. It has no key of its own.
 - **The dialog:** `PreferencesDialog` (`web/src/components/Preferences.tsx`), a [dialog](#dialogs) with `size="lg"` (`--pw-dialog-lg`, 840 px), titled "Preferences", with the subtitle "Each change applies at once. This browser remembers the view settings; pitwall keeps the models for this run." and no footer.
   - **Width** (W122; Phil, 2026-11-02: "Can we make the preference panel a bit wider?"): 840 px, the large card, so Models and effort puts a kind of work, its Model and its Effort on one line, with Claude Code's resolved defaults in full (below). W62 (Phil, 2026-10-23: "The preferences dialog should definitely be wider.") had chosen 624 px, the smallest that put every radio option's line on one line but one, and passed over 840 px as a long line to read; now When you open it's two sentences, about 733 px, fit on one line too, and the radio groups' lines are short anyway.
-  - **Never over the repo list:** from 900 px, where the repo list is a column, the card is at most the window less `--pw-sidebar-w` on each side, `min(var(--pw-dialog-lg), 100%, 100vw - 2 * var(--pw-sidebar-w))`: 420 px at 900 px, 624 px at 1,104 px, 720 px at 1,200 px and 840 px from 1,320 px. Below 900 px, where the repo list is a drawer, it's the window less its 16 px margins, up to 840 px. A media query, the sidebar row's in [2.12](#212-breakpoints-and-widths), as for other components that fill the window.
+  - **Never over the repo list:** from 900 px, where the repo list is a column, the card is at most the window less `--pw-repo-list-w` on each side, `min(var(--pw-dialog-lg), 100%, 100vw - 2 * var(--pw-repo-list-w))`: 420 px at 900 px, 624 px at 1,104 px, 720 px at 1,200 px and 840 px from 1,320 px. Below 900 px, where the repo list is a drawer, it's the window less its 16 px margins, up to 840 px. A media query, the sidebar row's in [2.12](#212-breakpoints-and-widths), as for other components that fill the window.
   - **No Save button:** each choice applies as it's made, as the menu's did, and the page behind shows it at once: the backdrop is translucent, and from 900 px the card leaves the repo list in sight beside it, so a new grouping shows as it's chosen. Every setting is cheap to change back, and a Save would add a step and a way to lose a choice. The cost: the arrows choose as they move, so stepping through Group sessions by regroups at each step, and can replace the selection on the way (see Switching, below).
   - **Sections,** in the page's order, left to right. Each is a `<section>` named by its `<h3>` (m 14/20, 600), after a 1 px `--pw-border` line and 16 px, with 12 px to its first setting and 16 px between its settings:
     - **Repo list:** Group sessions by. Named for the repo list, whose groups, counts and root tabs' badges it decides, rather than the session list, which only shows the group selected there.
@@ -2291,7 +2291,7 @@ The header's dialog of settings, a section for each area they affect (W59; Phil,
 - **The terminal takes the keyboard** (W57), whose legend reads on into each option, "… when you open it", W57's words:
   - **When you open it,** the default: "Right after you open the session or its Terminal tab with a click or Enter. Never after a reload, the back button or j and k."
   - **Never:** "Click the terminal, or Tab to it, to type to the session."
-  - The rule, and why there's no "always", are in [Session view: header, tabs and footer](#session-view-header-tabs-and-footer). The Dashboard holds the one value, which the dialog sets and the views read at each attach.
+  - The rule, and why there's no "always", are in [Session view: header, tabs and footer](#session-view-header-tabs-and-footer). The AppShell holds the one value, which the dialog sets and the views read at each attach.
 - **Models and effort** (W119): the model and effort for each kind of work pitwall starts, so a choice can follow usage limits.
   - **A line first,** in meta type: "pitwall's server keeps these until it stops. They don't change the config file: its "work" block sets the defaults." Unlike the other sections, these aren't in the browser: they change processes the server starts, so the server holds them (`src/server/work.ts`), for every tab, until it stops. The section loads them as the dialog opens (`GET /api/work`), saying "Loading the models…" until then, "They can't be changed from here." with no API (the gallery), and a danger [inline alert](#inline-alerts) when it can't.
   - **Then, once the server has sent them,** in meta type: "Claude Code's own defaults are read from its settings files and your environment as this opens. A project's settings can change a session's, as New session shows, and your organization's default or policy from claude.ai can change any."
@@ -2324,7 +2324,7 @@ The header's dialog of settings, a section for each area they affect (W59; Phil,
 
 ### Toasts
 
-- **Component:** `ToastProvider` and `useToast()` (`web/src/components/Toast.tsx`). The Dashboard keeps the stack inside the app, from its first render.
+- **Component:** `ToastProvider` and `useToast()` (`web/src/components/Toast.tsx`). The AppShell keeps the stack inside the app, from its first render.
 - **Placement:** a stack at the bottom right, 24 px from the edges (16 px and full width when the app is 600 px wide or narrower), newest at the bottom, 12 px apart, at most three (the oldest goes first), `--pw-z-toast`. Only the toasts take the pointer, not the stack around them.
 - **Card:** `--pw-surface-overlay`, `--pw-shadow-3`, `--pw-radius-md`, `--pw-toast-w` wide, padding 8 px.
   - A 28 px icon tile (`--pw-<tone>-tint` with `inset 0 0 0 1px var(--pw-<tone>-border)`, `--pw-radius-sm`, a 16 px icon in `--pw-<tone>-tint-fg`): `success`, `info`, or `error` on the danger tokens.
@@ -2662,7 +2662,7 @@ Single-key shortcuts (`/`, `?`, `n`, `j`, `k`, `s`) work only while they're swit
 - while a dialog or the repo drawer is open, since both are modal (the session view over the list isn't);
 - for a key that something nearer already handled, or while an input method is composing.
 
-Holding `n`, `?` or `s` down doesn't repeat them; holding `j` or `k` does. They're handled in `Dashboard.tsx`, on the document, after every handler inside the app; `web/src/shortcuts.ts` decides which key is which.
+Holding `n`, `?` or `s` down doesn't repeat them; holding `j` or `k` does. They're handled in `AppShell.tsx`, on the document, after every handler inside the app; `web/src/shortcuts.ts` decides which key is which.
 
 | Key | Where | What it does |
 |---|---|---|

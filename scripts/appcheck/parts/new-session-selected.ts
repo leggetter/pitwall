@@ -36,7 +36,7 @@ const startedText = (name: string) => `Started ${name}. Its view opens when it s
 const listedText = (name: string) => `${name} is listed now. It didn't open, so you keep your place.`;
 /** The ids the fake server gives the sessions it starts. */
 const STARTED_ID = '00000000-0000-4000-8000-000000064';
-const MESSAGE_BOX = `${VIEW}?.querySelector('.relay-box textarea')`;
+const MESSAGE_BOX = `${VIEW}?.querySelector('.message-box textarea')`;
 
 /**
  * Watches for the dialog leaving the page, and keeps what had focus at that moment in

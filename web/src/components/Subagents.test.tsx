@@ -21,7 +21,7 @@ import type { ConnectionView } from '../connection.js';
 import { NOW, group, minutesAgo, session, snapshot } from '../test/fixtures.js';
 import { cutShort, hover, pass, shownTooltips, unhover } from '../test/tooltips.js';
 import { SUBAGENT_LINK_HINT } from './Conversation.js';
-import { Dashboard } from './Dashboard.js';
+import { AppShell } from './AppShell.js';
 import { SessionRow } from './SessionRow.js';
 import { SessionView } from './SessionView.js';
 import { NO_SUBAGENTS } from './Subagents.js';
@@ -389,7 +389,7 @@ describe('stepping through sessions', () => {
     const view: ConnectionView = { state: 'live', snapshot: snapshot([group({ sessions })]) };
     render(
       <ApiContext.Provider value={api}>
-        <Dashboard view={view} />
+        <AppShell view={view} />
       </ApiContext.Provider>,
     );
     fireEvent.click(within(screen.getByRole('main')).getByRole('button', { name: 'pitwall-test-step-1' }));
