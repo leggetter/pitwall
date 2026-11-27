@@ -1306,6 +1306,34 @@ describe('Conversation: spin-off blocks', () => {
       expect(window.location.search).toBe(`?session=${SID}`);
     });
 
+    it('follows a link that shows a view kept hidden in another root tab (W38): the Conversation tab, at the newest card', async () => {
+      const entries = [withBlocks(2, [fenced('One.')], [proposal(KEY, 'One.')]), withBlocks(3, [fenced('Two.')], [proposal(KEY2, 'Two.')])];
+      const server = fakeServer(page(entries));
+      const api = createApiClient({ apiKey: API_KEY, fetch: withoutSubagents(server.fetch) });
+      window.history.replaceState(null, '', '/');
+      const current = target({});
+      const view = (hidden: boolean) => (
+        <ApiContext.Provider value={api}>
+          <SessionView session={current} listed hidden={hidden} onClose={() => {}} spinOffs={{ onStart: () => {}, onOpenSession: () => {} }} />
+        </ApiContext.Provider>
+      );
+      const result = render(view(true));
+      await settle();
+      // The link is followed while the view is hidden: it ignores the popstate, as a hidden view does.
+      window.history.pushState(null, '', `/?session=${SID}&spinoff=latest`);
+      await act(async () => {
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      });
+      expect(scrolled).toHaveLength(0);
+      // The dashboard shows it: it reads the link from the address.
+      result.rerender(view(false));
+      await settle();
+      expect(scrolled).toHaveLength(1);
+      expect(scrolled[0]!.getAttribute('data-key')).toBe(KEY2);
+      expect(within(result.container).getByRole('tab', { name: /Conversation/, selected: true })).toBeTruthy();
+      expect(window.location.search).toBe(`?session=${SID}`);
+    });
+
     it('does nothing for a session with no block, or without the parameter, or for another session', async () => {
       await viewWith([claude(2, 'No block here.')], {}, `?session=${SID}&spinoff=latest`);
       expect(scrolled).toHaveLength(0);
