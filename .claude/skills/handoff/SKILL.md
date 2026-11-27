@@ -16,7 +16,7 @@ Leave the repo so the next session can start from `NOW.md` alone. Do the steps i
 2. **Update `PLAN.md` only where the design changed:** a new interface, a security rule, a milestone's scope, a row in the open milestone's work breakdown. Not for status; status lives in `NOW.md`. A settled decision moves to `docs/decisions.md` under its ID. Finished milestones' detail goes to `docs/plan-archive.md`, verbatim, under the same heading.
 3. **Check the docs:** `NOW.md` is under 100 lines, and `PLAN.md` hasn't grown past what the change needs.
 4. **Commit** with a conventional message, such as `docs: hand off after W123`. Docs only, so no tests. Use the commit attribution the session was given. Don't push or merge unless asked.
-5. **End with a hand-off block, and nothing after it (W168).** Say in a sentence that the work is committed and that the next session starts from `NOW.md`. If questions are open, say how many, and that they're in `NOW.md` and the next session asks them first, so there's no need to answer before continuing. Don't list them again: one place, `NOW.md`. Then end the message with one `spin-off` block (the pitwall plugin's `pitwall` skill describes it), as the very last thing in it:
+5. **End with a hand-off block, and nothing after it (W168).** Say in a sentence that the work is committed and that the next session starts from `NOW.md`. If questions are open, say how many, and that they're in `NOW.md` and the next session asks any still open first, so there's no need to answer before continuing. Then put them in the message too, as the **Needs your decision:** block, each in full with your lean: pitwall reads that block to list the session in Needs you at once, and a question left only in `NOW.md` showed nowhere until a recap came (W225). Then end the message with one `spin-off` block (the pitwall plugin's `pitwall` skill describes it), as the very last thing in it:
 
    ````
    ```spin-off
@@ -36,6 +36,6 @@ Leave the repo so the next session can start from `NOW.md` alone. Do the steps i
 
 Phil (2026-11-04): with questions open at a hand-off, it wasn't clear whether to answer them first or run `/clear`, or whether they'd be lost. The rule:
 
-- **They're never lost.** The hand-off writes every open question to `NOW.md`'s "Open questions for Phil", in full, with its lean (step 1). That's the only place they're carried.
+- **They're never lost.** The hand-off writes every open question to `NOW.md`'s "Open questions for Phil", in full, with its lean (step 1). That's the only place they're carried across the `/clear`; the hand-off message repeats them in its Needs your decision block so Phil sees them now (step 5).
 - **Either order works.** Answered in this session: record each answer in `NOW.md` (under "Answered", with the date, and in "Next" or `PLAN.md` where it changes the work), commit, then `/clear`. Not answered: `/clear` anyway.
 - **The next session asks first.** After reading `NOW.md`, a session with open questions puts them to Phil before it starts any work they affect, each with its lean, and records the answers as above.

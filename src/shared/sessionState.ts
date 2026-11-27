@@ -123,6 +123,7 @@ export interface StatusBadge {
  * - 'claude-code' and 'blocked': "Blocked". The job's own line is on the row's line 2.
  * - 'restarted': "Waiting for your prompt".
  * - 'asked': "Asked you", subtle, as before W69.
+ * - 'handed-off': "Handed off", subtle (W225), as below.
  * - 'recap': "Waiting on you", subtle as Asked you is (M5, W111): its current recap says it's waiting
  *   on you, as a job Claude Code calls done can be (Phil, 2026-10-29). It takes Done's place. A session
  *   that is also busy (W174) keeps Busy's 8 px dot before the label.
@@ -158,6 +159,9 @@ function needsBadge(session: SessionSummary): StatusBadge {
       return { status: 'blocked', label: `Blocked${reason}`, look: 'solid-warning' };
     case 'restarted':
       return { status: 'restarted', label: 'Waiting for your prompt', look: 'solid-warning' };
+    case 'handed-off':
+      // Needs you since W225; the same badge isHandedOff() gives below.
+      return { status: 'handed-off', label: 'Handed off', look: 'subtle-warning' };
     case 'asked':
       return { status: 'asked', label: 'Asked you', look: 'subtle-warning' };
     case 'recap':
@@ -207,7 +211,7 @@ export const STATUS_RULES: Readonly<Record<SessionStatus, string>> = {
   recap: "Its current recap says it's waiting on you (Needs you reason 'recap'). A busy session keeps Busy's dot.",
   'blocked-stale': 'Claude Code says blocked, nothing needs you, and it has had no activity for over 7 days (stale). Outlined.',
   failed: "Claude Code's background state is failed.",
-  'handed-off': "Its newest message is its own hand-off (spinOff is its own, from a `Continues session <id>.` block or its recap's word-for-word quote), whatever Claude Code's state, but not failed or stopped. It carries on after /clear, so it isn't done. Its card is in Needs you until your next prompt or the job's new session id.",
+  'handed-off': "Its newest message is its own hand-off (spinOff is its own, from a `Continues session <id>.` block or its recap's word-for-word quote), whatever Claude Code's state, but not failed or stopped. It carries on after /clear, so it isn't done. It is in Needs you itself (reason 'handed-off', W225), with its card, until your next prompt, the job's new session id, or the proposal is started or dismissed.",
   'waiting-on': "Claude Code says done, but pitwall's own current recap says it waits on CI, another session or someone else.",
   done: "Claude Code's background state is done, and its recap doesn't say it waits on anyone else.",
   stopped: "Claude Code's background state is stopped.",
@@ -226,6 +230,7 @@ export const NEEDS_YOU_RULES: Readonly<Record<NonNullable<SessionSummary['needsY
   prompt: 'Claude Code is showing a prompt (status waiting); waitingFor says which.',
   'claude-code': "A background job's own line on what it needs, from its state.json.",
   asked: 'Its last turn ended by asking you something.',
+  'handed-off': 'Its last turn ended with its own hand-off, so it waits for you to clear and continue it, until the proposal is started or dismissed.',
   recap: "Its recap, made after its newest activity, says it's waiting on you.",
   restarted: 'You resumed or restarted it in this run of pitwall and no prompt has been sent since.',
   blocked: "Claude Code says blocked and pitwall couldn't read why. Kept so a question is never hidden.",

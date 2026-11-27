@@ -7,7 +7,7 @@ import { DEFAULT_POLL_INTERVAL_MS, type IndexSnapshot, type PrLink, type RelayAl
 import { createAgentsSource, type AgentRow, type AgentsResult } from './agents.js';
 import { createEndedScanner, type EndedScanner, type EndedSession } from './ended.js';
 import { createGroupResolver } from './grouping.js';
-import { createIndexer, startIndexer, type IndexerDeps } from './index.js';
+import { createIndexer, startIndexer, type IndexerDeps, withJobLinks } from './index.js';
 import { createJobReader, type JobNeeds } from './jobs.js';
 import { createSubagentTracker } from './subagents.js';
 import { createTranscriptReader, encodeProjectDir, type TranscriptInfo } from './transcripts.js';
@@ -2065,5 +2065,17 @@ describe('createIndexer: sub-agents (W76)', () => {
     } finally {
       indexer.stop();
     }
+  });
+});
+
+describe("withJobLinks: the job file's links beside the transcript's (W225)", () => {
+  const at = '2026-11-27T15:00:00.000Z';
+  const linked = (number: number, lastAt = at): PrLink => ({ kind: 'linked', repo: 'example/demo-app', number, lastAt });
+  const mention: PrLink = { kind: 'mentioned', repo: 'example/demo-app', number: 7, lastAt: at };
+
+  it("keeps the transcript's, and adds the job's for PRs the transcript has no 'linked' link to", () => {
+    expect(withJobLinks([mention], [linked(7, '2026-11-26T16:00:00.000Z')])).toEqual([mention, linked(7, '2026-11-26T16:00:00.000Z')]);
+    expect(withJobLinks([linked(7)], [linked(7, '2026-11-26T16:00:00.000Z'), linked(8)])).toEqual([linked(7), linked(8)]);
+    expect(withJobLinks([mention], undefined)).toEqual([mention]);
   });
 });

@@ -29,6 +29,8 @@ export function needsAttention(session: SessionSummary): boolean {
  */
 export function indexNeedsYou(session: SessionSummary): boolean {
   if (session.stale || session.finished || session.ended) return false;
+  // A hand-off (W225) that you started or dismissed is settled on the server, after the index set the reason.
+  if (session.needsYou?.reason === 'handed-off' && (session.spinOff === undefined || session.spinOff.settled !== undefined)) return false;
   return session.needsYou !== undefined;
 }
 

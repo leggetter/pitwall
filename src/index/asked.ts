@@ -18,9 +18,9 @@ export const LINE_STRIP_MAX = 1024;
  * Whether `fullText`, the whole raw markdown of an assistant message, asks the
  * user something. Fenced code blocks are ignored.
  *
- * 1. An "Open questions" section decides, when there is one: asked unless its
- *    content is empty, "None" or "N/A". The excerpt is its first list item, or
- *    else its first sentence.
+ * 1. An "Open questions" or "Needs your decision" section decides, when there
+ *    is one (the last of them): asked unless its content is empty, "None" or
+ *    "N/A". The excerpt is its first list item, or else its first sentence.
  * 2. Otherwise asked when the last non-empty line ends with a question mark,
  *    optionally followed by closing quotes or brackets. The excerpt is that line.
  *
@@ -39,8 +39,12 @@ export function detectAskedYou(fullText: string): AskedYou | undefined {
 
 /**
  * The start of a label line. After any blockquote marker, list marker, `#`,
- * `*` and `_`: "open question" or "open questions", then the closing emphasis
- * and a colon. The rest of the line follows the match.
+ * `*` and `_`: "open question" or "open questions", or "needs your decision"
+ * or "needs your decisions", then the closing emphasis and a colon. The rest of
+ * the line follows the match. "Needs your decision" is the label Phil's own
+ * instructions have asked for since 2026-11-05 (W225): with "Open questions"
+ * alone, a session that asked him in that block was found only by its recap,
+ * 5 to 15 minutes later.
  *
  * `lead` starts with `*`, `_` or `#`, so it never competes with the
  * whitespace before it, and nothing after "questions" can fail: two
@@ -48,7 +52,7 @@ export function detectAskedYou(fullText: string): AskedYou | undefined {
  * every split between them, which is quadratic on a long run of spaces.
  */
 const LABEL =
-  /^[\s>]*(?:(?:[-+]|\d+[.)])\s+)?(?<lead>(?:[*_#][*_#\s]*)?)open[*_\s]+questions?(?<close>[*_]*)\s*(?<colon>:?)[*_]*\s*/i;
+  /^[\s>]*(?:(?:[-+]|\d+[.)])\s+)?(?<lead>(?:[*_#][*_#\s]*)?)(?:open[*_\s]+questions?|needs[*_\s]+your[*_\s]+decisions?)(?<close>[*_]*)\s*(?<colon>:?)[*_]*\s*/i;
 const LIST_ITEM = /^\s*(?:>\s*)*(?:[-*+]|\d+[.)])\s+/;
 /** A line that starts a new labelled part, such as `**Next steps:**` or a line that is all bold. */
 const BOLD_LABEL = /^\s*(\*\*|__)(?:[^*_\n]+?(?::\s*\1|\1\s*:)|[^*_\n]+\1\s*$)/;
@@ -59,7 +63,7 @@ interface Section {
   asked: AskedYou | undefined;
 }
 
-/** The last "Open questions" section, or undefined when the message has none. */
+/** The last "Open questions" or "Needs your decision" section, or undefined when the message has none. */
 function openQuestions(lines: readonly MarkedLine[]): Section | undefined {
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i] as MarkedLine;
