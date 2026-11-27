@@ -16,6 +16,16 @@ describe('ownLinkSearch (W220)', () => {
     expect(isOwnLink('http://127.0.0.1:4518/?pr=1', e)).toBe(true);
   });
 
+  it('keeps only the query of a parsing edge case: userinfo, a backslash, an encoded #', () => {
+    const e = env();
+    // Userinfo is dropped: only the query string is followed.
+    expect(ownLinkSearch('http://x@127.0.0.1:4518/?session=a', e)).toBe('?session=a');
+    // A backslash after the host is a path to the URL parser, so it isn't /.
+    expect(ownLinkSearch('http://127.0.0.1:4518\\@evil.example/?session=a', e)).toBeUndefined();
+    // %23 stays in the query: no fragment reaches token.ts.
+    expect(ownLinkSearch('http://127.0.0.1:4518/?session=a%23token=x', e)).toBe('?session=a%23token=x');
+  });
+
   it('refuses another origin, port, scheme, host or path', () => {
     const e = env();
     for (const href of [
