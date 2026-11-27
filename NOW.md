@@ -71,6 +71,8 @@ Still to do:
 
 ## Open questions for Phil
 
+0. **Merge [#360](https://github.com/leggetter/pitwall/pull/360) (W225: Needs you catches a hand-off, "Needs your decision" and a continued job's PRs at once) into `main` once CI is green, then restart 4518?** Lean: yes. CI was running at the hand-off (2026-11-27); check `gh pr checks 360` first. After the restart, confirm the openclaw job (session 824da875) reads right in Needs you.
+0. **Merge [leggetter/phil-skills#18](https://github.com/leggetter/phil-skills/pull/18) (the general handoff skill repeats open questions in the hand-off's Needs your decision block) into its `main`?** Lean: yes; a two-line wording change. Its branch's worktree was in the W225 session's job folder, which goes with that job: the branch is pushed.
 1. **Post the scope change to [#143](https://github.com/leggetter/pitwall/issues/143) (Session view: expand the conversation or terminal to the full page)?** The comment's exact text is in `PLAN.md`, W224, "The #143 comment", checked with `phil-messaging`, with the issue retitled "Session view: let the session pane fill the browser window". Lean: yes, then post it.
 
 - Answered (Phil, 2026-11-27, "yes to both"): merge #350 (W218 piece 1) into `main` with the builder's four UI calls (done); add W221 (the sessions pitwall starts don't inherit a session's sub-agent settings), after W218 (in `PLAN.md`).
