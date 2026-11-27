@@ -241,7 +241,7 @@ export class LeadStore {
         return file === undefined ? undefined : readDerivedFrom(file, sessionId);
       });
     if (this.#file !== undefined) {
-      const stored = readLeadsFile(this.#file);
+      const stored = readLeadsFile(this.#file, this.#now());
       for (const mark of stored.marks) this.#marks.set(mark.id, mark);
       for (const link of stored.links) this.#links.set(linkKey(link), link);
     }
@@ -269,8 +269,10 @@ export class LeadStore {
     if (on) {
       if (tree.leadOf.has(id)) return { ok: false, error: 'It’s a worker. Choose Not a worker first, then Make lead.' };
       if (tree.marked.has(id)) return { ok: true };
-    } else if (!tree.leads.has(id)) {
-      return { ok: true };
+    } else {
+      // A Start a worker… still waited for would make it a lead again (W218 review, F3).
+      for (const [shortId, entry] of this.#expected) if (this.#newest(entry.lead) === id) this.#expected.delete(shortId);
+      if (!tree.leads.has(id)) return { ok: true };
     }
     const at = this.#now().toISOString();
     const changes: { marks: LeadMark[]; links: LeadLink[] } = { marks: [{ id: sessionId, at, on }], links: [] };
@@ -279,8 +281,8 @@ export class LeadStore {
       for (const mark of this.#marks.values()) if (mark.on && mark.id !== sessionId && this.#newest(mark.id) === id) changes.marks.push({ id: mark.id, at, on: false });
       changes.links.push(...this.#unlinks(at, (lead) => lead === id));
     }
-    this.#apply(changes);
-    return { ok: true };
+    this.#apply(changes, at);
+    return this.#took(on ? (tree) => tree.marked.has(id) : (tree) => !tree.leads.has(id));
   }
 
   /** Report to…: `worker` works for `lead`, which must be a lead now. Replaces any lead it had. Both read as the newest in their chains. */
@@ -296,8 +298,8 @@ export class LeadStore {
     const at = this.#now().toISOString();
     const links = this.#unlinks(at, (_, each) => each === newestWorker);
     links.push({ lead, worker, at, on: true, how });
-    this.#apply({ marks: [], links });
-    return { ok: true };
+    this.#apply({ marks: [], links }, at);
+    return this.#took((tree) => tree.leadOf.get(newestWorker)?.lead === newestLead);
   }
 
   /** Not a worker: `worker`, read as the newest in its chain, no longer works for its lead. */
@@ -305,8 +307,9 @@ export class LeadStore {
     if (!isId(worker)) return { ok: false, error: 'That is not a valid session id.' };
     const id = this.#newest(worker);
     if (!this.tree().leadOf.has(id)) return { ok: true };
-    this.#apply({ marks: [], links: this.#unlinks(this.#now().toISOString(), (_, each) => each === id) });
-    return { ok: true };
+    const at = this.#now().toISOString();
+    this.#apply({ marks: [], links: this.#unlinks(at, (_, each) => each === id) }, at);
+    return this.#took((tree) => !tree.leadOf.has(id));
   }
 
   /** Whether `sessionId`, read as the newest in its chain, is a worker now: one can't have workers. */
@@ -342,12 +345,21 @@ export class LeadStore {
     return newestOf(id, (each) => this.#lineage?.linksOf(each).to, clearedTo);
   }
 
-  #apply(changes: { marks: readonly LeadMark[]; links: readonly LeadLink[] }): void {
+  /** `changes`, made at `at`, held and written. */
+  #apply(changes: { marks: readonly LeadMark[]; links: readonly LeadLink[] }, at: string): void {
     if (changes.marks.length === 0 && changes.links.length === 0) return;
     for (const mark of changes.marks) this.#marks.set(mark.id, mark);
     for (const link of changes.links) this.#links.set(linkKey(link), link);
-    this.#write();
+    this.#write(at);
     this.#changed();
+  }
+
+  /**
+   * OK when the tree shows the change just made, else a refusal for a 409, so a 200 always means it took
+   * (W218 review, F1). An entry held with a newer time, such as after the clock went back, would hide it.
+   */
+  #took(shows: (tree: LeadTree) => boolean): LeadChange {
+    return shows(this.tree()) ? { ok: true } : { ok: false, error: 'That change didn’t take: pitwall holds a newer one. Reload and try again.' };
   }
 
   /** `snapshot` with `lead` and `workerOf` on each listed lead and worker. Also starts the reads it needs. A copy when any session changed. */
@@ -400,7 +412,7 @@ export class LeadStore {
       const at = this.#now().toISOString();
       // Not through link(): the lead may have been unmarked since, and its started worker makes it one again.
       this.#links.set(linkKey({ lead: entry.lead, worker }), { lead: entry.lead, worker, at, on: true, how: 'started' });
-      this.#write();
+      this.#write(at);
       // Told after this decoration, which already has it.
       this.#version += 1;
       queueMicrotask(() => this.#tell());
@@ -478,10 +490,13 @@ export class LeadStore {
     for (const listener of [...this.#listeners]) listener();
   }
 
-  /** The file, after merging what another pitwall wrote, written whole by rename. Fails soft. */
-  #write(): void {
+  /**
+   * The file, after merging what another pitwall wrote, written whole by rename. Fails soft. The file's
+   * times after `at`, the change's own, are read as `at`, so a time in the future can't beat it.
+   */
+  #write(at: string): void {
     if (this.#file === undefined || this.#home === undefined) return;
-    const disk = readLeadsFile(this.#file);
+    const disk = readLeadsFile(this.#file, new Date(at));
     const merge = <T extends { at: string }>(mine: Map<string, T>, theirs: readonly T[], key: (entry: T) => string) => {
       for (const entry of theirs) {
         const held = mine.get(key(entry));
@@ -511,10 +526,11 @@ export class LeadStore {
 /**
  * The marks and links in the file at `file` that check out; none when there's no file or it can't be
  * trusted: not a regular file of this user's, a link, writable by group or others, or over
- * LEADS_FILE_MAX_BYTES. Each entry is made again from the fields that check out; the newest
- * LEADS_HELD_MAX of each are kept.
+ * LEADS_FILE_MAX_BYTES. Each entry is made again from the fields that check out, with a time after
+ * `now` read as `now` (as W188's PR dismissals do), so a planted future time can't win every merge or
+ * push every new entry out; the newest LEADS_HELD_MAX of each are kept.
  */
-export function readLeadsFile(file: string): { marks: LeadMark[]; links: LeadLink[] } {
+export function readLeadsFile(file: string, now: Date = new Date()): { marks: LeadMark[]; links: LeadLink[] } {
   const none = { marks: [], links: [] };
   let fd: number | undefined;
   let value: unknown;
@@ -537,16 +553,19 @@ export function readLeadsFile(file: string): { marks: LeadMark[]; links: LeadLin
     if (fd !== undefined) closeSync(fd);
   }
   if (!isRecord(value) || value.v !== 1) return none;
+  const nowMs = now.getTime();
+  const nowIso = now.toISOString();
+  const timeOf = (at: string) => (Date.parse(at) > nowMs ? nowIso : at);
   const marks: LeadMark[] = [];
   for (const entry of Array.isArray(value.marks) ? (value.marks as unknown[]) : []) {
     if (!isRecord(entry) || !isId(entry.id) || !isTime(entry.at) || typeof entry.on !== 'boolean') continue;
-    marks.push({ id: entry.id, at: entry.at, on: entry.on });
+    marks.push({ id: entry.id, at: timeOf(entry.at), on: entry.on });
   }
   const links: LeadLink[] = [];
   for (const entry of Array.isArray(value.links) ? (value.links as unknown[]) : []) {
     if (!isRecord(entry) || !isId(entry.lead) || !isId(entry.worker) || entry.lead === entry.worker || !isTime(entry.at) || typeof entry.on !== 'boolean') continue;
     if (entry.how !== undefined && entry.how !== 'started' && entry.how !== 'reported') continue;
-    links.push({ lead: entry.lead, worker: entry.worker, at: entry.at, on: entry.on, ...(entry.on && entry.how !== undefined ? { how: entry.how as 'started' | 'reported' } : {}) });
+    links.push({ lead: entry.lead, worker: entry.worker, at: timeOf(entry.at), on: entry.on, ...(entry.on && entry.how !== undefined ? { how: entry.how as 'started' | 'reported' } : {}) });
   }
   const newest = <T extends { at: string }>(entries: T[]) => entries.sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).slice(-LEADS_HELD_MAX);
   return { marks: newest(marks), links: newest(links) };

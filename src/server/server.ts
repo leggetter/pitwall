@@ -125,7 +125,7 @@ import { createRelayManager } from './relay.js';
 import { registerRelay } from './relayRoute.js';
 import { DIAGNOSTICS_INTERVAL_MS, DiagnosticsLog, NeedsYouRecorder } from './diagnostics.js';
 import { createFlagView, FlagStore, registerFlags } from './flags.js';
-import { createLeadsView, LeadStore } from './leads.js';
+import { createLeadsView, LeadStore, type LeadStoreOptions } from './leads.js';
 import { registerLeads } from './leadRoutes.js';
 import { createLineageView, LineageStore } from './lineage.js';
 import { createSnoozeView, registerSnoozes, SnoozeStore } from './snoozes.js';
@@ -257,6 +257,11 @@ export interface ServerInternals {
    * adapter (src/index/jobs.ts): tests pass a fake, so none reads the user's jobs folder.
    */
   savedPermission?: SupervisorActionSources['savedPermission'];
+  /**
+   * Reads a session's `derived-from` entry for leads and workers (W218, leads.ts): tests pass a fake, so
+   * none reads the user's transcripts under ~/.claude/projects (W218 review, F6).
+   */
+  readDerived?: LeadStoreOptions['readDerived'];
 }
 
 export async function startServerWithInternals(
@@ -330,7 +335,7 @@ export async function startServerWithInternals(
   const lineage = options.lineage ?? new LineageStore(options.pitwallHome === undefined ? {} : { home: options.pitwallHome });
   const lineaged = createLineageView(snoozed, lineage);
   // Leads and workers (W218): each lead's `lead` and each worker's `workerOf`, ids only, over lineage, since a lead keeps its workers through its chain.
-  const leads = new LeadStore({ lineage, ...(options.pitwallHome === undefined ? {} : { home: options.pitwallHome }) });
+  const leads = new LeadStore({ lineage, ...(options.pitwallHome === undefined ? {} : { home: options.pitwallHome }), ...(internals.readDerived === undefined ? {} : { readDerived: internals.readDerived }) });
   const led = createLeadsView(lineaged, leads);
   // Started and dismissed spin-off proposals (W212): each one's `settled`, from a click on any page or a session found with its name and folder.
   const spinOffs = options.spinOffs ?? new SpinOffStore({ ...(options.pitwallHome === undefined ? {} : { home: options.pitwallHome }), predecessorOf: (id) => lineage.linksOf(id).from });

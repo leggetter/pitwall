@@ -242,6 +242,51 @@ describe('LeadStore', () => {
     expect(new LeadStore({ home, now, readDerived: none }).tree().leads.has(A)).toBe(true);
   });
 
+  it('reads a future time in the file as now, so a planted entry can’t beat Make lead or push new links out (W218 review, F1)', () => {
+    const future = '2099-01-01T00:00:00.000Z';
+    const planted = Array.from({ length: LEADS_HELD_MAX }, (_, i) => ({ lead: C, worker: `cccccccc-cccc-4ccc-8ccc-${i.toString(16).padStart(12, '0')}`, at: future, on: false }));
+    writeFileSync(file(), JSON.stringify({ v: 1, marks: [{ id: A, at: future, on: false }], links: planted }), { mode: 0o600 });
+    expect(readLeadsFile(file(), now()).marks).toEqual([{ id: A, at: now().toISOString(), on: false }]);
+    const store = new LeadStore({ home, now, readDerived: none });
+    clock += 1000;
+    expect(store.mark(A, true)).toEqual({ ok: true });
+    expect(store.tree().marked.has(A)).toBe(true);
+    clock += 1000;
+    expect(store.link(B, A, 'reported')).toEqual({ ok: true });
+    // Still there after another pitwall reads the file, and not pushed out by the planted 500.
+    const again = new LeadStore({ home, now, readDerived: none });
+    expect(again.tree().marked.has(A)).toBe(true);
+    expect(again.tree().leadOf.get(B)).toEqual({ lead: A, how: 'reported' });
+    expect(readFileSync(file(), 'utf8')).not.toContain('2099');
+  });
+
+  it('refuses a change the tree doesn’t show afterwards, so a 200 means it took (W218 review, F1)', () => {
+    writeFileSync(file(), JSON.stringify({ v: 1, marks: [{ id: A, at: at(0), on: false }], links: [] }), { mode: 0o600 });
+    const store = new LeadStore({ home, now, readDerived: none });
+    // Another pitwall's file fills up with LEADS_HELD_MAX marks dated in the future, read as now: as new as
+    // Make lead's own, which then loses its place in the newest LEADS_HELD_MAX.
+    const planted = Array.from({ length: LEADS_HELD_MAX }, (_, i) => ({ id: `cccccccc-cccc-4ccc-8ccc-${i.toString(16).padStart(12, '0')}`, at: '2099-01-01T00:00:00.000Z', on: false }));
+    writeFileSync(file(), JSON.stringify({ v: 1, marks: [{ id: A, at: at(0), on: false }, ...planted], links: [] }), { mode: 0o600 });
+    expect(store.mark(A, true)).toMatchObject({ ok: false });
+    expect(store.tree().marked.has(A)).toBe(false);
+    // Again a moment later: the file's times are in the past now, so it takes.
+    clock += 1000;
+    expect(store.mark(A, true)).toEqual({ ok: true });
+    expect(new LeadStore({ home, now, readDerived: none }).tree().marked.has(A)).toBe(true);
+  });
+
+  it('Not a lead drops a Start a worker… still waited for, so it doesn’t make the session a lead again (W218 review, F3)', async () => {
+    const store = new LeadStore({ now, readDerived: none });
+    store.mark(A, true);
+    expect(store.expectWorker('0f0f0f0f', A)).toBe(true);
+    expect(store.mark(A, false)).toEqual({ ok: true });
+    const s = byId(store.decorate(snapshotOf(session(A), session(B, { shortId: '0f0f0f0f' }))));
+    expect(s.get(A)?.lead).toBeUndefined();
+    expect(s.get(B)?.workerOf).toBeUndefined();
+    expect(store.tree().leads.size).toBe(0);
+    await settle();
+  });
+
   describe('readLeadsFile()', () => {
     const good = { v: 1, marks: [mark(A, 0)], links: [link(A, B, 1, true, 'started')] };
     const write = (value: unknown, mode = 0o600) => {
