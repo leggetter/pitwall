@@ -109,6 +109,9 @@ const ICONS: Readonly<Record<string, string | readonly [glyph: string, style: ty
   file: 'description',
   // The header's Usage (W158), which opens the Usage view: a bar chart, what the view mostly is.
   usage: 'bar_chart',
+  // The session view's Fill the window, and Show the lists again (W224): a panel at the left, closing, then opening.
+  'pane-fill': 'left_panel_close',
+  'pane-restore': 'left_panel_open',
   'theme-system': 'computer',
   'theme-light': 'light_mode',
   'theme-dark': 'dark_mode',

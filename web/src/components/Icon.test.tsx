@@ -9,7 +9,7 @@ const NAMES = [
   'conversation', 'send', 'stop', 'remove', 'restart', 'retry', 'info', 'success', 'warning', 'error',
   'repo', 'directory', 'external', 'latest', 'back', 'keyboard', 'hide', 'show', 'sort', 'preferences', 'checked', 'star', 'starred', 'snooze', 'snooze-on', 'flag', 'flag-on', 'undo', 'usage', 'subagents', 'supervisor', 'attach',
   'image', 'pdf', 'file', 'theme-system',
-  'theme-light', 'theme-dark',
+  'pane-fill', 'pane-restore', 'theme-light', 'theme-dark',
 ];
 
 function svgOf(container: HTMLElement): SVGSVGElement {
