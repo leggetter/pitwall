@@ -120,7 +120,29 @@ The spin-off card shows the kind and the reason:
 - **Delegated sessions report to their lead with `SendMessage`,** which revises Peers' show-only rule for a lead and its delegated sessions only.
 - **A spin-off block gets one optional line** saying whether the new session reports back.
 - **Labels, option A, are not the way to group sessions:** that's projects, a future item (W219, `PLAN.md`, "Later: projects").
-- **The names "lead" and "delegated"** are checked against other tools before the build (below).
+- **The names "lead" and "delegated"** are checked against other tools before the build (below); the recommendation is "coordinator session" and "child sessions", for Phil's call.
+
+### The names: what other tools call them (checked 2026-11-27)
+
+Phil, 2026-11-27: "is 'delegated' the right word, and is 'lead' the right word? … I don't want to invent our own if there's something in T3 Code or similar." A sub-agent fetched each tool's own docs; every term below is quoted from them.
+
+| Tool | The session that hands out work | The sessions that get it | Separate sessions you can steer? |
+| --- | --- | --- | --- |
+| [Devin](https://docs.devin.ai/work-with-devin/advanced-capabilities.md) | "coordinator session" | "child sessions" | Separate machines; steering them not confirmed |
+| [icons8/hub](https://github.com/icons8/hub) | "coordinator session" | "agents" (permanent), "executors" (short-lived) | Yes |
+| T3 Code (`docs/user/subagents.md` in pingdotgg/t3code) | "parent thread" | "child threads", from `delegate_task`; also "T3-delegated subagent" | Yes, each "has its own composer" |
+| [Gas Town](https://github.com/gastownhall/gastown) | the Mayor, "Your primary AI coordinator" | polecats, "Worker agents" | The Mayor, yes; polecats not confirmed |
+| [Herdr](https://herdr.dev/) | "the agent that started them" | "helpers" | Yes |
+| [Claude Code agent teams](https://code.claude.com/docs/en/agent-teams) | "lead" | "teammates" | Yes, inside the lead's session |
+| [OpenAI Codex](https://learn.chatgpt.com/docs/agent-configuration/subagents.md) | "main agent", "parent agent" | "subagent", "A delegated agent that Codex starts" | Partly |
+| [Cursor's research](https://cursor.com/blog/scaling-agents) | "planners" | "workers" | No |
+
+- **No single convention.** Parent and child recur most for the relationship (T3 Code, Devin, Codex); "coordinator" recurs most for the session that hands out work (hub, Devin, Gas Town), and it's the word pitwall's own `AGENTS.md` and `NOW.md` already use for the session that directs pitwall's work.
+- **"Delegated" is used for sub-agents** by T3 Code and Codex, which blurs the line W218's rule draws between a delegated session and a sub-agent.
+- **"Lead" with "teammates"** is only Claude Code's agent teams, which this spike found don't give this shape, so it would read as agent teams.
+- **"Child"** suggests the coordinator started the session; Report to… also links one that already existed. That's the less common case, and Devin and T3 Code use "child" the same way for sessions their coordinator started.
+- **No clash** with pitwall's other words: lineage (W167) says "continues" and "continued by", not parent and child; the supervisor stays the view across all sessions.
+- **The recommendation:** **coordinator session** and **child sessions**, Devin's pair; in the list, "Coordinator · 3 children" and "child of W218 design". The fallback, if "child" reads wrong for an assigned session: "coordinator" with "linked sessions", which is pitwall's own word, not a convention.
 
 ### What it changes in the plan
 
