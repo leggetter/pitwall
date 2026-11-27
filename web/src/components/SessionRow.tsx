@@ -28,7 +28,7 @@
 
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import type { PullRequestSummary, SessionGroup, SessionSummary } from '../../../src/shared/protocol.js';
-import { absoluteTime, plainText } from '../format.js';
+import { absoluteTime, clockTime, plainText } from '../format.js';
 import { prNeedText, sessionPrBadge } from '../prs.js';
 import { ENDED_RECAP_HINT, FINISHED_RECAP_HINT, finishedWaitingOnYou, forYouLabel, quietWaitingOn, recapForYou, WAITING_ON_TEXT, waitingPr } from '../recap.js';
 import { elsewhereRepos } from '../groupBy.js';
@@ -41,7 +41,7 @@ import { runningText } from '../subagents.js';
 import { contextLevel } from '../context.js';
 import { Badge, StatusBadge } from './Badge.js';
 import { Icon } from './Icon.js';
-import { underText } from '../leads.js';
+import { REPORTED, reportedLinkLabel, underText } from '../leads.js';
 import { ContextBadge } from './ContextGauge.js';
 import { Highlight } from './Highlight.js';
 import { canResumeFromRow, RowResume } from './RowResume.js';
@@ -234,9 +234,14 @@ export interface SessionRowProps {
   lead?: { text: string; open: boolean; onToggle: () => void; listId: string; hasWorkers: boolean } | undefined;
   /** A worker whose lead isn't shown with it (W218): "under <lead>" on line 2, after its group's label. */
   under?: string | undefined;
+  /**
+   * A worker's "reported 10:42" (W218 piece 2), after its group's label and "under <lead>": the time of its
+   * newest report to its lead, a link that opens its view on the Conversation tab. Not shown without it.
+   */
+  onReported?: ((sessionId: string) => void) | undefined;
 }
 
-export function SessionRow({ session, group, showGroup = false, onOpen, onStep, isOpen = false, starred = false, onStar, onSnooze, onFlag, owned, offerResume = false, lead, under }: SessionRowProps) {
+export function SessionRow({ session, group, showGroup = false, onOpen, onStep, isOpen = false, starred = false, onStar, onSnooze, onFlag, owned, offerResume = false, lead, under, onReported }: SessionRowProps) {
   // Snoozed (W154) or flagged as not needing you (W153): it still needs you, by the index, but has no
   // bar, its badge is outlined, and line 2 says so.
   const snoozed = isSnoozed(session);
@@ -263,6 +268,10 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
   const pr = sessionPrBadge(owned);
   // Line 2's label: the group's, in Needs you and All sessions.
   const label = [showGroup ? plainText(groupLabel(group)) : undefined, under === undefined ? undefined : underText(plainText(under))].filter((part) => part !== undefined).join(' · ') || undefined;
+  // A worker's newest report to its lead (W218 piece 2): "reported 10:42", after the label.
+  const reportedAt = session.workerOf?.reportedAt;
+  const reportedTime = onReported === undefined || reportedAt === undefined ? undefined : clockTime(reportedAt);
+  const reported = reportedAt !== undefined && reportedTime !== undefined ? { at: reportedAt, time: reportedTime } : undefined;
   // A lead's workers (W218): "3 workers", first on line 2.
   const workers = lead?.text;
   // How many of its sub-agents are running, at the end of line 2, while any are (W77).
@@ -316,7 +325,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
   ].filter(Boolean);
 
   // Line 2, when there's anything to say (the flag and snooze controls have a line 2 to themselves when there isn't).
-  const line2 = (workers !== undefined || label !== undefined || wants || running || aside !== undefined || waitingOn !== undefined || elsewhere !== undefined) && (
+  const line2 = (workers !== undefined || label !== undefined || reported !== undefined || wants || running || aside !== undefined || waitingOn !== undefined || elsewhere !== undefined) && (
     <Tooltip content={wants?.hint} relation="none" onlyIfCut>
       <p className="session-what">
         {/* What gives way, with an ellipsis, before the running count does. */}
@@ -324,7 +333,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
           {workers !== undefined && (
             <>
               <span className="session-lead-workers">{workers}</span>
-              {(label !== undefined || aside !== undefined || wants || waitingOn !== undefined) && (
+              {(label !== undefined || reported !== undefined || aside !== undefined || wants || waitingOn !== undefined) && (
                 <span className="session-what-sep" aria-hidden="true">
                   {' · '}
                 </span>
@@ -336,6 +345,25 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
               <span className="session-group">
                 <Highlight text={label} />
               </span>
+              {(reported !== undefined || aside !== undefined || wants || waitingOn !== undefined) && (
+                <span className="session-what-sep" aria-hidden="true">
+                  {' · '}
+                </span>
+              )}
+            </>
+          )}
+          {reported !== undefined && (
+            // Quiet, as the label is: a link to its conversation, at the newest place, not at the report.
+            <>
+              <button
+                type="button"
+                className="link-button session-reported"
+                data-reported={session.sessionId}
+                aria-label={reportedLinkLabel(reported.time)}
+                onClick={() => onReported?.(session.sessionId)}
+              >
+                {REPORTED} <time dateTime={reported.at}>{reported.time}</time>
+              </button>
               {(aside !== undefined || wants || waitingOn !== undefined) && (
                 <span className="session-what-sep" aria-hidden="true">
                   {' · '}
@@ -370,7 +398,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
         {running !== undefined && (
           // Quiet, and never cut: "· 2 sub-agents running", after whatever is before it.
           <span className="session-running">
-            {(workers !== undefined || label !== undefined || wants || aside !== undefined || waitingOn !== undefined) && (
+            {(workers !== undefined || label !== undefined || reported !== undefined || wants || aside !== undefined || waitingOn !== undefined) && (
               <span className="session-what-sep" aria-hidden="true">
                 {' · '}
               </span>
@@ -381,7 +409,7 @@ export function SessionRow({ session, group, showGroup = false, onOpen, onStep, 
         {elsewhere !== undefined && (
           // Quiet, as the count is, after it: "· also in phil-skills", "+1" for each more.
           <span className="session-elsewhere">
-            {(workers !== undefined || label !== undefined || wants || aside !== undefined || waitingOn !== undefined || running !== undefined) && (
+            {(workers !== undefined || label !== undefined || reported !== undefined || wants || aside !== undefined || waitingOn !== undefined || running !== undefined) && (
               <span className="session-what-sep" aria-hidden="true">
                 {' · '}
               </span>

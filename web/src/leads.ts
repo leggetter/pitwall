@@ -21,7 +21,7 @@
 // only closed leads' ids are kept, `{"v":1,"closed":["<session id>", …]}`, at most LEADS_CAP of them,
 // the oldest dropped first. Every read and write is in try/catch; without storage every lead is open.
 
-import { leadPath, workerPath, workerStartedPath, type LeadResult, type SessionGroup, type SessionSummary } from '../../src/shared/protocol.js';
+import { leadBriefPath, leadPath, workerBriefPath, workerPath, workerStartedPath, type LeadBriefResult, type LeadResult, type SessionGroup, type SessionSummary } from '../../src/shared/protocol.js';
 import type { ApiClient } from './api.js';
 import { groupLabel, needsAttention, isBusy, type Listed } from './sessions.js';
 import { isPrRow, type ListRow } from './work.js';
@@ -178,6 +178,8 @@ export const WORKER_FOR = 'worker for';
 
 // The menu's items and what they say once done.
 export const MAKE_LEAD = 'Make lead';
+/** Make lead on a lead only by its own transcript's word: pitwall didn't see it take the lead's place (the fix check's N2). */
+export const CONFIRM_LEAD = 'Confirm as lead';
 export const NOT_A_LEAD = 'Not a lead';
 export const START_WORKER = 'Start a worker…';
 export const REPORT_TO = 'Report to…';
@@ -185,21 +187,28 @@ export const NOT_A_WORKER = 'Not a worker';
 /** New session's subtitle from Start a worker…. */
 export const startWorkerSubtitle = (leadName: string) => `For: ${leadName}`;
 
-/** Which sessions you can pick in Report to…: every listed lead but the session itself, by name. */
+/**
+ * Which sessions you can pick in Report to…: every listed lead but the session itself, by name, and only a
+ * lead by your marks, links, launches and the lineage pitwall saw (`lead.trusted`, the review's F2), never
+ * one only by its own transcript's word: the server refuses that one until you choose Make lead on it.
+ */
 export function leadChoices(every: Iterable<Listed>, sessionId: string): Listed[] {
-  return [...every].filter(({ session }) => session.lead !== undefined && session.sessionId !== sessionId).sort((a, b) => a.session.name.localeCompare(b.session.name));
+  return [...every].filter(({ session }) => session.lead?.trusted === true && session.sessionId !== sessionId).sort((a, b) => a.session.name.localeCompare(b.session.name));
 }
 
 /** The menu items a session's view offers for leads and workers (W218). */
-export type LeadAction = 'make-lead' | 'not-lead' | 'start-worker' | 'report-to' | 'not-worker';
+export type LeadAction = 'make-lead' | 'confirm-lead' | 'not-lead' | 'start-worker' | 'report-to' | 'not-worker';
 
 /**
  * Which of them `session` offers: a lead can start a worker or stop being a lead; a worker can report
  * to another lead or stop being a worker; any other session can be made a lead or report to one, a
- * finished one included. `leadsToPick` is whether Report to… has a lead to list.
+ * finished one included. A lead only by its own transcript's word (no `lead.trusted`) offers Confirm as
+ * lead, which is Make lead under a name that says pitwall didn't see it take the lead's place, and is how
+ * it becomes one pitwall names (the review's F2, the fix check's N2), and no Start a worker…, which would
+ * make it one without that word (N1). `leadsToPick` is whether Report to… has a lead to list.
  */
 export function leadActions(session: Pick<SessionSummary, 'lead' | 'workerOf'>, leadsToPick: boolean): LeadAction[] {
-  if (session.lead !== undefined) return ['start-worker', 'not-lead'];
+  if (session.lead !== undefined) return session.lead.trusted === true ? ['start-worker', 'not-lead'] : ['confirm-lead', 'not-lead'];
   if (session.workerOf !== undefined) return [...(leadsToPick ? (['report-to'] as const) : []), 'not-worker'];
   return ['make-lead', ...(leadsToPick ? (['report-to'] as const) : [])];
 }
@@ -270,8 +279,46 @@ export const workerStarted = (api: Pick<ApiClient, 'post'>, leadId: string, shor
 
 /** The toast once one is done. */
 export function leadDoneText(action: Exclude<LeadAction, 'start-worker' | 'report-to'>, name: string): string {
-  if (action === 'make-lead') return `${name} is a lead.`;
+  if (action === 'make-lead' || action === 'confirm-lead') return `${name} is a lead.`;
   if (action === 'not-lead') return `${name} isn’t a lead. Its workers are no longer linked to it.`;
   return `${name} isn’t a worker.`;
 }
 export const reportedText = (name: string, leadName: string) => `${name} is a worker for ${leadName}.`;
+
+// The paragraph a worker is given about its lead (W218 piece 2, src/server/leadBrief.ts): shown before New
+// session's Start from Start a worker…, and offered after Report to…. The server writes it and, for Start a
+// worker…, adds its own copy to the first prompt; the page only shows it, or sends what the server gave.
+
+/** What a paragraph request answers: the paragraph, or why there's none, to show as it is. */
+export type BriefOutcome = { kind: 'ok'; leadName: string; text: string } | { kind: 'refused'; error: string };
+
+/** What a failed paragraph request shows when the server gave no `error` of its own. */
+export const BRIEF_FAILED = 'pitwall couldn’t get the paragraph about its lead.';
+
+/** GETs a paragraph. Never throws. */
+export async function getBrief(api: Pick<ApiClient, 'get'>, path: string, signal?: AbortSignal): Promise<BriefOutcome> {
+  try {
+    const result = await api.get(path, signal ? { signal } : {});
+    if (result.kind === 'unauthorized') return { kind: 'refused', error: "pitwall didn't accept the page's key. Reload the page." };
+    const answer = result.body as Partial<LeadBriefResult> | undefined;
+    if (typeof answer !== 'object' || answer === null) return { kind: 'refused', error: BRIEF_FAILED };
+    if (result.kind === 'ok' && answer.ok === true && typeof answer.text === 'string' && typeof answer.leadName === 'string') return { kind: 'ok', leadName: answer.leadName, text: answer.text };
+    if (answer.ok === false && typeof answer.error === 'string') return { kind: 'refused', error: answer.error };
+    return { kind: 'refused', error: BRIEF_FAILED };
+  } catch {
+    return { kind: 'refused', error: BRIEF_FAILED };
+  }
+}
+
+export const leadBriefOf = (api: Pick<ApiClient, 'get'>, leadId: string, signal?: AbortSignal) => getBrief(api, leadBriefPath(leadId), signal);
+export const workerBriefOf = (api: Pick<ApiClient, 'get'>, workerId: string, signal?: AbortSignal) => getBrief(api, workerBriefPath(workerId), signal);
+
+/** New session's label over the paragraph from Start a worker…. */
+export const BRIEF_LABEL = 'Added after your prompt';
+/** What New session says when there's no paragraph, after the server's reason. */
+export const BRIEF_WITHOUT = 'The worker starts without it.';
+
+/** A worker's row (W218 piece 2): "reported", before the time of its newest report to its lead. */
+export const REPORTED = 'reported';
+/** The row's link's name: what it opens. */
+export const reportedLinkLabel = (time: string) => `reported ${time}: open its conversation`;

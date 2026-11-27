@@ -225,6 +225,7 @@ export class LineageStore {
   readonly #listeners = new Set<() => void>();
   #version = 0;
   #indexed: { version: number; index: LineIndex } | undefined;
+  #successors: { version: number; next: Map<string, Set<string>>; observed: Map<string, Set<string>> } | undefined;
   /** The last listing's background rows by job short id. */
   #jobs = new Map<string, Seen>();
   /** Jobs backfilled this run, by short id and the session id the listing gave. */
@@ -264,6 +265,27 @@ export class LineageStore {
     if (back[0] !== undefined) links.from = back[0].from;
     if (forward[0] !== undefined) links.to = forward[0].to;
     return links;
+  }
+
+  /**
+   * The one session that carries on from `sessionId`, or undefined when none does or more than one
+   * does (W218 piece 2, the review's F2): a worker's report target follows a chain only where it has
+   * one answer, so it follows neither of two sessions that claim the same predecessor. With
+   * `inferred: false`, only the lines pitwall saw happen count (the review's F1): an `inferred` line is
+   * backfill()'s, built from a job's state.json and a transcript's opening, which a session can write.
+   */
+  soleSuccessorOf(sessionId: string, options: { inferred?: boolean } = {}): string | undefined {
+    if (this.#successors === undefined || this.#successors.version !== this.#version) {
+      const next = new Map<string, Set<string>>();
+      const observed = new Map<string, Set<string>>();
+      for (const line of this.#lines) {
+        next.set(line.from, (next.get(line.from) ?? new Set()).add(line.to));
+        if (line.inferred !== true) observed.set(line.from, (observed.get(line.from) ?? new Set()).add(line.to));
+      }
+      this.#successors = { version: this.#version, next, observed };
+    }
+    const found = (options.inferred === false ? this.#successors.observed : this.#successors.next).get(sessionId);
+    return found?.size === 1 ? [...found][0] : undefined;
   }
 
   /**

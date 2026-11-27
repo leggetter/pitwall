@@ -99,6 +99,7 @@ import {
   SPAWN_PROMPT_MAX,
   stopPath,
   type ActionResult,
+  type LeadBriefResult,
   type ResumeResult,
   type SessionLaunch,
   type SessionSummary,
@@ -130,6 +131,11 @@ export interface ActionOptions {
   pluginDir?: string | false;
   /** The environment children start from, before childEnvironment() scrubs it. Default process.env, read per call. */
   env?: NodeJS.ProcessEnv;
+  /**
+   * Start a worker…'s paragraph for a lead (W218 piece 2, src/server/leadBrief.ts), for a spawn request's
+   * `lead`. Without it, a request with `lead` gets 409 and nothing starts.
+   */
+  workerBrief?: (leadId: string) => LeadBriefResult;
   /** The server's token. Any variable whose value contains it is left out of a child's environment. */
   token?: string;
   /** Records each short id a spawn or a resume reports, so attach knows the session is starting (attach.ts). */
@@ -229,6 +235,8 @@ export interface ValidSpawn {
   cwd: string;
   /** The user's own prompt, without the `@` lines spawnPrompt() adds. */
   prompt: string;
+  /** Start a worker…'s paragraph about its lead (W218 piece 2), the server's own, added after the prompt by spawnPrompt(). */
+  brief?: string;
   name?: string;
   /** isWorkModel(), or WORK_DEFAULT for no `--model` whatever the defaults say (W119). */
   model?: string;
@@ -382,10 +390,11 @@ export function spawnArgs(spawn: ValidSpawn, pluginDir?: string): string[] {
 
 /**
  * The first prompt as `claude --bg` gets it: the profile's skill, `/<skill> `, when it has one (W155),
- * the user's, then, after a blank line, an `@<path>` line per attachment.
+ * the user's, then, after a blank line, a worker's paragraph about its lead (W218 piece 2), then, after
+ * a blank line, an `@<path>` line per attachment.
  */
-export function spawnPrompt(spawn: Pick<ValidSpawn, 'prompt' | 'attachments' | 'skill'>): string {
-  const prompt = withSkill(spawn.prompt, spawn.skill);
+export function spawnPrompt(spawn: Pick<ValidSpawn, 'prompt' | 'attachments' | 'skill' | 'brief'>): string {
+  const prompt = spawn.brief === undefined ? withSkill(spawn.prompt, spawn.skill) : `${withSkill(spawn.prompt, spawn.skill)}\n\n${spawn.brief}`;
   const files = spawn.attachments ?? [];
   if (files.length === 0) return prompt;
   return `${prompt}\n\n${files.map((file) => `@${file.file}`).join('\n')}`;
@@ -1009,7 +1018,7 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
   const spawner = options.spawner ?? createSpawnRunner(options);
   const limiter = spawner.limiter;
 
-  const spawnResult = (c: Context, result: SpawnResult, status: 201 | 400 | 413 | 415 | 422 | 429 | 502 | 503 | 504) => {
+  const spawnResult = (c: Context, result: SpawnResult, status: 201 | 400 | 409 | 413 | 415 | 422 | 429 | 502 | 503 | 504) => {
     c.header('Cache-Control', 'no-store');
     return c.json(result, status);
   };
@@ -1037,7 +1046,22 @@ export function registerActions(app: Hono, indexer: Pick<Indexer, 'latest' | 'po
       const profiles = options.work?.profile;
       const validation = await validateSpawnRequest(body, snapshot.roots, options.attachments, profiles === undefined ? undefined : (name) => profiles(name));
       if (!validation.ok) return spawnResult(c, { ok: false, error: validation.error }, 400);
-      const started = await spawner.start(validation.spawn);
+      // Start a worker… (W218 piece 2): the lead's paragraph from the server's own reading of it, never the page's text.
+      let spawn = validation.spawn;
+      const lead = (body as Record<string, unknown>).lead;
+      if (lead !== undefined) {
+        if (typeof lead !== 'string' || !isSessionUuid(lead)) return spawnResult(c, { ok: false, error: 'The lead must be a session id.' }, 400);
+        const brief = options.workerBrief?.(lead) ?? { ok: false as const, error: 'pitwall can’t name a lead here.' };
+        if (!brief.ok) return spawnResult(c, { ok: false, error: brief.error }, 409);
+        // The paragraph the dialog showed, or none (the review's F3): the lead's name must be the one it named.
+        const leadName = (body as Record<string, unknown>).leadName;
+        if (typeof leadName !== 'string') return spawnResult(c, { ok: false, error: 'pitwall didn’t get the lead’s name the dialog showed, so nothing started. Reload and try again.' }, 409);
+        if (leadName !== brief.leadName) {
+          return spawnResult(c, { ok: false, error: `The lead’s name is ${brief.leadName} now, not the name the dialog showed, so nothing started. Open Start a worker… again to see the paragraph pitwall would add.` }, 409);
+        }
+        spawn = { ...spawn, brief: brief.text };
+      }
+      const started = await spawner.start(spawn);
       if (started.retryAfterSeconds !== undefined) c.header('Retry-After', String(started.retryAfterSeconds));
       return spawnResult(c, started.result, started.status);
     },

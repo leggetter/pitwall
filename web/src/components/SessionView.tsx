@@ -104,17 +104,18 @@ import type { CheckedSpinOff } from './SpinOffCards.js';
 import { SessionLineage, type LineageTarget } from './SessionLineage.js';
 import { SessionPrsPanel, sessionPrsCount, type LinkedPr } from './SessionPrs.js';
 import { MenuButton, type MenuEntry } from './Menu.js';
-import { MAKE_LEAD, NOT_A_LEAD, NOT_A_WORKER, REPORT_TO, START_WORKER, WORKER_FOR, type LeadAction } from '../leads.js';
+import { CONFIRM_LEAD, MAKE_LEAD, NOT_A_LEAD, NOT_A_WORKER, REPORT_TO, START_WORKER, WORKER_FOR, type LeadAction } from '../leads.js';
 import type { IconName } from './Icon.js';
 
 const LEAD_ACTION_LABELS: Readonly<Record<LeadAction, string>> = {
   'make-lead': MAKE_LEAD,
+  'confirm-lead': CONFIRM_LEAD,
   'not-lead': NOT_A_LEAD,
   'start-worker': START_WORKER,
   'report-to': REPORT_TO,
   'not-worker': NOT_A_WORKER,
 };
-const LEAD_ACTION_ICONS: Readonly<Record<LeadAction, IconName>> = { 'make-lead': 'subagents', 'not-lead': 'undo', 'start-worker': 'add', 'report-to': 'send', 'not-worker': 'undo' };
+const LEAD_ACTION_ICONS: Readonly<Record<LeadAction, IconName>> = { 'make-lead': 'subagents', 'confirm-lead': 'subagents', 'not-lead': 'undo', 'start-worker': 'add', 'report-to': 'send', 'not-worker': 'undo' };
 import { MiddleEllipsis } from './MiddleEllipsis.js';
 import { MessageBox } from './MessageBox.js';
 import { SessionConfirm, useSessionActions } from './SessionActions.js';
@@ -485,6 +486,11 @@ export interface SessionViewProps {
    * <lead>" under the header's other lines, a link to the lead's view. None without it.
    */
   leads?: { actions: readonly LeadAction[]; onAction: (action: LeadAction) => void; workerFor?: { sessionId: string; name: string } | undefined; onOpen: (sessionId: string) => void } | undefined;
+  /**
+   * A worker's "reported 10:42" on its row (W218 piece 2): each new number asks the view for its Conversation
+   * tab, which opens at the newest place, not at the report. Set as the view opens, it opens there, not on Terminal.
+   */
+  conversationAsk?: number | undefined;
 }
 
 type Tab = 'conversation' | 'terminal' | 'subagents' | 'prs';
@@ -518,6 +524,7 @@ export function SessionView({
   polledAt,
   lineage,
   spinOffs,
+  conversationAsk,
   backLabel,
   prs,
   recaps,
@@ -598,7 +605,9 @@ export function SessionView({
    * preferences says Conversation; Conversation for the rest. A finished one restarts when attached,
    * which the restart confirmation asks first, so it waits for you to open the tab.
    */
-  const openingTab = (): Tab => (!latestSpinOff.current && backgroundTab === 'terminal' && background && session.alive && terminalOff === undefined ? 'terminal' : 'conversation');
+  // Asked for the Conversation tab as it opens, from a worker's "reported" on its row (W218 piece 2).
+  const askedConversation = useRef(conversationAsk !== undefined);
+  const openingTab = (): Tab => (!latestSpinOff.current && !askedConversation.current && backgroundTab === 'terminal' && background && session.alive && terminalOff === undefined ? 'terminal' : 'conversation');
   // Undefined until the view is first shown: one that opens hidden, in a root tab that isn't open (W38),
   // as a session started there does, decides when that tab is opened, so it never attaches unseen.
   const [chosen, setChosen] = useState<Tab | undefined>(() => (hidden ? undefined : openingTab()));
@@ -663,6 +672,12 @@ export function SessionView({
     browserNavigation.addEventListener('popstate', follow);
     return () => browserNavigation.removeEventListener('popstate', follow);
   }, [hidden, session.sessionId]);
+  // Asked again while it's open (W218 piece 2): the Conversation tab, as the link above does, without the card.
+  useEffect(() => {
+    if (conversationAsk === undefined || hidden) return;
+    setChosen('conversation');
+    setAttachStatus(undefined);
+  }, [conversationAsk, hidden]);
   useLayoutEffect(() => {
     // Once loading ends, whatever it ends in: a conversation that fails or is unavailable takes the parameter out too,
     // so it isn't followed again each time the view is shown (W220's review of the fix).

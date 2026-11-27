@@ -1,7 +1,8 @@
 // The lead and worker routes (W218): ids validated, listed sessions only, JSON only, a body limit, and 409s.
 import { Hono } from 'hono';
-import { describe, expect, it } from 'vitest';
-import { leadPath, workerPath, workerStartedPath, type IndexSnapshot, type LeadResult, type SessionSummary } from '../shared/protocol.js';
+import { describe, expect, it, vi } from 'vitest';
+import { leadBriefPath, leadPath, workerBriefPath, workerPath, workerStartedPath, type IndexSnapshot, type LeadBriefResult, type LeadResult, type SessionSummary } from '../shared/protocol.js';
+import { workerBriefText, type LiveNames } from './leadBrief.js';
 import { LEAD_BODY_MAX_BYTES, registerLeads } from './leadRoutes.js';
 import { LeadStore } from './leads.js';
 
@@ -27,8 +28,8 @@ function session(sessionId: string, overrides: Partial<SessionSummary> = {}): Se
   };
 }
 
-function setup(options: { listed?: boolean; spawned?: string[] | null } = {}) {
-  const store = new LeadStore({ now: () => new Date('2026-11-27T10:00:00.000Z'), readDerived: async () => ({}) });
+function setup(options: { listed?: boolean; spawned?: string[] | null; live?: () => LiveNames } = {}) {
+  const store = new LeadStore({ now: () => new Date('2026-11-27T10:00:00.000Z'), readDerived: async () => ({}), readReport: async () => ({}) });
   const snapshot: IndexSnapshot = {
     generatedAt: '2026-11-27T10:00:00.000Z',
     roots: ['/tmp/pitwall-test-root'],
@@ -40,12 +41,17 @@ function setup(options: { listed?: boolean; spawned?: string[] | null } = {}) {
     snapshots: { latest: () => (options.listed === false ? undefined : snapshot) },
     store,
     ...(options.spawned === null ? {} : { spawned: new Set(options.spawned ?? []) }),
+    ...(options.live === undefined ? {} : { live: options.live }),
   });
   const post = async (path: string, body: unknown, type = 'application/json') => {
     const res = await app.request(path, { method: 'POST', headers: { 'content-type': type }, body: typeof body === 'string' ? body : JSON.stringify(body) });
     return { status: res.status, json: (await res.json()) as LeadResult, cache: res.headers.get('cache-control') };
   };
-  return { store, post };
+  const get = async (path: string) => {
+    const res = await app.request(path);
+    return { status: res.status, json: (await res.json()) as LeadBriefResult, cache: res.headers.get('cache-control') };
+  };
+  return { store, post, get };
 }
 
 describe('the lead routes', () => {
@@ -133,5 +139,51 @@ describe('the lead routes', () => {
     await post(workerPath(B), { lead: A });
     expect((await post(workerStartedPath(B), { shortId: '0f0f0f0f' })).status).toBe(409);
     expect((await setup({ spawned: null }).post(workerStartedPath(A), { shortId: '0f0f0f0f' })).status).toBe(409);
+  });
+
+  it("refuses Start a worker… on a lead only by its own transcript's word (the fix check's N1)", async () => {
+    const { store, post } = setup({ spawned: ['0f0f0f0f'] });
+    // A shows as a lead in the list, but the trusted tree has no lead A.
+    vi.spyOn(store, 'tree').mockReturnValue({ ...store.tree(), leads: new Set([A]) } as ReturnType<typeof store.tree>);
+    const refused = await post(workerStartedPath(A), { shortId: '0f0f0f0f' });
+    expect(refused.status).toBe(409);
+    expect(refused.json).toMatchObject({ ok: false, error: expect.stringContaining('Confirm as lead') });
+    // Confirm as lead (Make lead) makes it one pitwall names, and the start is noted.
+    await post(leadPath(A), { on: true });
+    expect((await post(workerStartedPath(A), { shortId: '0f0f0f0f' })).status).toBe(200);
+  });
+
+  it('answers the worker paragraph for a lead you set, and for a worker’s lead (W218 piece 2)', async () => {
+    const { post, get } = setup();
+    await post(leadPath(A), { on: true });
+    await post(workerPath(B), { lead: A });
+    const text = workerBriefText(`pitwall-test-${A.slice(0, 4)}`);
+    expect(await get(leadBriefPath(A))).toEqual({ status: 200, json: { ok: true, leadId: A, leadName: `pitwall-test-${A.slice(0, 4)}`, text }, cache: 'no-store' });
+    expect(await get(workerBriefPath(B))).toEqual({ status: 200, json: { ok: true, leadId: A, leadName: `pitwall-test-${A.slice(0, 4)}`, text }, cache: 'no-store' });
+  });
+
+  it('refuses the paragraph with 409 for a session that isn’t a lead or a worker, and 400, 404 and 503 as the POSTs do', async () => {
+    const { get } = setup();
+    const notLead = await get(leadBriefPath(A));
+    expect(notLead.status).toBe(409);
+    expect(notLead.json).toMatchObject({ ok: false, error: expect.any(String) });
+    expect((await get(workerBriefPath(B))).status).toBe(409);
+    expect((await get(leadBriefPath('../etc'))).status).toBe(400);
+    expect((await get(leadBriefPath('deploy'))).status).toBe(400);
+    expect((await get(workerBriefPath(UNLISTED))).status).toBe(404);
+    expect((await setup({ listed: false }).get(leadBriefPath(A))).status).toBe(503);
+  });
+
+  it('refuses the paragraph when another live row, outside the listing, has the lead’s name (the review’s F4)', async () => {
+    const name = `pitwall-test-${A.slice(0, 4)}`;
+    const elsewhere = { sessionId: UNLISTED, name, kind: 'background' as const, cwd: '/tmp/pitwall-test-elsewhere', pid: 5000, startedAt: '2026-11-27T09:00:00.000Z' };
+    const { post, get } = setup({ live: () => ({ rows: [elsewhere] }) });
+    await post(leadPath(A), { on: true });
+    await post(workerPath(B), { lead: A });
+    for (const path of [leadBriefPath(A), workerBriefPath(B)]) {
+      const refused = await get(path);
+      expect(refused.status, path).toBe(409);
+      expect(refused.json).toMatchObject({ ok: false, error: expect.stringMatching(/Another running session/) });
+    }
   });
 });

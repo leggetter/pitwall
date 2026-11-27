@@ -2240,6 +2240,68 @@ mark.match {
   white-space: nowrap;
 }
 
+/*
+ * A worker's newest report to its lead (W218 piece 2): "reported 10:42" on line 2, as quiet as the
+ * group's label, in the line's own face; its underline says it's a link, and hover thickens it.
+ */
+.link-button.session-reported {
+  border-radius: var(--pw-radius-xs);
+  color: var(--pw-text-subtle);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-decoration-color: var(--pw-border-strong);
+}
+
+@media (hover: hover) {
+  .link-button.session-reported:hover {
+    color: var(--pw-text-muted);
+    text-decoration-color: currentColor;
+  }
+}
+
+/*
+ * The paragraph a worker is given about its lead (W218 piece 2): read-only, in a quiet box as an
+ * approval's message is, but in --pw-surface-sunken, since a dialog's --pw-surface-overlay has
+ * --pw-surface-muted's value in dark. New session's notice from Start a worker… sits above the fields; Report
+ * to…'s second step puts Copy message beside it for a background session.
+ */
+.worker-brief-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-1-5);
+}
+
+.worker-brief-text {
+  max-height: max(calc(6 * var(--pw-leading-m) + 2 * var(--pw-space-2)), 30vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--pw-space-2) var(--pw-space-3);
+  background: var(--pw-surface-sunken);
+  border-radius: var(--pw-radius-md);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.worker-brief-text:focus-visible {
+  outline-offset: -2px;
+  box-shadow: var(--pw-ring-focus-inset);
+}
+
+.worker-brief-copyable {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--pw-space-1);
+}
+
+.worker-brief-copyable .worker-brief-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.worker-brief-copy {
+  flex: none;
+}
+
 /* The Finished section (section 4): a toggle row at the bottom of the session list, then its rows. */
 
 .finished-list {
